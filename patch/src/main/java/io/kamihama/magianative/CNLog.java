@@ -65,6 +65,8 @@ public final class CNLog {
     private static boolean openedOnce = false;
     /** 缓冲区有新内容时被调用（UI 用它刷新 LOG 面板）；可为 null。 */
     private static volatile Runnable listener;
+    /** writeRaw 的落盘计数：logcat 量大，逐行 flush 会造成明显的 I/O 压力。 */
+    private static int rawSinceFlush = 0;
 
     private CNLog() {}
 
@@ -102,6 +104,7 @@ public final class CNLog {
     }
 
     private static void closeWriterLocked() {
+        rawSinceFlush = 0;
         if (writer != null) {
             try { writer.flush(); } catch (Throwable ignore) {}
             try { writer.close(); } catch (Throwable ignore) {}
@@ -189,7 +192,13 @@ public final class CNLog {
                 try {
                     writer.write(line);
                     writer.write('\n');
-                    writer.flush();
+                    // 每 50 行才落一次盘。逐行 flush 在 logcat 的量级下会把
+                    // 磁盘打满，反过来拖慢整个进程。自己模块的日志（write）
+                    // 仍然逐条 flush，那条路量小且更需要即时性。
+                    if (++rawSinceFlush >= 50) {
+                        writer.flush();
+                        rawSinceFlush = 0;
+                    }
                 } catch (Throwable ignore) {}
             }
         }
@@ -263,6 +272,28 @@ public final class CNLog {
             }
             return false;
         }
+    }
+
+    /**
+     * 只取最后 {@code n} 条。
+     *
+     * <p>面板渲染用这个而不是 {@link #snapshot()}：缓冲上限 3000 行拼出来约
+     * 300KB，每次刷新都把这么大一坨塞进 TextView 会直接把主线程压垮。
+     * 「复制全部」仍然走 {@link #snapshot()}，那是一次性操作。
+     */
+    public static String tail(int n) {
+        StringBuilder sb = new StringBuilder();
+        synchronized (BUFFER) {
+            int skip = BUFFER.size() - n;
+            Iterator<String> it = BUFFER.iterator();
+            int i = 0;
+            while (it.hasNext()) {
+                String line = it.next();
+                if (i++ < skip) continue;
+                sb.append(line).append('\n');
+            }
+        }
+        return sb.toString();
     }
 
     /** 当前缓冲区的全部内容（每行一条）。 */

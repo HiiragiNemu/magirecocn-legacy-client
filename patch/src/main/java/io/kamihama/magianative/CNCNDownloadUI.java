@@ -763,7 +763,9 @@ public class CNCNDownloadUI {
         tvLog.setTextColor(COLOR_LOG_PANEL_TEXT);
         tvLog.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
         tvLog.setTypeface(Typeface.MONOSPACE);
-        tvLog.setTextIsSelectable(true);
+        // 不开 setTextIsSelectable：大文本下它会启用近似 EditText 的机制，
+        // 每次 setText 都要重建选择/输入相关结构，是面板卡死的主要来源之一。
+        // 复制走标题栏的「复制全部」按钮。
         vLogScroll.addView(tvLog, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -1013,7 +1015,7 @@ public class CNCNDownloadUI {
                 ClipboardManager cm = (ClipboardManager)
                         act.getSystemService(Context.CLIPBOARD_SERVICE);
                 if (cm == null) return;
-                cm.setPrimaryClip(ClipData.newPlainText("log-service", composeLogText()));
+                cm.setPrimaryClip(ClipData.newPlainText("log-service", composeLogText(true)));
                 toast(act, "日志已复制到剪贴板（" + CNLog.size() + " 条）");
             } catch (Throwable t) {
                 toast(act, "复制失败：" + t.getMessage());
@@ -1021,13 +1023,28 @@ public class CNCNDownloadUI {
         }
     }
 
-    /** LOG 面板的完整内容：文件安装状态 + 运行日志。 */
-    private static String composeLogText() {
+    /** 面板里最多渲染多少行日志。缓冲区本身仍保留 3000 行，供「复制全部」。 */
+    private static final int PANEL_LOG_LINES = 300;
+
+    /**
+     * LOG 面板显示的内容：文件安装状态 + 运行日志的**尾部**。
+     *
+     * @param full true 时取全部日志（供「复制全部」），false 时只取尾部（供渲染）
+     */
+    private static String composeLogText(boolean full) {
         StringBuilder sb = new StringBuilder();
         sb.append(buildStatusText());
         sb.append("\n──────── 运行日志 ────────\n");
-        String log = CNLog.snapshot();
-        sb.append(log.length() == 0 ? "（暂无日志）\n" : log);
+        String log = full ? CNLog.snapshot() : CNLog.tail(PANEL_LOG_LINES);
+        if (log.length() == 0) {
+            sb.append("（暂无日志）\n");
+        } else {
+            if (!full && CNLog.size() > PANEL_LOG_LINES) {
+                sb.append("（仅显示最近 ").append(PANEL_LOG_LINES).append(" 行，共 ")
+                  .append(CNLog.size()).append(" 行；「复制全部」可取完整日志）\n");
+            }
+            sb.append(log);
+        }
         return sb.toString();
     }
 
@@ -1035,7 +1052,7 @@ public class CNCNDownloadUI {
     private static void renderLogModal() {
         if (logModal == null || tvLog == null) return;
         if (logModal.getVisibility() != View.VISIBLE) return;
-        tvLog.setText(composeLogText());
+        tvLog.setText(composeLogText(false));
     }
 
     private static void openLogModal() {
@@ -1055,17 +1072,34 @@ public class CNCNDownloadUI {
      * {@link CNLog} 的缓冲区变更回调。日志可能来自任意下载线程，所以要切回主线程
      * 再碰视图；面板不可见时直接跳过。
      */
+    /**
+     * 待刷新标记。logcat 一秒能灌进来几百行，若每行都 post 一次渲染，主线程
+     * 就会被成百上千次大文本重排压死（表现为打开 LOG 面板即掉帧/卡死）。
+     * 这里把它们合并成「最多每 {@value #LOG_REFRESH_MS} 毫秒渲染一帧」。
+     */
+    private static final java.util.concurrent.atomic.AtomicBoolean LOG_DIRTY =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+    private static final long LOG_REFRESH_MS = 250L;
+
+    /** 请求刷新日志面板（可从任意线程调用，自动合并）。 */
+    private static void scheduleLogRefresh() {
+        Handler h = uiHandler;
+        if (h == null || logModal == null) return;
+        if (logModal.getVisibility() != View.VISIBLE) return;
+        if (LOG_DIRTY.compareAndSet(false, true)) {
+            h.postDelayed(new RenderLog(), LOG_REFRESH_MS);
+        }
+    }
+
     private static final class LogChanged implements Runnable {
         @Override public void run() {
-            Handler h = uiHandler;
-            if (h == null || logModal == null) return;
-            if (logModal.getVisibility() != View.VISIBLE) return;
-            h.post(new RenderLog());
+            scheduleLogRefresh();
         }
     }
 
     private static final class RenderLog implements Runnable {
         @Override public void run() {
+            LOG_DIRTY.set(false);
             boolean atBottom = false;
             if (vLogScroll != null && tvLog != null) {
                 int bottom = vLogScroll.getScrollY() + vLogScroll.getHeight();
@@ -1194,7 +1228,7 @@ public class CNCNDownloadUI {
         // 这里**必须**走 renderLogModal()：早先直接 setText(buildStatusText())
         // 会把刚拼进去的日志段整段抹掉，而 renderAll 每 500ms 就跑一次——
         // 表现就是日志行刚打印出来就转瞬即逝。
-        renderLogModal();
+        scheduleLogRefresh();
 
         int[]   status     = fileStatus;
         int[]   progress   = fileProgress;
@@ -1272,7 +1306,8 @@ public class CNCNDownloadUI {
                 sv.retryView.setVisibility(st == 3 ? View.VISIBLE : View.GONE);
                 if (st == 2) {
                     sv.infoView.setTextColor(0xFF66BB6A);
-                    sv.infoView.setText("✓");
+                    sv.infoView.setText(size != null && size[i] > 0f
+                            ? ("✓ " + formatMb(size[i])) : "✓");
                 } else if (st == 3) {
                     sv.infoView.setTextColor(0xFFE53935);
                     sv.infoView.setText("✗");
@@ -1289,8 +1324,15 @@ public class CNCNDownloadUI {
                     }
                     sv.infoView.setText(sb.toString());
                 } else {
+                    // 等待中：只要大小已经探到就显示出来。
+                    // 早先这里是空串，于是「还没开始下载的文件不显示大小」——
+                    // 即便开跑前已经探完，玩家也看不到，观感上就像没探。
                     sv.infoView.setTextColor(COLOR_SUB);
-                    sv.infoView.setText("");
+                    if (size != null && size[i] > 0f) {
+                        sv.infoView.setText("等待中 · " + formatMb(size[i]));
+                    } else {
+                        sv.infoView.setText("等待中");
+                    }
                 }
             }
         }
