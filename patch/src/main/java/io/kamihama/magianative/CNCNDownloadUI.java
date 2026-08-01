@@ -754,6 +754,7 @@ public class CNCNDownloadUI {
         logScrollBg.setStroke(1, darkMode ? 0x33FFFFFF : 0x22000000);
         vLogScroll.setBackground(logScrollBg);
         vLogScroll.setPadding(dp(act, 8), dp(act, 6), dp(act, 8), dp(act, 6));
+        vLogScroll.getViewTreeObserver().addOnScrollChangedListener(new LogScrollWatcher());
         panel.addView(vLogScroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
@@ -1057,6 +1058,7 @@ public class CNCNDownloadUI {
 
     private static void openLogModal() {
         if (logModal == null) return;
+        logAutoScroll = true;          // 每次打开都从底部开始看
         logModal.setVisibility(View.VISIBLE);
         renderLogModal();
         if (vLogScroll != null) {
@@ -1097,18 +1099,41 @@ public class CNCNDownloadUI {
         }
     }
 
+    /**
+     * 是否保持吸底。
+     *
+     * <p>早先是在每次渲染**之前**用几何关系临时判断「当前是不是在底部」，再决定
+     * 渲染后要不要滚下去。问题是那次判断用的是**旧内容**的高度，而 setText 之后
+     * 高度立刻就变了；再加上 ScrollView 在内容变化时会把 scrollY 夹回合法范围，
+     * 判定几乎总是落空——表现就是根本不吸底。
+     *
+     * <p>改为记录**用户意图**：默认吸底；用户手动往上滚就关掉；滚回底部再打开。
+     * 渲染后只看这个标记，不再依赖时序敏感的几何判断。
+     */
+    private static boolean logAutoScroll = true;
+
     private static final class RenderLog implements Runnable {
         @Override public void run() {
             LOG_DIRTY.set(false);
-            boolean atBottom = false;
-            if (vLogScroll != null && tvLog != null) {
-                int bottom = vLogScroll.getScrollY() + vLogScroll.getHeight();
-                atBottom = bottom >= tvLog.getHeight() - dpStatic(24);
-            }
             renderLogModal();
-            if (atBottom && vLogScroll != null) {
+            if (logAutoScroll && vLogScroll != null) {
                 vLogScroll.post(new ScrollToBottom());
             }
+        }
+    }
+
+    /** 监听用户滚动，维护 {@link #logAutoScroll}。 */
+    private static final class LogScrollWatcher
+            implements android.view.ViewTreeObserver.OnScrollChangedListener {
+        @Override public void onScrollChanged() {
+            try {
+                ScrollView sv = vLogScroll;
+                if (sv == null || sv.getChildCount() == 0) return;
+                View content = sv.getChildAt(0);
+                int rest = content.getHeight() - sv.getHeight() - sv.getScrollY();
+                // 距底部一屏的 1/6 以内都算「还在底部」，给手指一点容差
+                logAutoScroll = rest <= Math.max(dpStatic(32), sv.getHeight() / 6);
+            } catch (Throwable ignore) {}
         }
     }
 

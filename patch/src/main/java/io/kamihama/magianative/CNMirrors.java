@@ -52,6 +52,23 @@ public final class CNMirrors {
     private static volatile int  cfgStallSeconds      = 25;
     private static volatile int  cfgMinSpeedKbps      = 32;
     private static volatile long cfgCooldownMs        = 60_000L;
+    // ---- 反限速 ----
+    /** 跌到基准速度的这个比例以下即视为疑似被限速。 */
+    private static volatile int  cfgThrottleRatioPct   = 60;
+    /** 基准速度的取样窗口（秒）：下载开始后 [from, to) 这一段的平均速度。 */
+    private static volatile int  cfgBaselineFromS      = 10;
+    private static volatile int  cfgBaselineToS        = 30;
+    /** 连续低于阈值多久才认定为限速（秒），避免被瞬时抖动误伤。 */
+    private static volatile int  cfgThrottleGraceS     = 15;
+    /** 另一条线路的基准要高出当前速度这么多倍，才值得换过去（百分比）。 */
+    private static volatile int  cfgSwitchGainPct      = 125;
+    /** 被判定限速后降低优先级的时长。 */
+    private static volatile long cfgThrottleDemoteMs   = 120_000L;
+
+    public static int  throttleRatioPct() { return cfgThrottleRatioPct; }
+    public static int  baselineFromS()    { return cfgBaselineFromS; }
+    public static int  baselineToS()      { return cfgBaselineToS; }
+    public static int  throttleGraceS()   { return cfgThrottleGraceS; }
 
     public static int  chunks()          { return cfgChunks; }
     public static long minChunkBytes()   { return cfgMinChunkBytes; }
@@ -68,6 +85,16 @@ public final class CNMirrors {
         /** 该线路的分片数；<=0 表示用全局默认。 */
         public final int    chunks;
         public final boolean enabled;
+
+        /**
+         * 观测到的基准速度（字节/秒），取历次观测的最大值。
+         *
+         * <p>用最大值而不是平均：我们要的是「这条线路没被限速时能跑多快」，
+         * 一旦某次跑出过高速，后面掉下去就说明是被限了，而不是它本来就慢。
+         */
+        volatile long baselineBps = 0L;
+        /** 判定为限速后的降级截止时刻（nanoTime 基准）；降级只降优先级，不禁用。 */
+        volatile long demoteUntilNs = 0L;
 
         final AtomicInteger failures = new AtomicInteger(0);
         /** 冷却截止时刻（{@link System#nanoTime()} 基准）；0 表示不在冷却中。 */
@@ -179,6 +206,13 @@ public final class CNMirrors {
             cfgStallSeconds    = clampInt(st.optInt("stall_seconds",      cfgStallSeconds),    5, 300);
             cfgMinSpeedKbps    = clampInt(st.optInt("min_speed_kbps",     cfgMinSpeedKbps),    0, 1000000);
             cfgCooldownMs      = Math.max(1000L, st.optLong("cooldown_ms", cfgCooldownMs));
+            cfgThrottleRatioPct = clampInt(st.optInt("throttle_ratio_pct",   cfgThrottleRatioPct), 10, 100);
+            cfgBaselineFromS    = clampInt(st.optInt("baseline_from_s",      cfgBaselineFromS),     1, 600);
+            cfgBaselineToS      = clampInt(st.optInt("baseline_to_s",        cfgBaselineToS),       2, 1200);
+            if (cfgBaselineToS <= cfgBaselineFromS) cfgBaselineToS = cfgBaselineFromS + 10;
+            cfgThrottleGraceS   = clampInt(st.optInt("throttle_grace_s",     cfgThrottleGraceS),    1, 600);
+            cfgSwitchGainPct    = clampInt(st.optInt("switch_gain_pct",      cfgSwitchGainPct),   100, 1000);
+            cfgThrottleDemoteMs = Math.max(1000L, st.optLong("throttle_demote_ms", cfgThrottleDemoteMs));
         }
 
         JSONArray arr = root.optJSONArray("mirrors");
@@ -241,7 +275,19 @@ public final class CNMirrors {
             if (m.cooldownUntilNs > now) continue;
             ok.add(m);
         }
-        if (!ok.isEmpty()) return ok;
+        if (!ok.isEmpty()) {
+            // 被判定限速的线路不排除，只挪到末尾——它仍然可用，只是不优先
+            List<Mirror> normal = new ArrayList<Mirror>(ok.size());
+            List<Mirror> demoted = new ArrayList<Mirror>();
+            for (Mirror m : ok) {
+                if (m.demoteUntilNs > now) demoted.add(m); else normal.add(m);
+            }
+            if (!normal.isEmpty()) {
+                normal.addAll(demoted);
+                return normal;
+            }
+            return ok;
+        }
         List<Mirror> any = new ArrayList<Mirror>(all.size());
         for (Mirror m : all) if (m.enabled) any.add(m);
         if (any.isEmpty()) any.add(new Mirror("默认线路", DEFAULT_BASE, 0, 0, true));
@@ -271,6 +317,52 @@ public final class CNMirrors {
         } else {
             CNLog.w(TAG, "线路失败 mirror=" + m.name + " reason=" + reason + " count=" + f);
         }
+    }
+
+    /** 记录一次基准速度观测。 */
+    public static void reportBaseline(Mirror m, long bps) {
+        if (m == null || bps <= 0) return;
+        if (bps > m.baselineBps) {
+            m.baselineBps = bps;
+            CNLog.i(TAG, "线路基准速度 " + m.name + " = " + (bps / 1024) + " KB/s");
+        }
+    }
+
+    /** 判定为限速：降低其优先级一段时间，但不禁用（它仍然可用，只是不优先）。 */
+    public static void reportThrottled(Mirror m) {
+        if (m == null) return;
+        m.demoteUntilNs = System.nanoTime() + cfgThrottleDemoteMs * 1_000_000L;
+        CNLog.w(TAG, "线路疑似被限速，降级 " + cfgThrottleDemoteMs + "ms: " + m.name);
+    }
+
+    /**
+     * 当前线路已跌到 {@code currentBps}，换一条是否可能更好？
+     *
+     * <p>这是「反限速」最容易做错的地方：只看「相对自己掉了多少」就换线，会把
+     * 一条被限到 5MB/s 的快线，换成一条本来就只有 1MB/s 的慢线——越换越慢。
+     * 所以这里要求**换过去有实际收益**才放行：
+     * <ul>
+     *   <li>存在还没测过基准的线路 → 值得试一次（未知即机会）；</li>
+     *   <li>或存在基准速度高于当前速度 {@code switch_gain_pct}% 的线路。</li>
+     * </ul>
+     * 两者都不满足时留在原地——被限速也好过换到更慢的线。
+     */
+    public static boolean worthSwitching(Mirror from, long currentBps) {
+        List<Mirror> ok = healthy();
+        for (Mirror m : ok) {
+            if (m == from) continue;
+            if (m.baselineBps <= 0) {
+                CNLog.i(TAG, "存在未测速线路 " + m.name + "，值得一试");
+                return true;
+            }
+            if (m.baselineBps > currentBps * cfgSwitchGainPct / 100L) {
+                CNLog.i(TAG, "线路 " + m.name + " 基准 " + (m.baselineBps / 1024)
+                        + " KB/s 明显快于当前 " + (currentBps / 1024) + " KB/s，值得换");
+                return true;
+            }
+        }
+        CNLog.i(TAG, "没有更快的线路可换（当前 " + (currentBps / 1024) + " KB/s），留在原地");
+        return false;
     }
 
     /** 记一次成功：清空失败计数并解除冷却。 */

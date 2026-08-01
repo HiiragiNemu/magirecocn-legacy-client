@@ -561,7 +561,7 @@ public final class CNDownloaderFix {
                     updateSize(index, probe.total);
                     updateProgress(index, 0L, probe.total);
                     CNChunkedDownload.Result r = CNChunkedDownload.download(
-                            url, archive, chunks, direct, probe, new ArchiveSink(index));
+                            url, archive, chunks, direct, probe, new ArchiveSink(index), mirror);
                     return new DownloadMetadata(r.totalBytes, r.etag);
                 }
             }

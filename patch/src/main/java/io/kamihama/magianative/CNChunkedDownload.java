@@ -193,6 +193,16 @@ public final class CNChunkedDownload {
     public static Result download(String url, File target, int requestedChunks,
                                   boolean direct, Probe probe, Sink sink)
             throws IOException {
+        return download(url, target, requestedChunks, direct, probe, sink, null);
+    }
+
+    /**
+     * 同上，额外传入本次使用的线路，用于反限速判定（可为 null 表示不判定）。
+     */
+    public static Result download(String url, File target, int requestedChunks,
+                                  boolean direct, Probe probe, Sink sink,
+                                  CNMirrors.Mirror mirror)
+            throws IOException {
 
         final long total = probe.total;
         if (total <= 0) throw new IOException("未知的文件长度");

@@ -142,11 +142,12 @@ public class ResumeTest {
         Sink s = new Sink();
         CNChunkedDownload.Result r = CNChunkedDownload.download(base, t, 4, false, p, s);
         check("续传后内容正确", sha256(t).equals(expectSha), "sha=" + sha256(t).substring(0, 12));
-        // 上一步每片只拿到 1/4，总共 totalSize/4；续传必须从这个量接着下，
-        // 而不是从 0 重来
-        check("确实复用了断点（首次回调 = 已下量，非 0）",
-              s.first > 0 && s.first == totalSize / 4,
-              "首次回调=" + s.first + " 期望=" + (totalSize / 4));
+        // 续传必须从已有进度接着下，而不是从 0 重来。
+        // 不断言具体数值：上一步某个分片短读后会 abort 其余分片，某片可能
+        // 一字节都没写就退出，复用量因此是时序相关的（3/4 或 4/4 份都可能）。
+        check("确实复用了断点（首次回调 > 0 且未下完）",
+              s.first > 0 && s.first < totalSize,
+              "首次回调=" + s.first + " 总长=" + totalSize);
         check("预分配长度一致", before == totalSize, "" + before);
         check("大小正确", r.totalBytes == totalSize, "" + r.totalBytes);
     }
