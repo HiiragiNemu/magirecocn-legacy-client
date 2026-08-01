@@ -16,6 +16,7 @@ import urllib.parse
 
 PAYLOAD = None
 ETAG = '"v1-abc"'
+TRUNCATE = 0
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -37,9 +38,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        global ETAG
+        # 控制端点：切换服务端默认 ETag，用于模拟「同一 URL、文件被换掉」
+        if urllib.parse.urlparse(self.path).path == "/settruncate":
+            global TRUNCATE
+            TRUNCATE = int(urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("v",["0"])[0])
+            self.send_response(200); self.send_header("Content-Length","2"); self.end_headers()
+            self.wfile.write(b"ok"); return
+        if urllib.parse.urlparse(self.path).path == "/setetag":
+            ETAG = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("v", ['"v2"'])[0]
+            self.send_response(200); self.send_header("Content-Length","2"); self.end_headers()
+            self.wfile.write(b"ok"); return
         q = self._q()
         etag = q.get("etag", [ETAG])[0]
-        truncate = int(q.get("truncate", [0])[0])
+        truncate = int(q.get("truncate", [TRUNCATE])[0])
         over = int(q.get("over", [0])[0])
         norange = q.get("norange", ["0"])[0] == "1"
         total = len(PAYLOAD)

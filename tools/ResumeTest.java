@@ -47,6 +47,31 @@ public class ResumeTest {
         CNChunkedDownload.metaFileFor(target).delete();
     }
 
+    // 7. 换线续传：ETag 变了但确实是同一份文件时，必须复用断点而不是从零重下
+    static void test7_crossMirrorResume(File dir) throws Exception {
+        System.out.println("\n[7] 换线续传（不同线路 ETag 不同）");
+        File t = new File(dir, "f.bin");
+        clean(t);
+        // 线路 A：ETag = v1，只发一部分制造残局
+        try {
+            CNChunkedDownload.Probe p0 = CNChunkedDownload.probe(base + "?etag=v1", false);
+            ctl("/settruncate?v=" + (totalSize/16));
+            CNChunkedDownload.download(base + "?etag=v1", t, 4, false, p0, new Sink());
+            ctl("/settruncate?v=0");
+        } catch (IOException ignore) {}
+        ctl("/settruncate?v=0");
+        File part = CNChunkedDownload.partFileFor(t);
+        check("残局已产生", part.exists() && CNChunkedDownload.metaFileFor(t).exists(), "");
+        // 线路 B：同一份文件，但 ETag 完全不同（模拟 CDN 与源站 ETag 格式不一致）
+        String urlB = base + "?etag=" + java.net.URLEncoder.encode("\"0xDEADBEEF\"", "UTF-8");
+        CNChunkedDownload.Probe p = CNChunkedDownload.probe(urlB, false);
+        Sink s = new Sink();
+        CNChunkedDownload.Result r = CNChunkedDownload.download(urlB, t, 4, false, p, s);
+        check("换线后内容正确", sha256(t).equals(expectSha), "sha=" + sha256(t).substring(0,12));
+        check("复用了断点而非从零重下", s.first > 0,
+              "换线后首次回调=" + s.first + "（0 表示进度被作废）");
+    }
+
     public static void main(String[] args) throws Exception {
         base      = args[0];
         expectSha = args[1];
@@ -60,6 +85,7 @@ public class ResumeTest {
         test4_missingPartFile(dir);
         test5_etagChanged(dir);
         test6_overSend(dir);
+        test7_crossMirrorResume(dir);
 
         System.out.println();
         System.out.println("通过 " + passed + " / 失败 " + failed);
@@ -87,12 +113,13 @@ public class ResumeTest {
         File t = new File(dir, "b.bin");
         clean(t);
         long per = totalSize / 4;
-        String url = base + "?truncate=" + (per / 4);
+        // 用服务端开关截断，保持 URL 与后续续传完全一致（否则会被判成换线）
+        ctl("/settruncate?v=" + (per / 4));
         CNChunkedDownload.Probe p = CNChunkedDownload.probe(base, false);
         boolean threw = false;
         String msg = "";
         try {
-            CNChunkedDownload.download(url, t, 4, false, p, new Sink());
+            CNChunkedDownload.download(base, t, 4, false, p, new Sink());
         } catch (IOException e) {
             threw = true; msg = String.valueOf(e.getMessage());
         }
@@ -109,6 +136,7 @@ public class ResumeTest {
         File part = CNChunkedDownload.partFileFor(t);
         long before = 0;
         if (part.exists()) before = part.length();
+        ctl("/settruncate?v=0");
         CNChunkedDownload.Probe p = CNChunkedDownload.probe(base, false);
         Sink s = new Sink();
         CNChunkedDownload.Result r = CNChunkedDownload.download(base, t, 4, false, p, s);
@@ -151,19 +179,21 @@ public class ResumeTest {
         check("大小正确", r.totalBytes == totalSize, "" + r.totalBytes);
     }
 
-    // 5. 续传途中服务端换了文件（ETag 变化）：必须放弃断点重下
+    // 5. 同一条线路上服务端换了文件（URL 不变、ETag 变化）：必须放弃断点重下
     static void test5_etagChanged(File dir) throws Exception {
-        System.out.println("\n[5] ETag 变化后拒绝复用断点");
+        System.out.println("\n[5] 同一线路上 ETag 变化 -> 拒绝复用断点");
         File t = new File(dir, "d.bin");
         clean(t);
-        // 先制造一个残局
+        // 用**同一个 URL**制造残局
+        ctl("/settruncate?v=1024");
         try {
             CNChunkedDownload.Probe p0 = CNChunkedDownload.probe(base, false);
-            CNChunkedDownload.download(base + "?truncate=1024", t, 4, false, p0, new Sink());
+            CNChunkedDownload.download(base, t, 4, false, p0, new Sink());
         } catch (IOException ignore) {}
+        ctl("/settruncate?v=0");
         File part = CNChunkedDownload.partFileFor(t);
         check("残局已产生", part.exists() && CNChunkedDownload.metaFileFor(t).exists(), "");
-        // 往残片里写入可识别的脏数据，若被错误复用，最终 sha 必然对不上
+        // 往残片里写脏数据：若断点被错误复用，最终 sha 必然对不上
         RandomAccessFile raf = new RandomAccessFile(part, "rw");
         raf.seek(0);
         byte[] junk = new byte[512];
@@ -171,12 +201,27 @@ public class ResumeTest {
         raf.write(junk);
         raf.close();
 
-        // 服务端换 ETag
-        String url = base + "?etag=" + java.net.URLEncoder.encode("\"v2-zzz\"", "UTF-8");
-        CNChunkedDownload.Probe p = CNChunkedDownload.probe(url, false);
-        CNChunkedDownload.download(url, t, 4, false, p, new Sink());
-        check("整份重下，脏数据未被保留", sha256(t).equals(expectSha),
-              "sha=" + sha256(t).substring(0, 12));
+        // 服务端把 ETag 换掉（URL 不变 —— 这才是「文件被换了」而非「换线」）
+        ctl("/setetag?v=" + java.net.URLEncoder.encode("\"v2-changed\"", "UTF-8"));
+
+        CNChunkedDownload.Probe p = CNChunkedDownload.probe(base, false);
+        Sink s = new Sink();
+        CNChunkedDownload.download(base, t, 4, false, p, s);
+        check("断点被丢弃，从零重下", s.first == 0, "首次回调=" + s.first + "（应为 0）");
+        check("脏数据未被保留", sha256(t).equals(expectSha), "sha=" + sha256(t).substring(0,12));
+    }
+
+    /** 调服务端控制端点（保持请求 URL 不变，只改服务端行为）。 */
+    static void ctl(String path) throws Exception {
+        java.net.HttpURLConnection c = (java.net.HttpURLConnection)
+                new java.net.URL(baseRoot() + path).openConnection();
+        c.getResponseCode(); c.disconnect();
+    }
+
+    /** 从 base 推出服务器根地址，用于调控制端点。 */
+    static String baseRoot() throws Exception {
+        java.net.URL u = new java.net.URL(base);
+        return u.getProtocol() + "://" + u.getHost() + ":" + u.getPort();
     }
 
     // 6. 服务端多发字节：必须夹到分片边界，不能踩坏相邻分片

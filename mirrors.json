@@ -8,35 +8,35 @@
     "min_chunk_bytes": 8388608,
     "switch_after_failures": 1,
     "stall_seconds": 25,
-    "min_speed_kbps": 32,
+    "min_speed_kbps": 800,
     "cooldown_ms": 60000
   },
 
   "mirrors": [
     {
-      "name": "主线 · assets.example.test",
+      "name": "服务器直连 • assests.example.test",
       "base": "https://assets.example.test/",
-      "weight": 100,
+      "weight": 40,
       "chunks": 4,
       "enabled": true
     },
     {
-      "name": "备线 · CyberNova 加速",
-      "base": "https://cdn-cybernova.example.net/magireco/",
+      "name": "CDN加速线路1 • （已退役线路甲）.example.test",
+      "base": "https://（已退役线路甲）.example.test/",
       "weight": 80,
       "chunks": 8,
       "enabled": true
     },
     {
-      "name": "备线 · 对象存储直连",
-      "base": "https://s3.example.com/example-assets/",
+      "name": "CDN加速线路2 • （已退役线路乙）.example.test",
+      "base": "https://（已退役线路乙）.example.test/",
       "weight": 60,
-      "chunks": 4,
+      "chunks": 8,
       "enabled": true
     },
     {
-      "name": "应急线路（默认关闭）",
-      "base": "https://backup.example.org/magireco/",
+      "name": "GitHub直连（默认关闭）",
+      "base": "https://（外部发布渠道）/releases/download/latest/",
       "weight": 10,
       "chunks": 2,
       "enabled": false

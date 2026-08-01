@@ -46,8 +46,10 @@ import java.util.concurrent.atomic.AtomicReference;
  *   <li>{@code .cpart} 存在，且长度恰好等于本次探测到的总长度——防止元数据还在、
  *       临时文件已被清掉时，把预分配出来的<b>全零文件</b>当成已下完直接提交；</li>
  *   <li>元数据记录的总长度与本次探测一致；</li>
- *   <li>元数据记录的 ETag 与本次探测一致（任一方为空时跳过比较）——服务端换了
- *       文件就必须重下；</li>
+ *   <li>元数据记录的 ETag 与本次探测一致——<b>仅当本次与上次是同一条线路时才比对</b>。
+ *       各线路对同一文件给出的 ETag 格式互不相同（nginx 的 inode-mtime、CDN 的
+ *       MD5、对象存储的版本号），跨线路照比必然不等，会让换线把续传成果全部作废；
+ *       换线时改为只依赖总长度一致；</li>
  *   <li>各分片的已完成字节数都在 {@code [0, 分片长度]} 区间内。</li>
  * </ul>
  *
@@ -65,7 +67,7 @@ public final class CNChunkedDownload {
     private static final int READ_TIMEOUT_MS    = 30000;
 
     /** 断点元数据的格式标识；不匹配一律视作不可用。 */
-    private static final String META_MAGIC = "CNVPROG2";
+    private static final String META_MAGIC = "CNVPROG3";
 
     private CNChunkedDownload() {}
 
@@ -108,6 +110,8 @@ public final class CNChunkedDownload {
         long   total;
         int    chunks;
         String etag = "";
+        /** 写下这份断点时所用的完整 URL；用于判断本次是否换了线路。 */
+        String url  = "";
         long[] done;
     }
 
@@ -206,7 +210,7 @@ public final class CNChunkedDownload {
         long[] resumed  = null;
         Resume st = readResume(meta);
         if (st != null) {
-            String why = resumeRejectReason(st, total, probe.etag, part);
+            String why = resumeRejectReason(st, total, probe.etag, url, part);
             if (why == null) {
                 // 沿用元数据里的分片布局，保证换线也能接着下
                 chunks  = st.chunks;
@@ -239,7 +243,7 @@ public final class CNChunkedDownload {
         } finally {
             try { raf.close(); } catch (Throwable ignore) {}
         }
-        saveMeta(meta, total, probe.etag, done);
+        saveMeta(meta, total, probe.etag, url, done);
 
         final AtomicLong totalDone = new AtomicLong(0L);
         for (int i = 0; i < chunks; i++) totalDone.addAndGet(done.get(i));
@@ -285,7 +289,11 @@ public final class CNChunkedDownload {
 
         // 监控：停滞 / 过慢 / 外部取消 —— 命中即中断本次尝试，交给上层换线
         final long stallNs = TimeUnit.SECONDS.toNanos(CNMirrors.stallSeconds());
-        final long minBps  = (long) CNMirrors.minSpeedKbps() * 1024L;
+        // 字段名是 min_speed_kbps —— kbps 按惯例是「千比特每秒」，所以要
+        // 除以 8 换成字节。之前按 KiB/s 解释，线上配置的 800 会变成
+        // 800 KiB/s ≈ 6.5 Mbit/s 的下限，任何慢于此的用户每条线都会在 10 秒
+        // 后被判「过慢」，4 次尝试耗尽后整包安装失败。
+        final long minBps  = (long) CNMirrors.minSpeedKbps() * 1000L / 8L;
         long checkStartNs  = System.nanoTime();
         long bytesAtCheck  = totalDone.get();
         try {
@@ -309,8 +317,8 @@ public final class CNChunkedDownload {
                     if (bps < minBps) {
                         abort.set(true);
                         firstErr.compareAndSet(null, new IOException(
-                                "线路过慢：" + (bps / 1024) + " KB/s < "
-                                + CNMirrors.minSpeedKbps() + " KB/s"));
+                                "线路过慢：" + (bps * 8 / 1000) + " kbps < "
+                                + CNMirrors.minSpeedKbps() + " kbps"));
                         break;
                     }
                     checkStartNs = now;
@@ -326,7 +334,7 @@ public final class CNChunkedDownload {
         pool.shutdownNow();
         try { pool.awaitTermination(5, TimeUnit.SECONDS); } catch (InterruptedException ignore) {}
         // 无论成败都落盘：保住这一轮已经下到的进度
-        saveMeta(meta, total, probe.etag, done);
+        saveMeta(meta, total, probe.etag, url, done);
 
         IOException err = firstErr.get();
         if (err != null) throw err;   // 保留 .cpart 与元数据，下次可续
@@ -357,7 +365,8 @@ public final class CNChunkedDownload {
     /**
      * 判断已有断点是否可用。返回 {@code null} 表示可用，否则返回不可用的原因。
      */
-    private static String resumeRejectReason(Resume st, long total, String etag, File part) {
+    private static String resumeRejectReason(Resume st, long total, String etag,
+                                             String url, File part) {
         if (st.total != total) {
             return "总长度不符 " + st.total + " != " + total;
         }
@@ -372,7 +381,13 @@ public final class CNChunkedDownload {
         if (part.length() != total) {
             return "临时文件长度不符 " + part.length() + " != " + total;
         }
-        if (st.etag.length() > 0 && etag != null && etag.length() > 0
+        // ETag 只在**同一条线路**上才有可比性。
+        // 实测三条线路对同一个文件给出的 ETag 格式互不相同（nginx 的
+        // inode-mtime、CDN 的 MD5、对象存储的版本号），跨线路比对必然不等，
+        // 若照比就会让「自动换线」把「断点续传」的成果全部作废——两个功能
+        // 互相抵消。换线时改为只依赖总长度一致（镜像提供的是同一份文件）。
+        boolean sameLine = st.url.length() > 0 && st.url.equals(url);
+        if (sameLine && st.etag.length() > 0 && etag != null && etag.length() > 0
                 && !st.etag.equals(etag)) {
             return "ETag 已变化";
         }
@@ -508,7 +523,7 @@ public final class CNChunkedDownload {
                     }
                 }
                 if (now - lastSaveNs > 2_000_000_000L) {
-                    saveMeta(meta, total, etag, done);
+                    saveMeta(meta, total, etag, url, done);
                     lastSaveNs = now;
                 }
                 if (cur >= chunkLen) break;
@@ -520,7 +535,7 @@ public final class CNChunkedDownload {
                 throw new IOException("分片 " + idx + " 短读: " + finished + " / " + chunkLen);
             }
         } finally {
-            saveMeta(meta, total, etag, done);
+            saveMeta(meta, total, etag, url, done);
             if (raf != null) { try { raf.close(); } catch (Throwable ignore) {} }
             if (is  != null) { try { is.close();  } catch (Throwable ignore) {} }
             try { c.disconnect(); } catch (Throwable ignore) {}
@@ -533,10 +548,12 @@ public final class CNChunkedDownload {
     //   第 1 行 CNVPROG2
     //   第 2 行 <总长度> <分片数>
     //   第 3 行 <ETag>（可为空行）
+    //   第 4 行 <写下这份断点时所用的完整 URL>（可为空行）
     //   其后每行一个分片的已完成字节数
 
     private static synchronized void saveMeta(File meta, long total,
-                                              String etag, AtomicLongArray done) {
+                                              String etag, String url,
+                                              AtomicLongArray done) {
         File tmp = new File(meta.getAbsolutePath() + ".tmp");
         Writer w = null;
         try {
@@ -545,6 +562,7 @@ public final class CNChunkedDownload {
             sb.append(META_MAGIC).append('\n');
             sb.append(total).append(' ').append(done.length()).append('\n');
             sb.append(sanitize(etag)).append('\n');
+            sb.append(sanitize(url)).append('\n');
             for (int i = 0; i < done.length(); i++) sb.append(done.get(i)).append('\n');
             w.write(sb.toString());
             w.flush();
@@ -581,6 +599,8 @@ public final class CNChunkedDownload {
 
             String e = br.readLine();
             st.etag = e == null ? "" : e.trim();
+            String u = br.readLine();
+            st.url = u == null ? "" : u.trim();
 
             st.done = new long[st.chunks];
             for (int i = 0; i < st.chunks; i++) {
