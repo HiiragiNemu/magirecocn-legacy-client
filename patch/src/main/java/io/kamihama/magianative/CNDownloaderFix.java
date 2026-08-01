@@ -434,6 +434,8 @@ public final class CNDownloaderFix {
             }
         }
         CNLog.i(TAG, "尺寸探测完成 " + n + "/" + ARCHIVE_COUNT + " 个，合计约 " + known + " MB");
+        CNCNDownloadUI.updateSimple("开始下载",
+                "已探明 " + n + "/" + ARCHIVE_COUNT + " 个文件，合计约 " + known + " MB");
         CNCNDownloadUI.throttledUpdate();
     }
 
