@@ -190,9 +190,22 @@ public final class CNDownloaderFix {
     private static void runInstallerInner() {
         CNLog.i(TAG, "installer=v2 max_downloads=" + MAX_DOWNLOADS);
         try {
-            Activity currentActivity = RestClient.getCurrentActivity();
+            // Activity 可能还没就绪（hook 在引擎切场景时就触发了）。原先只取一次，
+            // 取不到就完全不显示浮层——屏幕上便直接露出引擎自带的下载场景。
+            // 这里改为最多等 3 秒，与热更新路径的做法一致。
+            Activity currentActivity = null;
+            for (int i = 0; i < 30; i++) {
+                currentActivity = RestClient.getCurrentActivity();
+                if (currentActivity != null) break;
+                try { Thread.sleep(100L); } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
             if (currentActivity != null) {
                 CNCNDownloadUI.show(currentActivity);
+            } else {
+                CNLog.e(TAG, "取不到 Activity，浮层无法显示（引擎场景可能外露）");
             }
         } catch (Throwable th) {
             CNLog.e(TAG, "Unable to show installer UI", th);
@@ -684,6 +697,11 @@ public final class CNDownloaderFix {
     /** 一段时间没有新进度就把该文件的速度显示归零。 */
     private static final class SpeedWatchdog implements Runnable {
         @Override public void run() {
+            // 顺带确保浮层没有从视图树上掉下去。引擎切场景时可能把 decorView
+            // 的内容换掉，浮层一旦脱离，引擎自带的下载场景就露出来了。
+            try {
+                CNCNDownloadUI.ensureVisible(RestClient.getCurrentActivity());
+            } catch (Throwable ignore) {}
             long now = System.nanoTime();
             boolean changed = false;
             for (int i = 0; i < ARCHIVE_COUNT; i++) {

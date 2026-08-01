@@ -1016,6 +1016,58 @@ public class CNCNDownloadUI {
                 .getDisplayMetrics().density + 0.5f);
     }
 
+    /**
+     * 确保浮层仍然挂在 decorView 上；掉了就重新挂。
+     *
+     * <p>为什么需要：引擎在切场景时可能把 decorView 的内容整体换掉，我们的浮层
+     * 就此脱离视图树——屏幕上随即露出引擎自带的下载场景，也就是必须避免的
+     * 「原生安装界面」。安装期间由看门狗每秒调一次，发现脱离就立刻补回去。
+     *
+     * <p>可从任意线程调用；内部会切到主线程执行。
+     */
+    public static void ensureVisible(final Activity act) {
+        if (act == null) return;
+        try {
+            act.runOnUiThread(new EnsureVisible(act));
+        } catch (Throwable ignore) {}
+    }
+
+    private static final class EnsureVisible implements Runnable {
+        private final Activity act;
+        EnsureVisible(Activity act) { this.act = act; }
+        @Override public void run() {
+            try {
+                FrameLayout ov = overlayView;
+                if (ov != null && ov.getParent() != null) return;   // 还在，无需处理
+
+                ViewGroup dv = (ViewGroup) act.getWindow().getDecorView();
+                if (ov != null) {
+                    // 仅仅是脱离了父节点：直接挂回去，保留现有状态
+                    try { dv.addView(ov, new ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT)); } catch (Throwable ignore) {}
+                    decorView = dv;
+                    CNLog.w("界面", "浮层曾脱离视图树，已重新挂上");
+                    return;
+                }
+                // 整个浮层都没了（或从未建成）：重建一份
+                if (hostActivity == null) hostActivity = act;
+                loadPalette(darkMode);
+                FrameLayout fresh = buildOverlay(act);
+                dv.addView(fresh, new ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT));
+                decorView   = dv;
+                overlayView = fresh;
+                isShowing   = true;
+                renderAll();
+                CNLog.w("界面", "浮层缺失，已重建并挂上");
+            } catch (Throwable t) {
+                CNLog.e("界面", "重挂浮层失败: " + t, t);
+            }
+        }
+    }
+
     /** 切换亮色/夜间主题：保存偏好后原地重建浮层视图树。 */
     private static void toggleTheme(Activity act) {
         try {
@@ -1063,9 +1115,11 @@ public class CNCNDownloadUI {
      * fileSpeed / fileDownloaded），只是渲染成槽位样式。
      */
     private static void renderAll() {
-        // 原始文本日志（模态面板内）
-        TextView log = tvLog;
-        if (log != null) log.setText(buildStatusText());
+        // 日志面板内容（安装状态 + 运行日志）。
+        // 这里**必须**走 renderLogModal()：早先直接 setText(buildStatusText())
+        // 会把刚拼进去的日志段整段抹掉，而 renderAll 每 500ms 就跑一次——
+        // 表现就是日志行刚打印出来就转瞬即逝。
+        renderLogModal();
 
         int[]   status     = fileStatus;
         int[]   progress   = fileProgress;
@@ -1187,6 +1241,9 @@ public class CNCNDownloadUI {
                     CNLog.init(activity.getFilesDir());
                 } catch (Throwable ignore) {}
                 CNLog.setListener(new LogChanged());
+                // 把整机 logcat 并进面板：native hook（MagiaClientJNI）、引擎、
+                // 以及任何 Java 异常栈都能在设备上直接看到，不必接电脑
+                CNLog.startLogcatCapture();
 
                 try {
                     darkMode = activity
@@ -1223,6 +1280,7 @@ public class CNCNDownloadUI {
                 CNLog.i("界面", "下载浮层关闭");
                 // 先摘掉监听再拆视图，避免拆到一半又被日志回调碰上
                 CNLog.setListener(null);
+                CNLog.stopLogcatCapture();
                 CNLog.close();
                 ViewGroup dv = CNCNDownloadUI.decorView;
                 FrameLayout ov = CNCNDownloadUI.overlayView;

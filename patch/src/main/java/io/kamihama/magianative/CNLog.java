@@ -32,8 +32,17 @@ import java.util.Locale;
  */
 public final class CNLog {
 
-    /** 内存缓冲保留的最大条数。 */
-    public static final int BUFFER_MAX = 1000;
+    /**
+     * 内存缓冲保留的最大条数。
+     * 接入 logcat 后条目量会明显上升，所以放宽到 3000——诊断时宁可多留一些。
+     */
+    public static final int BUFFER_MAX = 3000;
+
+    /** 本模块自己的 tag：从 logcat 回收时要跳过，否则每条都会重复一遍。 */
+    private static final String[] OWN_TAGS = {
+        "MagiaCNDownloader", "MagiaCNChunk", "MagiaCNMirrors",
+        "MagiaCNHotUpdate", "CNLog", "界面"
+    };
 
     /** 日志文件名。 */
     private static final String LOG_FILE = "cnv_installer.log";
@@ -164,6 +173,97 @@ public final class CNLog {
     }
 
     // ---- 读取 ----
+
+    /**
+     * 只写入缓冲与文件，**不**转发给 {@link Log}。
+     * 供 logcat 回收线程使用：那些行本来就来自 logcat，再转发一次会形成回环。
+     */
+    public static void writeRaw(String line) {
+        if (line == null || line.length() == 0) return;
+        synchronized (BUFFER) {
+            BUFFER.addLast(line);
+            while (BUFFER.size() > BUFFER_MAX) BUFFER.removeFirst();
+        }
+        synchronized (FILE_LOCK) {
+            if (writer != null) {
+                try {
+                    writer.write(line);
+                    writer.write('\n');
+                    writer.flush();
+                } catch (Throwable ignore) {}
+            }
+        }
+        Runnable r = listener;
+        if (r != null) {
+            try { r.run(); } catch (Throwable ignore) {}
+        }
+    }
+
+    // ---- logcat 回收 ----
+
+    private static volatile Process logcatProc;
+    private static volatile Thread  logcatThread;
+
+    /**
+     * 起一个后台线程读 logcat，把整机日志并入本缓冲区。
+     *
+     * <p>这样 LOG 面板里能直接看到 native hook（{@code MagiaClientJNI}）、引擎、
+     * 以及任何 Java 异常栈——出问题时不必接电脑。重复调用是安全的。
+     *
+     * <p>只从「当前时刻」开始读（{@code -T 1}），不回灌历史，否则开局就会把
+     * 缓冲区冲满。自己模块打的行会被跳过，避免与 {@link #write} 的记录重复。
+     */
+    public static synchronized void startLogcatCapture() {
+        if (logcatThread != null) return;
+        Thread t = new Thread(new LogcatReader(), "cnv-logcat");
+        t.setDaemon(true);
+        logcatThread = t;
+        t.start();
+    }
+
+    /** 停止 logcat 回收。 */
+    public static synchronized void stopLogcatCapture() {
+        Process p = logcatProc;
+        logcatProc = null;
+        logcatThread = null;
+        if (p != null) {
+            try { p.destroy(); } catch (Throwable ignore) {}
+        }
+    }
+
+    private static final class LogcatReader implements Runnable {
+        @Override public void run() {
+            java.io.BufferedReader br = null;
+            try {
+                ProcessBuilder pb = new ProcessBuilder(
+                        "logcat", "-v", "time", "-T", "1");
+                pb.redirectErrorStream(true);
+                Process p = pb.start();
+                logcatProc = p;
+                write("日志", "INFO", "logcat 回收已启动", null);
+                br = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(p.getInputStream(), "UTF-8"));
+                String line;
+                while ((line = br.readLine()) != null) {
+                    if (logcatProc == null) break;
+                    if (isOwnLine(line)) continue;   // 跳过自己打的，避免重复
+                    writeRaw(line);
+                }
+            } catch (Throwable t) {
+                try { write("日志", "WARN", "logcat 回收不可用: " + t, null); } catch (Throwable ignore) {}
+            } finally {
+                if (br != null) { try { br.close(); } catch (Throwable ignore) {} }
+            }
+        }
+
+        /** logcat 的 time 格式里 tag 出现在冒号之前，用包含判断即可。 */
+        private boolean isOwnLine(String line) {
+            for (int i = 0; i < OWN_TAGS.length; i++) {
+                if (line.contains(OWN_TAGS[i])) return true;
+            }
+            return false;
+        }
+    }
 
     /** 当前缓冲区的全部内容（每行一条）。 */
     public static String snapshot() {
