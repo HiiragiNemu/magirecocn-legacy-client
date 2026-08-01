@@ -1,49 +1,52 @@
 {
-  "schema": 1,
-  "updated": "2026-08-01T00:00:00Z",
-  "comment": "客户端从 https://assets.example.test/mirrors.json 读取本文件。settings 与 mirrors 都是可选的：settings 缺省时用客户端内置默认值；mirrors 为空或整个文件拉取失败时，客户端回退到内置默认线路 https://assets.example.test/ ，行为与加入换线功能之前一致。 反限速：以下载开始后 baseline_from_s~baseline_to_s 这段的平均速度为基准，滚动速度持续低于其 throttle_ratio_pct% 达 throttle_grace_s 秒即视为被限速；但只有当另一条线路的基准速度高出当前速度 switch_gain_pct% 时才真的换线，否则留在原地——被限速也好过换到更慢的线。",
+  "schema": 2,
+  "updated": "2026-08-01T22:30:00Z",
+  "comment": "客户端从 https://assets.example.test/mirrors.json 读取本文件。settings 与 mirrors 都是可选的：settings 缺省时用客户端内置默认值；mirrors 为空或整个文件拉取失败时，客户端回退到内置默认线路 https://assets.example.test/ ，行为与加入换线功能之前一致。",
+
   "settings": {
     "chunks": 4,
     "min_chunk_bytes": 8388608,
     "switch_after_failures": 1,
     "stall_seconds": 25,
-    "min_speed_kbps": 800,
-    "cooldown_ms": 60000,
-    "throttle_ratio_pct": 60,
-    "baseline_from_s": 10,
-    "baseline_to_s": 30,
-    "throttle_grace_s": 15,
-    "switch_gain_pct": 125,
-    "throttle_demote_ms": 120000
+    "min_speed_kbps": 6400,
+    "cooldown_ms": 60000
   },
+
   "mirrors": [
     {
-      "name": "服务器直连 • assests.example.test",
-      "base": "https://assets.example.test/",
-      "weight": 40,
-      "chunks": 4,
-      "enabled": true
-    },
-    {
-      "name": "CDN加速线路1 • （已退役线路甲）.example.test",
-      "base": "https://（已退役线路甲）.example.test/",
-      "weight": 80,
+      "name": "国内CDN加速 • （已退役线路丙）.example.test",
+      "base": "https://（已退役线路丙）.example.test/",
+      "weight": 95,
       "chunks": 8,
       "enabled": true
     },
     {
       "name": "CDN加速线路2 • （已退役线路乙）.example.test",
       "base": "https://（已退役线路乙）.example.test/",
-      "weight": 60,
+      "weight": 70,
+      "chunks": 4,
+      "enabled": true
+    },
+    {
+      "name": "CDN加速线路1 • （已退役线路甲）.example.test",
+      "base": "https://（已退役线路甲）.example.test/",
+      "weight": 45,
       "chunks": 8,
       "enabled": true
     },
     {
-      "name": "GitHub直连（默认关闭）",
-      "base": "https://（外部发布渠道）/releases/download/latest/",
-      "weight": 10,
-      "chunks": 2,
-      "enabled": false
+      "name": "服务器直连 • assets.example.test",
+      "base": "https://assets.example.test/",
+      "weight": 20,
+      "chunks": 4,
+      "enabled": true
+    },
+    {
+      "name": "gh-proxy镜像 • gh-proxy.org",
+      "base": "https://gh-proxy.org/https://（外部发布渠道）/releases/download/latest/",
+      "weight": 50,
+      "chunks": 4,
+      "enabled": true
     }
   ]
 }
