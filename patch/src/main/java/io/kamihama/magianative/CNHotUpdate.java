@@ -61,6 +61,7 @@ public final class CNHotUpdate {
         // 与原实现一致：目标文件已经在了就直接算完成
         if (dest.isFile()) {
             CNLog.i(TAG, "目标已存在，跳过下载: " + destPath);
+            CNCNDownloadUI.setFileSize(index, (float) (dest.length() / 1000000.0d));
             markDone(index);
             return true;
         }

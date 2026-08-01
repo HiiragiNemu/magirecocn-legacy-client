@@ -404,11 +404,24 @@ public final class CNDownloaderFix {
                     updateSize(index, archive.length());
                     return Boolean.TRUE;
                 }
-                CNMirrors.Mirror m = CNMirrors.pick(1);
-                CNChunkedDownload.Probe p = CNChunkedDownload.probe(m.urlFor(name), false);
-                if (p.total > 0) {
-                    updateSize(index, p.total);
-                    return Boolean.TRUE;
+                // 网络探测：依次尝试多条健康线路，而不是只盯死第一条。
+                // 第一条线路可能正处于冷却、被限速或暂时不可达，直接放弃的话
+                // 该文件就会在开跑时没有大小——总进度的分母随之成为变量。
+                java.util.List<CNMirrors.Mirror> healthy = CNMirrors.healthy();
+                int maxProbe = Math.min(healthy.size(), 3);
+                for (int attempt = 1; attempt <= maxProbe; attempt++) {
+                    CNMirrors.Mirror m = CNMirrors.pick(attempt);
+                    try {
+                        CNChunkedDownload.Probe p = CNChunkedDownload.probe(
+                                m.urlFor(name), false);
+                        if (p.total > 0) {
+                            updateSize(index, p.total);
+                            return Boolean.TRUE;
+                        }
+                    } catch (Throwable t) {
+                        CNLog.w(TAG, "尺寸探测异常（换线重试）: " + name
+                                + " mirror=" + m.name, t);
+                    }
                 }
                 CNLog.w(TAG, "尺寸探测失败（不影响下载）: " + name);
             } catch (Throwable t) {
@@ -540,7 +553,9 @@ public final class CNDownloaderFix {
                                                  File archive, int index, boolean direct)
             throws IOException {
         if (archive.isFile()) {
-            return new DownloadMetadata(archive.length(), readSidecarEtag(archive));
+            long len = archive.length();
+            updateSize(index, len);
+            return new DownloadMetadata(len, readSidecarEtag(archive));
         }
 
         String url = mirror.urlFor(name);
@@ -599,7 +614,9 @@ public final class CNDownloaderFix {
                                                  int index, boolean direct)
             throws IOException {
         if (archive.isFile()) {
-            return new DownloadMetadata(archive.length(), readSidecarEtag(archive));
+            long len = archive.length();
+            updateSize(index, len);
+            return new DownloadMetadata(len, readSidecarEtag(archive));
         }
 
         File part  = new File(archive.getPath() + ".part");
