@@ -1207,8 +1207,11 @@ public class CNCNDownloadUI {
                                 ViewGroup.LayoutParams.MATCH_PARENT));
                 CNCNDownloadUI.overlayView = root;
                 renderAll();
-            } catch (Exception e) {
-                CNLog.e("界面", "浮层操作失败: " + e.getMessage(), e);
+            } catch (Throwable e) {
+                // 捕获 Throwable 而非 Exception：构建视图时的 Error（如 OOM）
+                // 若逃逸出去，会沿 JNI 冒泡回 native hook，导致引擎放行原生
+                // 下载界面。
+                CNLog.e("界面", "浮层创建失败: " + e, e);
             }
         }
     }
@@ -1246,7 +1249,7 @@ public class CNCNDownloadUI {
                 logPillBg     = null;
                 hostActivity  = null;
                 slotList.clear();
-            } catch (Exception e) {
+            } catch (Throwable e) {
             }
         }
     }
@@ -1256,7 +1259,7 @@ public class CNCNDownloadUI {
         public void run() {
             try {
                 renderAll();
-            } catch (Exception e) {
+            } catch (Throwable e) {
             }
         }
     }
@@ -1374,9 +1377,17 @@ public class CNCNDownloadUI {
                 } catch (InterruptedException unused) {
                 }
             }
-            isShowing = true;
-        } catch (Exception e) {
-            CNLog.e("界面", "浮层操作失败: " + e.getMessage(), e);
+            // 只有浮层**确实挂上了 decorView** 才算显示成功。
+            // 早先无条件置 true 是个坑：一旦创建失败，后续每次 show() 都会在
+            // 开头的 isShowing 判断处直接返回，本进程内再也没机会把浮层建起来，
+            // 屏幕上就只剩引擎自己的画面了。
+            isShowing = (overlayView != null);
+            if (!isShowing) {
+                CNLog.e("界面", "浮层创建失败（overlayView 为空），将允许后续重试");
+            }
+        } catch (Throwable e) {
+            isShowing = (overlayView != null);
+            CNLog.e("界面", "show() 失败: " + e, e);
         }
     }
 

@@ -86,6 +86,7 @@ public class ResumeTest {
         test5_etagChanged(dir);
         test6_overSend(dir);
         test7_crossMirrorResume(dir);
+        test8_rangeIgnored(dir);
 
         System.out.println();
         System.out.println("通过 " + passed + " / 失败 " + failed);
@@ -185,6 +186,9 @@ public class ResumeTest {
         File t = new File(dir, "d.bin");
         clean(t);
         // 用**同一个 URL**制造残局
+        // 先把服务端 ETag 重置到已知值——否则若上一轮测试已把它改成目标值，
+        // 本用例里的「变化」根本没发生，断言就失去意义（测试隔离）
+        ctl("/setetag?v=" + java.net.URLEncoder.encode("\"v1-fresh\"", "UTF-8"));
         ctl("/settruncate?v=1024");
         try {
             CNChunkedDownload.Probe p0 = CNChunkedDownload.probe(base, false);
@@ -209,6 +213,40 @@ public class ResumeTest {
         CNChunkedDownload.download(base, t, 4, false, p, s);
         check("断点被丢弃，从零重下", s.first == 0, "首次回调=" + s.first + "（应为 0）");
         check("脏数据未被保留", sha256(t).equals(expectSha), "sha=" + sha256(t).substring(0,12));
+    }
+
+    // 8. 有断点时服务端忽略 Range 返回 200：必须清掉断点，而不是反复撞墙
+    static void test8_rangeIgnored(File dir) throws Exception {
+        System.out.println("\n[8] 有断点时服务端忽略 Range（返回 200）");
+        File t = new File(dir, "g.bin");
+        clean(t);
+        // 先制造断点
+        ctl("/settruncate?v=" + (totalSize/8));
+        try {
+            CNChunkedDownload.Probe p0 = CNChunkedDownload.probe(base, false);
+            CNChunkedDownload.download(base, t, 4, false, p0, new Sink());
+        } catch (IOException ignore) {}
+        ctl("/settruncate?v=0");
+        check("断点已产生", CNChunkedDownload.metaFileFor(t).exists(), "");
+
+        // 服务端开始无视 Range（norange=1 -> 整份 200）
+        String urlNR = base + "?norange=1";
+        CNChunkedDownload.Probe p = CNChunkedDownload.probe(base, false);
+        boolean threw = false; String msg = "";
+        try {
+            CNChunkedDownload.download(urlNR, t, 4, false, p, new Sink());
+        } catch (IOException e) { threw = true; msg = String.valueOf(e.getMessage()); }
+        check("报错而非静默成功", threw, msg);
+        check("断点已被清除（下次整份重下）",
+              !CNChunkedDownload.metaFileFor(t).exists()
+              && !CNChunkedDownload.partFileFor(t).exists(),
+              "meta存在=" + CNChunkedDownload.metaFileFor(t).exists()
+              + " part存在=" + CNChunkedDownload.partFileFor(t).exists());
+
+        // 恢复正常后应当能一次下完
+        CNChunkedDownload.Probe p2 = CNChunkedDownload.probe(base, false);
+        CNChunkedDownload.download(base, t, 4, false, p2, new Sink());
+        check("恢复后下载成功", sha256(t).equals(expectSha), "sha=" + sha256(t).substring(0,12));
     }
 
     /** 调服务端控制端点（保持请求 URL 不变，只改服务端行为）。 */

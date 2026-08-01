@@ -264,7 +264,9 @@ public final class CNChunkedDownload {
         }
 
         final AtomicReference<IOException> firstErr = new AtomicReference<IOException>(null);
-        final AtomicBoolean abort       = new AtomicBoolean(false);
+        final AtomicBoolean abort        = new AtomicBoolean(false);
+        /** 任一分片收到 HTTP 200（Range 被忽略）时置位。 */
+        final AtomicBoolean rangeIgnored = new AtomicBoolean(false);
         final AtomicLong    lastMoveNs  = new AtomicLong(System.nanoTime());
         final AtomicLong    windowStart = new AtomicLong(System.nanoTime());
         final AtomicLong    windowBytes = new AtomicLong(0L);
@@ -282,6 +284,7 @@ public final class CNChunkedDownload {
             task.totalDone = totalDone;
             task.windowStart = windowStart; task.windowBytes = windowBytes;
             task.lastMoveNs = lastMoveNs;   task.abort = abort;
+            task.rangeIgnored = rangeIgnored;
             task.sink = sink;       task.firstErr = firstErr;
             task.latch = latch;
             pool.submit(task);
@@ -337,7 +340,16 @@ public final class CNChunkedDownload {
         saveMeta(meta, total, probe.etag, url, done);
 
         IOException err = firstErr.get();
-        if (err != null) throw err;   // 保留 .cpart 与元数据，下次可续
+        if (err != null) {
+            if (rangeIgnored.get()) {
+                // 断点在这条线路上用不了：清干净，下一次尝试整份重下。
+                // 不清的话每次尝试都会重复撞上同一个 200。
+                CNLog.w(TAG, "服务端忽略 Range，清除断点后整份重下: " + target.getName());
+                deleteQuietly(meta);
+                deleteQuietly(part);
+            }
+            throw err;   // 否则保留 .cpart 与元数据，下次可续
+        }
 
         // 完工校验：.cpart 是预分配的，长度永远等于 total，所以**不能**拿长度当
         // 完成依据——必须核对各分片累计的已写字节数。少了就是短读，绝不提交。
@@ -429,6 +441,7 @@ public final class CNChunkedDownload {
         AtomicLong windowBytes;
         AtomicLong lastMoveNs;
         AtomicBoolean abort;
+        AtomicBoolean rangeIgnored;
         Sink   sink;
         AtomicReference<IOException> firstErr;
         CountDownLatch latch;
@@ -436,7 +449,8 @@ public final class CNChunkedDownload {
         @Override public void run() {
             try {
                 oneChunk(url, part, start, end, done, idx, direct, meta, total, etag,
-                         totalDone, windowStart, windowBytes, lastMoveNs, abort, sink);
+                         totalDone, windowStart, windowBytes, lastMoveNs, abort,
+                         rangeIgnored, sink);
             } catch (Throwable t) {
                 firstErr.compareAndSet(null,
                         t instanceof IOException ? (IOException) t
@@ -455,7 +469,8 @@ public final class CNChunkedDownload {
                                  AtomicLong totalDone,
                                  AtomicLong windowStart, AtomicLong windowBytes,
                                  AtomicLong lastMoveNs,
-                                 AtomicBoolean abort, Sink sink) throws IOException {
+                                 AtomicBoolean abort, AtomicBoolean rangeIgnored,
+                                 Sink sink) throws IOException {
 
         final long chunkLen = chunkEnd - chunkStart + 1;
         long already = done.get(idx);
@@ -473,8 +488,15 @@ public final class CNChunkedDownload {
         int code = c.getResponseCode();
         if (code != 206) {
             try { c.disconnect(); } catch (Throwable ignore) {}
-            // 200 表示服务端忽略了 Range（或 If-Range 不匹配整份重发），
-            // 分片下载没法继续，交由上层回退/换线
+            if (code == 200) {
+                // 服务端忽略了 Range，或 If-Range 的校验值不匹配而整份重发。
+                // 这种响应对分片下载不可用，但**不是**线路故障：若只当普通失败
+                // 处理，四次尝试会全部撞在同一堵墙上，最终整个压缩包失败、
+                // 安装器提前返回——而安装器一返回，native hook 就会放行引擎
+                // 自带的下载场景。所以这里单独标记，让上层清掉断点后重来。
+                rangeIgnored.set(true);
+                throw new IOException("分片 " + idx + " 的 Range 被服务端忽略（HTTP 200）");
+            }
             throw new IOException("分片 " + idx + " 期望 206，实得 HTTP " + code);
         }
         // 回验服务端给的确实是我们要的区间，避免中间设备返回错位数据后

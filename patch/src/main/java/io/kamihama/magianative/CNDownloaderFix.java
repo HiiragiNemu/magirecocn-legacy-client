@@ -95,7 +95,21 @@ public final class CNDownloaderFix {
     // 端点发现（SNAA）
     // ==================================================================
 
+    /**
+     * 端点发现。**同样由 native 经 JNI 调用**，因此与 {@link #runInstaller()} 一样
+     * 不允许抛出：native 侧拿到挂起异常后的行为不受我们控制。失败时返回空串，
+     * 这与原实现在两次请求都失败时的返回值一致。
+     */
     public static String getEndpoint(int i) {
+        try {
+            return getEndpointInner(i);
+        } catch (Throwable t) {
+            try { CNLog.e(TAG, "getEndpoint 发生未预期错误，返回空串", t); } catch (Throwable ignore) {}
+            return "";
+        }
+    }
+
+    private static String getEndpointInner(int i) {
         int max = Math.max(i, MIN_SNAA_VERSION);
         String payload = "{\"version\":" + max + "}";
         CNLog.i(TAG, "snaa-request native_version=" + i + " sent_version=" + max);
@@ -149,7 +163,31 @@ public final class CNDownloaderFix {
     // 安装主流程
     // ==================================================================
 
+    /**
+     * 安装器入口。**由 native hook 经 JNI 调用**（hook 拦下引擎的
+     * {@code DownloadSceneLayer::init} 后转调 {@code RestClient.startCNDownload}，
+     * 后者直接转调本方法）。
+     *
+     * <p><b>本方法绝不允许抛出任何东西。</b>hook 在 {@code CallStaticVoidMethod}
+     * 之后会做 {@code ExceptionCheck} / {@code ExceptionClear}，一旦发现挂起的
+     * Java 异常就清掉并放行引擎原本的下载场景——也就是玩家会看到**原生安装界面**，
+     * 而那是无论如何都要避免出现的。所以整个方法体套在 catch(Throwable) 里：
+     * 宁可停在我们自己的浮层上显示错误，也不能把控制权交回引擎。
+     */
     public static void runInstaller() {
+        try {
+            runInstallerInner();
+        } catch (Throwable t) {
+            // 走到这里说明有意料之外的错误。绝不外抛：让浮层留在屏幕上显示错误，
+            // 引擎的下载场景就不会被放行。
+            try {
+                CNLog.e(TAG, "安装器发生未预期错误，已拦截以避免回退到原生下载界面", t);
+                failInstaller("安装器异常：" + t, t);
+            } catch (Throwable ignore) {}
+        }
+    }
+
+    private static void runInstallerInner() {
         CNLog.i(TAG, "installer=v2 max_downloads=" + MAX_DOWNLOADS);
         try {
             Activity currentActivity = RestClient.getCurrentActivity();
