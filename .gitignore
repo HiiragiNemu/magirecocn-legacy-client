@@ -1,0 +1,13 @@
+# 构建中间产物
+.build/
+.cache/
+build/
+dist/
+*.apk
+*.dex
+*.class
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store

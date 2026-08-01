@@ -1,0 +1,256 @@
+name: 🏗️ 构建 APK
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║   legacy-client —— APK 构建                              ║
+# ╠════════════════════════════════════════════════════════════════════╣
+# ║                                                                    ║
+# ║ 与 （旧客户端仓库） 的差异（重要）                               ║
+# ║ ─────────────────────────────────                                  ║
+# ║   ▸ 本仓库的 smali 已经是**打好补丁的成品**，不需要注入构建期常量：   ║
+# ║     没有 API_HOST / DIRECTORY_PUBKEY 之类的信任锚，因此不需要任何    ║
+# ║     Secret 或 Variable 就能构建。                                   ║
+# ║   ▸ 签名用 **AOSP testkey**，由 CI 从 android.googlesource.com 取，  ║
+# ║     不入库、也不需要 keystore Secret。这与上游发行的包是同一把 key， ║
+# ║     所以产物可以直接覆盖安装。                                       ║
+# ║   ▸ 没有 （旧 native 层） / HCA 转码 / 音频资源等步骤——那些是 （旧客户端）  ║
+# ║     独有的，本仓库不涉及。                                          ║
+# ║                                                                    ║
+# ║ 构建流程                                                            ║
+# ║ ───────                                                            ║
+# ║   1. 编译 patch/src/main/java/ 下的 Java 补丁源码                   ║
+# ║   2. d8 转成 dex，baksmali 解码回 smali                           ║
+# ║   3. 用生成的 smali 覆盖 smali_classes2/ 与 smali_classes3/ 中       ║
+# ║      对应的补丁类（Java 源码是唯一事实来源）                         ║
+# ║   4. apktool b 重组                                                 ║
+# ║   5. zipalign + apksigner（AOSP testkey）                           ║
+# ║   6. 上传为 workflow artifact                                       ║
+# ║                                                                    ║
+# ║ 触发方式：仅手动（workflow_dispatch）。                             ║
+# ║ 与 （旧客户端） 一样不做自动发版——本仓库是既有产物的存档与再构建，     ║
+# ║ 不应该因为一次 push 就产出新的对外 APK。                             ║
+# ╚════════════════════════════════════════════════════════════════════╝
+
+on:
+  workflow_dispatch:
+    inputs:
+      verify_only:
+        description: '只构建校验，不上传产物'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: 🛡️ 安全护栏（校验仓库白名单）
+        run: |
+          set -euo pipefail
+          # 防止 fork 出去的副本误用本工作流去产出「看起来官方」的包
+          ALLOWED="magirecocn-revival-project/legacy-client"
+          if [ "${GITHUB_REPOSITORY,,}" != "${ALLOWED,,}" ]; then
+            echo "::error::本工作流仅允许在 ${ALLOWED} 内运行，当前为 ${GITHUB_REPOSITORY}"
+            exit 1
+          fi
+          echo "仓库校验通过：${GITHUB_REPOSITORY}"
+
+      - name: 📦 检出仓库
+        uses: actions/checkout@v4
+
+      - name: ☕ 设置 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 🔧 安装构建工具（apktool / baksmali / SDK）
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /usr/local/bin
+
+          # ── apktool 2.9.3 ────────────────────────────────────────────
+          curl -sSL -o /tmp/apktool.jar \
+            "https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar"
+          sudo mv /tmp/apktool.jar /usr/local/bin/apktool.jar
+          printf '#!/bin/bash\nexec java -jar /usr/local/bin/apktool.jar "$@"\n' \
+            | sudo tee /usr/local/bin/apktool > /dev/null
+          sudo chmod +x /usr/local/bin/apktool
+
+          # ── baksmali 3.0.9（Google 维护的延续版本，tag 无 v 前缀）──────
+          curl -sSL -o /tmp/baksmali.jar \
+            "https://github.com/baksmali/smali/releases/download/3.0.9/baksmali-3.0.9-fat-release.jar"
+          sudo mv /tmp/baksmali.jar /usr/local/bin/baksmali.jar
+          printf '#!/bin/bash\nexec java -jar /usr/local/bin/baksmali.jar "$@"\n' \
+            | sudo tee /usr/local/bin/baksmali > /dev/null
+          sudo chmod +x /usr/local/bin/baksmali
+
+          # ── Android SDK build-tools（d8 / zipalign / apksigner）──────
+          BT_DIR="$(ls -d "${ANDROID_HOME}"/build-tools/*/ 2>/dev/null | sort -r | head -1 || true)"
+          if [ -z "${BT_DIR}" ]; then
+            yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "build-tools;34.0.0" > /dev/null
+            BT_DIR="$(ls -d "${ANDROID_HOME}"/build-tools/*/ | sort -r | head -1)"
+          fi
+          echo "BT_DIR=${BT_DIR%/}" >> "$GITHUB_ENV"
+          echo "build-tools: ${BT_DIR}"
+
+          apktool --version
+          "${BT_DIR%/}/apksigner" --version
+
+      - name: 📥 准备编译依赖（android.jar + OkHttp）
+        run: |
+          set -euo pipefail
+          # classpath 与 （旧客户端仓库） 保持一致：android.jar + OkHttp/Okio。
+          # 补丁源码只用 JDK 自带能力与 Android 框架，不引第三方库。
+          mkdir -p .cache/deps
+          curl -sSL -o .cache/deps/platform.zip \
+            "https://dl.google.com/android/repository/platform-33_r02.zip"
+          unzip -o -q -j .cache/deps/platform.zip "*/android.jar" -d .cache/deps
+          rm -f .cache/deps/platform.zip
+          curl -sSL -o .cache/deps/okhttp.jar \
+            "https://repo1.maven.org/maven2/com/squareup/okhttp3/okhttp/3.12.13/okhttp-3.12.13.jar"
+          curl -sSL -o .cache/deps/okio.jar \
+            "https://repo1.maven.org/maven2/com/squareup/okio/okio/1.17.5/okio-1.17.5.jar"
+          ls -la .cache/deps
+
+      - name: ☕ 编译 Java 补丁源码 → dex → smali
+        run: |
+          set -euo pipefail
+          CP=".cache/deps/android.jar:.cache/deps/okhttp.jar:.cache/deps/okio.jar"
+
+          # RestClient 只作为编译期桩存在：真实实现在 smali_classes2 里，
+          # 不参与本次 dex 产出（下面 d8 的输入里没有它）。
+          mkdir -p .build/stubs/io/kamihama/magianative
+          cat > .build/stubs/io/kamihama/magianative/RestClient.java <<'STUB'
+          package io.kamihama.magianative;
+          import android.app.Activity;
+          public class RestClient {
+              public static Activity getCurrentActivity() { return null; }
+              public static void restartApp() {}
+          }
+          STUB
+
+          mkdir -p .build/classes
+          mapfile -t SRC < <(find patch/src/main/java -name '*.java')
+          echo "编译 ${#SRC[@]} 个补丁源文件"
+          javac -nowarn -source 8 -target 8 -encoding UTF-8 \
+                -cp "${CP}" -d .build/classes \
+                "${SRC[@]}" .build/stubs/io/kamihama/magianative/RestClient.java
+
+          # ── 分两组出 dex：UI 类进 classes2，其余补丁类进 classes3 ──
+          # 这个划分必须与仓库里 smali_classes2/ 和 smali_classes3/ 的现状一致，
+          # 否则同一个类会在两个 dex 里各出现一次。
+          mkdir -p .build/dexui .build/dex3
+          "${BT_DIR}/d8" --min-api 21 --output .build/dexui --lib .cache/deps/android.jar \
+            $(find .build/classes -name 'CNCNDownloadUI*.class')
+          "${BT_DIR}/d8" --min-api 21 --output .build/dex3 --lib .cache/deps/android.jar \
+            $(find .build/classes \
+                 -name 'CNDownloaderFix*.class' -o -name 'CNMirrors*.class' \
+              -o -name 'CNChunkedDownload*.class' -o -name 'CNLog*.class' \
+              -o -name 'CNHotUpdate*.class')
+
+          rm -rf .build/smaliui .build/smali3
+          baksmali d .build/dexui/classes.dex -o .build/smaliui
+          baksmali d .build/dex3/classes.dex  -o .build/smali3
+
+      - name: 🔁 用编译产物覆盖仓库中的补丁 smali
+        run: |
+          set -euo pipefail
+          # Java 源码是唯一事实来源：每次构建都用它重新生成补丁类的 smali，
+          # 这样仓库里的 .smali 即使被手工改过也不会悄悄влия响产物。
+          #
+          # 注意：smali_classes2/ 里除补丁类以外的内容（含 RestClient 那处
+          # 把 cnDownloadFileFull 委托给 CNHotUpdate 的改动）保持原样，
+          # 只删掉并重建 CNCNDownloadUI*。
+          rm -f smali_classes2/io/kamihama/magianative/CNCNDownloadUI*.smali
+          cp .build/smaliui/io/kamihama/magianative/CNCNDownloadUI*.smali \
+             smali_classes2/io/kamihama/magianative/
+
+          rm -rf smali_classes3
+          mkdir -p smali_classes3
+          cp -r .build/smali3/. smali_classes3/
+
+          echo "smali_classes2 补丁类：$(ls smali_classes2/io/kamihama/magianative/CNCNDownloadUI*.smali | wc -l) 个"
+          echo "smali_classes3 类：$(find smali_classes3 -name '*.smali' | wc -l) 个"
+
+      - name: 🔨 重组 APK（apktool b）
+        run: |
+          set -euo pipefail
+          apktool b . -o .build/unsigned.apk --use-aapt2
+          ls -la .build/unsigned.apk
+
+      - name: 📐 对齐 APK（zipalign）
+        run: |
+          set -euo pipefail
+          "${BT_DIR}/zipalign" -f 4 .build/unsigned.apk .build/aligned.apk
+          "${BT_DIR}/zipalign" -c 4 .build/aligned.apk
+          echo "对齐校验通过"
+
+      - name: 🔏 签名 APK（AOSP testkey）
+        run: |
+          set -euo pipefail
+          # AOSP 公开测试密钥：与上游发行包同一签名身份，产物可直接覆盖安装。
+          # 它是公开的测试密钥，**不提供任何真实性保证**，仅用于保持可覆盖安装。
+          mkdir -p .build/key
+          for f in testkey.pk8 testkey.x509.pem; do
+            curl -sSL -o ".build/key/${f}.b64" \
+              "https://android.googlesource.com/platform/build/+/refs/tags/android-13.0.0_r83/target/product/security/${f}?format=TEXT"
+            base64 -d ".build/key/${f}.b64" > ".build/key/${f}"
+          done
+          "${BT_DIR}/apksigner" sign \
+            --key .build/key/testkey.pk8 \
+            --cert .build/key/testkey.x509.pem \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out .build/legacy-client.apk \
+            .build/aligned.apk
+          "${BT_DIR}/apksigner" verify --print-certs .build/legacy-client.apk
+
+      - name: 🔍 构建后自检
+        run: |
+          set -euo pipefail
+          APK=.build/legacy-client.apk
+          echo "sha256: $(sha256sum "$APK" | cut -d' ' -f1)"
+          echo "大小:   $(stat -c%s "$APK") 字节"
+          # 签名指纹必须是 AOSP testkey，否则装不上既有设备
+          FP=$("${BT_DIR}/apksigner" verify --print-certs "$APK" \
+                | grep -m1 'SHA-256 digest' | awk '{print $NF}')
+          EXPECT="a40da80a59d170caa950cf15c18c454d47a39b26989d8b640ecd745ba71bf5dc"
+          if [ "$FP" != "$EXPECT" ]; then
+            echo "::error::签名指纹不符，实得 $FP"
+            exit 1
+          fi
+          echo "签名指纹校验通过（AOSP testkey）"
+          # 补丁类必须真的在产物里
+          unzip -l "$APK" | grep -qE 'classes3\.dex' \
+            || { echo "::error::产物缺少 classes3.dex"; exit 1; }
+          echo "自检通过"
+
+      - name: 📤 上传产物
+        if: ${{ inputs.verify_only != true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-client-apk
+          path: .build/legacy-client.apk
+          retention-days: 30
+          compression-level: 0
+
+      - name: 📊 构建报告
+        if: always()
+        run: |
+          {
+            echo "## 构建结果"
+            echo
+            if [ -f .build/legacy-client.apk ]; then
+              echo "- 状态：✅ 成功"
+              echo "- sha256：\`$(sha256sum .build/legacy-client.apk | cut -d' ' -f1)\`"
+              echo "- 大小：$(( $(stat -c%s .build/legacy-client.apk) / 1024 / 1024 )) MB"
+              echo "- 签名：AOSP testkey（v1+v2+v3）"
+            else
+              echo "- 状态：❌ 失败"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

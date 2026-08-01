@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "updated": "2026-08-01T00:00:00Z",
+  "comment": "客户端从 https://assets.example.test/mirrors.json 读取本文件。settings 与 mirrors 都是可选的：settings 缺省时用客户端内置默认值；mirrors 为空或整个文件拉取失败时，客户端回退到内置默认线路 https://assets.example.test/ ，行为与加入换线功能之前一致。",
+
+  "settings": {
+    "chunks": 4,
+    "min_chunk_bytes": 8388608,
+    "switch_after_failures": 1,
+    "stall_seconds": 25,
+    "min_speed_kbps": 32,
+    "cooldown_ms": 60000
+  },
+
+  "mirrors": [
+    {
+      "name": "主线 · assets.example.test",
+      "base": "https://assets.example.test/",
+      "weight": 100,
+      "chunks": 4,
+      "enabled": true
+    },
+    {
+      "name": "备线 · CyberNova 加速",
+      "base": "https://cdn-cybernova.example.net/magireco/",
+      "weight": 80,
+      "chunks": 8,
+      "enabled": true
+    },
+    {
+      "name": "备线 · 对象存储直连",
+      "base": "https://s3.example.com/example-assets/",
+      "weight": 60,
+      "chunks": 4,
+      "enabled": true
+    },
+    {
+      "name": "应急线路（默认关闭）",
+      "base": "https://backup.example.org/magireco/",
+      "weight": 10,
+      "chunks": 2,
+      "enabled": false
+    }
+  ]
+}
