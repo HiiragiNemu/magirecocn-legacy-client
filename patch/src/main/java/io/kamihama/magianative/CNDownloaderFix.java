@@ -26,6 +26,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.regex.Matcher;
@@ -85,6 +86,9 @@ public final class CNDownloaderFix {
 
     private static final int ARCHIVE_COUNT = 15;
 
+    /** 防止 native hook 与 Java 侧同时触发安装器。 */
+    private static final AtomicBoolean installerStarted = new AtomicBoolean(false);
+
     /** 玩家点「重试」时用来唤醒安装器主循环。 */
     private static final Object RETRY_LOCK = new Object();
     private static volatile boolean retryRequested = false;
@@ -93,6 +97,37 @@ public final class CNDownloaderFix {
     private static final AtomicIntegerArray ACTIVE           = new AtomicIntegerArray(ARCHIVE_COUNT);
 
     private CNDownloaderFix() {
+    }
+
+    /**
+     * Java 侧的安装器入口。
+     *
+     * <p>由 {@code MyApplication.onCreate()} 在后台线程上调用，作为 native hook
+     * 触发之外的第二道保险。native hook 是否触发取决于引擎场景切换的时序——如果
+     * 引擎从未进入下载场景（例如缓存了完整资源），hook 就不会被调用，而此时本方法
+     * 也会在看到 {@code cn_base_done.flag} 后立刻 return，无事发生。
+     *
+     * <p>本方法检查 final flag 后启动安装器；内部调用 {@link #runInstaller()}，
+     * 后者内置哨兵保证只执行一次。
+     */
+    public static void triggerInstaller() {
+        Thread t = new Thread("cnv-installer-trigger") {
+            @Override public void run() {
+                try {
+                    File finalFlag = new File(FINAL_FLAG);
+                    if (finalFlag.isFile()) {
+                        CNLog.i(TAG, "triggerInstaller: flag 已存在，无需安装");
+                        return;
+                    }
+                    CNLog.i(TAG, "triggerInstaller: flag 不存在，启动安装器");
+                    runInstaller();
+                } catch (Throwable t) {
+                    CNLog.e(TAG, "triggerInstaller 异常: " + t, t);
+                }
+            }
+        };
+        t.setDaemon(true);
+        t.start();
     }
 
     // ==================================================================
@@ -200,8 +235,15 @@ public final class CNDownloaderFix {
      * Java 异常就清掉并放行引擎原本的下载场景——也就是玩家会看到**原生安装界面**，
      * 而那是无论如何都要避免出现的。所以整个方法体套在 catch(Throwable) 里：
      * 宁可停在我们自己的浮层上显示错误，也不能把控制权交回引擎。
+     *
+     * <p>本方法可被多次调用（native hook + Java 侧双重触发），内置哨兵保证
+     * 只执行一次。
      */
     public static void runInstaller() {
+        if (!installerStarted.compareAndSet(false, true)) {
+            CNLog.w(TAG, "安装器已在运行中，跳过重复调用");
+            return;
+        }
         try {
             runInstallerInner();
         } catch (Throwable t) {
