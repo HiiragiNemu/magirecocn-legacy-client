@@ -85,6 +85,10 @@ public final class CNDownloaderFix {
 
     private static final int ARCHIVE_COUNT = 15;
 
+    /** 玩家点「重试」时用来唤醒安装器主循环。 */
+    private static final Object RETRY_LOCK = new Object();
+    private static volatile boolean retryRequested = false;
+
     private static final AtomicLongArray    LAST_PROGRESS_NS = new AtomicLongArray(ARCHIVE_COUNT);
     private static final AtomicIntegerArray ACTIVE           = new AtomicIntegerArray(ARCHIVE_COUNT);
 
@@ -156,6 +160,29 @@ public final class CNDownloaderFix {
             return Integer.parseInt(m.group(1));
         } catch (NumberFormatException e) {
             return -1;
+        }
+    }
+
+    /**
+     * 玩家在浮层上点了某个失败文件的「重试」。
+     *
+     * <p>把该文件的状态复位并唤醒主循环。安装器在有文件失败时不会返回，而是停在
+     * 这里等待——既给了玩家重试的机会，也顺带保证 hook 不会拿回控制权去显示
+     * 引擎自带的下载场景。
+     */
+    public static void requestRetry(int index) {
+        try {
+            if (index >= 0 && index < ARCHIVE_COUNT) {
+                if (CNCNDownloadUI.fileStatus != null)   CNCNDownloadUI.fileStatus[index]   = 0;
+                if (CNCNDownloadUI.fileProgress != null) CNCNDownloadUI.fileProgress[index] = 0;
+                CNCNDownloadUI.setFileDownloaded(index, 0.0f);
+                CNCNDownloadUI.setDownloadSpeed(index, 0.0f);
+            }
+            CNLog.i(TAG, "收到重试请求 index=" + index);
+        } catch (Throwable ignore) {}
+        synchronized (RETRY_LOCK) {
+            retryRequested = true;
+            RETRY_LOCK.notifyAll();
         }
     }
 
@@ -237,35 +264,67 @@ public final class CNDownloaderFix {
 
         resetUiForRun();
         ScheduledExecutorService watchdog = startSpeedWatchdog();
-        ExecutorService pool = Executors.newFixedThreadPool(MAX_DOWNLOADS);
-        List<Future<Boolean>> futures = new ArrayList<Future<Boolean>>(ARCHIVE_COUNT);
-        for (int i = 0; i < ARCHIVE_COUNT; i++) {
-            futures.add(pool.submit(new ArchiveTask(i)));
-        }
-        pool.shutdown();
 
-        boolean allOk = true;
-        for (int i = 0; i < futures.size(); i++) {
-            try {
-                if (!futures.get(i).get().booleanValue()) {
+        // ── 开跑前先把所有文件的大小探一遍 ──
+        // 不这样做的话，fileSize[] 是随着各文件陆续开工才逐个填上的，总进度的
+        // 分母一直在变大，进度条就会来回跳。先探完再下，分母从一开始就是定值。
+        probeAllSizes();
+
+        boolean allOk = false;
+        // 主循环：有文件失败就停在这里等玩家点「重试」，而不是直接返回。
+        // 返回意味着把控制权交回 native hook，引擎随即显示它自带的下载场景。
+        while (true) {
+            ExecutorService pool = Executors.newFixedThreadPool(MAX_DOWNLOADS);
+            List<Future<Boolean>> futures = new ArrayList<Future<Boolean>>(ARCHIVE_COUNT);
+            for (int i = 0; i < ARCHIVE_COUNT; i++) {
+                futures.add(pool.submit(new ArchiveTask(i)));
+            }
+            pool.shutdown();
+
+            allOk = true;
+            for (int i = 0; i < futures.size(); i++) {
+                try {
+                    if (!futures.get(i).get().booleanValue()) {
+                        allOk = false;
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    CNLog.e(TAG, "Installer interrupted while waiting for " + FILE_NAMES[i], e);
+                    allOk = false;
+                } catch (ExecutionException e) {
+                    CNLog.e(TAG, "Installer worker crashed for " + FILE_NAMES[i], e);
                     allOk = false;
                 }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                CNLog.e(TAG, "Installer interrupted while waiting for " + FILE_NAMES[i], e);
-            } catch (ExecutionException e) {
-                CNLog.e(TAG, "Installer worker crashed for " + FILE_NAMES[i], e);
-                allOk = false;
             }
-        }
-        pool.shutdownNow();
-        watchdog.shutdownNow();
-        zeroAllSpeeds();
+            pool.shutdownNow();
+            zeroAllSpeeds();
 
-        if (!allOk || !allMarkersValid()) {
-            failInstaller("One or more archives failed; restart to resume", null);
-            return;
+            if (allOk && allMarkersValid()) break;
+
+            int failed = 0;
+            if (CNCNDownloadUI.fileStatus != null) {
+                for (int i = 0; i < ARCHIVE_COUNT; i++) {
+                    if (CNCNDownloadUI.fileStatus[i] == 3) failed++;
+                }
+            }
+            CNLog.w(TAG, "本轮有 " + failed + " 个文件失败，等待玩家重试");
+            failInstaller("有 " + failed + " 个文件下载失败，点击文件右侧的「重试」继续", null);
+
+            // 等重试信号。绝不返回——一返回引擎就会显示原生下载界面。
+            synchronized (RETRY_LOCK) {
+                while (!retryRequested) {
+                    try {
+                        RETRY_LOCK.wait();
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        CNLog.w(TAG, "等待重试时被中断，继续等待以避免退回原生界面");
+                    }
+                }
+                retryRequested = false;
+            }
+            CNCNDownloadUI.updateSimple("重试中", "正在重新下载失败的文件…", 0);
         }
+        watchdog.shutdownNow();
 
         try {
             writeAtomic(finalFlag, "schema=2\narchives=15\n");
@@ -285,6 +344,92 @@ public final class CNDownloaderFix {
         } catch (IOException e) {
             failInstaller("Final flag commit failed", e);
         }
+    }
+
+    /**
+     * 开跑前把 15 个文件的大小探一遍，填进进度 UI。
+     *
+     * <p>为什么必须先探：总进度的分母是各文件大小之和，而这些值原本是随着文件
+     * 陆续开工才逐个填上的——分母一路变大，已下总量除以它就会忽高忽低，进度条
+     * 来回跳。先探完，分母从一开始就是定值。
+     *
+     * <p>已经装好的文件不发请求：它们的大小直接从完成标记里的 {@code bytes=}
+     * 读出来，既省一次网络往返，也让它们照样计入分母。
+     *
+     * <p>整个过程是尽力而为：任何一个探测失败都只是让该文件暂时没有大小，
+     * 不影响后续下载。
+     */
+    private static void probeAllSizes() {
+        CNCNDownloadUI.updateSimple("准备中", "正在获取文件大小…", 0);
+        ExecutorService pool = Executors.newFixedThreadPool(MAX_DOWNLOADS);
+        List<Future<Boolean>> fs = new ArrayList<Future<Boolean>>(ARCHIVE_COUNT);
+        for (int i = 0; i < ARCHIVE_COUNT; i++) {
+            fs.add(pool.submit(new SizeProbeTask(i)));
+        }
+        pool.shutdown();
+        for (int i = 0; i < fs.size(); i++) {
+            try { fs.get(i).get(); }
+            catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            catch (Throwable ignore) {}
+        }
+        pool.shutdownNow();
+
+        long known = 0L;
+        int  n = 0;
+        if (CNCNDownloadUI.fileSize != null) {
+            for (int i = 0; i < ARCHIVE_COUNT; i++) {
+                if (CNCNDownloadUI.fileSize[i] > 0f) { known += (long) CNCNDownloadUI.fileSize[i]; n++; }
+            }
+        }
+        CNLog.i(TAG, "尺寸探测完成 " + n + "/" + ARCHIVE_COUNT + " 个，合计约 " + known + " MB");
+        CNCNDownloadUI.throttledUpdate();
+    }
+
+    /** 探一个文件的大小：已装好的读标记，否则发一次探测请求。 */
+    private static final class SizeProbeTask implements Callable<Boolean> {
+        private final int index;
+        SizeProbeTask(int index) { this.index = index; }
+        @Override public Boolean call() {
+            String name = FILE_NAMES[index];
+            try {
+                // 已完成的：大小直接从标记里取，不发网络请求
+                long fromMarker = readMarkerBytes(markerFor(name));
+                if (fromMarker > 0) {
+                    updateSize(index, fromMarker);
+                    return Boolean.TRUE;
+                }
+                // 本地已经下好但还没打标记的，用文件本身的长度
+                File archive = new File(FILE_ROOT, name);
+                if (archive.isFile() && archive.length() > 0) {
+                    updateSize(index, archive.length());
+                    return Boolean.TRUE;
+                }
+                CNMirrors.Mirror m = CNMirrors.pick(1);
+                CNChunkedDownload.Probe p = CNChunkedDownload.probe(m.urlFor(name), false);
+                if (p.total > 0) {
+                    updateSize(index, p.total);
+                    return Boolean.TRUE;
+                }
+                CNLog.w(TAG, "尺寸探测失败（不影响下载）: " + name);
+            } catch (Throwable t) {
+                CNLog.w(TAG, "尺寸探测异常（不影响下载）: " + name, t);
+            }
+            return Boolean.FALSE;
+        }
+    }
+
+    /** 从完成标记里读 {@code bytes=}；读不到返回 -1。 */
+    private static long readMarkerBytes(File marker) {
+        if (!marker.isFile() || marker.length() > 16384) return -1L;
+        try {
+            String[] lines = readSmallUtf8(marker).split("\\n");
+            for (String line : lines) {
+                if (line.startsWith("bytes=")) {
+                    return parsePositiveLong(line.substring(6).trim(), -1L);
+                }
+            }
+        } catch (Throwable ignore) {}
+        return -1L;
     }
 
     /** 单个压缩包的安装任务。 */

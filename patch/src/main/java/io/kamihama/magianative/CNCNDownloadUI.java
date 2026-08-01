@@ -133,6 +133,7 @@ public class CNCNDownloadUI {
     private static int COLOR_DIM;
     private static int COLOR_LOG_PANEL_BG;
     private static int COLOR_LOG_PANEL_TEXT;
+    private static int COLOR_LINK;      // 链接文字色（克制，不用强调粉）
     private static int COLOR_GLASS;
     private static int COLOR_GLASS_STK;
     private static boolean darkMode = false;
@@ -149,6 +150,7 @@ public class CNCNDownloadUI {
             COLOR_DIM            = 0xAA000000;
             COLOR_LOG_PANEL_BG   = 0xFF1B1029;
             COLOR_LOG_PANEL_TEXT = 0xFFF5ECFB;
+            COLOR_LINK           = 0xFF8FC6F0;   // 夜间：浅蓝
             COLOR_GLASS          = 0xCC18112A;
             COLOR_GLASS_STK      = 0x44FF80C0;
         } else {
@@ -162,6 +164,7 @@ public class CNCNDownloadUI {
             COLOR_DIM            = 0x88000000;
             COLOR_LOG_PANEL_BG   = 0xFFFFFFFF;
             COLOR_LOG_PANEL_TEXT = 0xFF2A1A3B;
+            COLOR_LINK           = 0xFF2C6BA8;   // 亮色：沉稳蓝
             COLOR_GLASS          = 0xCCFFFFFF;
             COLOR_GLASS_STK      = 0x33B53C8C;
         }
@@ -209,18 +212,41 @@ public class CNCNDownloadUI {
      */
     private static final String[] CREDIT_URLS = {
         "",                                                     // 标题
-        "",                                                     // 核心逆向开发
+        "https://b23.tv/aNjcz1p",                               // MadeInMagius
         "",                                                     // 说明
         "",                                                     // 「其他个人网站」小标题
         "https://reader.pages.example",
         "https://live2d.pages.example",
         "https://callsearch.pages.example",
         "",                                                     // 「协助与鸣谢」小标题
-        "",                                                     // 水银h2oag
-        "",                                                     // CyberNova
-        "",                                                     // segfault
+        "https://b23.tv/ovvbrNw",                               // 水银h2oag
+        "https://b23.tv/9vyRcI8",                               // CyberNova
+        "https://b23.tv/xjXW9DI",                               // segfault
         "https://www.example.test",
         "https://www.bilibili.com/video/BV1faRiBBExk"
+    };
+
+    /**
+     * 每条可点击条目里**只有这一段**会被染成链接色。
+     *
+     * <p>整行都上强调色 + 下划线太吵——署名区本来就是一大段文字，全刷成粉色下划线
+     * 会盖过进度信息。这里只把「网址」或「人名」那一小段标出来，其余保持正文色，
+     * 既能看出可点，又不喧宾夺主。空串表示整行都不特殊着色。
+     */
+    private static final String[] CREDIT_LINK_SPANS = {
+        "",
+        "MadeInMagius",
+        "",
+        "",
+        "reader.pages.example",
+        "live2d.pages.example",
+        "callsearch.pages.example",
+        "",
+        "水银h2oag",
+        "CyberNova",
+        "segfault",
+        "www.example.test",
+        "BV1faRiBBExk"
     };
 
     /**
@@ -264,10 +290,11 @@ public class CNCNDownloadUI {
     private static final class SlotViews {
         final TextView    nameView;
         final TextView    infoView;
+        final TextView    retryView;
         final ProgressBar bar;
         final View        divider;
-        SlotViews(TextView n, TextView i, ProgressBar b, View d) {
-            nameView = n; infoView = i; bar = b; divider = d;
+        SlotViews(TextView n, TextView i, TextView r, ProgressBar b, View d) {
+            nameView = n; infoView = i; retryView = r; bar = b; divider = d;
         }
     }
 
@@ -781,6 +808,39 @@ public class CNCNDownloadUI {
         }
     }
 
+    /**
+     * 把 {@code text} 里的 {@code span} 这一段染成链接色，其余不变。
+     * {@code span} 为空或找不到时原样返回。
+     */
+    private static CharSequence highlight(String text, String span) {
+        if (text == null) return "";
+        if (span == null || span.length() == 0) return text;
+        int at = text.indexOf(span);
+        if (at < 0) return text;
+        android.text.SpannableString ss = new android.text.SpannableString(text);
+        ss.setSpan(new android.text.style.ForegroundColorSpan(COLOR_LINK),
+                   at, at + span.length(),
+                   android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        return ss;
+    }
+
+    /** 「重试」按钮：把该文件交还给安装器重新下载。 */
+    private static final class RetryClick implements View.OnClickListener {
+        private final Activity act;
+        private final int      index;
+        RetryClick(Activity act, int index) { this.act = act; this.index = index; }
+        @Override public void onClick(View v) {
+            try {
+                v.setVisibility(View.GONE);
+                CNLog.i("界面", "玩家点击重试: index=" + index);
+                toast(act, "已加入重试队列");
+                CNDownloaderFix.requestRetry(index);
+            } catch (Throwable t) {
+                CNLog.e("界面", "重试请求失败: " + t, t);
+            }
+        }
+    }
+
     private static void toast(Activity act, String msg) {
         try {
             Toast.makeText(act, msg, Toast.LENGTH_LONG).show();
@@ -812,20 +872,16 @@ public class CNCNDownloadUI {
                 row.addView(dot, dotLp);
                 itemIndex++;
 
-                String url = i < CREDIT_URLS.length ? CREDIT_URLS[i] : "";
+                String url  = i < CREDIT_URLS.length ? CREDIT_URLS[i] : "";
+                String span = i < CREDIT_LINK_SPANS.length ? CREDIT_LINK_SPANS[i] : "";
                 TextView t = new TextView(act);
-                t.setText(CREDIT_TEXTS[i]);
+                t.setTextColor(COLOR_TEXT);
                 t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
+                t.setText(highlight(CREDIT_TEXTS[i], span));
                 if (url.length() > 0) {
-                    // 可点击的外链条目：用强调色 + 下划线让它看起来确实能点
-                    t.setTextColor(COLOR_ACCENT);
-                    t.setPaintFlags(t.getPaintFlags()
-                            | android.graphics.Paint.UNDERLINE_TEXT_FLAG);
                     row.setPadding(0, dp(act, 3), 0, dp(act, 3));
                     row.setClickable(true);
                     row.setOnClickListener(new CreditLinkClick(act, url));
-                } else {
-                    t.setTextColor(COLOR_TEXT);
                 }
                 row.addView(t, new LinearLayout.LayoutParams(
                         0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
@@ -895,6 +951,25 @@ public class CNCNDownloadUI {
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT));
 
+            // 「重试」按钮：仅在该文件失败（status==3）时可见
+            TextView retry = new TextView(act);
+            retry.setText("重试");
+            retry.setTextColor(0xFFFFFFFF);
+            retry.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
+            retry.setGravity(Gravity.CENTER);
+            retry.setPadding(dp(act, 10), dp(act, 3), dp(act, 10), dp(act, 3));
+            GradientDrawable retryBg = new GradientDrawable();
+            retryBg.setColor(0xFFE53935);
+            retryBg.setCornerRadius(dp(act, 10));
+            retry.setBackground(retryBg);
+            retry.setVisibility(View.GONE);
+            retry.setOnClickListener(new RetryClick(act, i));
+            LinearLayout.LayoutParams retryLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            retryLp.leftMargin = dp(act, 8);
+            headRow.addView(retry, retryLp);
+
             ProgressBar bar = new ProgressBar(
                     act, null, android.R.attr.progressBarStyleHorizontal);
             bar.setMax(100);
@@ -912,7 +987,7 @@ public class CNCNDownloadUI {
             divLp.topMargin = dp(act, 4);
             row.addView(div, divLp);
 
-            slotList.add(new SlotViews(name, info, bar, div));
+            slotList.add(new SlotViews(name, info, retry, bar, div));
         }
     }
 
@@ -1127,11 +1202,35 @@ public class CNCNDownloadUI {
         float[] speed      = fileSpeed;
         float[] downloaded = fileDownloaded;
 
-        // 总进度：与改版前一致 —— 15 个文件百分比的算术平均
-        if (progress != null) {
-            int sum = 0;
-            for (int i = 0; i < FILE_COUNT; i++) sum += progress[i];
-            int overall = sum / FILE_COUNT;
+        // ── 总进度 ──
+        // 优先按**体积加权**：已下字节数 / 总字节数。
+        // 改版前用的是「15 个文件百分比的算术平均」，那等于把 2MB 的小包和
+        // 1GB 的大包算作同等分量，进度条会随着小包秒完而猛冲、再被大包拖住，
+        // 观感就是来回跳。安装器开跑前已经把所有文件的大小探完（probeAllSizes），
+        // 所以这里的分母是定值。
+        //
+        // 万一尺寸探测整体失败（分母为 0），退回原来的算术平均，保证有进度可看。
+        {
+            float totalSize = 0f, totalDone = 0f;
+            if (size != null && downloaded != null && status != null) {
+                for (int i = 0; i < FILE_COUNT; i++) {
+                    if (size[i] <= 0f) continue;
+                    totalSize += size[i];
+                    // 已完成的文件按整包计入，避免它的 downloaded 被清零后
+                    // 总进度倒退
+                    totalDone += (status[i] == 2) ? size[i] : Math.min(downloaded[i], size[i]);
+                }
+            }
+            int overall;
+            if (totalSize > 0f) {
+                overall = (int) Math.min(100L, Math.max(0L, (long) (totalDone * 100f / totalSize)));
+            } else if (progress != null) {
+                int sum = 0;
+                for (int i = 0; i < FILE_COUNT; i++) sum += progress[i];
+                overall = sum / FILE_COUNT;
+            } else {
+                overall = 0;
+            }
             ProgressBar pb = progressBarOverall;
             if (pb != null) pb.setProgress(overall);
         }
@@ -1170,6 +1269,7 @@ public class CNCNDownloadUI {
                             android.content.res.ColorStateList.valueOf(color));
                 }
 
+                sv.retryView.setVisibility(st == 3 ? View.VISIBLE : View.GONE);
                 if (st == 2) {
                     sv.infoView.setTextColor(0xFF66BB6A);
                     sv.infoView.setText("✓");
@@ -1203,11 +1303,12 @@ public class CNCNDownloadUI {
         }
         if (vOverallText != null) {
             String text = "总进度";
-            if (size != null && downloaded != null) {
+            if (size != null && downloaded != null && status != null) {
                 float totalSize = 0f, totalDone = 0f;
                 for (int i = 0; i < FILE_COUNT; i++) {
+                    if (size[i] <= 0f) continue;
                     totalSize += size[i];
-                    totalDone += downloaded[i];
+                    totalDone += (status[i] == 2) ? size[i] : Math.min(downloaded[i], size[i]);
                 }
                 if (totalSize > 0f) {
                     text += "  " + formatMb(totalDone) + " / " + formatMb(totalSize);
