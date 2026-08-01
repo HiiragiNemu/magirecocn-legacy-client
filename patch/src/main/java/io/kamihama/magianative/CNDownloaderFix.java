@@ -219,9 +219,10 @@ public final class CNDownloaderFix {
         try {
             // Activity 可能还没就绪（hook 在引擎切场景时就触发了）。原先只取一次，
             // 取不到就完全不显示浮层——屏幕上便直接露出引擎自带的下载场景。
-            // 这里改为最多等 3 秒，与热更新路径的做法一致。
+            // 这里改为最多等 5 秒，与热更新路径的做法一致。
+            // 强退后重启时 Activity 初始化可能更慢，因此比之前的 3 秒再放宽一些。
             Activity currentActivity = null;
-            for (int i = 0; i < 30; i++) {
+            for (int i = 0; i < 50; i++) {
                 currentActivity = RestClient.getCurrentActivity();
                 if (currentActivity != null) break;
                 try { Thread.sleep(100L); } catch (InterruptedException ie) {
@@ -231,6 +232,10 @@ public final class CNDownloaderFix {
             }
             if (currentActivity != null) {
                 CNCNDownloadUI.show(currentActivity);
+                // show() 可能因为 UI 线程调度延迟而未能立即建成浮层
+                // （isShowing 被置为 false）。在看门狗下一轮补刀之前，
+                // 主动做一次 ensureVisible 提高首屏成功率。
+                try { CNCNDownloadUI.ensureVisible(currentActivity); } catch (Throwable ignore) {}
             } else {
                 CNLog.e(TAG, "取不到 Activity，浮层无法显示（引擎场景可能外露）");
             }
@@ -262,8 +267,13 @@ public final class CNDownloaderFix {
         CNCNDownloadUI.updateSimple("开始下载",
                 "可用线路 " + lineCount + " 条，单文件分片 " + CNMirrors.chunks() + " 线程", 0);
 
-        resetUiForRun();
+        // ── 尽早启动看门狗：从网络操作阶段开始就保护浮层 ──
+        // 首次打开后强退再进来的场景里，引擎可能在切场景时换掉 decorView 内容，
+        // 浮层脱离视图树后就露出引擎原生下载界面。把看门狗提前到网络操作之前，
+        // 确保整个安装周期都有浮层守护。
         ScheduledExecutorService watchdog = startSpeedWatchdog();
+
+        resetUiForRun();
 
         // ── 开跑前先把所有文件的大小探一遍 ──
         // 不这样做的话，fileSize[] 是随着各文件陆续开工才逐个填上的，总进度的

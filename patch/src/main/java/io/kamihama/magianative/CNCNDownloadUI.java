@@ -1589,8 +1589,17 @@ public class CNCNDownloadUI {
     }
 
     public static void show(Activity activity) {
+        // 早先无条件 return 是个坑：进程未被杀死（如后台回收后重启 Activity）
+        // 时 isShowing 可能仍为 true，但 overlayView 已脱离视图树甚至为 null。
+        // 这时需要当做未显示来处理，重建浮层。
         if (isShowing) {
-            return;
+            if (overlayView != null && overlayView.getParent() != null) {
+                return;  // 确实还在，跳过
+            }
+            // 状态不一致：标记位还在但视图没了，重置以便重建
+            CNLog.w("界面", "isShowing=true 但 overlayView 已脱离，重置状态");
+            isShowing = false;
+            overlayView = null;
         }
         try {
             uiHandler = new Handler(Looper.getMainLooper());
