@@ -16,3 +16,6 @@ dist/
 # 在构建期生成（CI 里那一步）。源文件已在库里，产物没必要再占 3MB。
 assets/magia/bgm*.ogg
 assets/magia/bgm.json
+
+# native 构建中间产物（magia-native 由 CI 编译，产物拷进 lib/<abi>/）
+magia-native/build/
