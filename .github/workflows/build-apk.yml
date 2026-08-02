@@ -119,6 +119,38 @@ jobs:
       - name: 🚧 校验 native 入口保护（异常绝不外泄）
         run: python3 tools/check-entry-guard.py
 
+      - name: 🎵 转换 BGM：HCA → OGG（vgmstream + ffmpeg）
+        run: |
+          set -euo pipefail
+          # assets 里的 BGM 是 CRI HCA 且 ciphType=56（加密），Android 放不了。
+          # vgmstream 自带 CRI 游戏的密钥库，能直接解；再用 ffmpeg 转 OGG。
+          # 与 （旧客户端仓库） 的同名步骤同一套做法。
+          mkdir -p .cache/audio
+
+          # vgmstream：官网的下载链接指向 vgmstream-releases 的 nightly 资产
+          curl -sSL -o .cache/audio/vgms.tar.gz \
+            "https://github.com/vgmstream/vgmstream-releases/releases/download/nightly/vgmstream-linux-cli.tar.gz"
+          mkdir -p .cache/audio/vgms
+          tar xzf .cache/audio/vgms.tar.gz -C .cache/audio/vgms
+          VGMS="$(find .cache/audio/vgms -name vgmstream-cli -type f | head -1)"
+          chmod +x "${VGMS}"
+
+          # ffmpeg：不走 apt（源不稳），直接拉 BtbN 的静态构建（含 libvorbis）
+          curl -sSL -o .cache/audio/ff.tar.xz \
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"
+          mkdir -p .cache/audio/ff
+          tar xJf .cache/audio/ff.tar.xz -C .cache/audio/ff
+          FF="$(find .cache/audio/ff -name ffmpeg -type f | head -1)"
+          chmod +x "${FF}"
+
+          python3 tools/convert-bgm.py --vgmstream "${VGMS}" --ffmpeg "${FF}"
+
+          # 产物必须齐全：缺了浮层就没有 BGM。音频不是关键路径，只告警不阻断。
+          for f in assets/magia/bgm1.ogg assets/magia/bgm2.ogg assets/magia/bgm.json; do
+            if [ ! -s "${f}" ]; then echo "::warning::缺少 ${f}，本次 APK 浮层将没有 BGM"; fi
+          done
+          ls -la assets/magia/
+
       - name: ☕ 编译 Java 补丁源码 → dex → smali
         run: |
           set -euo pipefail

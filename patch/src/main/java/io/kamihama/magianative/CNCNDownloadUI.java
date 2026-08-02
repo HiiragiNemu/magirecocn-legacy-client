@@ -293,6 +293,7 @@ public class CNCNDownloadUI {
     private static ScrollView   vLogScroll;
     private static GradientDrawable themeChipBg;
     private static GradientDrawable logPillBg;
+    private static TextView vBgmPill;
 
     /** 每个文件一个槽位。 */
     private static final class SlotViews {
@@ -601,13 +602,39 @@ public class CNCNDownloadUI {
         vLogPill.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { openLogModal(); }
         });
-        FrameLayout.LayoutParams logPillLp = new FrameLayout.LayoutParams(
+        // LOG 与 BGM 两个胶囊并排放在左上角
+        LinearLayout topLeft = new LinearLayout(act);
+        topLeft.setOrientation(LinearLayout.HORIZONTAL);
+        topLeft.setGravity(Gravity.CENTER_VERTICAL);
+        FrameLayout.LayoutParams topLeftLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
-        logPillLp.gravity    = Gravity.TOP | Gravity.START;
-        logPillLp.topMargin  = dp(act, 10);
-        logPillLp.leftMargin = dp(act, 14);
-        root.addView(vLogPill, logPillLp);
+        topLeftLp.gravity    = Gravity.TOP | Gravity.START;
+        topLeftLp.topMargin  = dp(act, 10);
+        topLeftLp.leftMargin = dp(act, 14);
+        root.addView(topLeft, topLeftLp);
+        topLeft.addView(vLogPill, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        // BGM 胶囊：点一下在 关闭 → BGM1 → BGM2 → 关闭 之间轮换。
+        // 没有可用曲目（bgm.json 缺失或转换失败）时干脆不显示，免得点了没反应。
+        if (CNBgm.trackCount(act) > 0) {
+            vBgmPill = new TextView(act);
+            vBgmPill.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
+            vBgmPill.setTypeface(vBgmPill.getTypeface(), Typeface.BOLD);
+            vBgmPill.setGravity(Gravity.CENTER);
+            vBgmPill.setPadding(dp(act, 12), dp(act, 6), dp(act, 12), dp(act, 6));
+            vBgmPill.setOnClickListener(new BgmPillClick(act));
+            LinearLayout.LayoutParams bgmLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            bgmLp.leftMargin = dp(act, 8);
+            topLeft.addView(vBgmPill, bgmLp);
+            // 按上次的选择起播（默认关闭）
+            CNBgm.select(act, CNBgm.loadChoice(act));
+            styleBgmPill(act);
+        }
 
         // ── 第 3 层：右上角主题切换胶囊 ──
         themeChipBg = new GradientDrawable();
@@ -1056,6 +1083,50 @@ public class CNCNDownloadUI {
                 toast(act, "复制失败：" + t.getMessage());
             }
         }
+    }
+
+    /**
+     * BGM 胶囊：关闭 → BGM1 → BGM2 → 关闭 轮换。
+     *
+     * <p>做成轮换而不是三个并排的胶囊，是因为左上角还挤着 LOG 胶囊，横向空间有限；
+     * 而且这三个状态互斥，轮换比三选一更省地方。
+     */
+    private static final class BgmPillClick implements View.OnClickListener {
+        private final Activity act;
+        BgmPillClick(Activity act) { this.act = act; }
+        @Override public void onClick(View v) {
+            try {
+                int n = CNBgm.trackCount(act);
+                int next = CNBgm.current() + 1;
+                if (next > n) next = 0;          // 越过最后一首就回到关闭
+                CNBgm.select(act, next);
+                styleBgmPill(act);
+                toast(act, next <= 0 ? "BGM 已关闭" : ("BGM " + next));
+            } catch (Throwable t) {
+                CNLog.w("界面", "切换 BGM 失败", t);
+            }
+        }
+    }
+
+    /** 按当前状态刷新 BGM 胶囊的文字与配色。开＝实心强调色，关＝暗色描边。 */
+    private static void styleBgmPill(Activity act) {
+        TextView p = vBgmPill;
+        if (p == null) return;
+        int cur = CNBgm.current();
+        p.setText(cur <= 0 ? "♪ 关" : ("♪ " + cur));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(act, 20));
+        if (cur > 0) {
+            bg.setColor(COLOR_LOG_PILL);
+            p.setTextColor(0xFFFFFFFF);
+        } else {
+            // 关闭态不用灰色实心：那样看着像「禁用」。空心 + 次要文字色表示
+            // 「可用但当前没开」，跟 LOG 面板里那三个开关是同一套语义。
+            bg.setColor(0x00000000);
+            bg.setStroke(dp(act, 1), COLOR_GLASS_STK);
+            p.setTextColor(COLOR_SUB);
+        }
+        p.setBackground(bg);
     }
 
     /**
@@ -1690,12 +1761,16 @@ public class CNCNDownloadUI {
     }
 
     public static void hide() {
+        // 浮层要收了，音乐也得停——否则安装完了背景音还在响。
+        // 放在 isShowing 判断之前：即使浮层没建起来，也要保证不会有残留的播放线程。
+        try { CNBgm.stop(); } catch (Throwable ignore) {}
         Handler handler;
         if (!isShowing || (handler = uiHandler) == null) {
             return;
         }
         handler.post(new HideRunnable());
         isShowing = false;
+        vBgmPill = null;
     }
 
     public static void markFileDone(int i) {

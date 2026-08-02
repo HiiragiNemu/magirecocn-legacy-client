@@ -11,3 +11,8 @@ dist/
 .idea/
 .vscode/
 .DS_Store
+
+# BGM 构建产物：由 tools/convert-bgm.py 从 assets/resource/sound_native/bgm/*.hca
+# 在构建期生成（CI 里那一步）。源文件已在库里，产物没必要再占 3MB。
+assets/magia/bgm*.ogg
+assets/magia/bgm.json
