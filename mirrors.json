@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "updated": "2026-08-01T23:15:00Z",
-  "comment": "客户端从 https://assets.example.test/mirrors.json 读取本文件。",
+  "comment": "客户端从 https://assets.example.test/mirrors.json 读取本文件。settings 与 mirrors 都是可选的：settings 缺省时用客户端内置默认值；mirrors 为空或整个文件拉取失败时，客户端回退到内置默认线路 https://assets.example.test/ ，行为与加入换线功能之前一致。",
 
   "settings": {
     "chunks": 4,
@@ -14,11 +14,46 @@
 
   "mirrors": [
     {
+      "name": "国内CDN加速 • （已退役线路丙）.example.test",
+      "base": "https://（已退役线路丙）.example.test/",
+      "weight": 95,
+      "chunks": 8,
+      "enabled": false
+    },
+    {
+      "name": "CDN加速线路2 • （已退役线路乙）.example.test",
+      "base": "https://（已退役线路乙）.example.test/",
+      "weight": 70,
+      "chunks": 4,
+      "enabled": false
+    },
+    {
+      "name": "CDN加速线路1 • （已退役线路甲）.example.test",
+      "base": "https://（已退役线路甲）.example.test/",
+      "weight": 45,
+      "chunks": 8,
+      "enabled": false
+    },
+    {
+      "name": "服务器直连 • assets.example.test",
+      "base": "https://assets.example.test/",
+      "weight": 20,
+      "chunks": 4,
+      "enabled": false
+    },
+    {
       "name": "gh-proxy镜像 • v4.gh-proxy.org",
       "base": "https://v4.gh-proxy.org/https://（外部发布渠道）/releases/download/latest/",
       "weight": 95,
       "chunks": 4,
       "enabled": true
+    },
+    {
+      "name": "gh-proxy镜像 • gh-proxy.org",
+      "base": "https://gh-proxy.org/https://（外部发布渠道）/releases/download/latest/",
+      "weight": 50,
+      "chunks": 4,
+      "enabled": false
     }
   ]
 }
