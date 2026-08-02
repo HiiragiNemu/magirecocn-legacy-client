@@ -510,29 +510,10 @@ public final class CNDownloaderFix {
      *                  各说各的，但节奏一致。
      */
     static void noticeAndRestart(final String toastText) {
-        try {
-            final Activity act = RestClient.getCurrentActivity();
-            if (act != null) {
-                act.runOnUiThread(new Runnable() {
-                    @Override public void run() {
-                        try {
-                            android.widget.Toast.makeText(act, toastText,
-                                    android.widget.Toast.LENGTH_LONG).show();
-                        } catch (Throwable ignore) {}
-                    }
-                });
-            } else {
-                CNLog.w(TAG, "取不到 Activity，重启前的 Toast 无法显示");
-            }
-            CNLog.i(TAG, "3 秒后重启");
-            Thread.sleep(3000L);
-            CNLog.flushNow();
-            RestClient.restartApp();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } catch (Throwable t) {
-            CNLog.e(TAG, "重启失败", t);
-        }
+        // 重启本身交给 CNRestart。原先这里调的是 RestClient.restartApp()，
+        // 那个实现真机上是坏的（会先重跑旧热更流程把浮层又拉出来，然后把新起的
+        // Activity 连同自己一起杀掉），详见 CNRestart 的类注释。
+        CNRestart.restartWithNotice(toastText, 3000L);
     }
 
     /**
