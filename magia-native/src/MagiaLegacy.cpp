@@ -105,8 +105,9 @@ static JavaVM* gJvm = nullptr;
 // 这个坑在 （旧客户端仓库） 的 MagiaClient.cpp 里有白纸黑字的警告
 // （ProxyBackends 那段），第一版还是照着踩了：真机日志里是
 //     E/MagiaCN_Legacy: [UrlConfig] 找不到 CNDownloaderFix
-static jclass gClsDownloaderFix = nullptr;   // io.kamihama.magianative.CNDownloaderFix
-static jclass gClsRestClient    = nullptr;   // io.kamihama.magianative.RestClient
+static jclass gClsDownloaderFix   = nullptr; // io.kamihama.magianative.CNDownloaderFix
+static jclass gClsRestClient      = nullptr; // io.kamihama.magianative.RestClient
+static jclass gClsTutorialPrompt  = nullptr; // io.kamihama.magianative.CNTutorialPrompt
 
 namespace cocos2d {
     struct Data { unsigned char* _bytes; ssize_t _size; };
@@ -393,18 +394,45 @@ static void pushSceneTopNew(void* self, const std::string& arg) {
     pushSceneTopOld(self, arg);
 }
 
+// 切换前端界面（Cocos2dxWebView）的可见性。
+//
+// 主界面是个盖在 GL SurfaceView 之上的 Android WebView，引擎的场景图层都画在
+// 它下面。正常走剧情时是前端 JS 自己发起跳转、顺手把自己藏起来；我们从 native
+// 直接压场景，前端不知情，于是主界面照旧盖在最上层，序章成了它的背景。
+// 由我们代劳：序章开始时藏，结束时放回来。
+static void setGameUiVisible(bool visible) {
+    if (!gClsTutorialPrompt) {
+        LOGE("[Tutorial] CNTutorialPrompt 全局引用缺失，无法隐藏前端界面");
+        return;
+    }
+    bool attached = false;
+    JNIEnv* env = attachEnv(attached);
+    if (!env) { LOGE("[Tutorial] 拿不到 JNIEnv"); return; }
+    jmethodID mid = env->GetStaticMethodID(gClsTutorialPrompt, "setGameUiVisible", "(Z)V");
+    if (mid) {
+        env->CallStaticVoidMethod(gClsTutorialPrompt, mid, (jboolean)visible);
+        if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
+    } else {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        LOGE("[Tutorial] 找不到 setGameUiVisible(Z)V");
+    }
+    if (attached) gJvm->DetachCurrentThread();
+}
+
 // 序章图层的构造/析构。析构是「序章真的结束了」最可靠的信号——比 notifyJs
 // 可靠，后者在序章过程中可能发多次。
 static void prologueCtorNew(void* _this, void* info) {
     prologueCtorOld(_this, info);
-    LOGI("[Tutorial] PrologueSceneLayer 已构造 _this=%p（forced=%d）",
-         _this, (int)g_tutorialForced.load());
+    bool forced = g_tutorialForced.load();
+    LOGI("[Tutorial] PrologueSceneLayer 已构造 _this=%p（forced=%d）", _this, (int)forced);
+    if (forced) setGameUiVisible(false);
 }
 
 static void prologueDtorNew(void* _this) {
     bool wasActive = g_tutorialActive.exchange(false);
     LOGI("[Tutorial] PrologueSceneLayer 析构 _this=%p（active=%d）",
          _this, (int)wasActive);
+    if (g_tutorialForced.load()) setGameUiVisible(true);   // 序章完了，前端界面放回来
     if (wasActive) {
         // 把吞掉的那次 pushSceneTop 补放回去。序章期间的 Top 全被我们吞了，
         // 栈里没有主页可退，不补的话玩家会停在空场景上。
@@ -621,8 +649,9 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     // 本函数所在线程持有 App ClassLoader，这是唯一能 FindClass 到我们自己类的时机。
     {
         struct { const char* name; jclass* slot; } want[] = {
-            { "io/kamihama/magianative/CNDownloaderFix", &gClsDownloaderFix },
-            { "io/kamihama/magianative/RestClient",      &gClsRestClient    },
+            { "io/kamihama/magianative/CNDownloaderFix",   &gClsDownloaderFix  },
+            { "io/kamihama/magianative/RestClient",        &gClsRestClient     },
+            { "io/kamihama/magianative/CNTutorialPrompt",  &gClsTutorialPrompt },
         };
         for (size_t i = 0; i < sizeof(want) / sizeof(want[0]); i++) {
             jclass local = env->FindClass(want[i].name);

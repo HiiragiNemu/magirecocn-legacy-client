@@ -1,7 +1,10 @@
 package io.kamihama.magianative;
 
+import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.view.View;
+import android.view.ViewGroup;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -50,6 +53,75 @@ public final class CNTutorialPrompt {
     private static final String KEY_ASKED  = "prompt_answered";
 
     private CNTutorialPrompt() {}
+
+    // ==================================================================
+    // 序章期间隐藏前端界面
+    // ==================================================================
+
+    /**
+     * 序章开始/结束时由 native 经 JNI 调用，隐藏/恢复前端界面。
+     *
+     * <h3>为什么需要</h3>
+     *
+     * 游戏主界面是 {@code org.cocos2dx.lib.Cocos2dxWebView}——一个普通的
+     * Android View，<b>盖在 GL SurfaceView 之上</b>。引擎的场景图层都画在 GL 里，
+     * 在它下面。
+     *
+     * <p>正常走剧情时，是前端 JS 自己发起跳转、顺手把自己藏起来的。我们是从
+     * native 直接压场景，前端根本不知道发生了什么，于是主界面照旧盖在最上层，
+     * 序章就成了它的背景——真机上看到的正是这个。
+     *
+     * <p>所以由我们代劳：序章图层构造时把 WebView 藏起来，析构时放回来。
+     *
+     * <p>用类名匹配而不是 {@code instanceof}：{@code Cocos2dxWebView} 在
+     * smali_classes2 里，补丁源码编译期看不到它，也不该为此建个桩。
+     *
+     * @param visible true 恢复显示，false 隐藏
+     */
+    public static void setGameUiVisible(final boolean visible) {
+        try {
+            final Activity act = RestClient.getCurrentActivity();
+            if (act == null) {
+                CNLog.w(TAG, "取不到 Activity，无法切换前端界面可见性");
+                return;
+            }
+            act.runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    try {
+                        View root = act.getWindow() == null
+                                ? null : act.getWindow().peekDecorView();
+                        if (root == null) return;
+                        int n = applyVisibility(root, visible);
+                        CNLog.i(TAG, (visible ? "恢复" : "隐藏") + "前端界面，命中 "
+                                + n + " 个 WebView");
+                    } catch (Throwable t) {
+                        CNLog.e(TAG, "切换前端界面可见性失败", t);
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            CNLog.e(TAG, "setGameUiVisible 失败", t);
+        }
+    }
+
+    /** 递归找 Cocos2dxWebView 并设置可见性，返回命中个数。 */
+    private static int applyVisibility(View v, boolean visible) {
+        int hit = 0;
+        String cn = v.getClass().getName();
+        if (cn.startsWith("org.cocos2dx.lib.Cocos2dxWebView")) {
+            v.setVisibility(visible ? View.VISIBLE : View.INVISIBLE);
+            hit++;
+            // 命中即返回：WebView 内部还有一堆子 View，没必要再往下钻
+            return hit;
+        }
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) {
+                hit += applyVisibility(g.getChildAt(i), visible);
+            }
+        }
+        return hit;
+    }
 
     // ==================================================================
     // 标记
