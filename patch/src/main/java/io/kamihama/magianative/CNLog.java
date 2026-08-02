@@ -429,12 +429,33 @@ public final class CNLog {
         }
     }
 
+    /**
+     * 单次启动的日志体积上限。
+     *
+     * <p>浮层收工后不再停 logcat 捕获——真正要看的东西（native 的 [Tutorial]、
+     * 引擎报错、序章表现）全发生在那之后。代价是捕获会一直跑到进程结束，玩久了
+     * 文件无限长。这里收口：超过上限就只停 logcat 回灌，本类自己的行（低频）
+     * 继续记，文件不再疯长也不影响排查。
+     */
+    private static final long MAX_LOG_BYTES = 24L * 1024 * 1024;
+    private static long    writtenBytes = 0L;
+    private static boolean capReported  = false;
+
     /** 往日志文件写一行。调用方必须持有 FILE_LOCK。 */
     private static void writeFileLocked(String line, boolean flush) {
         if (writer != null) {
             try {
                 writer.write(line); writer.write('\n');
                 if (flush) writer.flush();
+                writtenBytes += line.length() + 1;
+                if (writtenBytes > MAX_LOG_BYTES && !capReported) {
+                    capReported = true;
+                    try { stopLogcatCapture(); } catch (Throwable ignore) {}
+                    writer.write("［日志］本次启动已写满 "
+                            + (MAX_LOG_BYTES / 1024 / 1024)
+                            + " MB，停止回灌 logcat，仅保留本客户端自己的日志\n");
+                    writer.flush();
+                }
             } catch (Throwable ignore) {}
         }
     }

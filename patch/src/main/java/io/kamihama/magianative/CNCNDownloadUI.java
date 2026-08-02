@@ -1959,11 +1959,15 @@ public class CNCNDownloadUI {
         @Override
         public void run() {
             try {
-                CNLog.i("界面", "下载浮层关闭");
+                CNLog.i("界面", "下载浮层关闭（日志继续记录）");
                 // 先摘掉监听再拆视图，避免拆到一半又被日志回调碰上
                 CNLog.setListener(null);
-                CNLog.stopLogcatCapture();
-                CNLog.close();
+                // ⚠ 这里**不再**停 logcat 捕获、不再关文件。
+                //
+                // 原先是关掉的，结果日志正好在「浮层收工」这一刻断掉——而我们真正
+                // 要看的东西（native 的 [Tutorial] / [SceneCmd]、引擎报错、序章
+                // 表现）全都发生在这之后。拿到的日志永远停在游戏还没开始的地方，
+                // 等于没有。捕获改为一直跑到进程结束，由 CNLog 自己的体积上限收口。
                 ViewGroup dv = CNCNDownloadUI.decorView;
                 FrameLayout ov = CNCNDownloadUI.overlayView;
                 if (dv == null || ov == null) return;
