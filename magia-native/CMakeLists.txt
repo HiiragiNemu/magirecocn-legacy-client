@@ -61,7 +61,7 @@ FetchContent_Declare(
     # 在 v2.0.1 写就时还不存在，-Werror 会让它自己编不过，-Weverything 还会
     # 刷出大量噪音污染 CI 日志。shadowhook 对我们是黑盒，没必要让它的
     # self-warning 进我们视野。
-    # 两处改动，用同一条 sed 打（两个表达式对两个文件各自只命中一处）：
+    # 三处改动，用同一条 sed 打（各表达式只对目标文件命中一次）：
     #
     # (1) 去掉 -Weverything -Werror：Clang 18 新增的警告类在 v2.0.1 写就时还
     #     不存在，-Werror 会让 shadowhook 自己编不过。
@@ -87,10 +87,20 @@ FetchContent_Declare(
     #     代价：延迟 hook 不可用。若某次 hook 返回 SHADOWHOOK_ERRNO_PENDING
     #     （=目标库当时没加载），它将永远不会被补上——我们的代码会把它当失败
     #     报出来，见 MagiaLegacy.cpp 里的 H()。
+    #
+    # (3) **把 cmake_minimum_required 从 4.0.2 降回 3.22。**
+    #     v2.0.1 把最低版本提到了 4.0.2，但 GitHub runner 自带 CMake 只有
+    #     3.31.6，configure 阶段直接报「CMake 4.0.2 or higher is required」。
+    #     已逐行核对它的 CMakeLists：只用了 project / file(GLOB) / add_library
+    #     / target_* / find_program / add_custom_command 这些 3.x 时代就有的
+    #     命令，4.0.2 纯属写的人照抄本机版本，并非真实特性需求。
+    #     若上游哪天真的用了 4.x 特性，这里会在 configure 期以别的方式报错，
+    #     届时再升级 CI 的 CMake 不迟。
     PATCH_COMMAND  sed -i
                    -e "s/-Weverything//g"
                    -e "s/-Werror//g"
                    -e "s/GOTO_END(SHADOWHOOK_ERRNO_INIT_LINKER)/((void)0)/"
+                   -e "s/cmake_minimum_required(VERSION 4\\.0\\.2)/cmake_minimum_required(VERSION 3.22)/"
                    shadowhook/src/main/cpp/CMakeLists.txt
                    shadowhook/src/main/cpp/shadowhook.c
 )
