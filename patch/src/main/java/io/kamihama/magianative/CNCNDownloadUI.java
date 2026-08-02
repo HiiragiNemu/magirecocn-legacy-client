@@ -27,6 +27,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -756,16 +757,25 @@ public class CNCNDownloadUI {
         // ── 三个显示开关 ──
         // 异常排查时经常需要「只看某一类」：整机 logcat 很吵，native 日志在
         // 引擎出问题时才有用，而纯文字下载界面在只关心网络时纯属占地方。
+        //
+        // 用胶囊而不是系统 CheckBox：那个方框是 AppCompat 之外的平台默认样式，
+        // 方角、灰底、跟着系统主题走，摆在玻璃拟态的浮层里像块补丁。
+        // 横向可滚动，免得窄屏上三个挤成一团或被截断。
+        HorizontalScrollView togScroll = new HorizontalScrollView(act);
+        togScroll.setHorizontalScrollBarEnabled(false);
+        togScroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        panel.addView(togScroll, lpRow(0, dp(act, 8)));
+
         LinearLayout togRow = new LinearLayout(act);
         togRow.setOrientation(LinearLayout.HORIZONTAL);
         togRow.setGravity(Gravity.CENTER_VERTICAL);
-        panel.addView(togRow, lpRow(0, dp(act, 6)));
-        togRow.addView(makeLogToggle(act, "纯文字下载界面", PREF_LOG_STATUS, 0),
-                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        togRow.addView(makeLogToggle(act, "logcat", PREF_LOG_LOGCAT, 1),
-                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        togRow.addView(makeLogToggle(act, "原生日志", PREF_LOG_NATIVE, 2),
-                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        togScroll.addView(togRow, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        addLogChip(act, togRow, "下载状态", PREF_LOG_STATUS, 0);
+        addLogChip(act, togRow, "logcat",  PREF_LOG_LOGCAT, 1);
+        addLogChip(act, togRow, "原生日志", PREF_LOG_NATIVE, 2);
 
         vLogScroll = new ScrollView(act);
         vLogScroll.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
@@ -1049,42 +1059,87 @@ public class CNCNDownloadUI {
     }
 
     /**
-     * 造一个显示开关。
+     * 造一个显示开关胶囊并挂到 {@code row} 上。
      *
-     * @param which 0=纯文字下载界面 1=logcat 2=原生日志
+     * @param which 0=下载状态块 1=logcat 2=原生日志
      */
-    private static android.widget.CheckBox makeLogToggle(final Activity act,
-            String label, final String prefKey, final int which) {
-        android.widget.CheckBox cb = new android.widget.CheckBox(act);
-        cb.setText(label);
-        cb.setTextColor(COLOR_LOG_PANEL_TEXT);
-        cb.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
-        boolean on = true;
-        try {
-            on = act.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    .getBoolean(prefKey, true);
-        } catch (Throwable ignore) {}
-        cb.setChecked(on);
-        applyLogToggle(which, on);
-        cb.setOnCheckedChangeListener(new LogToggleListener(act, prefKey, which));
-        return cb;
+    private static void addLogChip(Activity act, LinearLayout row,
+            String label, String prefKey, int which) {
+        LogChip chip = new LogChip(act, label, prefKey, which);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.rightMargin = dp(act, 8);
+        row.addView(chip.view(), lp);
     }
 
-    private static final class LogToggleListener
-            implements android.widget.CompoundButton.OnCheckedChangeListener {
+    /**
+     * 日志来源开关的胶囊。
+     *
+     * <p>选中＝强调色描边 + 同色半透明填充 + 同色文字；未选＝细描边空心 + 次要
+     * 文字色。前缀的 ✓／○ 不是装饰：开与关只靠颜色区分，在色觉异常或强光下
+     * 分不出来，加个形状差异就稳了。
+     */
+    private static final class LogChip implements View.OnClickListener {
         private final Activity act;
+        private final TextView view;
+        private final String   label;
         private final String   prefKey;
         private final int      which;
-        LogToggleListener(Activity act, String prefKey, int which) {
-            this.act = act; this.prefKey = prefKey; this.which = which;
+        private boolean on;
+
+        LogChip(Activity act, String label, String prefKey, int which) {
+            this.act = act; this.label = label;
+            this.prefKey = prefKey; this.which = which;
+
+            boolean init = true;
+            try {
+                init = act.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                          .getBoolean(prefKey, true);
+            } catch (Throwable ignore) {}
+            this.on = init;
+
+            TextView t = new TextView(act);
+            t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
+            t.setGravity(Gravity.CENTER);
+            t.setSingleLine(true);
+            t.setPadding(dp(act, 12), dp(act, 5), dp(act, 12), dp(act, 5));
+            t.setOnClickListener(this);
+            this.view = t;
+
+            applyLogToggle(which, on);
+            restyle();
         }
-        @Override public void onCheckedChanged(
-                android.widget.CompoundButton b, boolean on) {
+
+        TextView view() { return view; }
+
+        private void restyle() {
+            view.setText((on ? "✓ " : "○ ") + label);
+            view.setTextColor(on ? COLOR_ACCENT : COLOR_SUB);
+
+            GradientDrawable bg = new GradientDrawable();
+            // 半高圆角：给个远大于控件高度的值，系统会自己收敛成胶囊
+            bg.setCornerRadius(dp(act, 100));
+            if (on) {
+                // 强调色的 20% 填充：既能一眼看出选中，又不会跟右上角那两个
+                // 实心动作按钮抢层级——这三个只是过滤器，不是主操作。
+                bg.setColor((COLOR_ACCENT & 0x00FFFFFF) | 0x33000000);
+                bg.setStroke(dp(act, 1), COLOR_ACCENT);
+            } else {
+                bg.setColor(0x00000000);
+                bg.setStroke(dp(act, 1), COLOR_GLASS_STK);
+            }
+            view.setBackground(bg);
+        }
+
+        @Override public void onClick(View v) {
+            on = !on;
             try {
                 act.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                    .edit().putBoolean(prefKey, on).apply();
             } catch (Throwable ignore) {}
             applyLogToggle(which, on);
+            restyle();
             CNLog.i("界面", "日志开关 " + prefKey + " = " + on);
             renderLogModal();      // 立即生效：过滤发生在渲染期，不必等新日志
         }
