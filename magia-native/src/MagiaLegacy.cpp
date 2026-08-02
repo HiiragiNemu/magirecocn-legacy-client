@@ -26,10 +26,7 @@
 // 去掉了 cnv 专有的部分：
 //   - setURI 代理后端（ProxyBackends 是复兴客户端自己的服务端设施）
 //   - 强制新手教程（pushSceneTop / PrologueSceneLayer::notifyJs）
-// 保留资源下载流水线，并补回 libcn_hook 特有的两个触发：
-//   - 「叫起 Java 安装器」（DownloadSceneLayer 等 → RestClient.startCNDownload）
-//   - JNI_OnLoad 尾部的热更检查（安装标记已就位 →
-//     RestClient.checkAndApplyHotUpdate，反汇编证据见下文「热更检查」小节）
+// 保留资源下载流水线，并补回 libcn_hook 特有的「叫起 Java 安装器」触发。
 //
 // ## 端点重定向（原 libuwasa 的核心职责）已接管
 //
@@ -290,48 +287,6 @@ static void* endpointThreadMain(void*) {
     return nullptr;
 }
 
-// ─── 热更检查（补回 libcn_hook 的 JNI_OnLoad 尾部行为）────
-//
-// 反汇编证实：libcn_hook 在 JNI_OnLoad 末尾查安装完成标记，flag 存在就
-// 起一个 detached 线程调 RestClient.checkAndApplyHotUpdate()V（静态、无参），
-// 日志 "[JNI] ★ 触发热更检查"，异常时 ExceptionDescribe + ExceptionClear；
-// flag 缺失则只记 "[JNI] flag不存在，等待触发安装..."，不触发——首次安装
-// 期间热更没有意义，装完后的下一次启动自然会查。
-// Java 侧 checkAndApplyHotUpdate 内部还会再查一次 flag 并等 Activity 就位
-// （最多 30×100ms），所以在 JNI_OnLoad 阶段就起线程是安全的。这里照搬。
-static void* hotUpdateThreadMain(void*) {
-    bool attached = false;
-    JNIEnv* env = attachEnv(attached);
-    if (!env) { LOGE("[HotUpdate] 拿不到 JNIEnv"); return nullptr; }
-    do {
-        // 同上：用全局引用，不 FindClass
-        jclass cls = gClsRestClient;
-        if (!cls) { LOGE("[HotUpdate] RestClient 全局引用缺失"); break; }
-        jmethodID mid = env->GetStaticMethodID(cls, "checkAndApplyHotUpdate", "()V");
-        if (!mid) { if (env->ExceptionCheck()) env->ExceptionClear();
-                    LOGE("[HotUpdate] 找不到 checkAndApplyHotUpdate()V"); break; }
-        LOGI("[HotUpdate] ★ 触发热更检查");
-        env->CallStaticVoidMethod(cls, mid);
-        if (env->ExceptionCheck()) {
-            env->ExceptionDescribe();
-            env->ExceptionClear();
-        }
-    } while (false);
-    if (attached) gJvm->DetachCurrentThread();
-    return nullptr;
-}
-
-static void maybeTriggerHotUpdate() {
-    if (!resourcesReady()) {
-        LOGI("[JNI] flag不存在，等待触发安装...");
-        return;
-    }
-    LOGI("[JNI] flag已存在，正常启动");
-    pthread_t t;
-    if (pthread_create(&t, nullptr, hotUpdateThreadMain, nullptr) == 0) pthread_detach(t);
-    else LOGE("[HotUpdate] 热更线程起不来");
-}
-
 // ─── 下载场景三连 ────────────────────────────────────────
 static void dslInfoCtorNew(void* _this, int type,
                            const std::function<void()>& cb,
@@ -522,12 +477,6 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
         LOGE("[shadowhook] init 失败 rc=%d errno=%d %s，本次不装任何 hook",
              rc, shadowhook_get_errno(), shadowhook_to_errmsg(shadowhook_get_errno()));
         LOGE("[shadowhook] version=%s", shadowhook_get_version());
-        // 但下载绝不能让给引擎原版——它分发的是英文资源，我们是中文资源。
-        // hook 全挂意味着 checkParseJson / DownloadSceneLayer 都不会再触发
-        // 安装器，趁现在直接叫起 Java 安装器（它自己会等 Activity、挂浮层、
-        // 走支线安装）；资源已装则引擎本就不会去下载，只触发热更检查。
-        if (!resourcesReady()) triggerCNDownload("shadowhook init 失败");
-        maybeTriggerHotUpdate();
         return JNI_VERSION_1_6;
     }
     LOGI("[shadowhook] init OK version=%s", shadowhook_get_version());
@@ -605,9 +554,5 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     }
 
     LOGI("[JNI] hooks 安装完成：成功 %d 个，失败 %d 个", hookOk, hookFail);
-
-    // 与老库一致：装完 hook 再查安装标记，已就位就起线程触发热更检查。
-    maybeTriggerHotUpdate();
-
     return JNI_VERSION_1_6;
 }
