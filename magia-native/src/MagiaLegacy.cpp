@@ -25,8 +25,8 @@
 //
 // 去掉了 cnv 专有的部分：
 //   - setURI 代理后端（ProxyBackends 是复兴客户端自己的服务端设施）
-//   - 强制新手教程（pushSceneTop / PrologueSceneLayer::notifyJs）
 // 保留资源下载流水线，并补回 libcn_hook 特有的「叫起 Java 安装器」触发。
+// 强制新手教程照搬了过来，但实现方式不同（见下文「强制新手教程」小节）。
 //
 // ## 端点重定向（原 libuwasa 的核心职责）已接管
 //
@@ -86,6 +86,8 @@
 
 #include <sys/stat.h>
 #include <pthread.h>
+#include <dlfcn.h>
+#include <stdio.h>
 
 #define LOG_TAG "MagiaCN_Legacy"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
@@ -116,6 +118,13 @@ namespace cocos2d {
 static const std::string FLAG_PATH =
     "/data/data/io.kamihama.totentanz/files/madomagi/magica/cn_base_done.flag";
 
+// 强制新手教程标记。由 Java 侧 CNTutorialPrompt 在玩家选「是」时写出，
+// 我们在引擎首个「进主页」命令上消费它。放在与安装标记同一个目录，
+// 那个目录在资源装完时必定存在，不必额外 mkdir。
+// ⚠ 必须与 CNTutorialPrompt.FORCE_TUTORIAL_FLAG 逐字一致。
+static const std::string FORCE_TUTORIAL_FLAG_PATH =
+    "/data/data/io.kamihama.totentanz/files/madomagi/magica/cn_force_tutorial.flag";
+
 // ─── 原函数指针 ──────────────────────────────────────────
 static bool (*checkParseJsonOld)(void*, const cocos2d::Data&) = nullptr;
 static void (*dlJsonOnRespOld)(void*, void*, void*)  = nullptr;
@@ -140,6 +149,12 @@ static void (*setMaxConnectionNumOld)(void*, int)    = nullptr;
 
 // 端点重定向：返回 const std::string&，故原型返回 const std::string*
 static const std::string* (*urlConfigResourceOld)(void*, int) = nullptr;
+
+// 强制新手教程：拦「进主页」，改走引擎自己的序章场景
+static void (*pushSceneTopOld)(void*, const std::string&)     = nullptr;
+static void (*notifyJsOld)(void*, const std::string&)         = nullptr;
+// 只取地址、不装 hook：命中标记时直接调它
+static void (*pushScenePrologueFn)(void*, const std::string&) = nullptr;
 
 // ─── info/layer 映射 ─────────────────────────────────────
 static std::unordered_map<void*, std::function<void()>> g_infoCallbackMap;
@@ -285,6 +300,85 @@ static void* endpointThreadMain(void*) {
     } while (false);
     if (attached) gJvm->DetachCurrentThread();
     return nullptr;
+}
+
+// ─── 强制新手教程 ────────────────────────────────────────
+//
+// 复刻服对任何账号都下发「已通关」的存档，正常流程永远走不到新手教程。
+// 唯一可靠的入口是拦下前端那条「进主页」命令（web::SceneCommand::pushSceneTop），
+// 命中标记时改为进序章。
+//
+// ## 为什么调 pushScenePrologue 而不是自己 new 一个 Info
+//
+// （旧 native 层） 那边是逐字段复刻调试菜单「播放序章」的构造：
+//     new PrologueSceneLayerInfo(0x58 字节) → ctor(9, "OP020", "{}")
+//     → SceneLayerManager::getInstance() → 虚表 [vptr+0x18] 压栈
+// 这套在本仓库的 arm64 引擎上逐字节核对过，是对的（0xd1f054 起那段）。
+// 但它把**结构体大小**和**虚表下标**写死了，而这两个值在 armeabi-v7a 上
+// 必然不同（指针 4 字节），得再逆一遍 arm32 才敢用。
+//
+// 引擎自己的 web::SceneCommand::pushScenePrologue(const std::string& json)
+// 干的就是同一件事——它解析 json 取出 beginningId，然后走上面那段构造。
+// 两个 ABI 都导出这个符号，直接调它就把「结构体多大、虚表第几项」整件事
+// 交还给引擎，一份代码两个 ABI 通用。
+//
+// json 的字段名从 0xd1ecbc 那个函数里读出来的：认 "beginningId"（序章脚本
+// ID）和 "callback"，两者都有「成员不存在」的兜底分支，所以只给 beginningId
+// 是合法的。"OP020" 与调试菜单写死的值一致，引擎二进制里也确实有这个字符串。
+static std::atomic<bool> g_tutorialForced{false};
+
+// 消费标记：存在则删除（一次性）并返回 true。
+// 删除是关键——只在本次启动的首个 pushSceneTop 处强制一次；序章结束返回
+// 主页时引擎会再调一次 pushSceneTop，那次必须放行，否则就卡在序章里出不来。
+static bool consumeForceTutorial() {
+    if (!fileExists(FORCE_TUTORIAL_FLAG_PATH)) return false;
+    if (::remove(FORCE_TUTORIAL_FLAG_PATH.c_str()) != 0) {
+        // 删不掉就不能强制——否则每次进主页都会被打回序章，玩家永远进不去。
+        LOGE("[Tutorial] 标记删不掉（%s），本次不强制，以免陷入死循环",
+             FORCE_TUTORIAL_FLAG_PATH.c_str());
+        return false;
+    }
+    return true;
+}
+
+static void pushSceneTopNew(void* self, const std::string& arg) {
+    if (pushScenePrologueFn && consumeForceTutorial()) {
+        static const std::string kPrologueArg = "{\"beginningId\":\"OP020\"}";
+        LOGI("[Tutorial] 命中强制教程标记 → 改走 pushScenePrologue(OP020)");
+        g_tutorialForced.store(true);
+        pushScenePrologueFn(self, kPrologueArg);
+        return;
+    }
+    pushSceneTopOld(self, arg);
+}
+
+// 序章完成时引擎经此函数向前端发通知。只在强制模式下记一行，用来确认
+// 序章确实跑完了、以及完成信号长什么样（将来若要做「完成后静默进主页」
+// 需要精确匹配这个字符串）。
+static void notifyJsNew(void* _this, const std::string& arg) {
+    if (g_tutorialForced.load()) {
+        LOGI("[Tutorial::notifyJs] arg=%s", arg.c_str());
+    }
+    notifyJsOld(_this, arg);
+}
+
+// 解析 pushScenePrologue 的地址。它在两个 ABI 的 .dynsym 里都是
+// GLOBAL DEFAULT，普通 dlsym 就能拿到，不必动用 shadowhook 的符号解析。
+static void resolvePrologueEntry(const char* lib) {
+    void* h = ::dlopen(lib, RTLD_NOW | RTLD_NOLOAD);   // 引擎早已加载，只取句柄
+    if (!h) h = ::dlopen(lib, RTLD_NOW);
+    if (!h) { LOGE("[Tutorial] dlopen(%s) 失败：%s", lib, ::dlerror()); return; }
+    void* p = ::dlsym(h,
+        "_ZN3web12SceneCommand17pushScenePrologueERKNSt6__ndk1"
+        "12basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE");
+    if (p) {
+        pushScenePrologueFn =
+            reinterpret_cast<void(*)(void*, const std::string&)>(p);
+        LOGI("[Tutorial] pushScenePrologue = %p", p);
+    } else {
+        LOGE("[Tutorial] 找不到 pushScenePrologue，强制教程将不可用");
+    }
+    ::dlclose(h);
 }
 
 // ─── 下载场景三连 ────────────────────────────────────────
@@ -544,6 +638,23 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     H("_ZNK9UrlConfig8resourceENS_8Resource4TypeE",
       (void*)urlConfigResourceNew, (void**)&urlConfigResourceOld,
       "UrlConfig::resource(端点重定向)");
+
+    // ── 强制新手教程：拦「进主页」，命中标记时改走序章 ──
+    // 先解析 pushScenePrologue：拿不到就别装 hook，省得白拦一道。
+    resolvePrologueEntry(LIB);
+    if (pushScenePrologueFn) {
+        H("_ZN3web12SceneCommand12pushSceneTopERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
+          (void*)pushSceneTopNew, (void**)&pushSceneTopOld,
+          "SceneCommand::pushSceneTop(强制教程闸门)");
+        // 序章完成信号日志。替换编号是 NS0_ 而非 NS1_：Itanium mangling 的
+        // S_/S0_/S1_ 按首次出现顺序编号，本符号在 std::__ndk1 之前只出现过
+        // PrologueSceneLayer 一个名字（S_），故 std::__ndk1 是 S0_。
+        // 对照 pushSceneTop 用 NS1_ 才对（web=S_、web::SceneCommand=S0_、
+        // std::__ndk1=S1_）——两者不能照抄，写错了查不到符号、hook 静默失效。
+        H("_ZN18PrologueSceneLayer8notifyJsERKNSt6__ndk112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE",
+          (void*)notifyJsNew, (void**)&notifyJsOld,
+          "PrologueSceneLayer::notifyJs(教程信号日志)");
+    }
 
     // 尽早发起 SNAA 查询：引擎很快就会问资源地址。取不到就保持 ready=false，
     // resource() 会一路回落到原版，不会卡住也不会崩。

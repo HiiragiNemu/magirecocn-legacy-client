@@ -196,6 +196,11 @@ public final class CNHotUpdateCheck {
         CNLog.i(TAG, "热更检查完毕：无需更新");
         sleep(IDLE_LINGER_MS);
         CNCNDownloadUI.hide();
+
+        // 浮层收掉之后才问新手教程：这里正是「即将正式进入游戏」的时刻，
+        // 而且两者不会抢同一片屏幕。只在不重启的这条路上问——要重启的话，
+        // 重启后的那次启动自然会走到这里。
+        CNTutorialPrompt.maybeAsk();
     }
 
     /**
