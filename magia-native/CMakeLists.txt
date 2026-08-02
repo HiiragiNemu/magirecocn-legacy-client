@@ -31,43 +31,37 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# shadowhook 的 version script（shadowhook.map.txt）把各架构的符号列在一起，
+# 例如 armv7 专有的 shadowhook_interceptor_glue_vfpv3d16/d32 在 arm64 构建里
+# 根本不存在。NDK 27 默认带 -Wl,--no-undefined-version，lld 18 会把这种情况
+# 直接判成错误：
+#     ld.lld: error: version script assignment of 'global' to symbol
+#             'shadowhook_interceptor_glue_vfpv3d16' failed: symbol not defined
+# 这里放宽回旧行为。写在 FetchContent 之前，让 shadowhook 子目录也继承；
+# 命令行上出现在 NDK 那个 flag 之后，后者被覆盖。
+add_link_options(-Wl,--undefined-version)
+
 include(FetchContent)
 FetchContent_Declare(
     shadowhook
     GIT_REPOSITORY https://github.com/bytedance/android-inline-hook.git
-    GIT_TAG        v1.1.1
+    # v1.1.1（（旧 native 层） 用的版本）在新 Android 上起不来：真机日志里是
+    #     shadowhook init(mode: UNIQUE, debuggable: false), return: 12
+    #     [Hook] ✗ ... errno=12 Init linker mod failed
+    # 十七个 hook 全军覆没。errno 12 = 初始化 linker 模块失败——v1.1.1 是
+    # 2023 年的版本，其 linker 适配跟不上新系统。v2.0.1 修了这一块。
+    # API 与我们用到的四个函数（init / hook_sym_name / get_errno / to_errmsg）
+    # 完全兼容，SHADOWHOOK_MODE_UNIQUE 仍为 1。
+    GIT_TAG        v2.0.1
     GIT_SHALLOW    TRUE
-    # shadowhook 的 git 仓库根是 Android Gradle 工程；真正的 CMake
-    # build 在 shadowhook/src/main/cpp/。SOURCE_SUBDIR 让 FetchContent
-    # 只 add_subdirectory 这个子目录，不要去碰仓库根（仓库根不是
-    # CMake 工程）。
+    # 真正的 CMake 工程在 shadowhook/src/main/cpp/，仓库根是 Gradle 工程。
     SOURCE_SUBDIR  shadowhook/src/main/cpp
-    # shadowhook v1.1.1 的 CMakeLists 有几个 NDK 27 / lld 18 下踩坑
-    # 的硬编码，都需要从源头修：
-    # (a) target_compile_options(... PUBLIC -std=c17 -Weverything -Werror)
-    #     ——PUBLIC 意味着任何链 shadowhook 的 target 编译时也吃这些
-    #     flag。我们 MagiaLegacy 是 C++，clang++ 看到 -std=c17 直接报
-    #     "'-std=c17' not allowed with 'C++'"。
-    # (b) target_(compile|link)_options(... PUBLIC -Oz ...) ——其中
-    #     link_options 那行还带 `-Wl,--version-script=shadowhook.map.txt`。
-    #     PUBLIC 让我们 MagiaLegacy 链接时也用这个 version script，但
-    #     脚本里 global: 段列出的 shadowhook_init 等符号是 libshadowhook.so
-    #     提供的、不在我们自己的 object 里。lld 18 strict mode 直接报
-    #     "version script assignment of 'global' to symbol ... failed:
-    #     symbol not defined"。
-    # (c) -Werror + -Weverything —— Clang 18 新增了一堆 -Weverything
-    #     拉出的新警告类（unsafe-buffer-usage / reserved-identifier /
-    #     declaration-after-statement 等），v1.1.1 写就时还不存在。
-    #     -Werror 让 shadowhook 自己也编不过；即使去掉 -Werror，
-    #     -Weverything 仍会刷出 ~2000 条噪音 warning 污染 CI log。
-    #     shadowhook 是字节维护的 vendored 依赖、对我们就是黑盒，
-    #     没必要让它的 self-warning 进我们视野。
-    # 修法：把所有 `PUBLIC -std=c17 / -Oz` 一律改 PRIVATE（shadowhook 自己
-    # 编译/链接时仍吃这些 flag，不传染消费者），并从源头去掉 -Werror
-    # 和 -Weverything。
+    # v2.0.1 已经把编译选项都改成 PRIVATE 了（v1.1.1 那一堆 PUBLIC 传染问题
+    # 不复存在），只剩 -Weverything -Werror 需要去掉：Clang 18 新增的警告类
+    # 在 v2.0.1 写就时还不存在，-Werror 会让它自己编不过，-Weverything 还会
+    # 刷出大量噪音污染 CI 日志。shadowhook 对我们是黑盒，没必要让它的
+    # self-warning 进我们视野。
     PATCH_COMMAND  sed -i
-                   -e "s/PUBLIC -std=c17/PRIVATE -std=c17/"
-                   -e "s/PUBLIC -Oz/PRIVATE -Oz/g"
                    -e "s/-Weverything//g"
                    -e "s/-Werror//g"
                    shadowhook/src/main/cpp/CMakeLists.txt

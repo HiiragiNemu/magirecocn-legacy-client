@@ -93,6 +93,19 @@
 
 static JavaVM* gJvm = nullptr;
 
+// ⚠ App 类的全局引用**必须在 JNI_OnLoad 阶段**缓存。
+//
+// JNI_OnLoad 跑在 System.loadLibrary 的调用线程上，那个线程持有 App ClassLoader，
+// FindClass 能解析到我们自己的类。而 hook 回调与我们起的工作线程走的是
+// AttachCurrentThread —— 那里的 FindClass 用**系统 ClassLoader**，看不到 App 类，
+// 只会返回 null 并挂一个 ClassNotFoundException。
+//
+// 这个坑在 （旧客户端仓库） 的 MagiaClient.cpp 里有白纸黑字的警告
+// （ProxyBackends 那段），第一版还是照着踩了：真机日志里是
+//     E/MagiaCN_Legacy: [UrlConfig] 找不到 CNDownloaderFix
+static jclass gClsDownloaderFix = nullptr;   // io.kamihama.magianative.CNDownloaderFix
+static jclass gClsRestClient    = nullptr;   // io.kamihama.magianative.RestClient
+
 namespace cocos2d {
     struct Data { unsigned char* _bytes; ssize_t _size; };
 }
@@ -166,10 +179,10 @@ static void* triggerThreadMain(void*) {
     JNIEnv* env = attachEnv(attached);
     if (!env) { LOGE("[trigger] 拿不到 JNIEnv"); return nullptr; }
 
-    jclass cls = env->FindClass("io/kamihama/magianative/RestClient");
+    // 用 JNI_OnLoad 缓存的全局引用，不要在这里 FindClass（见文件顶部的说明）
+    jclass cls = gClsRestClient;
     if (!cls) {
-        if (env->ExceptionCheck()) env->ExceptionClear();
-        LOGE("[trigger] 找不到 RestClient");
+        LOGE("[trigger] RestClient 全局引用缺失（JNI_OnLoad 阶段没缓存上）");
         if (attached) gJvm->DetachCurrentThread();
         return nullptr;
     }
@@ -177,7 +190,6 @@ static void* triggerThreadMain(void*) {
     if (!mid) {
         if (env->ExceptionCheck()) env->ExceptionClear();
         LOGE("[trigger] 找不到 startCNDownload()V");
-        env->DeleteLocalRef(cls);
         if (attached) gJvm->DetachCurrentThread();
         return nullptr;
     }
@@ -187,7 +199,6 @@ static void* triggerThreadMain(void*) {
         LOGE("[trigger] startCNDownload 抛出异常，已清除");
         env->ExceptionClear();
     }
-    env->DeleteLocalRef(cls);
     if (attached) gJvm->DetachCurrentThread();
     return nullptr;
 }
@@ -252,12 +263,12 @@ static void* endpointThreadMain(void*) {
     JNIEnv* env = attachEnv(attached);
     if (!env) { LOGE("[UrlConfig] 拿不到 JNIEnv"); return nullptr; }
     do {
-        jclass cls = env->FindClass("io/kamihama/magianative/CNDownloaderFix");
-        if (!cls) { if (env->ExceptionCheck()) env->ExceptionClear();
-                    LOGE("[UrlConfig] 找不到 CNDownloaderFix"); break; }
+        // 同上：用全局引用，不 FindClass
+        jclass cls = gClsDownloaderFix;
+        if (!cls) { LOGE("[UrlConfig] CNDownloaderFix 全局引用缺失"); break; }
         jmethodID mid = env->GetStaticMethodID(cls, "getEndpoint", "(I)Ljava/lang/String;");
         if (!mid) { if (env->ExceptionCheck()) env->ExceptionClear();
-                    LOGE("[UrlConfig] 找不到 getEndpoint(I)"); env->DeleteLocalRef(cls); break; }
+                    LOGE("[UrlConfig] 找不到 getEndpoint(I)"); break; }
         jobject js = env->CallStaticObjectMethod(cls, mid, (jint)0);
         if (env->ExceptionCheck()) { env->ExceptionClear(); LOGE("[UrlConfig] getEndpoint 抛异常"); }
         std::string json;
@@ -266,7 +277,6 @@ static void* endpointThreadMain(void*) {
             if (utf) { json = utf; env->ReleaseStringUTFChars((jstring)js, utf); }
             env->DeleteLocalRef(js);
         }
-        env->DeleteLocalRef(cls);
         std::string base = extractEndpoint(json);
         if (base.empty()) { LOGE("[UrlConfig] 响应里没有 endpoint，放弃重定向（将回落到原版地址）"); break; }
         while (!base.empty() && base.back() == '/') base.pop_back();   // 去掉尾斜杠，免得拼成 //
@@ -438,11 +448,38 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     LOGI("========== MagiaLegacy JNI_OnLoad ==========");
     LOGI("[VERSION] magia-native v1（取代 libuwasa；下载流水线待接管）");
 
+    // ── 先缓存 App 类的全局引用 ──
+    // 本函数所在线程持有 App ClassLoader，这是唯一能 FindClass 到我们自己类的时机。
+    {
+        struct { const char* name; jclass* slot; } want[] = {
+            { "io/kamihama/magianative/CNDownloaderFix", &gClsDownloaderFix },
+            { "io/kamihama/magianative/RestClient",      &gClsRestClient    },
+        };
+        for (size_t i = 0; i < sizeof(want) / sizeof(want[0]); i++) {
+            jclass local = env->FindClass(want[i].name);
+            if (local) {
+                *want[i].slot = (jclass)env->NewGlobalRef(local);
+                env->DeleteLocalRef(local);
+                LOGI("[JNI] 已缓存 %s", want[i].name);
+            } else {
+                if (env->ExceptionCheck()) env->ExceptionClear();
+                LOGE("[JNI] 找不到 %s —— 相关功能将不可用", want[i].name);
+            }
+        }
+    }
+
     const char* LIB = "libmadomagi_native.so";
 
     int rc = shadowhook_init(SHADOWHOOK_MODE_UNIQUE, false);
-    if (rc != 0) LOGE("[shadowhook] init 失败 rc=%d errno=%d", rc, shadowhook_get_errno());
-    else         LOGI("[shadowhook] init OK");
+    if (rc != 0) {
+        // init 失败时后面每个 hook 都会以同样的 errno 失败，刷十几行同样的错
+        // 没有意义，直接收工——本库不装 hook 也不影响进程存活。
+        LOGE("[shadowhook] init 失败 rc=%d errno=%d %s，本次不装任何 hook",
+             rc, shadowhook_get_errno(), shadowhook_to_errmsg(shadowhook_get_errno()));
+        LOGE("[shadowhook] version=%s", shadowhook_get_version());
+        return JNI_VERSION_1_6;
+    }
+    LOGI("[shadowhook] init OK version=%s", shadowhook_get_version());
 
     auto H = [&](const char* sym, void* fn, void** old, const char* label) -> bool {
         void* stub = shadowhook_hook_sym_name(LIB, sym, fn, old);
