@@ -98,7 +98,7 @@ public final class CNLog {
     /** native / 引擎日志的判定关键字。命中即归入 {@link #SRC_NATIVE}。 */
     private static final String[] NATIVE_HINTS = {
         "MagiaClientJNI", "MagiaCNDownloader", "Cocos2dx", "cocos2d",
-        "DownloadScene", "AssetLoad", "magia", "Magia", "libcn_hook",
+        "DownloadScene", "AssetLoad", "magia", "Magia", "MagiaCN_Legacy",
         "madomagi", "f4samurai"
     };
 
@@ -514,7 +514,7 @@ public final class CNLog {
                 // 回灌最近 1000 行，而不是只从当前时刻开始。
                 //
                 // 进程启动最早的一段（各 native 库的 JNI_OnLoad）恰恰是最需要看的：
-                // libuwasa / libcn_hook 都在那里装 hook 并打出「Successfully hooked X」
+                // libMagiaLegacy 就在那里装 hook 并打出「[Hook] ✓ / ✗ X」
                 // 「Unable to hook X」。而 CNLog 要等 native 调进 Java 才起得来，
                 // 用 -T 1 的话这些行早就过去了，永远抓不到。
                 //

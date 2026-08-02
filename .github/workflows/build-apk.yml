@@ -119,6 +119,46 @@ jobs:
       - name: 🚧 校验 native 入口保护（异常绝不外泄）
         run: python3 tools/check-entry-guard.py
 
+      - name: 🛠 编译 libMagiaLegacy.so（magia-native）
+        run: |
+          set -euo pipefail
+          # 取代原先包内两个预编译的 Dobby hook 库：
+          #   libuwasa.so   一改：端点重定向（顺带按英文行宽重排剧情文本，正是要去掉的）
+          #   libcn_hook.so 二改：拦引擎下载入口接我们的浮层
+          NDK_ROOT="${ANDROID_NDK_HOME:-}"
+          if [ -z "$NDK_ROOT" ] || [ ! -d "$NDK_ROOT" ]; then
+            NDK_BASE="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/ndk"
+            NDK_ROOT="$(ls -1d $NDK_BASE/* 2>/dev/null | sort -V | tail -1)"
+          fi
+          if [ -z "$NDK_ROOT" ] || [ ! -d "$NDK_ROOT" ]; then
+            echo "::error::找不到 Android NDK"; exit 1
+          fi
+          echo "[NDK] 使用 $NDK_ROOT"
+          # shadowhook v1.1.1 的 CMakeLists 要求 CMake >= 3.30.5，
+          # 低于此版本会在 configure 阶段直接失败
+          cmake --version | head -1
+
+          STRIP="$(find "$NDK_ROOT/toolchains/llvm/prebuilt" -name llvm-strip 2>/dev/null | head -1)"
+          for ABI in arm64-v8a armeabi-v7a; do
+            BUILD_DIR="magia-native/build/$ABI"
+            cmake -G Ninja \
+              -DCMAKE_TOOLCHAIN_FILE="$NDK_ROOT/build/cmake/android.toolchain.cmake" \
+              -DANDROID_ABI="$ABI" -DANDROID_PLATFORM=android-21 \
+              -DCMAKE_BUILD_TYPE=Release \
+              -B "$BUILD_DIR" magia-native
+            cmake --build "$BUILD_DIR" --parallel
+            SO="$BUILD_DIR/libMagiaLegacy.so"
+            if [ ! -f "$SO" ]; then echo "::error::[$ABI] 未产出 libMagiaLegacy.so"; exit 1; fi
+            cp "$SO" "lib/$ABI/libMagiaLegacy.so"
+            [ -n "$STRIP" ] && "$STRIP" --strip-unneeded "lib/$ABI/libMagiaLegacy.so"
+            echo "[$ABI] $(du -h lib/$ABI/libMagiaLegacy.so | cut -f1)"
+          done
+
+          # 旧库必须已从包内移除，否则会与新库对同一地址重复装 hook
+          for f in lib/arm64-v8a/libuwasa.so lib/armeabi-v7a/libuwasa.so lib/arm64-v8a/libcn_hook.so; do
+            if [ -e "$f" ]; then echo "::error::$f 仍然存在，会与 libMagiaLegacy 冲突"; exit 1; fi
+          done
+
       - name: 🎵 转换 BGM：HCA → OGG（vgmstream + ffmpeg）
         run: |
           set -euo pipefail
