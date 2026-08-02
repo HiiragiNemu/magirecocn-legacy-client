@@ -147,7 +147,13 @@ public final class CNDownloaderFix {
                         CNLog.initEarly();
                         File finalFlag = new File(FINAL_FLAG);
                         if (finalFlag.isFile()) {
-                            CNLog.i(TAG, "triggerInstaller: flag 已存在，无需安装");
+                            CNLog.i(TAG, "triggerInstaller: flag 已存在，无需安装，转入热更检查");
+                            // 资源已就位的正常启动，唯一还要做的就是热更检查。
+                            // 旧版由 libcn_hook 在 JNI_OnLoad 末尾经 JNI 叫起
+                            // RestClient.checkAndApplyHotUpdate；那条路真机上
+                            // 浮层建不出来（详见 CNHotUpdateCheck 的类注释），
+                            // 现在改由 Java 侧自己跑，时机与等待条件都可控。
+                            CNHotUpdateCheck.start();
                             return;
                         }
                         CNLog.i(TAG, "triggerInstaller: flag 不存在，由 Java 侧启动安装器");
@@ -890,7 +896,13 @@ public final class CNDownloaderFix {
     // 解压
     // ==================================================================
 
-    private static void extractChecked(File archive, File root) throws IOException {
+    /**
+     * 解压 {@code archive} 到 {@code root}，带 Zip Slip 防护与逐条目大小核对。
+     *
+     * <p>包内可见（而非 private）是因为热更新走的是同一套解压要求：
+     * {@link CNHotUpdateCheck} 直接复用，不再另写一份。
+     */
+    static void extractChecked(File archive, File root) throws IOException {
         if (!archive.isFile()) {
             throw new IOException("Archive is missing: " + archive);
         }
