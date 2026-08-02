@@ -76,12 +76,26 @@ public final class CNDownloaderFix {
     private static final long   STALE_SPEED_NS = TimeUnit.SECONDS.toNanos(2);
     private static final Object EXTRACT_LOCK   = new Object();
 
+    /**
+     * 下载顺序。
+     *
+     * <p><b>热更新的两个包排在最前面</b>：{@code cn_scenario_update.zip}（台词）与
+     * {@code cn_js_update.zip}（前端脚本）是热更新真正依赖的内容，先拿到它们，
+     * 玩家在剩下十几 GB 还没下完时就已经是最新的汉化与前端。排在后面的话，
+     * 要等 voice/movie 那几个大包下完才轮得到，热更新形同虚设。
+     *
+     * <p>顺序只是下载次序，不是身份：所有逻辑都按**文件名**索引，完成标记也是
+     * {@code <文件名>.done}，所以调整顺序不会让既有安装失效、也不会触发重下。
+     * 与 {@link CNCNDownloadUI#FILE_NAMES} / {@link CNCNDownloadUI#FILE_URLS}
+     * <b>必须逐项对齐</b>——三张表是按下标并行的。
+     */
     private static final String[] FILE_NAMES = {
+        "cn_scenario_update.zip", "cn_js_update.zip",
         "cn_base_00_db.zip", "cn_base_01_json.zip", "cn_base_02.zip",
         "cn_base_03.zip", "cn_base_04.zip", "cn_base_05.zip",
         "cn_base_06.zip", "cn_magica_resource.zip", "cn_scenario_img.zip",
-        "cn_voice_01.zip", "cn_voice_02_done.zip", "cn_js_update.zip",
-        "movie.zip", "movie2.zip", "cn_scenario_update.zip"
+        "cn_voice_01.zip", "cn_voice_02_done.zip",
+        "movie.zip", "movie2.zip"
     };
 
     private static final int ARCHIVE_COUNT = 15;

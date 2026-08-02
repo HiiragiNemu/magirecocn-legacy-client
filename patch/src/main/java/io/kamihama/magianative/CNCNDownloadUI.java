@@ -69,7 +69,11 @@ public class CNCNDownloadUI {
     public static TextView tvSpeed;
     public static Handler uiHandler;
 
+    // 顺序与 CNDownloaderFix.FILE_NAMES 逐项对齐（三张表按下标并行）。
+    // 热更新的两个包排最前，理由见 CNDownloaderFix.FILE_NAMES 的注释。
     public static final String[] FILE_URLS = {
+        "https://assets.example.test/cn_scenario_update.zip",
+        "https://assets.example.test/cn_js_update.zip",
         "https://assets.example.test/cn_base_00_db.zip",
         "https://assets.example.test/cn_base_01_json.zip",
         "https://assets.example.test/cn_base_02.zip",
@@ -81,18 +85,17 @@ public class CNCNDownloadUI {
         "https://assets.example.test/cn_scenario_img.zip",
         "https://assets.example.test/cn_voice_01.zip",
         "https://assets.example.test/cn_voice_02_done.zip",
-        "https://assets.example.test/cn_js_update.zip",
         "https://assets.example.test/movie.zip",
-        "https://assets.example.test/movie2.zip",
-        "https://assets.example.test/cn_scenario_update.zip"
+        "https://assets.example.test/movie2.zip"
     };
 
     public static final String[] FILE_NAMES = {
+        "cn_scenario_update.zip", "cn_js_update.zip",
         "cn_base_00_db.zip", "cn_base_01_json.zip", "cn_base_02.zip",
         "cn_base_03.zip", "cn_base_04.zip", "cn_base_05.zip",
         "cn_base_06.zip", "cn_magica_resource.zip", "cn_scenario_img.zip",
-        "cn_voice_01.zip", "cn_voice_02_done.zip", "cn_js_update.zip",
-        "movie.zip", "movie2.zip", "cn_scenario_update.zip"
+        "cn_voice_01.zip", "cn_voice_02_done.zip",
+        "movie.zip", "movie2.zip"
     };
 
     public static int[]   fileStatus     = new int[15];
@@ -128,7 +131,13 @@ public class CNCNDownloadUI {
 
     /** 由 updateSimple() 写入、在 UpdateRunnable 中渲染的阶段标题与明细。 */
     private static volatile String phaseText  = "准备中";
-    private static volatile String detailText = "正在初始化下载器…";
+    /**
+     * 首屏文案。这一行在探测完文件大小之前会显示好几秒，正好用来交代
+     * 「为什么台词/脚本这两个包排在最前面」——否则玩家看到下载顺序和上一版不同，
+     * 只会觉得莫名其妙。
+     */
+    private static volatile String detailText =
+            "正在初始化下载器…\n台词与前端脚本（热更新内容）已排在最前，先下完即可用上最新汉化";
 
     // ---- 配色（取自 BootstrapActivity 的调色板） ----
     private static int COLOR_CARD_STK;
@@ -544,8 +553,12 @@ public class CNCNDownloadUI {
         vStatus.setText(detailText);
         vStatus.setTextColor(COLOR_TEXT);
         vStatus.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
-        vStatus.setSingleLine(true);
-        vStatus.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        // 固定两行：首屏那句要交代「热更新内容已排到最前」，一行放不下。
+        // min=max=2 是为了让这一行的高度恒定——否则文案在一行/两行之间变动时，
+        // 下面的文件列表会跟着上下跳。
+        vStatus.setMinLines(2);
+        vStatus.setMaxLines(2);
+        vStatus.setEllipsize(android.text.TextUtils.TruncateAt.END);
         rightCol.addView(vStatus, lpRow(0, dp(act, 6)));
 
         ScrollView slotScroll = new ScrollView(act);
