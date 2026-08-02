@@ -128,12 +128,17 @@ public final class CNBgm {
 
     public static int current() { return current; }
 
-    /** 读回上次的选择；没存过默认关闭——不问自来的音乐挺讨厌的。 */
+    /**
+     * 读回上次的选择。
+     *
+     * <p>没存过时默认 <b>BGM1</b>：需求是「给浮层加上 BGM」，默认静音的话等于没加。
+     * 不喜欢点一下胶囊就关，选择会被记住。
+     */
     public static int loadChoice(Context ctx) {
         try {
             return ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                      .getInt(PREF_BGM, 0);
-        } catch (Throwable t) { return 0; }
+                      .getInt(PREF_BGM, 1);
+        } catch (Throwable t) { return 1; }
     }
 
     /**
@@ -233,10 +238,22 @@ public final class CNBgm {
             AudioTrack      out   = null;
             AssetFileDescriptor afd = null;
             try {
-                afd = ctx.getAssets().openFd(track.file);
                 ex = new MediaExtractor();
-                ex.setDataSource(afd.getFileDescriptor(),
-                                 afd.getStartOffset(), afd.getLength());
+                // openFd() 只对**未压缩**的 asset 有效；一旦打包时被 deflate 了，
+                // 它会抛 "This file can not be opened as a file descriptor"。
+                // apktool.yml 的 doNotCompress 已经加了 ogg，但不能把能不能出声
+                // 押在打包细节上——失败就落一份到 cacheDir 再放。
+                try {
+                    afd = ctx.getAssets().openFd(track.file);
+                    ex.setDataSource(afd.getFileDescriptor(),
+                                     afd.getStartOffset(), afd.getLength());
+                } catch (Throwable notFd) {
+                    if (afd != null) { try { afd.close(); } catch (Throwable ignore) {} afd = null; }
+                    CNLog.w(TAG, "asset 是压缩的，改用 cacheDir 副本: " + notFd);
+                    java.io.File cached = extractToCache(ctx, track.file);
+                    if (cached == null) { CNLog.e(TAG, "释放 BGM 到 cacheDir 失败"); return; }
+                    ex.setDataSource(cached.getAbsolutePath());
+                }
 
                 int audioTrackIdx = -1;
                 MediaFormat fmt = null;
@@ -253,14 +270,29 @@ public final class CNBgm {
                 }
                 ex.selectTrack(audioTrackIdx);
 
+                // 以**容器里的实际格式**为准建 AudioTrack，而不是照抄 bgm.json。
+                // 两者理应一致，不一致就说明音频重转过而元数据没跟上——那时用错
+                // 采样率会变调，宁可信文件本身。
+                int srcRate = fmt.containsKey(MediaFormat.KEY_SAMPLE_RATE)
+                        ? fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE) : track.sampleRate;
+                int srcCh   = fmt.containsKey(MediaFormat.KEY_CHANNEL_COUNT)
+                        ? fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT) : track.channels;
+                if (srcRate != track.sampleRate || srcCh != track.channels) {
+                    CNLog.w(TAG, "bgm.json 与音频实际格式不一致：json="
+                            + track.sampleRate + "Hz/" + track.channels + "ch 实际="
+                            + srcRate + "Hz/" + srcCh + "ch，以实际为准");
+                }
+                CNLog.i(TAG, "解码 " + track.file + " mime=" + fmt.getString(MediaFormat.KEY_MIME)
+                        + " " + srcRate + "Hz/" + srcCh + "ch");
+
                 codec = MediaCodec.createDecoderByType(fmt.getString(MediaFormat.KEY_MIME));
                 codec.configure(fmt, null, null, 0);
                 codec.start();
 
-                out = buildAudioTrack(track);
+                out = buildAudioTrack(srcRate, srcCh);
                 out.play();
 
-                decodeLoop(ex, codec, out);
+                decodeLoop(ex, codec, out, srcCh);
             } catch (Throwable t) {
                 CNLog.e(TAG, "BGM 播放线程异常（已忽略）", t);
             } finally {
@@ -284,11 +316,14 @@ public final class CNBgm {
          * 循环点，所以尾部 padding 永远不会被播出来，接缝也没有空隙
          * （AudioTrack 里还压着已排队的音频，seek+flush 的几毫秒不会造成断流）。
          */
-        private void decodeLoop(MediaExtractor ex, MediaCodec codec, AudioTrack out) {
-            final int bytesPerFrame = 2 * track.channels;   // PCM 16bit
+        private void decodeLoop(MediaExtractor ex, MediaCodec codec, AudioTrack out,
+                                int channels) {
+            final int bytesPerFrame = 2 * channels;   // PCM 16bit
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
             long framesWritten = track.loopStart;
             boolean sawInputEos = false;
+            long totalWritten = 0L;
+            int  loops = 0;
 
             while (running) {
                 if (!sawInputEos) {
@@ -324,6 +359,12 @@ public final class CNBgm {
                             buf.get(pcm, 0, pcm.length);
                             writeAll(out, pcm);
                             framesWritten += write;
+                            if (totalWritten == 0L) {
+                                // 第一块真正写进声卡。有这一行就说明解码链是通的，
+                                // 「没声音」的锅在音量/焦点那边；没有就说明卡在更早的地方。
+                                CNLog.i(TAG, "首块 PCM 已写入 AudioTrack（" + write + " 帧）");
+                            }
+                            totalWritten += write;
                         }
                     }
                     codec.releaseOutputBuffer(outIdx, false);
@@ -331,6 +372,7 @@ public final class CNBgm {
                     if (framesWritten >= track.loopEnd
                             || (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
                         if (!running) break;
+                        CNLog.i(TAG, "循环点到达，回到起点（第 " + (++loops) + " 圈）");
                         // 回到循环起点。loopStart==0 时 0 必是同步点，重建出来精确；
                         // 若将来有非零起点，这里会有几毫秒误差（见类注释）。
                         long seekUs = LOOP_START_MUST_BE_ZERO && track.loopStart == 0
@@ -352,6 +394,48 @@ public final class CNBgm {
                 if (n <= 0) break;
                 off += n;
             }
+        }
+    }
+
+    /**
+     * 把 asset 释放成 cacheDir 里的真实文件，供 {@link MediaExtractor} 按路径读。
+     *
+     * <p>只在 {@code openFd()} 失败（asset 被压缩）时才走这条路。已经释放过且大小
+     * 一致就直接复用，不重复写盘。
+     */
+    private static java.io.File extractToCache(Context ctx, String assetPath) {
+        InputStream in = null;
+        java.io.FileOutputStream fos = null;
+        try {
+            java.io.File dir = new java.io.File(ctx.getCacheDir(), "cnv_bgm");
+            if (!dir.isDirectory() && !dir.mkdirs() && !dir.isDirectory()) return null;
+            String name = assetPath.substring(assetPath.lastIndexOf('/') + 1);
+            java.io.File dst = new java.io.File(dir, name);
+
+            in = ctx.getAssets().open(assetPath);
+            if (dst.isFile() && dst.length() > 0 && dst.length() == in.available()) {
+                return dst;                      // 已经释放过，直接用
+            }
+            java.io.File tmp = new java.io.File(dir, name + ".tmp");
+            fos = new java.io.FileOutputStream(tmp);
+            byte[] buf = new byte[64 * 1024];
+            int n;
+            while ((n = in.read(buf)) > 0) fos.write(buf, 0, n);
+            fos.flush();
+            try { fos.getFD().sync(); } catch (Throwable ignore) {}
+            fos.close(); fos = null;
+            // 先写临时文件再改名：中途被杀不会留下半截文件被下次当成完整的用
+            if (dst.isFile() && !dst.delete()) { /* 覆盖失败也继续尝试 rename */ }
+            if (!tmp.renameTo(dst)) { tmp.delete(); return null; }
+            CNLog.i(TAG, "已释放 " + assetPath + " → " + dst.getAbsolutePath()
+                    + "（" + dst.length() / 1024 + " KB）");
+            return dst;
+        } catch (Throwable t) {
+            CNLog.w(TAG, "释放 asset 失败: " + assetPath, t);
+            return null;
+        } finally {
+            if (fos != null) try { fos.close(); } catch (Throwable ignore) {}
+            if (in  != null) try { in.close();  } catch (Throwable ignore) {}
         }
     }
 
@@ -378,16 +462,16 @@ public final class CNBgm {
         try { return codec.getOutputBuffer(idx); } catch (Throwable t) { return null; }
     }
 
-    private static AudioTrack buildAudioTrack(Track t) {
-        int chMask = (t.channels >= 2)
+    private static AudioTrack buildAudioTrack(int sampleRate, int channels) {
+        int chMask = (channels >= 2)
                 ? AudioFormat.CHANNEL_OUT_STEREO
                 : AudioFormat.CHANNEL_OUT_MONO;
         int min = AudioTrack.getMinBufferSize(
-                t.sampleRate, chMask, AudioFormat.ENCODING_PCM_16BIT);
-        if (min <= 0) min = t.sampleRate * 2 * t.channels / 4;   // 兜底约 250ms
+                sampleRate, chMask, AudioFormat.ENCODING_PCM_16BIT);
+        if (min <= 0) min = sampleRate * 2 * channels / 4;   // 兜底约 250ms
         // 缓冲开大一些：解码线程被系统调度挤开时不至于断音，
         // 也给 seek+flush 的那几毫秒留出余量。
-        int bufSize = Math.max(min * 4, t.sampleRate * 2 * t.channels / 2);
+        int bufSize = Math.max(min * 4, sampleRate * 2 * channels / 2);
 
         AudioAttributes attrs = new AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -395,10 +479,13 @@ public final class CNBgm {
                 .build();
         AudioFormat af = new AudioFormat.Builder()
                 .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                .setSampleRate(t.sampleRate)
+                .setSampleRate(sampleRate)
                 .setChannelMask(chMask)
                 .build();
-        return new AudioTrack(attrs, af, bufSize,
+        AudioTrack at = new AudioTrack(attrs, af, bufSize,
                 AudioTrack.MODE_STREAM, AudioManager.AUDIO_SESSION_ID_GENERATE);
+        CNLog.i(TAG, "AudioTrack 就绪 " + sampleRate + "Hz/" + channels + "ch"
+                + " buf=" + bufSize + " state=" + at.getState());
+        return at;
     }
 }

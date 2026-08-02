@@ -251,6 +251,9 @@ jobs:
           APK=.build/legacy-client.apk
           echo "sha256: $(sha256sum "$APK" | cut -d' ' -f1)"
           echo "大小:   $(stat -c%s "$APK") 字节"
+          # BGM 的 ogg 必须未压缩，否则 AssetManager.openFd() 打不开，
+          # 表现为「界面一切正常、就是没声音」——光看界面发现不了
+          python3 tools/check-asset-compression.py "$APK"
           # 签名指纹必须是 AOSP testkey，否则装不上既有设备
           FP=$("${BT_DIR}/apksigner" verify --print-certs "$APK" \
                 | grep -m1 'SHA-256 digest' | awk '{print $NF}')
