@@ -1332,7 +1332,20 @@ public class CNCNDownloadUI {
         return b;
     }
 
-    /** 询问框的选择处理：落地标记 → 记「已问过」→ 关框 → 刷新胶囊 → 回调。 */
+    /**
+     * 询问框的选择处理：落地标记 → 记「已问过」→ 关框 → 刷新胶囊 → 收尾。
+     *
+     * <p>收尾分两种，取决于是谁弹的框：
+     * <ul>
+     *   <li><b>安装收尾的自动询问</b>（{@code onDone != null}）：交回给
+     *       {@link CNDownloaderFix}，它问完还要收浮层，重启由它统一做，
+     *       这里不能自己重启，否则会重启两次。</li>
+     *   <li><b>教程胶囊</b>（{@code onDone == null}）：自己走「Toast + 3 秒 +
+     *       重启」。不重启的话玩家点完什么反应都没有，也没法确认设置生没生效；
+     *       而且引擎可能已经走过首个 pushSceneTop 了，那时标记要到下次启动
+     *       才会被消费——重启一次把这件事变确定。</li>
+     * </ul>
+     */
     private static final class TutorialChoice implements View.OnClickListener {
         private final Activity act;
         private final boolean  yes;
@@ -1341,6 +1354,7 @@ public class CNCNDownloadUI {
             this.act = act; this.yes = yes; this.onDone = onDone;
         }
         @Override public void onClick(View v) {
+            boolean handedBack = false;
             try {
                 boolean armed = CNTutorialPrompt.set(yes);
                 CNTutorialPrompt.markAsked();
@@ -1348,15 +1362,55 @@ public class CNCNDownloadUI {
                                     : "玩家选择跳过序章");
                 closeTutorialDialog();
                 styleTutorialPill(act);
-                toast(act, yes ? "下次启动将播放序章" : "已设为正常进入游戏");
             } catch (Throwable t) {
                 CNLog.e("教程", "处理教程选择失败", t);
                 try { closeTutorialDialog(); } catch (Throwable ignore) {}
             } finally {
                 if (onDone != null) {
+                    handedBack = true;
                     try { onDone.run(); } catch (Throwable ignore) {}
                 }
             }
+            if (!handedBack) restartAfterTutorialChoice(act, yes);
+        }
+    }
+
+    /**
+     * 教程胶囊改完设置后的重启。本方法在 UI 线程上被调用，而
+     * {@code noticeAndRestart} 要睡 3 秒，所以另起线程。
+     */
+    private static void restartAfterTutorialChoice(final Activity act, final boolean yes) {
+        try {
+            final String head = yes ? "已设为播放序章" : "已设为正常进入游戏";
+            // 安装还在跑：不能重启，会把下载打断。安装收尾自己会重启一次，
+            // 那时这个设置照样生效，等它就好。
+            if (CNDownloaderFix.isInstalling()) {
+                CNLog.i("教程", "安装进行中，改完教程设置不立刻重启，等安装收尾");
+                toast(act, head + "，安装完成后重启生效");
+                return;
+            }
+            // 热更检查还在跑：同理，重启会打断下载或解压到一半。挂到检查的
+            // 收尾上去做。
+            final String msg = head + "，3 秒后自动重启游戏";
+            if (CNHotUpdateCheck.requestRestartWhenDone(msg)) {
+                CNLog.i("教程", "热更检查进行中，重启接力给检查收尾");
+                toast(act, head + "，热更检查完成后重启");
+                return;
+            }
+            Thread t = new Thread("cnv-tutorial-restart") {
+                @Override public void run() {
+                    try {
+                        CNDownloaderFix.noticeAndRestart(msg);
+                    } catch (Throwable th) {
+                        CNLog.e("教程", "改完教程设置后重启失败", th);
+                    }
+                }
+            };
+            t.setDaemon(true);
+            t.start();
+        } catch (Throwable t) {
+            CNLog.e("教程", "起不了重启线程", t);
+            toast(act, "设置已保存，请手动重启游戏生效");
         }
     }
 

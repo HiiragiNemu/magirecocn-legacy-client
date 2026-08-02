@@ -103,6 +103,15 @@ public final class CNDownloaderFix {
     /** 防止 native hook 与 Java 侧同时触发安装器。 */
     private static final AtomicBoolean installerStarted = new AtomicBoolean(false);
 
+    /**
+     * 安装器是否正在跑。教程胶囊用它决定「改完设置要不要立刻重启」——
+     * 安装到一半重启会把下载打断（虽然 .cnvprog 能续传，但没必要），
+     * 而且安装收尾本来就会重启一次，等它就好。
+     */
+    static boolean isInstalling() {
+        return installerStarted.get();
+    }
+
     /** 玩家点「重试」时用来唤醒安装器主循环。 */
     private static final Object RETRY_LOCK = new Object();
     private static volatile boolean retryRequested = false;
@@ -458,7 +467,7 @@ public final class CNDownloaderFix {
             // 屏幕上什么都没有——玩家不知道发生了什么，也不知道要等。
             // 选了序章的话，序章在重启后的那个进程里播（native 侧在首个
             // pushSceneTop 上消费标记），所以两条路径的重启时机是一样的。
-            noticeAndRestart();
+            noticeAndRestart("安装完成，3 秒后自动重启游戏");
         } catch (IOException e) {
             failInstaller("Final flag commit failed", e);
         }
@@ -491,16 +500,23 @@ public final class CNDownloaderFix {
         }
     }
 
-    /** Toast 告知即将重启，倒数 3 秒后重启。 */
-    private static void noticeAndRestart() {
+    /**
+     * Toast 告知即将重启，倒数 3 秒后重启。<b>会阻塞 3 秒</b>，别在 UI 线程上调。
+     *
+     * <p>包内可见：教程胶囊那条路（{@link CNCNDownloadUI} 的教程询问框）改完
+     * 选择后也要走同一套「有提示的重启」，不另写一份。
+     *
+     * @param toastText 提示文案。两条路的上下文不同（装完 / 改了教程设置），
+     *                  各说各的，但节奏一致。
+     */
+    static void noticeAndRestart(final String toastText) {
         try {
             final Activity act = RestClient.getCurrentActivity();
             if (act != null) {
                 act.runOnUiThread(new Runnable() {
                     @Override public void run() {
                         try {
-                            android.widget.Toast.makeText(act,
-                                    "安装完成，3 秒后自动重启游戏",
+                            android.widget.Toast.makeText(act, toastText,
                                     android.widget.Toast.LENGTH_LONG).show();
                         } catch (Throwable ignore) {}
                     }

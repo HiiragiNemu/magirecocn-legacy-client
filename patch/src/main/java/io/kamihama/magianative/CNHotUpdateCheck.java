@@ -84,6 +84,24 @@ public final class CNHotUpdateCheck {
     private static final java.util.concurrent.atomic.AtomicBoolean STARTED =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
+    /** 检查是否正在跑（含下载与解压）。教程胶囊据此决定要不要立刻重启。 */
+    private static volatile boolean running = false;
+    /** 非 null 表示「本次检查跑完后按这个文案重启」。由教程胶囊设置。 */
+    private static volatile String pendingRestartMsg = null;
+
+    /** 检查是否正在进行。跑到一半重启会打断下载或解压。 */
+    static boolean isRunning() { return running; }
+
+    /**
+     * 请求「等本次检查跑完再重启」。教程胶囊在检查进行中被点时走这条路，
+     * 而不是当场重启。检查已经收工的话返回 false，调用方自己重启。
+     */
+    static boolean requestRestartWhenDone(String toastText) {
+        if (!running) return false;
+        pendingRestartMsg = toastText;
+        return true;
+    }
+
     private CNHotUpdateCheck() {}
 
     /** 一个热更包的全部参数。 */
@@ -172,6 +190,7 @@ public final class CNHotUpdateCheck {
 
         java.util.concurrent.ScheduledExecutorService watchdog = startWatchdog(act);
         boolean applied = false;
+        running = true;
         try {
             CNCNDownloadUI.updateSimple("检查热更新", "正在查询台词与前端脚本的版本…", 0);
             for (int i = 0; i < PACKAGES.length; i++) {
@@ -190,9 +209,20 @@ public final class CNHotUpdateCheck {
             CNCNDownloadUI.updateSimple("已是最新", "台词与前端脚本均为最新版本，即将进入游戏", 0);
         }
         sleep(IDLE_LINGER_MS);
+        // running 要在浮层收掉之前清掉：之后再点胶囊（浮层还在的最后一刻）
+        // 应当走「自己重启」那条路，而不是挂在一个马上就结束的检查上。
+        running = false;
         CNCNDownloadUI.hide();
-        // 这条路上不重启：重启只发生在首次安装跑完那一次。热更是启动早期跑的，
-        // 引擎此时还没读到台词/脚本，原地替换即可生效——原实现也是这么做的。
+
+        // 检查本身不重启——热更是启动早期跑的，引擎此时还没读到台词/脚本，
+        // 原地替换即可生效，原实现也是这么做的。唯一的例外是玩家在检查进行中
+        // 点了教程胶囊：那次重启不能打断下载/解压，于是接力到这里来做。
+        String msg = pendingRestartMsg;
+        pendingRestartMsg = null;
+        if (msg != null) {
+            CNLog.i(TAG, "检查已收工，执行教程胶囊请求的重启");
+            CNDownloaderFix.noticeAndRestart(msg);
+        }
     }
 
     /**
