@@ -243,14 +243,18 @@ public final class CNDownloaderFix {
      * 只执行一次。
      */
     public static void runInstaller() {
-        // 日志必须在这里就开：浮层没建起来、或安装器压根没被调用，都是最需要
-        // 现场的时候，而那时 CreateUIRunnable 里的 init 根本不会执行。
-        CNLog.initEarly();
-        if (!installerStarted.compareAndSet(false, true)) {
-            CNLog.w(TAG, "安装器已在运行中，跳过重复调用");
-            return;
-        }
+        // ⚠ 从这里到方法结束，**一行都不能在 try 之外**。
+        // 之前把 initEarly() 和下面的哨兵判断放在了 try 前面，结果日志初始化
+        // （mkdirs / 读写 .seq / 开文件 / 装崩溃处理器）任何一步抛出都会直接
+        // 漏进 JNI，hook 清掉异常后就放行了引擎自带的下载场景。
         try {
+            // 日志必须尽早开：浮层没建起来、或安装器压根没被调用，都是最需要
+            // 现场的时候，而那时 CreateUIRunnable 里的 init 根本不会执行。
+            CNLog.initEarly();
+            if (!installerStarted.compareAndSet(false, true)) {
+                CNLog.w(TAG, "安装器已在运行中，跳过重复调用");
+                return;
+            }
             runInstallerInner();
         } catch (Throwable t) {
             // 走到这里说明有意料之外的错误。绝不外抛：让浮层留在屏幕上显示错误，

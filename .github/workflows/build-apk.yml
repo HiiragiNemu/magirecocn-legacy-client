@@ -116,6 +116,9 @@ jobs:
             "https://repo1.maven.org/maven2/com/squareup/okio/okio/1.17.5/okio-1.17.5.jar"
           ls -la .cache/deps
 
+      - name: 🚧 校验 native 入口保护（异常绝不外泄）
+        run: python3 tools/check-entry-guard.py
+
       - name: ☕ 编译 Java 补丁源码 → dex → smali
         run: |
           set -euo pipefail
