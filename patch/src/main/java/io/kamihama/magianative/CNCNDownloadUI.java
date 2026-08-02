@@ -303,6 +303,9 @@ public class CNCNDownloadUI {
     private static GradientDrawable themeChipBg;
     private static GradientDrawable logPillBg;
     private static TextView vBgmPill;
+    private static TextView vTutorialPill;
+    /** 教程询问的模态框。非空即表示正在显示，用于防重入。 */
+    private static FrameLayout tutorialModal;
 
     /** 每个文件一个槽位。 */
     private static final class SlotViews {
@@ -649,6 +652,21 @@ public class CNCNDownloadUI {
             // 只有玩家点了胶囊才会响，CNBgm.current 也只存内存、不落盘。
             styleBgmPill(act);
         }
+
+        // 教程胶囊：点开询问「是否播放新手教程」。常驻——自动询问只在首次安装
+        // 跑完、完成标记落盘那一瞬间弹一次，之后这里就是唯一的入口。
+        vTutorialPill = new TextView(act);
+        vTutorialPill.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
+        vTutorialPill.setTypeface(vTutorialPill.getTypeface(), Typeface.BOLD);
+        vTutorialPill.setGravity(Gravity.CENTER);
+        vTutorialPill.setPadding(dp(act, 12), dp(act, 6), dp(act, 12), dp(act, 6));
+        vTutorialPill.setOnClickListener(new TutorialPillClick(act));
+        LinearLayout.LayoutParams tutLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        tutLp.leftMargin = dp(act, 8);
+        topLeft.addView(vTutorialPill, tutLp);
+        styleTutorialPill(act);
 
         // ── 第 3 层：右上角主题切换胶囊 ──
         themeChipBg = new GradientDrawable();
@@ -1141,6 +1159,213 @@ public class CNCNDownloadUI {
             p.setTextColor(COLOR_SUB);
         }
         p.setBackground(bg);
+    }
+
+    // ==================================================================
+    // 新手教程询问
+    // ==================================================================
+
+    /**
+     * 教程胶囊的点击：无条件弹询问框。
+     *
+     * <p>不做成「点一下直接切换」是刻意的——它的后果（无视账号进度从头播序章）
+     * 比切 BGM 重得多，误触的代价不对等，所以要一次确认。
+     */
+    private static final class TutorialPillClick implements View.OnClickListener {
+        private final Activity act;
+        TutorialPillClick(Activity act) { this.act = act; }
+        @Override public void onClick(View v) { showTutorialDialog(act, null); }
+    }
+
+    /** 按标记状态刷新教程胶囊。已就位＝实心强调色，未就位＝空心。与 BGM 胶囊同语义。 */
+    private static void styleTutorialPill(Activity act) {
+        TextView p = vTutorialPill;
+        if (p == null) return;
+        boolean armed = CNTutorialPrompt.isArmed();
+        p.setText(armed ? "▶ 教程" : "教程");
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(act, 20));
+        if (armed) {
+            bg.setColor(COLOR_LOG_PILL);
+            p.setTextColor(0xFFFFFFFF);
+        } else {
+            bg.setColor(0x00000000);
+            bg.setStroke(dp(act, 1), COLOR_GLASS_STK);
+            p.setTextColor(COLOR_SUB);
+        }
+        p.setBackground(bg);
+    }
+
+    /**
+     * 自动询问：仅在从未问过时弹一次，问过就直接放行。
+     *
+     * <p>由 {@link CNDownloaderFix} 在首次安装跑完、完成标记落盘那一瞬间调用。
+     * 之后不再自动弹——玩家想改主意就点教程胶囊。
+     *
+     * <p><b>本方法立即返回</b>，结果通过 {@code onDone} 回调。调用方在工作线程上
+     * 需要等待的话，自己拿个闩去卡。
+     *
+     * @param onDone 询问结束（或无需询问）后执行，可为 null
+     */
+    public static void askTutorialOnce(Activity act, Runnable onDone) {
+        try {
+            if (CNTutorialPrompt.askedOnce()) {
+                CNLog.i("教程", "自动询问已问过，跳过");
+                if (onDone != null) onDone.run();
+                return;
+            }
+            showTutorialDialog(act, onDone);
+        } catch (Throwable t) {
+            CNLog.e("教程", "自动询问失败", t);
+            if (onDone != null) {
+                try { onDone.run(); } catch (Throwable ignore) {}
+            }
+        }
+    }
+
+    /**
+     * 弹出教程询问框。用浮层自己的调色板与圆角，与 LOG 面板同一套模态框样式——
+     * 宿主是引擎的 Activity，系统 AlertDialog 在上面格格不入。
+     *
+     * <p>可在任意线程调用，内部会切到 UI 线程。浮层没建起来时无处可挂，此时
+     * 直接走 {@code onDone}，不把调用方卡死。
+     */
+    private static void showTutorialDialog(final Activity act, final Runnable onDone) {
+        final FrameLayout host = overlayView;
+        if (act == null || host == null) {
+            CNLog.w("教程", "浮层不在，无法显示教程询问");
+            if (onDone != null) onDone.run();
+            return;
+        }
+        act.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                try { buildTutorialDialog(act, host, onDone); }
+                catch (Throwable t) {
+                    CNLog.e("教程", "构建教程询问框失败", t);
+                    if (onDone != null) onDone.run();
+                }
+            }
+        });
+    }
+
+    /** 在 UI 线程上真正把询问框建出来。 */
+    private static void buildTutorialDialog(final Activity act, FrameLayout host,
+                                            final Runnable onDone) {
+        if (tutorialModal != null) {           // 已经开着，别叠第二层
+            if (onDone != null) onDone.run();
+            return;
+        }
+        final FrameLayout modal = new FrameLayout(act);
+        modal.setBackgroundColor(COLOR_DIM);
+        modal.setClickable(true);              // 吃掉点击，不许点框外关掉：
+        modal.setFocusable(true);              // 这是必须做出的选择，不是可略过的提示
+
+        LinearLayout panel = new LinearLayout(act);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(act, 22), dp(act, 20), dp(act, 22), dp(act, 18));
+        GradientDrawable panelBg = new GradientDrawable();
+        panelBg.setColor(COLOR_LOG_PANEL_BG);
+        panelBg.setCornerRadius(dp(act, 16));
+        panelBg.setStroke(dp(act, 1), COLOR_CARD_STK);
+        panel.setBackground(panelBg);
+        FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
+                dp(act, 330), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        panelLp.leftMargin = panelLp.rightMargin = dp(act, 20);
+        modal.addView(panel, panelLp);
+
+        TextView title = new TextView(act);
+        title.setText("新手教程");
+        title.setTextColor(COLOR_ACCENT);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f);
+        title.setTypeface(title.getTypeface(), Typeface.BOLD);
+        panel.addView(title, lpRow(0, dp(act, 10)));
+
+        TextView msg = new TextView(act);
+        msg.setText("是否播放新手教程（序章）？\n\n"
+                  + "· 「是」：无视账号进度，从头播放序章。\n"
+                  + "· 「否」：正常进入游戏。\n\n"
+                  + "选完之后都会重启一次游戏才能生效。");
+        msg.setTextColor(COLOR_LOG_PANEL_TEXT);
+        msg.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
+        msg.setLineSpacing(dp(act, 2), 1f);
+        panel.addView(msg, lpRow(0, dp(act, 18)));
+
+        LinearLayout row = new LinearLayout(act);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.END);
+        panel.addView(row, lpRow(0, 0));
+
+        TextView no  = dialogButton(act, "否", COLOR_LOG_PANEL_TEXT, 0x00000000, true);
+        TextView yes = dialogButton(act, "是", 0xFFFFFFFF, COLOR_ACCENT, false);
+        LinearLayout.LayoutParams yesLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        yesLp.leftMargin = dp(act, 10);
+        row.addView(no, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        row.addView(yes, yesLp);
+
+        no.setOnClickListener(new TutorialChoice(act, false, onDone));
+        yes.setOnClickListener(new TutorialChoice(act, true,  onDone));
+
+        host.addView(modal, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        tutorialModal = modal;
+    }
+
+    /** 询问框的按钮。{@code hollow} 为真时用空心描边（次要动作）。 */
+    private static TextView dialogButton(Activity act, String text,
+                                         int fg, int bg, boolean hollow) {
+        TextView b = new TextView(act);
+        b.setText(text);
+        b.setTextColor(fg);
+        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
+        b.setTypeface(b.getTypeface(), Typeface.BOLD);
+        b.setGravity(Gravity.CENTER);
+        b.setPadding(dp(act, 26), dp(act, 9), dp(act, 26), dp(act, 9));
+        GradientDrawable d = new GradientDrawable();
+        d.setCornerRadius(dp(act, 10));
+        d.setColor(bg);
+        if (hollow) d.setStroke(dp(act, 1), COLOR_GLASS_STK);
+        b.setBackground(d);
+        b.setClickable(true);
+        return b;
+    }
+
+    /** 询问框的选择处理：落地标记 → 记「已问过」→ 关框 → 刷新胶囊 → 回调。 */
+    private static final class TutorialChoice implements View.OnClickListener {
+        private final Activity act;
+        private final boolean  yes;
+        private final Runnable onDone;
+        TutorialChoice(Activity act, boolean yes, Runnable onDone) {
+            this.act = act; this.yes = yes; this.onDone = onDone;
+        }
+        @Override public void onClick(View v) {
+            try {
+                boolean armed = CNTutorialPrompt.set(yes);
+                CNTutorialPrompt.markAsked();
+                CNLog.i("教程", yes ? ("玩家选择播放序章，标记就位=" + armed)
+                                    : "玩家选择跳过序章");
+                closeTutorialDialog();
+                styleTutorialPill(act);
+                toast(act, yes ? "下次启动将播放序章" : "已设为正常进入游戏");
+            } catch (Throwable t) {
+                CNLog.e("教程", "处理教程选择失败", t);
+                try { closeTutorialDialog(); } catch (Throwable ignore) {}
+            } finally {
+                if (onDone != null) {
+                    try { onDone.run(); } catch (Throwable ignore) {}
+                }
+            }
+        }
+    }
+
+    private static void closeTutorialDialog() {
+        FrameLayout m = tutorialModal;
+        tutorialModal = null;
+        if (m != null && m.getParent() instanceof ViewGroup) {
+            ((ViewGroup) m.getParent()).removeView(m);
+        }
     }
 
     /**
@@ -1705,6 +1930,8 @@ public class CNCNDownloadUI {
                 vThemeChip    = null;
                 vLogPill      = null;
                 logModal      = null;
+                vTutorialPill = null;
+                tutorialModal = null;
                 vLogScroll    = null;
                 themeChipBg   = null;
                 logPillBg     = null;
@@ -1785,6 +2012,8 @@ public class CNCNDownloadUI {
         handler.post(new HideRunnable());
         isShowing = false;
         vBgmPill = null;
+        vTutorialPill = null;
+        tutorialModal = null;
     }
 
     public static void markFileDone(int i) {

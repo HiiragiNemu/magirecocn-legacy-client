@@ -440,20 +440,82 @@ public final class CNDownloaderFix {
         try {
             writeAtomic(finalFlag, "schema=2\narchives=15\n");
             CNCNDownloadUI.updateSimple("安装完成", "所有资源已验证并提交完成标记", 100);
-            CNCNDownloadUI.hide();
             CNLog.i(TAG, "All archives installed; final flag committed atomically");
+
+            // 完成标记刚落盘的这一瞬间，就是唯一一次自动询问「要不要播序章」的
+            // 时机——玩家此刻正好处在「装完了、还没进过游戏」的状态。之后不再
+            // 自动问，改主意就点浮层左上角的教程胶囊。
+            //
+            // 浮层要留到问完再收：询问框挂在浮层上，先 hide 就没地方显示了。
+            awaitTutorialChoice();
+            CNCNDownloadUI.hide();
+
             if (new File(NO_RESTART_FLAG).isFile()) {
                 CNLog.i(TAG, "Test no-restart marker present; restart suppressed");
                 return;
             }
-            try {
-                Thread.sleep(2000L);
-                RestClient.restartApp();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
+            // 装完必须重启一次引擎才进得去。原先是闷头 sleep 2 秒然后重启，
+            // 屏幕上什么都没有——玩家不知道发生了什么，也不知道要等。
+            // 选了序章的话，序章在重启后的那个进程里播（native 侧在首个
+            // pushSceneTop 上消费标记），所以两条路径的重启时机是一样的。
+            noticeAndRestart();
         } catch (IOException e) {
             failInstaller("Final flag commit failed", e);
+        }
+    }
+
+    /**
+     * 弹出教程询问并<b>等玩家选完</b>。本方法跑在安装线程上，而询问框在 UI 线程，
+     * 所以拿个闩卡住；超时 60 秒兜底，免得询问框因为任何原因没能建出来时，
+     * 安装线程永远停在这里、连重启都不做（那才是真的「永远进不去」）。
+     */
+    private static void awaitTutorialChoice() {
+        try {
+            Activity act = RestClient.getCurrentActivity();
+            if (act == null) {
+                CNLog.w(TAG, "取不到 Activity，跳过教程询问");
+                return;
+            }
+            final java.util.concurrent.CountDownLatch latch =
+                    new java.util.concurrent.CountDownLatch(1);
+            CNCNDownloadUI.askTutorialOnce(act, new Runnable() {
+                @Override public void run() { latch.countDown(); }
+            });
+            if (!latch.await(60, TimeUnit.SECONDS)) {
+                CNLog.w(TAG, "教程询问超时未选择，按「否」继续");
+            }
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        } catch (Throwable t) {
+            CNLog.e(TAG, "教程询问出错，继续收尾", t);
+        }
+    }
+
+    /** Toast 告知即将重启，倒数 3 秒后重启。 */
+    private static void noticeAndRestart() {
+        try {
+            final Activity act = RestClient.getCurrentActivity();
+            if (act != null) {
+                act.runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        try {
+                            android.widget.Toast.makeText(act,
+                                    "安装完成，3 秒后自动重启游戏",
+                                    android.widget.Toast.LENGTH_LONG).show();
+                        } catch (Throwable ignore) {}
+                    }
+                });
+            } else {
+                CNLog.w(TAG, "取不到 Activity，重启前的 Toast 无法显示");
+            }
+            CNLog.i(TAG, "3 秒后重启");
+            Thread.sleep(3000L);
+            CNLog.flushNow();
+            RestClient.restartApp();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Throwable t) {
+            CNLog.e(TAG, "重启失败", t);
         }
     }
 

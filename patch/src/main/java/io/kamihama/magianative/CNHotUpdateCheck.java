@@ -2,7 +2,6 @@ package io.kamihama.magianative;
 
 import android.app.Activity;
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
 
 import java.io.BufferedInputStream;
@@ -51,12 +50,12 @@ import org.json.JSONObject;
  *   <li>解压到 {@code <files>/}，解压完删临时包。</li>
  * </ul>
  *
- * <h3>与原实现不同的地方</h3>
+ * <h3>不重启</h3>
  *
- * 应用成功后<b>会重启进程</b>。原实现不重启，赌的是「热更跑完时引擎还没读到
- * 这些文件」——而本类为了让浮层可靠出现，会一直等到 Activity 真正可用，
- * 那时引擎已经在起了，再原地改脚本就有读到半新半旧的风险。整包安装完成后
- * 本来就要重启（见 {@code CNDownloaderFix} 末尾），这里沿用同一处理。
+ * 应用成功后<b>不</b>重启进程，与原实现一致：热更是启动早期跑的，引擎此时还
+ * 没读到台词/脚本，原地替换即可生效。整个客户端里只有一处会重启——首次安装
+ * 跑完那一次（见 {@code CNDownloaderFix} 末尾），因为那次引擎是在「没有资源」
+ * 的状态下起来的，非重启不可。
  */
 public final class CNHotUpdateCheck {
 
@@ -182,25 +181,18 @@ public final class CNHotUpdateCheck {
             stopWatchdog(watchdog);
         }
 
+        // 无论有没有更新都把结论留在屏幕上——否则和「压根没跑」看起来一模一样。
         if (applied) {
-            CNLog.i(TAG, "热更已应用，重启进程让引擎读到新文件");
-            CNCNDownloadUI.updateSimple("更新完成", "已应用热更新，正在重启以生效…", 0);
-            sleep(1200L);
-            CNCNDownloadUI.hide();
-            relaunch(act);
-            return;
+            CNLog.i(TAG, "热更检查完毕：已应用更新");
+            CNCNDownloadUI.updateSimple("更新完成", "热更新已应用，即将进入游戏", 0);
+        } else {
+            CNLog.i(TAG, "热更检查完毕：无需更新");
+            CNCNDownloadUI.updateSimple("已是最新", "台词与前端脚本均为最新版本，即将进入游戏", 0);
         }
-
-        // 没有更新也要把结论留在屏幕上——否则和「压根没跑」看起来一模一样。
-        CNCNDownloadUI.updateSimple("已是最新", "台词与前端脚本均为最新版本，即将进入游戏", 0);
-        CNLog.i(TAG, "热更检查完毕：无需更新");
         sleep(IDLE_LINGER_MS);
         CNCNDownloadUI.hide();
-
-        // 浮层收掉之后才问新手教程：这里正是「即将正式进入游戏」的时刻，
-        // 而且两者不会抢同一片屏幕。只在不重启的这条路上问——要重启的话，
-        // 重启后的那次启动自然会走到这里。
-        CNTutorialPrompt.maybeAsk();
+        // 这条路上不重启：重启只发生在首次安装跑完那一次。热更是启动早期跑的，
+        // 引擎此时还没读到台词/脚本，原地替换即可生效——原实现也是这么做的。
     }
 
     /**
@@ -414,33 +406,6 @@ public final class CNHotUpdateCheck {
         } catch (Throwable t) {
             return null;
         }
-    }
-
-    /**
-     * 重启进程。不走 {@code RestClient.restartApp()}：那个实现会先调一次
-     * 原包的 {@code checkAndApplyHotUpdate()}，等于把刚被本类取代的旧流程
-     * 再跑一遍。
-     */
-    private static void relaunch(Activity act) {
-        try {
-            Context ctx = act != null ? act : appContext();
-            if (ctx != null) {
-                Intent it = ctx.getPackageManager()
-                        .getLaunchIntentForPackage(ctx.getPackageName());
-                if (it != null) {
-                    it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                            | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-                    if (act != null) act.finish();
-                    sleep(300L);
-                    ctx.startActivity(it);
-                    sleep(800L);
-                }
-            }
-        } catch (Throwable t) {
-            CNLog.e(TAG, "重启失败，直接结束进程", t);
-        }
-        try { CNLog.flushNow(); } catch (Throwable ignore) {}
-        android.os.Process.killProcess(android.os.Process.myPid());
     }
 
     private static void deleteQuietly(File f) {
