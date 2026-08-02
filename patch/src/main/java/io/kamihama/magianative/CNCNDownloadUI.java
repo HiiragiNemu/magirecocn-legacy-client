@@ -114,6 +114,13 @@ public class CNCNDownloadUI {
 
     private static final String PREFS_NAME     = "cnv_bootstrap_ui";
     private static final String PREF_DARK_MODE = "dark_mode";
+    /** LOG 面板三个显示开关的持久化键。 */
+    private static final String PREF_LOG_STATUS = "log_show_status";
+    private static final String PREF_LOG_LOGCAT = "log_show_logcat";
+    private static final String PREF_LOG_NATIVE = "log_show_native";
+
+    /** 面板是否显示「纯文字下载界面」（buildStatusText 那段文件清单）。 */
+    private static boolean showStatusBlock = true;
 
     /** 承载浮层的宿主 Activity；主题切换时需要用它重建视图树。 */
     private static Activity hostActivity;
@@ -746,6 +753,20 @@ public class CNCNDownloadUI {
         closeLp.leftMargin = dp(act, 8);
         logHead.addView(closeBtn, closeLp);
 
+        // ── 三个显示开关 ──
+        // 异常排查时经常需要「只看某一类」：整机 logcat 很吵，native 日志在
+        // 引擎出问题时才有用，而纯文字下载界面在只关心网络时纯属占地方。
+        LinearLayout togRow = new LinearLayout(act);
+        togRow.setOrientation(LinearLayout.HORIZONTAL);
+        togRow.setGravity(Gravity.CENTER_VERTICAL);
+        panel.addView(togRow, lpRow(0, dp(act, 6)));
+        togRow.addView(makeLogToggle(act, "纯文字下载界面", PREF_LOG_STATUS, 0),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        togRow.addView(makeLogToggle(act, "logcat", PREF_LOG_LOGCAT, 1),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        togRow.addView(makeLogToggle(act, "原生日志", PREF_LOG_NATIVE, 2),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
         vLogScroll = new ScrollView(act);
         vLogScroll.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         GradientDrawable logScrollBg = new GradientDrawable();
@@ -1024,6 +1045,68 @@ public class CNCNDownloadUI {
         }
     }
 
+    /**
+     * 造一个显示开关。
+     *
+     * @param which 0=纯文字下载界面 1=logcat 2=原生日志
+     */
+    private static android.widget.CheckBox makeLogToggle(final Activity act,
+            String label, final String prefKey, final int which) {
+        android.widget.CheckBox cb = new android.widget.CheckBox(act);
+        cb.setText(label);
+        cb.setTextColor(COLOR_LOG_PANEL_TEXT);
+        cb.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
+        boolean on = true;
+        try {
+            on = act.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .getBoolean(prefKey, true);
+        } catch (Throwable ignore) {}
+        cb.setChecked(on);
+        applyLogToggle(which, on);
+        cb.setOnCheckedChangeListener(new LogToggleListener(act, prefKey, which));
+        return cb;
+    }
+
+    private static final class LogToggleListener
+            implements android.widget.CompoundButton.OnCheckedChangeListener {
+        private final Activity act;
+        private final String   prefKey;
+        private final int      which;
+        LogToggleListener(Activity act, String prefKey, int which) {
+            this.act = act; this.prefKey = prefKey; this.which = which;
+        }
+        @Override public void onCheckedChanged(
+                android.widget.CompoundButton b, boolean on) {
+            try {
+                act.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                   .edit().putBoolean(prefKey, on).apply();
+            } catch (Throwable ignore) {}
+            applyLogToggle(which, on);
+            CNLog.i("界面", "日志开关 " + prefKey + " = " + on);
+            renderLogModal();      // 立即生效：过滤发生在渲染期，不必等新日志
+        }
+    }
+
+    /**
+     * 应用一个开关。
+     *
+     * <p>logcat 与原生日志共用同一个采集线程：任一开启就得跑，两个都关才停。
+     * 过滤发生在渲染期而非采集期——若采集时就丢弃，事后再打开开关也补不回来。
+     */
+    private static void applyLogToggle(int which, boolean on) {
+        if (which == 0) {
+            showStatusBlock = on;
+        } else if (which == 1) {
+            CNLog.setShowLogcat(on);
+            if (on || CNLog.isShowNative()) CNLog.startLogcatCapture();
+            else CNLog.stopLogcatCapture();
+        } else {
+            CNLog.setShowNative(on);
+            if (on || CNLog.isShowLogcat()) CNLog.startLogcatCapture();
+            else CNLog.stopLogcatCapture();
+        }
+    }
+
     /** 面板里最多渲染多少行日志。缓冲区本身仍保留 3000 行，供「复制全部」。 */
     private static final int PANEL_LOG_LINES = 300;
 
@@ -1034,15 +1117,24 @@ public class CNCNDownloadUI {
      */
     private static String composeLogText(boolean full) {
         StringBuilder sb = new StringBuilder();
-        sb.append(buildStatusText());
-        sb.append("\n──────── 运行日志 ────────\n");
+        if (full) {
+            // 复制出去的内容带上文件位置，便于对照落盘的完整日志
+            sb.append("日志文件：").append(CNLog.currentLogPath()).append('\n');
+            sb.append("　　外部：").append(CNLog.publicLogPath()).append('\n');
+            sb.append("本次为第 ").append(CNLog.launchSeq()).append(" 次启动\n\n");
+        }
+        if (showStatusBlock) {
+            sb.append(buildStatusText());
+            sb.append("\n──────── 运行日志 ────────\n");
+        }
         String log = full ? CNLog.snapshot() : CNLog.tail(PANEL_LOG_LINES);
         if (log.length() == 0) {
-            sb.append("（暂无日志）\n");
+            sb.append("（暂无日志；若已关闭 logcat 与原生日志，这里只会有本补丁自己的记录）\n");
         } else {
-            if (!full && CNLog.size() > PANEL_LOG_LINES) {
+            int vis = CNLog.visibleSize();
+            if (!full && vis > PANEL_LOG_LINES) {
                 sb.append("（仅显示最近 ").append(PANEL_LOG_LINES).append(" 行，共 ")
-                  .append(CNLog.size()).append(" 行；「复制全部」可取完整日志）\n");
+                  .append(vis).append(" 行；「复制全部」可取完整日志）\n");
             }
             sb.append(log);
         }
@@ -1405,9 +1497,8 @@ public class CNCNDownloadUI {
                 hostActivity = activity;
                 // 日志落盘目录用应用私有目录；此前安装器已经写入的内容仍在内存
                 // 缓冲里，会随第一次刷新一起显示出来
-                try {
-                    CNLog.init(activity.getFilesDir());
-                } catch (Throwable ignore) {}
+                // 日志已在 native 入口（CNLog.initEarly）开好，这里不要重开：
+                // 重开会再分配一次启动序号、另起一个文件，把前半段记录分家。
                 CNLog.setListener(new LogChanged());
                 // 把整机 logcat 并进面板：native hook（MagiaClientJNI）、引擎、
                 // 以及任何 Java 异常栈都能在设备上直接看到，不必接电脑
@@ -1653,6 +1744,15 @@ public class CNCNDownloadUI {
      * <p>改版前这两个参数被直接丢弃；现在把它们渲染到右列顶部的阶段行与状态行，
      * 调用点与调用时机不变。
      */
+    /**
+     * 两参便捷重载。{@code CNDownloaderFix.probeAllSizes()} 用的是这个签名，
+     * 但此前只存在三参版本——当前 main 因此编译不过。百分比参数本就未被使用
+     * （见三参版本），这里补一个重载而不是改调用点，改动面最小。
+     */
+    public static void updateSimple(String str, String str2) {
+        updateSimple(str, str2, 0);
+    }
+
     public static void updateSimple(String str, String str2, int i) {
         if (str != null && str.length() > 0)   phaseText  = str;
         if (str2 != null && str2.length() > 0) detailText = str2;

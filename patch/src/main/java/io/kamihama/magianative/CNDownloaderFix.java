@@ -141,6 +141,9 @@ public final class CNDownloaderFix {
      */
     public static String getEndpoint(int i) {
         try {
+            // 本进程里最早被 native 调到的入口之一，在这里开日志能覆盖
+            // 「安装器从未被调用」这种情况。
+            CNLog.initEarly();
             return getEndpointInner(i);
         } catch (Throwable t) {
             try { CNLog.e(TAG, "getEndpoint 发生未预期错误，返回空串", t); } catch (Throwable ignore) {}
@@ -240,6 +243,9 @@ public final class CNDownloaderFix {
      * 只执行一次。
      */
     public static void runInstaller() {
+        // 日志必须在这里就开：浮层没建起来、或安装器压根没被调用，都是最需要
+        // 现场的时候，而那时 CreateUIRunnable 里的 init 根本不会执行。
+        CNLog.initEarly();
         if (!installerStarted.compareAndSet(false, true)) {
             CNLog.w(TAG, "安装器已在运行中，跳过重复调用");
             return;
