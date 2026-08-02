@@ -28,14 +28,32 @@
 //   - 强制新手教程（pushSceneTop / PrologueSceneLayer::notifyJs）
 // 保留资源下载流水线，并补回 libcn_hook 特有的「叫起 Java 安装器」触发。
 //
-// ## ⚠ 尚未接管端点发现
+// ## ⚠ 尚未接管端点重定向 —— 因此当前**不能**停用 libuwasa
 //
-// libcn_hook 里有个 MagiaRest 类（GetEndpointUrl / GetMaxThreads /
-// GetEndpointVersion / Endpoint），经 JNI 调 RestClient.GetEndpoint(I)。
-// 它拿到的结果最终喂给谁，尚未逆向清楚——所以本库**暂不接管这一块**，
-// 在弄明白之前不能停用 libcn_hook。当前状态：本库可独立编译、可与
-// libcn_hook 并存装载（shadowhook UNIQUE 模式下同一地址只能被 hook 一次，
-// 因此并存时下载流水线那组 hook 会有一方失败并打日志，属预期）。
+// 三层改造的关系（由维护者确认，并经反汇编印证）：
+//
+//   日服原版包 ──libuwasa（一改）──▶ 把引擎的资源下载地址改指 Totentanz
+//                                        │
+//                            libcn_hook（二改）──▶ 拦下载入口，接我们的浮层
+//
+// 也就是说 libuwasa 是**承重**的：删掉它，引擎的下载地址会退回已停服的日服。
+// 它靠 hook UrlConfig::resource(Resource::Type) 实现，逆出来的逻辑是：
+//
+//     const std::string& resource(Resource::Type type) const
+//         type > 2                  → 调原版
+//         越界                       → log "Out of range for endpoint type %d!" → 调原版
+//         表[type] 非空指针          → ★ 直接返回，顶掉原版
+//         为空                       → log "Empty endpoint found ..." → 调原版
+//
+// 表按 type 0/1/2 索引、元素 16 字节，由 SNAA 响应（经 RestClient.GetEndpoint(I)）
+// 填充；libcn_hook 里的 MagiaRest 类是同一份响应的另一个消费者。
+//
+// 要接管它还差两件事，都必须逆清楚、不能猜（猜错就是崩）：
+//   1. 确切返回类型（看指令序列最像 const std::string&，但需确认不是 sret）；
+//   2. Resource::Type 0/1/2 各自的语义，以及表的填充时机。
+//
+// 在此之前本库只做「可编译、可并存」，不改动 com/loadLib/libLoader，
+// 也不删任何 .so —— 现有行为完全不变。
 
 #include <jni.h>
 #include <android/log.h>
