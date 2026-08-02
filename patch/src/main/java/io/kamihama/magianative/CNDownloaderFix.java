@@ -100,34 +100,55 @@ public final class CNDownloaderFix {
     }
 
     /**
-     * Java 侧的安装器入口。
+     * Java 侧的安装器入口，由 {@code MyApplication.onCreate()} 调用，
+     * 作为 native hook 触发之外的第二道保险。
      *
-     * <p>由 {@code MyApplication.onCreate()} 在后台线程上调用，作为 native hook
-     * 触发之外的第二道保险。native hook 是否触发取决于引擎场景切换的时序——如果
-     * 引擎从未进入下载场景（例如缓存了完整资源），hook 就不会被调用，而此时本方法
-     * 也会在看到 {@code cn_base_done.flag} 后立刻 return，无事发生。
+     * <p><b>为什么需要它。</b>把 libcn_hook.so 反汇编出来看，native 侧真正会转调
+     * {@code RestClient.startCNDownload} 的只有 {@code triggerCNDownload()}，
+     * 而它只有两个调用点：
+     * <ul>
+     *   <li>{@code DownloadAssetJsonState::checkParseJson}（正常路径）</li>
+     *   <li>{@code MainScene::onError}（出错路径）</li>
+     * </ul>
+     * 两者都先查 {@code cn_base_done.flag}，再用一个进程级 atomic 保证只触发一次。
+     * 换句话说，安装器起不起得来，取决于引擎能不能走到「下载资源清单」那一步；
+     * 引擎在那之前卡住或走了别的分支，安装器就永远不会被调用，玩家看到的就是
+     * 引擎自带的下载场景。本方法把这个依赖去掉。
+     *
+     * <p>（注意 {@code DownloadSceneLayer} 的 ctor / init / onEnter 三个 hook
+     * <b>不</b>调用任何 Java 代码，它们只打日志并维护一张 layer→info 的映射。
+     * 之前注释里写的「hook 拦下 DownloadSceneLayer::init 后转调
+     * startCNDownload」是错的。）
      *
      * <p>本方法检查 final flag 后启动安装器；内部调用 {@link #runInstaller()}，
-     * 后者内置哨兵保证只执行一次。
+     * 后者内置哨兵保证只执行一次——所以即使 native 侧随后也触发了，也不会重复跑。
      */
     public static void triggerInstaller() {
-        Thread t = new Thread("cnv-installer-trigger") {
-            @Override public void run() {
-                try {
-                    File finalFlag = new File(FINAL_FLAG);
-                    if (finalFlag.isFile()) {
-                        CNLog.i(TAG, "triggerInstaller: flag 已存在，无需安装");
-                        return;
+        // 这个方法同样由外部（Application.onCreate）直接调用，出了事不能把
+        // 宿主进程的启动流程带崩，所以整体不抛。
+        try {
+            Thread t = new Thread("cnv-installer-trigger") {
+                @Override public void run() {
+                    try {
+                        CNLog.initEarly();
+                        File finalFlag = new File(FINAL_FLAG);
+                        if (finalFlag.isFile()) {
+                            CNLog.i(TAG, "triggerInstaller: flag 已存在，无需安装");
+                            return;
+                        }
+                        CNLog.i(TAG, "triggerInstaller: flag 不存在，由 Java 侧启动安装器");
+                        runInstaller();
+                    } catch (Throwable t) {
+                        CNLog.e(TAG, "triggerInstaller 异常: " + t, t);
                     }
-                    CNLog.i(TAG, "triggerInstaller: flag 不存在，启动安装器");
-                    runInstaller();
-                } catch (Throwable t) {
-                    CNLog.e(TAG, "triggerInstaller 异常: " + t, t);
                 }
-            }
-        };
-        t.setDaemon(true);
-        t.start();
+            };
+            t.setDaemon(true);
+            t.start();
+        } catch (Throwable t) {
+            try { android.util.Log.e(TAG, "triggerInstaller 启动失败", t); }
+            catch (Throwable ignore) {}
+        }
     }
 
     // ==================================================================
@@ -229,9 +250,14 @@ public final class CNDownloaderFix {
     // ==================================================================
 
     /**
-     * 安装器入口。**由 native hook 经 JNI 调用**（hook 拦下引擎的
-     * {@code DownloadSceneLayer::init} 后转调 {@code RestClient.startCNDownload}，
-     * 后者直接转调本方法）。
+     * 安装器入口。两条路进来：
+     * <ul>
+     *   <li>native hook 经 JNI：{@code DownloadAssetJsonState::checkParseJson}
+     *       或 {@code MainScene::onError} → {@code triggerCNDownload()} →
+     *       起一条 detached 线程调 {@code RestClient.startCNDownload} → 本方法；</li>
+     *   <li>Java 侧 {@link #triggerInstaller()}（由 Application.onCreate 调用）。</li>
+     * </ul>
+     * 详见 {@link #triggerInstaller()} 的说明。
      *
      * <p><b>本方法绝不允许抛出任何东西。</b>hook 在 {@code CallStaticVoidMethod}
      * 之后会做 {@code ExceptionCheck} / {@code ExceptionClear}，一旦发现挂起的
@@ -251,6 +277,9 @@ public final class CNDownloaderFix {
             // 日志必须尽早开：浮层没建起来、或安装器压根没被调用，都是最需要
             // 现场的时候，而那时 CreateUIRunnable 里的 init 根本不会执行。
             CNLog.initEarly();
+            // 记下是谁把安装器叫起来的：出问题时这一行能直接回答
+            // 「native hook 到底触发没有」，不必再靠猜。
+            CNLog.i(TAG, "runInstaller 被调用，线程=" + Thread.currentThread().getName());
             if (!installerStarted.compareAndSet(false, true)) {
                 CNLog.w(TAG, "安装器已在运行中，跳过重复调用");
                 return;
