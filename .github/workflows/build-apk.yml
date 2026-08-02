@@ -151,7 +151,14 @@ jobs:
             if [ ! -f "$SO" ]; then echo "::error::[$ABI] 未产出 libMagiaLegacy.so"; exit 1; fi
             cp "$SO" "lib/$ABI/libMagiaLegacy.so"
             [ -n "$STRIP" ] && "$STRIP" --strip-unneeded "lib/$ABI/libMagiaLegacy.so"
-            echo "[$ABI] $(du -h lib/$ABI/libMagiaLegacy.so | cut -f1)"
+            # shadowhook 是**动态库**，libMagiaLegacy 对它有 DT_NEEDED，
+            # 必须一并打包——漏了的话 APK 照样能打能签能装，但真机启动时
+            # dlopen failed: library "libshadowhook.so" not found。这个坑踩过一次。
+            SH="$BUILD_DIR/_deps/shadowhook-build/libshadowhook.so"
+            if [ ! -f "$SH" ]; then echo "::error::[$ABI] 未产出 libshadowhook.so"; exit 1; fi
+            cp "$SH" "lib/$ABI/libshadowhook.so"
+            [ -n "$STRIP" ] && "$STRIP" --strip-unneeded "lib/$ABI/libshadowhook.so"
+            echo "[$ABI] MagiaLegacy=$(du -h lib/$ABI/libMagiaLegacy.so | cut -f1) shadowhook=$(du -h lib/$ABI/libshadowhook.so | cut -f1)"
           done
 
           # 旧库必须已从包内移除，否则会与新库对同一地址重复装 hook
@@ -294,6 +301,9 @@ jobs:
           # BGM 的 ogg 必须未压缩，否则 AssetManager.openFd() 打不开，
           # 表现为「界面一切正常、就是没声音」——光看界面发现不了
           python3 tools/check-asset-compression.py "$APK"
+          # 每个 .so 的 DT_NEEDED 都要能在包内或系统里解析到，
+          # 否则 dlopen 只在真机启动那一刻才失败，静态自检全都发现不了
+          python3 tools/check-so-deps.py "$APK"
           # 签名指纹必须是 AOSP testkey，否则装不上既有设备
           FP=$("${BT_DIR}/apksigner" verify --print-certs "$APK" \
                 | grep -m1 'SHA-256 digest' | awk '{print $NF}')
