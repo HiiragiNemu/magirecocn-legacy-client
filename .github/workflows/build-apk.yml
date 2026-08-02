@@ -225,14 +225,31 @@ jobs:
           # ── 分两组出 dex：UI 类进 classes2，其余补丁类进 classes3 ──
           # 这个划分必须与仓库里 smali_classes2/ 和 smali_classes3/ 的现状一致，
           # 否则同一个类会在两个 dex 里各出现一次。
+          #
+          # ⚠ 第二组用「排除法」而不是逐个点名。原先是点名的，结果 CNBgm 加进来
+          # 之后没人记得改这一行，它就**两组都不属于**——编译得出 .class，却进不了
+          # 任何 dex。而 CNCNDownloadUI.buildOverlay 里有一句没有兜底的
+          # CNBgm.trackCount(act)，真机上会抛 NoClassDefFoundError，浮层直接建不
+          # 出来。这种「类静默缺席」的错误静态检查一律看不见，只有装到机器上才炸。
+          # 排除法保证以后新加的补丁类默认有归属。
           mkdir -p .build/dexui .build/dex3
+          mapfile -t DEX_UI < <(find .build/classes -name 'CNCNDownloadUI*.class' | sort)
+          # RestClient 是编译期桩，真实实现在 smali_classes2 里，不能进 dex
+          mapfile -t DEX_3 < <(find .build/classes -name '*.class' \
+              ! -name 'CNCNDownloadUI*.class' ! -name 'RestClient*.class' | sort)
+          echo "classes2 组 ${#DEX_UI[@]} 个类，classes3 组 ${#DEX_3[@]} 个类"
+          if [ "${#DEX_UI[@]}" -eq 0 ] || [ "${#DEX_3[@]}" -eq 0 ]; then
+            echo "::error::dex 分组为空，补丁类没被编译出来"; exit 1
+          fi
+          # 每个 .class 都必须恰好落在一组里，否则就是上面那种静默缺席
+          TOTAL=$(find .build/classes -name '*.class' ! -name 'RestClient*.class' | wc -l)
+          if [ "$(( ${#DEX_UI[@]} + ${#DEX_3[@]} ))" -ne "$TOTAL" ]; then
+            echo "::error::dex 分组没覆盖全部补丁类（$TOTAL 个）"; exit 1
+          fi
           "${BT_DIR}/d8" --min-api 21 --output .build/dexui --lib .cache/deps/android.jar \
-            $(find .build/classes -name 'CNCNDownloadUI*.class')
+            "${DEX_UI[@]}"
           "${BT_DIR}/d8" --min-api 21 --output .build/dex3 --lib .cache/deps/android.jar \
-            $(find .build/classes \
-                 -name 'CNDownloaderFix*.class' -o -name 'CNMirrors*.class' \
-              -o -name 'CNChunkedDownload*.class' -o -name 'CNLog*.class' \
-              -o -name 'CNHotUpdate*.class')
+            "${DEX_3[@]}"
 
           rm -rf .build/smaliui .build/smali3
           baksmali d .build/dexui/classes.dex -o .build/smaliui
