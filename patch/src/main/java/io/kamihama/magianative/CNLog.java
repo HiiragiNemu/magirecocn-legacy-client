@@ -511,8 +511,16 @@ public final class CNLog {
         @Override public void run() {
             java.io.BufferedReader br = null;
             try {
+                // 回灌最近 1000 行，而不是只从当前时刻开始。
+                //
+                // 进程启动最早的一段（各 native 库的 JNI_OnLoad）恰恰是最需要看的：
+                // libuwasa / libcn_hook 都在那里装 hook 并打出「Successfully hooked X」
+                // 「Unable to hook X」。而 CNLog 要等 native 调进 Java 才起得来，
+                // 用 -T 1 的话这些行早就过去了，永远抓不到。
+                //
+                // 1000 行相对 BUFFER_MAX=3000 是可接受的开销，且文件里本来就全都有。
                 ProcessBuilder pb = new ProcessBuilder(
-                        "logcat", "-v", "time", "-T", "1");
+                        "logcat", "-v", "time", "-T", "1000");
                 pb.redirectErrorStream(true);
                 Process p = pb.start();
                 logcatProc = p;
