@@ -146,6 +146,10 @@ public final class CNLog {
     private static volatile Runnable listener;
     /** writeRaw 的落盘计数：logcat 量大，逐行 flush 会造成明显的 I/O 压力。 */
     private static int rawSinceFlush = 0;
+    /** 上次把 writeRaw 的内容落盘的时刻。 */
+    private static long lastFlushMs = 0L;
+    /** 落盘滞后上限：超过这个时间就强制 flush 一次，保证取出来的日志不缺尾巴。 */
+    private static final long FLUSH_INTERVAL_MS = 1000L;
 
     private CNLog() {}
 
@@ -179,6 +183,7 @@ public final class CNLog {
         if (openedOnce) return;
         init(new File(PRIV_DIR));
         startLogcatCapture();
+        startFlusher();
         installCrashHandler();
         write("日志", "INFO", "日志已启动（第 " + launchSeq + " 次启动）"
                 + " 文件=" + currentLogPath()
@@ -386,7 +391,45 @@ public final class CNLog {
         }
     }
 
-    /** 往两个日志文件各写一行。调用方必须持有 FILE_LOCK。 */
+    /**
+     * 强制把攒着的内容落盘。定时线程与「玩家点复制日志」都会调用。
+     *
+     * <p>writeRaw 的行数阈值只在**还有新行进来**时才会被跨过。如果 logcat 恰好
+     * 安静下来（或 logcat 回收被关掉），最后那几行会一直留在 BufferedWriter 里
+     * 出不去——玩家此刻把文件取走，看到的就是一份缺尾巴的日志。
+     */
+    public static void flushNow() {
+        synchronized (FILE_LOCK) {
+            if (writer == null) return;
+            if (rawSinceFlush == 0) return;   // 没有欠账，不做无谓的 I/O
+            try { writer.flush(); } catch (Throwable ignore) {}
+            rawSinceFlush = 0;
+            lastFlushMs = System.currentTimeMillis();
+        }
+    }
+
+    private static volatile Thread flusherThread;
+
+    /** 起定时 flush 线程；重复调用安全。 */
+    private static synchronized void startFlusher() {
+        if (flusherThread != null) return;
+        Thread t = new Thread(new Flusher(), "cnv-log-flush");
+        t.setDaemon(true);
+        flusherThread = t;
+        t.start();
+    }
+
+    private static final class Flusher implements Runnable {
+        @Override public void run() {
+            while (true) {
+                try { Thread.sleep(FLUSH_INTERVAL_MS); }
+                catch (InterruptedException ie) { Thread.currentThread().interrupt(); return; }
+                try { flushNow(); } catch (Throwable ignore) {}
+            }
+        }
+    }
+
+    /** 往日志文件写一行。调用方必须持有 FILE_LOCK。 */
     private static void writeFileLocked(String line, boolean flush) {
         if (writer != null) {
             try {
@@ -414,10 +457,16 @@ public final class CNLog {
             while (BUFFER.size() > BUFFER_MAX) BUFFER.removeFirst();
         }
         synchronized (FILE_LOCK) {
-            // 每 50 行才落一次盘：逐行 flush 在 logcat 的量级下会造成明显 I/O
-            // 压力，反过来拖慢整个进程。自己模块的日志仍逐条 flush。
-            boolean doFlush = (++rawSinceFlush >= 50);
-            if (doFlush) rawSinceFlush = 0;
+            // 逐行 flush 在 logcat 的量级下 I/O 压力太大，会反过来拖慢整个进程，
+            // 所以要攒。但**只按行数攒是错的**：上一版「每 50 行落一次盘」的结果是
+            // 玩家把日志文件取出来时，末尾不足 50 行永远留在 BufferedWriter 里，
+            // 文件正好断在 50 的整数倍上——而断掉的那一截恰恰是出问题的现场。
+            // 现在改成「满 50 行 **或** 距上次落盘超过 1 秒」，再配合下面的定时
+            // flush 线程兜住「日志突然安静下来」的情况：落盘滞后不超过约 1 秒。
+            long now = System.currentTimeMillis();
+            boolean doFlush = (++rawSinceFlush >= 50)
+                    || (now - lastFlushMs >= FLUSH_INTERVAL_MS);
+            if (doFlush) { rawSinceFlush = 0; lastFlushMs = now; }
             writeFileLocked(line, doFlush);
         }
         Runnable r = listener;

@@ -1037,6 +1037,9 @@ public class CNCNDownloadUI {
                 ClipboardManager cm = (ClipboardManager)
                         act.getSystemService(Context.CLIPBOARD_SERVICE);
                 if (cm == null) return;
+                // 玩家点了复制，多半接着就要把日志文件也取出来。先把攒着的
+                // logcat 行落盘，免得文件比剪贴板里的还短一截。
+                CNLog.flushNow();
                 cm.setPrimaryClip(ClipData.newPlainText("log-service", composeLogText(true)));
                 toast(act, "日志已复制到剪贴板（" + CNLog.size() + " 条）");
             } catch (Throwable t) {
