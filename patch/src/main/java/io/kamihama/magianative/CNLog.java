@@ -70,8 +70,9 @@ public final class CNLog {
     public static String currentLogPath() {
         return PRIV_DIR + "/" + LOG_DIR + "/" + logName;
     }
-    public static String publicLogPath() {
-        return PUB_DIR + "/" + LOG_DIR + "/" + logName;
+    /** 日志目录（供界面提示玩家去哪儿找）。 */
+    public static String logDirPath() {
+        return PRIV_DIR + "/" + LOG_DIR;
     }
     public static int launchSeq() { return launchSeq; }
 
@@ -120,19 +121,18 @@ public final class CNLog {
     }
     private static final Object FILE_LOCK = new Object();
 
-    /** 应用私有目录（写死：早期初始化时拿不到 Context）。 */
-    private static final String PRIV_DIR =
-            "/data/data/io.kamihama.totentanz/files";
     /**
-     * 应用专属外部目录。写这一份纯粹是为了**取得出来**：
-     * /data/data 下的文件没 root 或 run-as 根本拿不到，而这个路径用文件管理器
-     * 或数据线就能直接复制。无需任何权限（API 19+ 应用专属目录）。
+     * 应用数据目录（写死：早期初始化时拿不到 Context）。
+     *
+     * <p>日志落在 {@code <数据目录>/log/} 下。曾经额外往
+     * {@code /sdcard/Android/data/<包名>/files/} 也写一份「方便取出」，已移除：
+     * Android 10+ 的分区存储下，用写死路径去 mkdirs 这个应用专属外部目录基本
+     * 是失败的（该目录须由框架经 getExternalFilesDir() 创建），写了也白写，
+     * 反而让人误以为那里会有东西。
      */
-    private static final String PUB_DIR =
-            "/sdcard/Android/data/io.kamihama.totentanz/files";
+    private static final String PRIV_DIR = "/data/data/io.kamihama.totentanz";
 
     private static BufferedWriter writer;
-    private static BufferedWriter writer2;
     /**
      * 本进程内是否已经打开过日志文件。
      *
@@ -164,13 +164,24 @@ public final class CNLog {
      * 方法体第一行调用本方法，保证日志从最早的时刻就开始记。重复调用无副作用。
      */
     public static synchronized void initEarly() {
+        // 本方法由 native 入口在最外层调用，**绝不允许抛出**：调用方所在的
+        // JNI 边界一旦拿到挂起异常，就会放行引擎自带的下载场景。
+        // 日志起不来是可以接受的降级，把游戏搞坏不是。
+        try {
+            initEarlyInner();
+        } catch (Throwable t) {
+            try { Log.e("CNLog", "日志初始化失败（已忽略，不影响主流程）", t); }
+            catch (Throwable ignore) {}
+        }
+    }
+
+    private static void initEarlyInner() {
         if (openedOnce) return;
         init(new File(PRIV_DIR));
         startLogcatCapture();
         installCrashHandler();
         write("日志", "INFO", "日志已启动（第 " + launchSeq + " 次启动）"
-                + " 私有=" + currentLogPath()
-                + " 外部=" + publicLogPath()
+                + " 文件=" + currentLogPath()
                 + " 保留最近 " + KEEP_LOGS + " 次", null);
     }
 
@@ -202,8 +213,7 @@ public final class CNLog {
                 }
                 writeRaw("  调用栈:" + sb);
                 synchronized (FILE_LOCK) {
-                    if (writer  != null) try { writer.flush();  } catch (Throwable ignore) {}
-                    if (writer2 != null) try { writer2.flush(); } catch (Throwable ignore) {}
+                    if (writer != null) try { writer.flush(); } catch (Throwable ignore) {}
                 }
             } catch (Throwable ignore) {}
             if (prev != null) prev.uncaughtException(t, e);
@@ -226,13 +236,9 @@ public final class CNLog {
                         + launchSeq + " 次启动，开始于 ")
                     + TS.format(new Date())
                     + (append ? "） ----\n" : "） ====\n");
-            writer  = openOne(new File(dir, LOG_DIR), append, head);
-            // 外部目录再写一份，方便不 root 也能取出来
-            writer2 = openOne(new File(PUB_DIR, LOG_DIR), append, head);
-            if (writer != null || writer2 != null) openedOnce = true;
-            if (writer == null && writer2 == null) {
-                Log.w("CNLog", "两个日志路径都打不开");
-            }
+            writer = openOne(new File(dir, LOG_DIR), append, head);
+            if (writer != null) openedOnce = true;
+            else Log.w("CNLog", "日志目录打不开: " + new File(dir, LOG_DIR));
         }
     }
 
@@ -323,11 +329,6 @@ public final class CNLog {
             try { writer.close(); } catch (Throwable ignore) {}
             writer = null;
         }
-        if (writer2 != null) {
-            try { writer2.flush(); } catch (Throwable ignore) {}
-            try { writer2.close(); } catch (Throwable ignore) {}
-            writer2 = null;
-        }
     }
 
     /** 注册缓冲区变更回调；传 null 取消。 */
@@ -391,12 +392,6 @@ public final class CNLog {
             try {
                 writer.write(line); writer.write('\n');
                 if (flush) writer.flush();
-            } catch (Throwable ignore) {}
-        }
-        if (writer2 != null) {
-            try {
-                writer2.write(line); writer2.write('\n');
-                if (flush) writer2.flush();
             } catch (Throwable ignore) {}
         }
     }

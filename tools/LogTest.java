@@ -29,9 +29,10 @@ public class LogTest {
         check("log/ 目录已建且有一个日志", l1.length==1, Arrays.toString(l1));
         check("命名为 序号_时间.log", l1.length==1 && l1[0].matches("\\d{4}_\\d{8}-\\d{6}\\.log"), l1.length==1?l1[0]:"");
         check("序号为 1", CNLog.launchSeq()==1, "seq="+CNLog.launchSeq());
-        check("外部路径拼装正确", CNLog.publicLogPath()
-              .startsWith("/sdcard/Android/data/io.kamihama.totentanz/files/log/"),
-              CNLog.publicLogPath());
+        check("日志目录在应用数据目录下", CNLog.logDirPath()
+              .equals("/data/data/io.kamihama.totentanz/log"), CNLog.logDirPath());
+        check("当前日志路径 = 目录 + 文件名", CNLog.currentLogPath()
+              .startsWith("/data/data/io.kamihama.totentanz/log/"), CNLog.currentLogPath());
 
         System.out.println("\n[2] 再启动 4 次，序号递增、文件各自独立");
         for(int i=0;i<4;i++){ resetOpened(); Thread.sleep(1100);
@@ -70,6 +71,18 @@ public class LogTest {
         check("MagiaClientJNI -> NATIVE", ((Integer)cl.invoke(null,"I/MagiaClientJNI: x"))==CNLog.SRC_NATIVE,"");
         check("Cocos2dx -> NATIVE", ((Integer)cl.invoke(null,"I/Cocos2dxActivity: x"))==CNLog.SRC_NATIVE,"");
         check("其它 -> LOGCAT", ((Integer)cl.invoke(null,"I/WifiService: x"))==CNLog.SRC_LOGCAT,"");
+
+        System.out.println("\n[6] initEarly() 绝不抛异常（hook 不变量）");
+        // 这里的路径在 JVM 上多半建不出来（无 /data/data 写权限），正好用来验证
+        // 「日志起不来也只能降级、不能把异常漏给 JNI」这条不变量。
+        resetOpened();
+        boolean threw=false;
+        try { CNLog.initEarly(); } catch(Throwable t){ threw=true; }
+        check("路径不可写时也正常返回", !threw, threw?"抛了异常":"已降级");
+        resetOpened();
+        threw=false;
+        try { CNLog.initEarly(); } catch(Throwable t){ threw=true; }
+        check("重复调用也正常返回", !threw, threw?"抛了异常":"ok");
 
         System.out.println("\n通过 "+pass+" / 失败 "+fail);
         if(fail>0) System.exit(1);

@@ -1120,7 +1120,8 @@ public class CNCNDownloadUI {
         if (full) {
             // 复制出去的内容带上文件位置，便于对照落盘的完整日志
             sb.append("日志文件：").append(CNLog.currentLogPath()).append('\n');
-            sb.append("　　外部：").append(CNLog.publicLogPath()).append('\n');
+            sb.append("日志目录：").append(CNLog.logDirPath())
+              .append("（保留最近若干次启动）\n");
             sb.append("本次为第 ").append(CNLog.launchSeq()).append(" 次启动\n\n");
         }
         if (showStatusBlock) {
