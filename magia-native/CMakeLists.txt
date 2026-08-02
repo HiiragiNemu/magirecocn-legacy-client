@@ -61,10 +61,38 @@ FetchContent_Declare(
     # 在 v2.0.1 写就时还不存在，-Werror 会让它自己编不过，-Weverything 还会
     # 刷出大量噪音污染 CI 日志。shadowhook 对我们是黑盒，没必要让它的
     # self-warning 进我们视野。
+    # 两处改动，用同一条 sed 打（两个表达式对两个文件各自只命中一处）：
+    #
+    # (1) 去掉 -Weverything -Werror：Clang 18 新增的警告类在 v2.0.1 写就时还
+    #     不存在，-Werror 会让 shadowhook 自己编不过。
+    #
+    # (2) **让 linker mod 初始化失败变成非致命。**
+    #     shadowhook_init 里唯一的硬性门槛是
+    #         if (0 != sh_linker_init()) GOTO_END(SHADOWHOOK_ERRNO_INIT_LINKER);
+    #     sh_linker_init 要从 linker64 解析 __dl__ZN6soinfo17call_constructorsEv
+    #     与 __dl_g_dl_mutex，在 Android 16 上解析不到，于是整个 shadowhook 停摆
+    #     （真机 errno=12「Init linker mod failed」，17 个 hook 全挂）。
+    #
+    #     但那套 linker mod 只服务两件事：监听**后续**加载的 .so（延迟 hook）、
+    #     以及与 dlopen 串行化。我们是在 JNI_OnLoad 里对**已经加载好**的
+    #     libmadomagi_native.so 同步下钩，两件都用不上：
+    #       - 立即 hook 走 sh_linker_get_addr_info_by_name（xdl 解析，与 ctors
+    #         hook 无关）；
+    #       - sh_linker_register_dl*_callback 只出现在延迟（PENDING）路径上；
+    #       - sh_linker.c 的静态全局都有安全初值（SIZE_MAX / false /
+    #         TAILQ_HEAD_INITIALIZER），未 init 也不会解引用野指针。
+    #     bytesig / sh_safe / sh_island / sh_enter / sh_switch 这些真正的 hook
+    #     机器在 sh_linker_init 之前就已初始化成功（见真机日志的失败位置）。
+    #
+    #     代价：延迟 hook 不可用。若某次 hook 返回 SHADOWHOOK_ERRNO_PENDING
+    #     （=目标库当时没加载），它将永远不会被补上——我们的代码会把它当失败
+    #     报出来，见 MagiaLegacy.cpp 里的 H()。
     PATCH_COMMAND  sed -i
                    -e "s/-Weverything//g"
                    -e "s/-Werror//g"
+                   -e "s/GOTO_END(SHADOWHOOK_ERRNO_INIT_LINKER)/((void)0)/"
                    shadowhook/src/main/cpp/CMakeLists.txt
+                   shadowhook/src/main/cpp/shadowhook.c
 )
 FetchContent_MakeAvailable(shadowhook)
 

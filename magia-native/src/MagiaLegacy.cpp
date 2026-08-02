@@ -480,12 +480,22 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
         return JNI_VERSION_1_6;
     }
     LOGI("[shadowhook] init OK version=%s", shadowhook_get_version());
+    // 提醒：我们在构建期把「linker mod 初始化失败」改成了非致命（见 CMakeLists
+    // 的 PATCH_COMMAND）。代价是延迟 hook 不可用，因此下面任何一个 hook 若返回
+    // PENDING（目标库当时没加载）就等于永久失败，H() 会把它当错误报出来。
 
+    int hookOk = 0, hookFail = 0;
     auto H = [&](const char* sym, void* fn, void** old, const char* label) -> bool {
         void* stub = shadowhook_hook_sym_name(LIB, sym, fn, old);
-        if (stub) { LOGI("[Hook] ✓ %s", label); return true; }
+        if (stub) { LOGI("[Hook] ✓ %s", label); hookOk++; return true; }
         int e = shadowhook_get_errno();
-        LOGE("[Hook] ✗ %s errno=%d %s", label, e, shadowhook_to_errmsg(e));
+        // 关掉 linker mod 后 PENDING 永远不会被补上，等同于失败，单独点名。
+        if (e == SHADOWHOOK_ERRNO_PENDING) {
+            LOGE("[Hook] ✗ %s PENDING —— 目标库未加载，且延迟 hook 已禁用", label);
+        } else {
+            LOGE("[Hook] ✗ %s errno=%d %s", label, e, shadowhook_to_errmsg(e));
+        }
+        hookFail++;
         return false;
     };
 
@@ -543,6 +553,6 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
         else LOGE("[UrlConfig] 端点线程起不来");
     }
 
-    LOGI("[JNI] hooks 安装完成");
+    LOGI("[JNI] hooks 安装完成：成功 %d 个，失败 %d 个", hookOk, hookFail);
     return JNI_VERSION_1_6;
 }
