@@ -92,6 +92,28 @@ def needed_fallback(path):
     return out
 
 
+# 只应由 DT_NEEDED 自动加载、不得被 System.loadLibrary 显式加载的库
+NEVER_LOAD_EXPLICITLY = {"shadowhook"}
+
+
+def check_explicit_loads(apk):
+    """在 dex 里找 System.loadLibrary("<禁止项>") 的痕迹。
+
+    dex 的字符串池是明文的，禁止项作为库名会原样出现；而它作为 DT_NEEDED
+    只出现在 .so 里、不会进 dex。所以「dex 里出现该字符串」即可判定为显式加载。
+    """
+    out = []
+    with zipfile.ZipFile(apk) as z:
+        for n in z.namelist():
+            if not (n.startswith("classes") and n.endswith(".dex")):
+                continue
+            blob = z.read(n)
+            for lib in NEVER_LOAD_EXPLICITLY:
+                if lib.encode() in blob:
+                    out.append((n, f'dex 里出现库名 "{lib}"，疑似被 System.loadLibrary 显式加载'))
+    return out
+
+
 def main():
     if len(sys.argv) < 2:
         print("用法: check-so-deps.py <apk>", file=sys.stderr)
@@ -116,6 +138,13 @@ def main():
                     if dep in SYSTEM_LIBS or dep in by_abi[abi]:
                         continue
                     problems.append((n, dep))
+
+    # 额外一条：带 JNI_OnLoad 的依赖库不能被 smali 显式 loadLibrary。
+    # 按 DT_NEEDED 自动加载不会调 JNI_OnLoad，显式加载会——而 libshadowhook
+    # 的 JNI_OnLoad 要注册 com/bytedance/shadowhook/ShadowHook 的 native 方法，
+    # 我们包里没这个类，于是 JNI_ERR。这个坑踩过一次。
+    bad_load = check_explicit_loads(apk)
+    problems += bad_load
 
     if checked == 0:
         print("::warning::APK 里没有 .so")
