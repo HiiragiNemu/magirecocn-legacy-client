@@ -1,7 +1,6 @@
 package io.kamihama.magianative;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.content.res.AssetFileDescriptor;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
@@ -40,6 +39,13 @@ import java.nio.ByteBuffer;
  *
  * <p>整个类<b>绝不外抛</b>：BGM 是锦上添花，任何环节出问题都只能安静降级，
  * 不允许影响安装流程。
+ *
+ * <p><b>播放状态只存在内存里，且默认关闭——这是有意为之，别改成持久化。</b>
+ * 浮层的 BGM 与引擎自己的 BGM 是两套独立的播放器，谁也不知道谁。一旦选择被记到
+ * SharedPreferences，下次启动只要浮层露一下脸（比如资源已就位、装完直接进游戏
+ * 那条路径），我们的 BGM 就会自动起播，和引擎的 BGM 撞在一起变成二重奏。
+ * 只存内存意味着<b>必须由玩家在本次会话里主动打开才会响</b>，永远不会自动起播，
+ * 从根上排除了这种撞车。代价是每次启动都要重新点一下——值得。
  */
 public final class CNBgm {
 
@@ -47,10 +53,6 @@ public final class CNBgm {
 
     /** 与 {@code assets/magia/bgm.json} 同名。 */
     private static final String META_ASSET = "magia/bgm.json";
-
-    private static final String PREFS_NAME = "cnv_installer_ui";
-    /** 玩家选的曲目：0=关闭，1=BGM1，2=BGM2。 */
-    public  static final String PREF_BGM   = "bgm_track";
 
     /** 见类注释：目前两首的 loopStart 都是 0，seek 回 0 才能保证采样精确。 */
     private static final boolean LOOP_START_MUST_BE_ZERO = true;
@@ -129,28 +131,12 @@ public final class CNBgm {
     public static int current() { return current; }
 
     /**
-     * 读回上次的选择。
-     *
-     * <p>没存过时默认 <b>BGM1</b>：需求是「给浮层加上 BGM」，默认静音的话等于没加。
-     * 不喜欢点一下胶囊就关，选择会被记住。
-     */
-    public static int loadChoice(Context ctx) {
-        try {
-            return ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                      .getInt(PREF_BGM, 1);
-        } catch (Throwable t) { return 1; }
-    }
-
-    /**
      * 切到某首曲子。{@code id<=0} 表示关闭。重复选同一首不会重启播放。
+     *
+     * <p>选择<b>不落盘</b>，只改 {@link #current} 这个进程内的静态字段——原因见类注释：
+     * 一旦持久化，下次启动浮层一露脸就会自动起播，和引擎的 BGM 撞成二重奏。
      */
     public static synchronized void select(Context ctx, int id) {
-        try {
-            SharedPreferences.Editor e = ctx.getSharedPreferences(
-                    PREFS_NAME, Context.MODE_PRIVATE).edit();
-            e.putInt(PREF_BGM, id).apply();
-        } catch (Throwable ignore) {}
-
         if (id == current && thread != null && !paused) return;
         stopInternal();
         current = id;

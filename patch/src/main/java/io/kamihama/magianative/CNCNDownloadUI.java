@@ -631,8 +631,9 @@ public class CNCNDownloadUI {
                     ViewGroup.LayoutParams.WRAP_CONTENT);
             bgmLp.leftMargin = dp(act, 8);
             topLeft.addView(vBgmPill, bgmLp);
-            // 按上次的选择起播（默认关闭）
-            CNBgm.select(act, CNBgm.loadChoice(act));
+            // 这里**不主动起播**。浮层的 BGM 与引擎自己的 BGM 互不知情，自动起播
+            // 会在「资源已就位、浮层一闪而过直接进游戏」那条路径上撞成二重奏。
+            // 只有玩家点了胶囊才会响，CNBgm.current 也只存内存、不落盘。
             styleBgmPill(act);
         }
 
