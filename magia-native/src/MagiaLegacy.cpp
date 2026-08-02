@@ -153,6 +153,8 @@ static const std::string* (*urlConfigResourceOld)(void*, int) = nullptr;
 // 强制新手教程：拦「进主页」，改走引擎自己的序章场景
 static void (*pushSceneTopOld)(void*, const std::string&)     = nullptr;
 static void (*notifyJsOld)(void*, const std::string&)         = nullptr;
+static void (*prologueCtorOld)(void*, void*)                  = nullptr;
+static void (*prologueDtorOld)(void*)                         = nullptr;
 // 只取地址、不装 hook：命中标记时直接调它
 static void (*pushScenePrologueFn)(void*, const std::string&) = nullptr;
 
@@ -325,11 +327,33 @@ static void* endpointThreadMain(void*) {
 // json 的字段名从 0xd1ecbc 那个函数里读出来的：认 "beginningId"（序章脚本
 // ID）和 "callback"，两者都有「成员不存在」的兜底分支，所以只给 beginningId
 // 是合法的。"OP020" 与调试菜单写死的值一致，引擎二进制里也确实有这个字符串。
+// ## 为什么要一直吞掉 pushSceneTop，而不是只吞第一次
+//
+// 第一版只在命中标记时把首个 pushSceneTop 换成序章，之后放行。真机结果是
+// **序章被压在主界面后面，成了主界面的背景**。
+//
+// 原因在 SceneLayerManager::pushSceneLayer（0xb82610）：它不按 ESceneLayerType
+// 排层序，只是把任务塞进一个 deque，之后按**入队顺序**处理。也就是说后 push
+// 的盖在先 push 的上面。序章（type=9）先入队，随后又来的 pushSceneTop
+// （type=11）后入队，于是主页盖在序章上。
+//
+// 所以：从强制那一刻起，到序章图层真正销毁为止，期间所有 pushSceneTop 一律
+// 吞掉。销毁时把最后吞掉的那次原样补放回去，保证序章结束后能回到主页——
+// 我们把中间的 Top 全吞了，栈里没有主页可以退回去。
 static std::atomic<bool> g_tutorialForced{false};
+// 强制教程进行中：置位于强制那一刻，清除于 PrologueSceneLayer 析构。
+// 必须比「序章图层存在」更宽——push 只是入队，图层要等队列被处理才构造，
+// 这中间的窗口同样不能放主页进来。
+static std::atomic<bool> g_tutorialActive{false};
+// 被吞掉的最后一次 pushSceneTop，供序章结束后原样补放
+static std::mutex   g_savedTopMutex;
+static void*        g_savedTopSelf = nullptr;
+static std::string  g_savedTopArg;
+static bool         g_savedTopValid = false;
 
 // 消费标记：存在则删除（一次性）并返回 true。
-// 删除是关键——只在本次启动的首个 pushSceneTop 处强制一次；序章结束返回
-// 主页时引擎会再调一次 pushSceneTop，那次必须放行，否则就卡在序章里出不来。
+// 删除是关键——只强制一次；序章结束后的 pushSceneTop 必须放行，
+// 否则就卡在序章里出不来。
 static bool consumeForceTutorial() {
     if (!fileExists(FORCE_TUTORIAL_FLAG_PATH)) return false;
     if (::remove(FORCE_TUTORIAL_FLAG_PATH.c_str()) != 0) {
@@ -341,24 +365,75 @@ static bool consumeForceTutorial() {
     return true;
 }
 
+static void saveTop(void* self, const std::string& arg) {
+    std::lock_guard<std::mutex> lk(g_savedTopMutex);
+    g_savedTopSelf  = self;
+    g_savedTopArg   = arg;
+    g_savedTopValid = true;
+}
+
 static void pushSceneTopNew(void* self, const std::string& arg) {
+    // 教程进行中：一律吞掉，别让主页盖在序章上面（理由见上）
+    if (g_tutorialActive.load()) {
+        LOGI("[Tutorial] 教程进行中，吞掉 pushSceneTop(arg=%s)", arg.c_str());
+        saveTop(self, arg);
+        return;
+    }
     if (pushScenePrologueFn && consumeForceTutorial()) {
         static const std::string kPrologueArg = "{\"beginningId\":\"OP020\"}";
-        LOGI("[Tutorial] 命中强制教程标记 → 改走 pushScenePrologue(OP020)");
+        LOGI("[Tutorial] 命中强制教程标记 → 改走 pushScenePrologue(OP020)"
+             "（原 pushSceneTop arg=%s）", arg.c_str());
+        saveTop(self, arg);
         g_tutorialForced.store(true);
+        g_tutorialActive.store(true);
         pushScenePrologueFn(self, kPrologueArg);
         return;
     }
+    LOGI("[SceneCmd] pushSceneTop(arg=%s) 放行", arg.c_str());
     pushSceneTopOld(self, arg);
 }
 
-// 序章完成时引擎经此函数向前端发通知。只在强制模式下记一行，用来确认
-// 序章确实跑完了、以及完成信号长什么样（将来若要做「完成后静默进主页」
-// 需要精确匹配这个字符串）。
-static void notifyJsNew(void* _this, const std::string& arg) {
-    if (g_tutorialForced.load()) {
-        LOGI("[Tutorial::notifyJs] arg=%s", arg.c_str());
+// 序章图层的构造/析构。析构是「序章真的结束了」最可靠的信号——比 notifyJs
+// 可靠，后者在序章过程中可能发多次。
+static void prologueCtorNew(void* _this, void* info) {
+    prologueCtorOld(_this, info);
+    LOGI("[Tutorial] PrologueSceneLayer 已构造 _this=%p（forced=%d）",
+         _this, (int)g_tutorialForced.load());
+}
+
+static void prologueDtorNew(void* _this) {
+    bool wasActive = g_tutorialActive.exchange(false);
+    LOGI("[Tutorial] PrologueSceneLayer 析构 _this=%p（active=%d）",
+         _this, (int)wasActive);
+    if (wasActive) {
+        // 把吞掉的那次 pushSceneTop 补放回去。序章期间的 Top 全被我们吞了，
+        // 栈里没有主页可退，不补的话玩家会停在空场景上。
+        //
+        // 这里只是往 SceneLayerManager 的 deque 里再排一个任务（pushSceneLayer
+        // 就是个入队函数，见 0xb82610），引擎自己也常在图层里 push 别的图层，
+        // 不是重入路径。
+        void* self = nullptr;
+        std::string arg;
+        bool ok = false;
+        {
+            std::lock_guard<std::mutex> lk(g_savedTopMutex);
+            if (g_savedTopValid) { self = g_savedTopSelf; arg = g_savedTopArg; ok = true; }
+            g_savedTopValid = false;
+        }
+        if (ok && pushSceneTopOld) {
+            LOGI("[Tutorial] 序章结束，补放 pushSceneTop(arg=%s)", arg.c_str());
+            pushSceneTopOld(self, arg);
+        } else {
+            LOGE("[Tutorial] 序章结束但没有可补放的 pushSceneTop，可能停在空场景");
+        }
     }
+    prologueDtorOld(_this);
+}
+
+// 序章向前端发通知。无条件记录：那条「完成信号」长什么样目前还没拿到，
+// 而且要靠它判断前端在序章期间到底跟 native 说了些什么。
+static void notifyJsNew(void* _this, const std::string& arg) {
+    LOGI("[Tutorial::notifyJs] arg=%s", arg.c_str());
     notifyJsOld(_this, arg);
 }
 
@@ -654,6 +729,15 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
         H("_ZN18PrologueSceneLayer8notifyJsERKNSt6__ndk112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE",
           (void*)notifyJsNew, (void**)&notifyJsOld,
           "PrologueSceneLayer::notifyJs(教程信号日志)");
+        // 序章图层的生存期。析构是「序章真的结束了」最可靠的信号；D1 与 D2
+        // 在两个 ABI 上都是同一个地址（别名），删除型析构 D0 也走 D2，
+        // 所以只 hook D2 就能覆盖全部销毁路径。
+        H("_ZN18PrologueSceneLayerC1EP22PrologueSceneLayerInfo",
+          (void*)prologueCtorNew, (void**)&prologueCtorOld,
+          "PrologueSceneLayer::ctor");
+        H("_ZN18PrologueSceneLayerD2Ev",
+          (void*)prologueDtorNew, (void**)&prologueDtorOld,
+          "PrologueSceneLayer::dtor(序章结束闸门)");
     }
 
     // 尽早发起 SNAA 查询：引擎很快就会问资源地址。取不到就保持 ready=false，
