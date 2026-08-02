@@ -28,7 +28,7 @@
 //   - 强制新手教程（pushSceneTop / PrologueSceneLayer::notifyJs）
 // 保留资源下载流水线，并补回 libcn_hook 特有的「叫起 Java 安装器」触发。
 //
-// ## ⚠ 尚未接管端点重定向 —— 因此当前**不能**停用 libuwasa
+// ## 端点重定向（原 libuwasa 的核心职责）已接管
 //
 // 三层改造的关系（由维护者确认，并经反汇编印证）：
 //
@@ -36,24 +36,42 @@
 //                                        │
 //                            libcn_hook（二改）──▶ 拦下载入口，接我们的浮层
 //
-// 也就是说 libuwasa 是**承重**的：删掉它，引擎的下载地址会退回已停服的日服。
-// 它靠 hook UrlConfig::resource(Resource::Type) 实现，逆出来的逻辑是：
+// libuwasa 靠 hook UrlConfig::resource(Resource::Type) 做重定向。逆向结果：
 //
-//     const std::string& resource(Resource::Type type) const
-//         type > 2                  → 调原版
-//         越界                       → log "Out of range for endpoint type %d!" → 调原版
-//         表[type] 非空指针          → ★ 直接返回，顶掉原版
-//         为空                       → log "Empty endpoint found ..." → 调原版
+//   引擎侧 UrlConfig::resource(Resource::Type) const @0x90855c（32 字节）：
+//       x8 = *(*(0x1d01db0))    ; UrlConfig::Impl 单例
+//       x0 = x8 + type*24 + 8   ; 24 = sizeof(std::string)
+//       ret
+//   → **返回 const std::string&**（x0 里是指针，不是 sret）。
+//     同结构的 UrlConfig::api 只是偏移换成 +0x68，可交叉印证。
+//     引擎的 Impl::setResourceUrl 也只写 impl+0x8/+0x20/+0x38，
+//     正好是 type=0/1/2，与 libuwasa 的「type > 2 → 调原版」吻合。
 //
-// 表按 type 0/1/2 索引、元素 16 字节，由 SNAA 响应（经 RestClient.GetEndpoint(I)）
-// 填充；libcn_hook 里的 MagiaRest 类是同一份响应的另一个消费者。
+//   libuwasa 的替换函数 @0x67160：
+//       type > 2 / 越界 / 表项为空  → 尾调原版
+//       否则                        → 返回表[type]（std::string*）
+//     表在 0xea080，是 std::vector<std::shared_ptr<std::string>>
+//     （元素 16 字节 = {T*, 控制块}，返回的正是 .first）。
 //
-// 要接管它还差两件事，都必须逆清楚、不能猜（猜错就是崩）：
-//   1. 确切返回类型（看指令序列最像 const std::string&，但需确认不是 sret）；
-//   2. Resource::Type 0/1/2 各自的语义，以及表的填充时机。
+//   三个槽位由 SNAA 响应的 endpoint 加固定后缀拼成。后缀是 .bss 里的三个
+//   std::string 全局，由静态构造器 @0x68858 填（strb 的立即数即 size<<1）：
+//       0xea130 = "/magica/resource"        (0x20>>1 = 16)
+//       0xea148 = "/download/asset/master"  (0x2c>>1 = 22)
+//       0xea160 = "/resource/scenario"      (0x24>>1 = 18)
+//   拼装顺序（照 0x66550-0x667d0 的临时量流向）：
+//       slot0 = base + "/magica/resource"
+//       slot1 = slot0 + "/download/asset/master"
+//       slot2 = slot1 + "/resource/scenario"
 //
-// 在此之前本库只做「可编译、可并存」，不改动 com/loadLib/libLoader，
-// 也不删任何 .so —— 现有行为完全不变。
+// 本文件按上述规格重新实现，端点经 CNDownloaderFix.getEndpoint(I)（静态方法）
+// 取得。传 0 即可：Java 侧会 max(i, MIN_SNAA_VERSION=128)，与 libuwasa 实际
+// 发出的 sent_version=128 一致。
+//
+// ## ⚠ 仍未切换加载
+//
+// 代码就位不等于可以切。libuwasa 与本库若同时加载，会对同一地址装两次 hook
+// （Dobby vs shadowhook），行为未定义。切换必须与「停用 libuwasa」同一步做，
+// 且需真机验证。本提交仍不改 com/loadLib/libLoader、不删任何 .so。
 
 #include <jni.h>
 #include <android/log.h>
@@ -106,6 +124,9 @@ static void (*downloadSceneLayerOnEnterOld)(void*)     = nullptr;
 // libuwasa 逆向移植来的两个
 static int  (*criNcvGetHwSampleRateOld)(void)        = nullptr;
 static void (*setMaxConnectionNumOld)(void*, int)    = nullptr;
+
+// 端点重定向：返回 const std::string&，故原型返回 const std::string*
+static const std::string* (*urlConfigResourceOld)(void*, int) = nullptr;
 
 // ─── info/layer 映射 ─────────────────────────────────────
 static std::unordered_map<void*, std::function<void()>> g_infoCallbackMap;
@@ -182,6 +203,78 @@ static void triggerCNDownload(const char* reason) {
         LOGE("[trigger] pthread_create 失败");
         g_downloadTriggered.store(false);   // 允许后续重试
     }
+}
+
+// ─── 端点重定向（取代 libuwasa 的 UrlConfig::resource）────
+//
+// 三个槽位在 SNAA 响应回来后一次性写好，之后只读不改；读侧靠 acquire 看到
+// release 之前的全部写入。返回的是 static 数组元素的地址，生命周期与进程同寿，
+// 引擎拿去当 const std::string& 用是安全的。
+static std::string       g_resourceUrl[3];
+static std::atomic<bool> g_resourceReady{false};
+
+static const std::string* urlConfigResourceNew(void* self, int type) {
+    if (g_resourceReady.load(std::memory_order_acquire) && type >= 0 && type < 3) {
+        return &g_resourceUrl[type];
+    }
+    return urlConfigResourceOld(self, type);
+}
+
+// 从 SNAA 响应里抠出 endpoint。响应形如
+//   {"message":"snaa","response":{"endpoint":"https://...","max_threads":40,...},"status":200}
+// 只取第一个 "endpoint" 的字符串值；不引 JSON 库（本库不该为这点事背依赖）。
+static std::string extractEndpoint(const std::string& json) {
+    static const std::string KEY = "\"endpoint\"";
+    size_t k = json.find(KEY);
+    if (k == std::string::npos) return std::string();
+    size_t c = json.find(':', k + KEY.size());
+    if (c == std::string::npos) return std::string();
+    size_t q1 = json.find('"', c);
+    if (q1 == std::string::npos) return std::string();
+    size_t q2 = json.find('"', q1 + 1);
+    if (q2 == std::string::npos) return std::string();
+    return json.substr(q1 + 1, q2 - q1 - 1);
+}
+
+static void buildResourceUrls(const std::string& base) {
+    // 后缀与拼装顺序照抄 libuwasa 的逆向结果，见文件头。
+    g_resourceUrl[0] = base + "/magica/resource";
+    g_resourceUrl[1] = g_resourceUrl[0] + "/download/asset/master";
+    g_resourceUrl[2] = g_resourceUrl[1] + "/resource/scenario";
+    g_resourceReady.store(true, std::memory_order_release);
+    for (int i = 0; i < 3; i++) LOGI("[UrlConfig] resource[%d] = %s", i, g_resourceUrl[i].c_str());
+}
+
+// 取端点。走 CNDownloaderFix.getEndpoint(I)（静态方法）而不是 RestClient.GetEndpoint
+// （那是实例方法，还得先造对象）。传 0 即可，Java 侧会 max(i, 128)。
+static void* endpointThreadMain(void*) {
+    bool attached = false;
+    JNIEnv* env = attachEnv(attached);
+    if (!env) { LOGE("[UrlConfig] 拿不到 JNIEnv"); return nullptr; }
+    do {
+        jclass cls = env->FindClass("io/kamihama/magianative/CNDownloaderFix");
+        if (!cls) { if (env->ExceptionCheck()) env->ExceptionClear();
+                    LOGE("[UrlConfig] 找不到 CNDownloaderFix"); break; }
+        jmethodID mid = env->GetStaticMethodID(cls, "getEndpoint", "(I)Ljava/lang/String;");
+        if (!mid) { if (env->ExceptionCheck()) env->ExceptionClear();
+                    LOGE("[UrlConfig] 找不到 getEndpoint(I)"); env->DeleteLocalRef(cls); break; }
+        jobject js = env->CallStaticObjectMethod(cls, mid, (jint)0);
+        if (env->ExceptionCheck()) { env->ExceptionClear(); LOGE("[UrlConfig] getEndpoint 抛异常"); }
+        std::string json;
+        if (js) {
+            const char* utf = env->GetStringUTFChars((jstring)js, nullptr);
+            if (utf) { json = utf; env->ReleaseStringUTFChars((jstring)js, utf); }
+            env->DeleteLocalRef(js);
+        }
+        env->DeleteLocalRef(cls);
+        std::string base = extractEndpoint(json);
+        if (base.empty()) { LOGE("[UrlConfig] 响应里没有 endpoint，放弃重定向（将回落到原版地址）"); break; }
+        while (!base.empty() && base.back() == '/') base.pop_back();   // 去掉尾斜杠，免得拼成 //
+        LOGI("[UrlConfig] endpoint = %s", base.c_str());
+        buildResourceUrls(base);
+    } while (false);
+    if (attached) gJvm->DetachCurrentThread();
+    return nullptr;
 }
 
 // ─── 下载场景三连 ────────────────────────────────────────
@@ -399,6 +492,19 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     H("_ZN5http212Http2Session19setMaxConnectionNumEi",
       (void*)setMaxConnectionNumNew, (void**)&setMaxConnectionNumOld,
       "http2::setMaxConnectionNum(4→10)");
+
+    // ── 端点重定向（原 libuwasa 的核心职责）──
+    H("_ZNK9UrlConfig8resourceENS_8Resource4TypeE",
+      (void*)urlConfigResourceNew, (void**)&urlConfigResourceOld,
+      "UrlConfig::resource(端点重定向)");
+
+    // 尽早发起 SNAA 查询：引擎很快就会问资源地址。取不到就保持 ready=false，
+    // resource() 会一路回落到原版，不会卡住也不会崩。
+    {
+        pthread_t t;
+        if (pthread_create(&t, nullptr, endpointThreadMain, nullptr) == 0) pthread_detach(t);
+        else LOGE("[UrlConfig] 端点线程起不来");
+    }
 
     LOGI("[JNI] hooks 安装完成");
     return JNI_VERSION_1_6;
