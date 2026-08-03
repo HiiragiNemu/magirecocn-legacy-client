@@ -23,9 +23,11 @@
    接口（如 `Comparator<T>`）——当前 d8 版本会以 NPE 崩掉。用具名静态类代替。
    这不是猜测，是本仓库构建时实测撞过三次的问题。
 
-5. **配置直连主线，支线只分发文件**。`config.json` / `version_js.json` /
-   `version_scenario.json` 必须直连 `assets.example.test`，不得经过任何支线。
-   改动涉及下载路径时，对照 README 的「网络出口」表逐条确认。
+5. **线路表直连主线，其余一律走换线**。只有 `config.json`（线路表本身）必须
+   直连 `api.example.test`——它定义了线路，没得选。两份 version json
+   （`version_js.json` / `version_scenario.json`）与资源文件一样走换线
+   （2026-08-03 起；此前它们也直连主线，铁律已改）。改动涉及下载路径时，
+   对照 README 的「网络出口」表逐条确认。
 
 6. **不做自动发版**。CI 只保留 `workflow_dispatch`；不要加 push 触发，
    也不要自动建 Release。

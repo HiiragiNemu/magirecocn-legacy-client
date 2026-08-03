@@ -71,6 +71,8 @@ public class CNCNDownloadUI {
 
     // 顺序与 CNDownloaderFix.FILE_NAMES 逐项对齐（三张表按下标并行）。
     // 热更新的两个包排最前，理由见 CNDownloaderFix.FILE_NAMES 的注释。
+    // ⚠ 这一列是**规范名（身份标识）**，不是下载地址：标记连续性依赖它，
+    // 域名废弃也不改；实际下载地址由 CNMirrors 线路给出。
     public static final String[] FILE_URLS = {
         "https://assets.example.test/cn_scenario_update.zip",
         "https://assets.example.test/cn_js_update.zip",

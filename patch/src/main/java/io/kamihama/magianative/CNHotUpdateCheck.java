@@ -127,12 +127,12 @@ public final class CNHotUpdateCheck {
     // 所以是 0 和 1——原实现里写的 14 / 11 是排序前的下标，照抄会画错行。
     private static final Pkg[] PACKAGES = {
         new Pkg("台词包",
-                "https://assets.example.test/version_scenario.json", "scenario_version",
-                "https://assets.example.test/cn_scenario_update.zip",
+                "https://r2.assets.example.test/version_scenario.json", "scenario_version",
+                "https://r2.assets.example.test/cn_scenario_update.zip",
                 "cn_scenario_update.zip", 0),
         new Pkg("前端脚本",
-                "https://assets.example.test/version_js.json", "js_version",
-                "https://assets.example.test/cn_js_update.zip",
+                "https://r2.assets.example.test/version_js.json", "js_version",
+                "https://r2.assets.example.test/cn_js_update.zip",
                 "cn_js_update_hot.zip", 1),
     };
 
@@ -370,8 +370,36 @@ public final class CNHotUpdateCheck {
     // 版本号
     // ==================================================================
 
-    /** 直连主线取版本 json。配置类请求一律不换线，与 {@code config.json} 同理。 */
+    /**
+     * 取版本 json。<b>走换线</b>：与资源文件同一套线路（维护者 2026-08-03 定的
+     * 新规——「配置直连主线」的铁律对这两份 version json 不再适用；仍直连主线
+     * 的只有线路表本身 config.json，它定义了线路，没得选）。从规范地址取出
+     * 文件名后逐条线路试，失败记冷却；全部失败才抛出（调用方按「跳过本次
+     * 热更」处理，不会卡住启动）。
+     */
     private static int fetchVersion(String url) throws Exception {
+        String base = CNMirrors.DEFAULT_BASE;
+        String name = url.startsWith(base) ? url.substring(base.length()) : url;
+        // 线路表可能还没拉过（热更检查不一定跟在安装器后面跑）
+        if (!CNMirrors.isLoaded()) {
+            CNMirrors.refresh(false);
+            if (!CNMirrors.isLoaded()) CNMirrors.refresh(true);
+        }
+        Exception last = null;
+        for (CNMirrors.Mirror m : CNMirrors.healthy()) {
+            try {
+                return fetchVersionDirect(m.urlFor(name));
+            } catch (Exception t) {
+                CNLog.w(TAG, "版本 json 线路失败 mirror=" + m.name + ": " + t);
+                CNMirrors.reportFailure(m, "version json");
+                last = t;
+            }
+        }
+        throw last != null ? last : new java.io.IOException("无可用线路");
+    }
+
+    /** 从单条线路直取版本 json 并解析 version 字段。 */
+    private static int fetchVersionDirect(String url) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection(Proxy.NO_PROXY);
         try {
             c.setConnectTimeout(CONNECT_TIMEOUT_MS);
