@@ -1,0 +1,1312 @@
+# 原文	译文	风险	出现次数	出现于
+閉じる	关闭		95	js/_common/ajaxControl.js,js/campaign/box_gacha/CampaignBoxGachaTop.js,js/chara/CharaCompose.js,…共55处
+キャンセル	取消		76	js/_common/router.js,js/campaign/box_gacha/CampaignBoxGachaTop.js,js/chara/CharaCompose.js,…共50处
+エラー	错误	疑似碎片	30	js/_common/base.js,js/camera/CameraTop.js,js/event/EventArenaRankMatch/Result.js,…共19处
+遊び方	玩法		27	template/arena/ArenaRanking.html,template/campaign/box_gacha/CampaignBoxGachaTop.html,template/campaign/quiz/CampaignQuizTop.html,…共27处
+ミッション	任务		25	js/_common/nativeCommand.js,js/_common/nativeCommand2.js,js/event/dungeon/EventDungeonMap.js,…共22处
+まで		疑似碎片	23	js/event/EventArenaRankMatch/Result.js,js/event/EventWitch/Model.js,js/event/arenaranking/view/EventArenaResultView.js,…共18处
+チーム	队伍	疑似碎片	22	js/event/accomplish/EventAccomplishDeck.js,js/formation/DeckFormation.js,js/formation/DeckFormationUtil.js,…共7处
+編成エラー	编成错误		19	js/event/accomplish/EventAccomplishDeck.js,js/formation/DeckFormation.js,js/formation/DeckFormationUtil.js,…共5处
+お知らせ	公告		16	js/_common/backboneCommon.js,js/campaign/box_gacha/CampaignBoxGachaTop.js,js/event/arenaMission/EventArenaMissionTop.js,…共9处
+メモリアセット	记忆结晶组合		12	js/memoria/MemoriaSetEquip.js,js/memoria/MemoriaSetList.js,template/memoria/MemoriaComposeTop.html,…共5处
+よろしいですか？	确定吗？		12	template/campaign/box_gacha/CampaignBoxGachaTop.html,template/chara/CharaBulkCustomizePopup.html,template/event/EventArenaRankMatch/parts/AttackCountPopup.html,…共10处
+対戦相手の変更	更换对手		11	js/event/arenaMission/EventArenaMissionStage.js,js/event/arenaMission/view/ArenaConfirmView.js,js/event/arenaranking/view/EventArenaConfirmView.js,…共6处
+バトルログ	战斗记录		11	js/event/dailytower/EventDailyTowerTop.js,js/regularEvent/groupBattle/RegularEventGroupBattleTop.js,template/event/dailytower/EventDailyTowerTop.html,…共9处
+回復する	回复		11	js/event/EventArenaRankMatch/parts/AttackCount.js,js/event/EventArenaRankMatch/parts/AttackCountItemPopup.js,js/event/accomplish/EventAccomplishRecovery.js,…共11处
+APが不足しています	AP 不足		10	js/event/EventWalpurgis/Utility.js,js/event/EventWitch/Utility.js,js/event/branch/EventBranchTop.js,…共7处
+あと		疑似碎片	10	js/chara/CharaCompose.js,js/view/user/GlobalMenuView.js,template/arena/ArenaFreeRank.html,…共9处
+\\x3cp class\\x3d"noMission ts_white"\\x3e挑戦できるミッションがありません\\x3c/p\\x3e			10	js/regularEvent/groupBattle/RegularEventGroupBattleTop.js,js/view/mission/MissionTopListView.js,js/view/mission/MissionTopView.js
+アーカイブ	回顾		10	template/event/EventWitch/page/Top.html,template/event/accomplish/EventAccomplishTop.html,template/event/branch/EventBranchTop.html,…共9处
+マイページへ	返回主页		9	js/campaign/summer_mission/CampaignSummerMissionTopListView.js,js/user/BackgroundSet.js,js/view/mission/MissionTopListView.js,…共7处
+クエスト確認	关卡确认		9	js/event/branch/EventBranchTop.js,js/event/raid/EventRaidTop.js,js/event/storyraid/EventStoryRaidTop.js,…共6处
+を		疑似碎片	9	js/chara/CharaCompose.js,js/chara/CharaTop.js,template/campaign/box_gacha/CampaignBoxGachaTop.html,…共8处
+ミラーズトップへ	返回镜界首页		8	js/event/arenaranking/view/EventArenaConfirmView.js,js/event/arenaranking/view/EventArenaRankingView.js,js/view/arena/ArenaConfirmView.js,…共4处
+<p class="noMission ts_white">全てのミッションをクリアしました</p>		HTML片段	8	js/event/raid/EventRaidCloseTop.js,js/event/raid/EventRaidTop.js
+サポートPt	支援点数		8	js/_common/nativeCommand.js,js/_common/nativeCommand2.js,js/gacha/GachaResult.js,…共6处
+マギアストーン	魔法石		8	js/gacha/GachaResult.js,js/view/gacha/GachaTopView2.js,js/view/user/APPopup.js,…共6处
+\\x3cdiv class\\x3d'noUser'\\x3e該当するプレイヤーが存在しません\\x3c/div\\x3e			8	js/view/follow/FollowSearchResultView.js,js/view/follow/FollowTopView.js
+残り			8	template/campaign/box_gacha/CampaignBoxGachaTop.html,template/campaign/summer_mission/CampaignSummerMissionTop.html,template/formation/DeckFormation.html,…共5处
+マギア		疑似碎片	7	js/_common/nativeCommand.js,js/_common/nativeCommand2.js,js/card/CardPopup.js,…共7处
+カ月前			7	js/event/arenaMission/EventArenaMissionResult.js,js/event/arenaranking/view/EventArenaResultView.js,js/quest/SupportSelect.js,…共7处
+入れ替え	替换		7	js/quest/secondPartLast/Formation.js,js/regularEvent/extermination/RegularEventExterminationFormation.js,template/patrol/PatrolLumpFormation.html,…共5处
+メモリア	记忆结晶		7	js/_common/nativeCommand.js,js/_common/nativeCommand2.js,js/view/memoria/MemoriaComposeTopView.js,…共5处
+キモチ戦			7	js/regularEvent/groupBattle/RegularEventGroupBattleTop.js,js/regularEvent/groupBattle/view/BossPageView.js,js/regularEvent/groupBattle/view/UserPageView.js,…共4处
+リロード	重新加载		6	js/_common/_common.js,js/_common/ajaxControl.js,js/top/TopPage.js,…共4处
+マギアLv	魔法等级		6	js/_common/nativeCommand.js,js/_common/nativeCommand2.js,js/event/accomplish/EventAccomplishRecovery.js,…共6处
+リプレイの保存	保存回放		6	js/event/EventArenaRankMatch/Result.js,js/event/arenaranking/view/EventArenaResultView.js,js/view/arena/ArenaResultView.js
+チーム編成	队伍编成		6	js/patrol/view/PatrolDeckView.js,template/patrol/PatrolLumpFormation.html,template/quest/secondPartLast/Formation.html,…共4处
+Blastディスク	Blast 圆盘		6	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+サポート編成	支援编成		6	js/_common/nativeCommand.js,js/_common/nativeCommand2.js,template/formation/FormationTop.html,…共6处
+メンテナンス	维护中		6	js/view/system/AnnounceView.js,template/user/AnnounceTemp.html,template/user/AnnounceTempMainte.html
+アップデート	更新		6	js/view/system/AnnounceView.js,template/user/AnnounceTemp.html,template/user/AnnounceTempMainte.html
+使用して	使用		6	template/campaign/box_gacha/CampaignBoxGachaTop.html,template/event/EventArenaRankMatch/parts/AttackCountItemPopup.html,template/event/EventArenaRankMatch/parts/AttackCountPopup.html,…共5处
+チーム編成一覧	队伍编成一览		6	template/quest/secondPartLast/BattleConfirm.html,template/quest/secondPartLast/Formation.html,template/quest/secondPartLast/Top.html,…共6处
+絵文字は使用できません	不能使用表情符号		6	template/event/accomplish/EventAccomplishDeck.html,template/event/storyraid/EventStoryRaidBoss.html,template/formation/FormationQuest.html,…共6处
+装備中のメモリア	装备中的记忆结晶		6	template/memoria/MemoriaComposeTop.html,template/memoria/PieceArchive.html,template/memoria/UserMemoriaList.html
+引き継ぎ・連携	数据转移・关联		5	js/top/TopPage.js,template/top/TopPage.html
+通信エラー	通信错误		5	js/_common/ajaxControl.js,js/top/TopPage.js
+ミッション報酬を			5	js/campaign/summer_mission/CampaignSummerMissionTopView.js,js/regularEvent/groupBattle/RegularEventGroupBattleTop.js,js/view/mission/MissionTopView.js
+変更する	变更		5	js/campaign/box_gacha/CampaignBoxGachaTop.js,js/event/arenaMission/EventArenaMissionStage.js,js/event/arenaranking/view/EventArenaRankingView.js,…共5处
+サポート	支援		5	js/_common/nativeCommand.js,js/_common/nativeCommand2.js,js/card/CardPopup.js,…共5处
+レアリティ	稀有度		5	js/event/accomplish/EventAccomplishRecovery.js,js/quest/QuestUtil.js,js/util/SortUtil.js,…共5处
+トップページへ	返回首页		5	js/_common/ajaxControl.js,js/_common/base.js,js/user/MyPage.js
+プレイヤーデータ削除	删除玩家数据		5	js/config/DeleteUserData.js
+話をクリア	通关话数		5	js/event/arenaranking/view/EventArenaResultView.js,js/quest/QuestUtil.js,js/view/arena/ArenaResultView.js,…共4处
+レベル順	按等级		5	js/memoria/MemoriaEquip.js,js/quest/SupportSelect.js,js/view/memoria/MemoriaComposeTopCardListView.js,…共5处
+解除する	解除		5	js/event/EventArenaRankMatch/parts/CoolTime.js,js/quest/secondPartLast/Formation.js,js/quest/secondPartLast/parts/StagePartsView.js,…共5处
+編成コピー	复制编成		5	js/formation/DeckFormation.js,js/quest/secondPartLast/Formation.js,js/regularEvent/extermination/RegularEventExterminationFormation.js,…共4处
+カメラ撮影	相机拍摄		5	js/camera/CameraTop.js,js/event/aprilfool2018/EventAprilFoolTop.js
+時間経過の為、対戦相手に変更がありました\\x3cbr\\x3eミラーズトップに戻ります			5	js/event/arenaranking/view/EventArenaRankingView.js,js/view/arena/ArenaConfirmView.js,js/view/arena/ArenaFreeRankView.js
+ミラーズランキング	镜界排名		5	js/event/arenaranking/view/EventArenaResultView.js,js/view/arena/ArenaTopView.js
+をプレゼント！			5	js/event/arenaMission/EventArenaMissionTop.js,js/event/dailytower/EventDailyTowerTop.js,js/event/tower/EventTowerTop.js
+フォロー数:	关注数：		5	js/follow/FollowPopup.js,js/view/follow/FollowTopListView.js
+コネクト	连携		5	js/_common/nativeCommand.js,js/_common/nativeCommand2.js,template/formation/FormationQuest.html,…共5处
+デスティニージェム変換	命运宝石转换		5	js/chara/CharaEquip.js,js/view/item/ItemListPartView.js,js/view/item/ItemSalePopupView.js
+クエスト開始条件	关卡开始条件		5	js/formation/DeckFormationUtil.js,js/formation/FormationQuest.js,js/view/quest/QuestListPartsView.js
+ミラーズID	镜界 ID		5	js/view/arena/ArenaSimulateView.js,template/arena/ArenaSimulate.html
+受け取り期限を過ぎているため\\x3cbr\\x3e対象のミッション報酬を受け取ることはできません			5	js/regularEvent/groupBattle/RegularEventGroupBattleTop.js,js/view/mission/MissionTopListView.js,js/view/mission/MissionTopView.js
+（オファー：COMPLETE）			5	js/view/shop/ShopPopupView.js,js/view/shop/ShopTopView.js,js/view/shop/q.js
+(オファー可能：			5	js/view/shop/ShopPopupView.js,js/view/shop/ShopTopView.js,js/view/shop/q.js
+レアリティ順	按稀有度		5	js/memoria/MemoriaEquip.js,js/view/memoria/MemoriaComposeTopCardListView.js,js/view/memoria/PieceArchiveView.js,…共5处
+フィルタ	筛选		5	template/memoria/MemoriaComposeTop.html,template/memoria/MemoriaEquip.html,template/memoria/PieceArchive.html,…共5处
+戦う			5	template/event/EventWalpurgis/MainBossPopup.html,template/event/EventWalpurgis/SubBossList.html,template/quest/puellaHistoria/lastBattle/MainBossPopup.html,…共5处
+はずす		疑似碎片	5	template/gacha/SelectableGachaPieceSelect.html,template/memoria/MemoriaComposeTop.html,template/memoria/MemoriaEquipInfo.html,…共5处
+ミラーズ編成	镜界编成		5	template/formation/FormationTop.html,template/memoria/MemoriaComposeTop.html,template/memoria/PieceArchive.html,…共4处
+すべて選択	全选		5	template/memoria/bulkSelectPopupView.html
+トータルダメージ	总伤害		5	template/regularEvent/groupBattle/RegularEventGroupBattleRanking.html,template/regularEvent/groupBattle/RegularEventGroupBattleUser.html
+通信環境の良い所で再度お試しください。	请在网络状况良好的环境下重试。		4	js/_common/ajaxControl.js,js/top/TopPage.js
+受け取り期限を過ぎているため<br>対象のミッション報酬を受け取ることはできません		HTML片段	4	js/campaign/summer_mission/CampaignSummerMissionTopListView.js,js/campaign/summer_mission/CampaignSummerMissionTopView.js,js/event/raid/EventRaidCloseTop.js,…共4处
+<p class="noMission ts_white">挑戦できるミッションがありません</p>		HTML片段	4	js/campaign/summer_mission/CampaignSummerMissionTopListView.js,js/campaign/summer_mission/CampaignSummerMissionTopView.js
+ガチャを引く	进行抽卡		4	js/campaign/box_gacha/CampaignBoxGachaTop.js,js/view/gacha/GachaBtnView.js
+エピソードLv	剧情等级		4	js/event/accomplish/EventAccomplishRecovery.js,js/quest/QuestUtil.js,js/util/SortUtil.js,…共4处
+戻る			4	js/collection/MagiRepoDetail.js,template/campaign/box_gacha/CampaignBoxGachaTop.html,template/user/AnnounceTemp.html,…共4处
+ストーリー	剧情		4	js/quest/QuestUtil.js,template/event/dailytower/EventDailyTowerTop.html,template/event/tower/EventTowerTop.html,…共4处
+▼ コメントを選ぶ			4	js/event/EventWalpurgis/parts/GroupRaid/Stamp.js,js/quest/puellaHistoria/lastBattle/parts/GroupRaid/Stamp.js,template/event/EventWalpurgis/Stamp.html,…共4处
+チーム全解散	解散所有队伍		4	js/quest/secondPartLast/Formation.js,js/regularEvent/extermination/RegularEventExterminationFormation.js
+魔法少女おまかせ編成	魔法少女自动编成		4	js/quest/secondPartLast/Formation.js,js/regularEvent/extermination/RegularEventExterminationFormation.js
+制圧状態を解除し、再度制圧前の状態に戻せます。\\x3cbr /\\x3e\\x3cbr /\\x3e\\x3cspan class\\x3d'attention'\\x3e※解除後は再度制圧をする必要があります。\\x3cbr /\\x3e※制圧に参加した魔法少女を再編成できます。\\x3c/span\\x3e			4	js/quest/secondPartLast/Formation.js,js/quest/secondPartLast/parts/StagePartsView.js,js/regularEvent/extermination/RegularEventExterminationFormation.js,…共4处
+撮影が完了しました。	拍摄完成。		4	js/camera/CameraTop.js,js/event/aprilfool2018/EventAprilFoolTop.js
+が		疑似碎片	4	js/event/EventArenaRankMatch/Utility.js,template/campaign/box_gacha/CampaignBoxGachaTop.html,template/chara/CharaComposeAttribute/popupItemConfirm.html,…共4处
+イベント終了	活动已结束		4	js/event/EventArenaRankMatch/parts/AttackCount.js,js/event/EventArenaRankMatch/parts/CoolTime.js,js/formation/DeckFormation.js,…共4处
+イベント開催期間外です。	不在活动开放期间。		4	js/event/EventArenaRankMatch/parts/AttackCount.js,js/event/EventArenaRankMatch/parts/CoolTime.js,js/formation/DeckFormation.js,…共4处
+魔法少女の回復	魔法少女回复		4	js/event/accomplish/EventAccomplishRecovery.js,js/event/dungeon/EventDungeonMap.js
+BPが不足しています。	BP 不足。		4	js/event/arenaMission/EventArenaMissionStage.js,js/event/arenaMission/view/ArenaConfirmView.js,js/view/arena/ArenaConfirmView.js,…共4处
+最低1キャラは設定してください	请至少设置 1 名角色		4	js/event/accomplish/EventAccomplishDeck.js,js/formation/FormationQuest.js,js/formation/FormationSupport.js
+ミッション報酬を1件受け取りました。\\x3cbr\\x3e\\x3cbr\\x3e※魔法少女はプレゼントボックスよりお受け取りください。\\x3cbr\\x3e※受け取ったアイテムは直接付与されています。			4	js/mission/PanelMissionTop.js,js/view/mission/MissionTopListView.js
+ターゲットの選択	选择目标		4	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+オートバトル	自动战斗		4	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+デスティニージェム	命运宝石		4	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+Acceleディスク	Accele 圆盘		4	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+ドッペル			4	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+Chargeの効果	Charge 效果		4	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+有償マギアストーン	付费魔法石		4	js/gacha/GachaResult.js,js/view/gacha/GachaTopView2.js
+CCが不足しています	CC 不足		4	js/chara/CharaCompose.js,js/chara/CharaComposeMagia.js,js/chara/CharaCustomize.js,…共4处
+精神強化のリセット	重置精神强化		4	js/chara/CharaEnhancementTree.js
+ショップへ	前往商店		4	js/chara/CharaComposeAttribute/popupCheckMaterial.js,js/view/gacha/GachaBtnView.js,template/chara/CharaEnhancementMaterialPopup.html,…共4处
+フォロー	关注		4	js/view/follow/FollowTopView.js,js/view/quest/QuestResultView.js
+アイテム購入	购买道具		4	js/view/shop/ShopPopupView.js
+現在商品購入可能な商品がありません。	当前没有可购买的商品。		4	js/view/shop/ShopTopView.js,js/view/shop/q.js
+メモリア保管庫	记忆结晶仓库		4	js/view/memoria/PieceArchiveView.js
+選択したメモリアを	将所选记忆结晶		4	js/view/memoria/PieceArchiveView.js
+から\\x3cbr\\x3e\\x3cspan class\\x3d'c_red'\\x3e			4	js/view/memoria/PieceArchiveView.js
+魔法少女を１体以上編成してください。	请至少编成 1 名魔法少女。		4	js/formation/DeckFormation.js,js/formation/DeckFormationUtil.js
+イベント編成	活动编成		4	js/formation/FormationTop.js,template/memoria/MemoriaComposeTop.html,template/memoria/PieceArchive.html,…共4处
+最大デイリーダメージ	单日最大伤害		4	template/regularEvent/groupBattle/RegularEventGroupBattleRanking.html,template/regularEvent/groupBattle/RegularEventGroupBattleUser.html,template/user/EventRecord.html
+バトル		疑似碎片	4	template/event/raid/EventRaidRewardParts.html,template/event/raid/EventRaidTop.html
+指定無し	不指定		4	template/follow/FollowSearch.html
+セット		疑似碎片	4	template/chara/CharaBulkCustomizePopup.html,template/chara/CharaCustomize.html,template/gacha/SelectableGachaPieceSelect.html,…共4处
+クエスト編成	关卡编成		4	template/formation/FormationTop.html,template/memoria/MemoriaComposeTop.html,template/memoria/PieceArchive.html,…共4处
+編成中のチームで、			4	template/memoria/MemoriaEquip.html,template/memoria/PieceArchive.html,template/memoria/UserMemoriaList.html
+が装備中です。			4	template/memoria/MemoriaEquip.html,template/memoria/PieceArchive.html,template/memoria/UserMemoriaList.html
+自分の所属グループ：			4	template/regularEvent/groupBattle/RegularEventGroupCommon.html
+グループに所属していません			4	template/regularEvent/groupBattle/RegularEventGroupCommon.html
+期間外のため<br>対象のミッションは存在しません		HTML片段	3	js/campaign/summer_mission/CampaignSummerMissionTopListView.js,js/campaign/summer_mission/CampaignSummerMissionTopView.js
+セット内容	组合内容		3	js/campaign/summer_mission/CampaignSummerMissionTopListView.js,js/view/mission/MissionTopListView.js,js/view/shop/ShopTopPartsView.js
+八雲 みたま	八云 御魂		3	js/campaign/quiz/CampaignQuizTop.js,template/campaign/quiz/CampaignQuizTop.html,template/event/training/EventTrainingCharaSelect.html
+ボックス内容の変更	变更箱内容		3	js/campaign/box_gacha/CampaignBoxGachaTop.js
+所持可能なメモリアの上限を100枠以上超えています。\\x3cbr\\x3eメモリアの所持枠を空けてください。			3	js/campaign/box_gacha/CampaignBoxGachaTop.js,js/view/gacha/GachaBtnView.js
+メモリアへ	前往记忆结晶		3	js/campaign/box_gacha/CampaignBoxGachaTop.js,js/view/gacha/GachaBtnView.js
+マギアレコード運営事務局より	来自魔法纪录运营事务局		3	js/user/MyPage.js
+ランク順	按等级排名		3	js/quest/SupportSelect.js,js/view/arena/ArenaSimulateView.js,template/arena/ArenaSimulate.html
+「みたまの撮影会」は終了しました。	「御魂的摄影会」已结束。		3	js/camera/CameraTop.js,js/event/aprilfool2018/EventAprilFoolTop.js
+◆ ストーリークエスト			3	js/event/dailytower/EventDailyTowerTop.js,js/event/tower/EventTowerTop.js,js/event/training/EventTrainingTop.js
+保存しない	不保存		3	js/event/EventArenaRankMatch/Result.js,js/event/arenaranking/view/EventArenaResultView.js,js/view/arena/ArenaResultView.js
+保存する	保存		3	js/event/EventArenaRankMatch/Result.js,js/event/arenaranking/view/EventArenaResultView.js,js/view/arena/ArenaResultView.js
+リプレイデータの保存に失敗しました。	回放数据保存失败。		3	js/event/EventArenaRankMatch/Result.js,js/event/arenaranking/view/EventArenaResultView.js,js/view/arena/ArenaResultView.js
+メインストーリー\\x26nbsp;			3	js/event/arenaranking/view/EventArenaResultView.js,js/view/arena/ArenaResultView.js,js/view/arena/ArenaTopView.js
+チャレンジ	挑战		3	js/event/EventWitch/parts/TopBattleInfo.js,template/event/dailytower/EventDailyTowerTop.html,template/event/tower/EventTowerTop.html
+リタイア	放弃		3	js/event/dungeon/EventDungeonMap.js,template/event/dungeon/EventDungeonMap.html
+クエストを開始できません	无法开始关卡		3	js/event/raid/EventRaidTop.js,js/event/storyraid/EventStoryRaidTop.js,js/regularEvent/groupBattle/view/BossPageView.js
+時間経過の為、対戦相手に変更がありました<br>イベントトップページに戻ります		HTML片段	3	js/event/arenaMission/EventArenaMissionStage.js,js/event/arenaMission/view/ArenaConfirmView.js
+チーム編成の終了	结束队伍编成		3	js/event/accomplish/EventAccomplishDeck.js,js/formation/DeckFormation.js,js/formation/FormationQuest.js
+変更を破棄して終了	放弃变更并退出		3	js/event/accomplish/EventAccomplishDeck.js,js/formation/DeckFormation.js,js/formation/FormationQuest.js
+変更を保存して終了	保存变更并退出		3	js/event/accomplish/EventAccomplishDeck.js,js/formation/DeckFormation.js,js/formation/FormationQuest.js
+コマンド	指令		3	js/event/accomplish/EventAccomplishEnemyDetail.js,js/regularEvent/accomplish/RegularEventAccomplishTop.js,template/event/accomplish/EventAccomplishEnemyDetail.html
+ミラーズについて	关于镜界		3	js/follow/FollowPopup.js,js/view/user/GlobalMenuView.js,js/view/user/MyProfilePopup.js
+フォロー追加	添加关注		3	js/follow/FollowPopup.js,js/view/follow/FollowTopListView.js,js/view/quest/QuestResultView.js
+スキル		疑似碎片	3	js/_common/nativeCommand.js,js/_common/nativeCommand2.js,template/memoria/bulkSelectPopupView.html
+強化できません	无法强化		3	js/chara/CharaCompose.js
+クリップボードにコピーしました。	已复制到剪贴板。		3	js/view/arena/ArenaSimulateView.js,js/view/etc/HelpView.js,js/view/user/MyProfilePopup.js
+クエストについて	关于关卡		3	js/view/user/GlobalMenuView.js
+ミラーズ設定	镜界设置		3	js/view/user/MyProfilePopup.js
+現在受取ることのできるプレゼントがありません	当前没有可领取的礼物		3	js/view/present/PresentListPageView.js
+リプレイID	回放 ID		3	js/view/arena/ArenaHistoryView.js,template/arena/ArenaHistory.html,template/arena/ArenaResult.html
+ミラーズランキングの結果集計中			3	js/view/arena/ArenaTopView.js
+プレイヤー			3	js/view/follow/FollowTopView.js
+期間外のため\\x3cbr\\x3e対象のミッションは存在しません			3	js/view/mission/MissionTopListView.js,js/view/mission/MissionTopView.js
+件受け取りました。\\x3cbr\\x3e\\x3cbr\\x3e※魔法少女はプレゼントボックスよりお受け取りください。\\x3cbr\\x3e※受け取ったアイテムは直接付与されています。			3	js/view/mission/MissionTopView.js
+\\x3cp class\\x3d"noItems"\\x3eデスティニージェムを所持していません\\x3c/p\\x3e			3	js/view/item/ItemListPartView.js,js/view/item/ItemListView.js
+メモリア売却			3	js/view/memoria/UserMemoriaListView.js
+コピー		疑似碎片	3	js/formation/DeckFormation.js,template/arena/ArenaResult.html,template/arena/ArenaSimulate.html
+バトル開始には、			3	js/formation/DeckFormation.js,js/formation/DeckFormationUtil.js
+お任せ編成			3	js/formation/DeckFormation.js,template/quest/PreQuestPopup.html
+チーム解散			3	js/formation/FormationQuest.js,template/event/accomplish/EventAccomplishDeck.html,template/formation/FormationQuest.html
+キモチ戦は			3	js/regularEvent/RegularEventTop.js,js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+終の結界			3	js/regularEvent/extermination/RegularEventExterminationBattleSelect.js,js/regularEvent/extermination/RegularEventExterminationFormation.js,js/regularEvent/extermination/view/RegularEventExterminationBattleSelectStagePartsView.js
+マギアストーンは無償分から先に消費され、決定後のキャンセルはできません。			3	template/event/EventArenaRankMatch/parts/AttackCountPopup.html,template/event/EventArenaRankMatch/parts/CoolTimePopup.html,template/user/APPopupForMoney.html
+設定なし			3	template/user/SetTitlePopup.html
+使用スキル			3	template/quest/secondPartLast/EnemyDetailPopup.html,template/regularEvent/accomplish/RegularEventAccomplishTop.html,template/regularEvent/extermination/RegularEventExterminationDifficultyPopupView.html
+入れ替えるチームを選択してくだい			3	template/patrol/PatrolLumpFormation.html,template/quest/secondPartLast/Formation.html,template/regularEvent/extermination/RegularEventExterminationFormation.html
+制限ターン数			3	template/event/raid/EventRaidTop.html,template/event/singleraid/EventSingleRaidSelect.html,template/event/storyraid/EventStoryRaidSelect.html
+（本日残り対戦回数			3	template/event/EventArenaRankMatch/parts/AttackCountItemPopup.html,template/event/EventArenaRankMatch/parts/AttackCountPopup.html
+次の回復まで&nbsp;			3	template/arena/ArenaInfoParts.html,template/event/dungeon/EventDungeonInfoParts.html,template/event/raid/EventRaidInfoParts.html
+編成するチームをタッチしてください			3	template/event/accomplish/EventAccomplishDeck.html,template/formation/FormationQuest.html,template/formation/ProfileFormationSupport.html
+撃破ミッション			3	template/event/raid/EventRaidCloseTop.html,template/event/raid/EventRaidTop.html
+バトル参加者			3	template/event/raid/EventRaidTop.html
+ランキング報酬			3	template/arena/ArenaReward.html,template/regularEvent/groupBattle/RegularEventGroupCommon.html
+ディスク			3	template/chara/CharaDetail.html,template/formation/FormationQuest.html,template/formation/FormationSupport.html
+必要なCC			3	template/chara/CharaEnhancementTree.html,template/memoria/MemoriaComposeTop.html
+ソート順			3	template/memoria/MemoriaComposeTop.html,template/memoria/PieceArchive.html,template/memoria/UserMemoriaList.html
+全ての編成から装備をはずしますか？			3	template/memoria/MemoriaComposeTop.html,template/memoria/PieceArchive.html,template/memoria/UserMemoriaList.html
+装備中の編成			3	template/memoria/MemoriaComposeTop.html,template/memoria/PieceArchive.html,template/memoria/UserMemoriaList.html
+全ての編成から装備をはずします。			3	template/memoria/MemoriaComposeTop.html,template/memoria/PieceArchive.html,template/memoria/UserMemoriaList.html
+イベントフィルタ			3	template/memoria/MemoriaEquip.html,template/memoria/PieceArchive.html,template/memoria/UserMemoriaList.html
+の装備を外して			3	template/memoria/MemoriaEquip.html,template/memoria/PieceArchive.html,template/memoria/UserMemoriaList.html
+が装備しますか？			3	template/memoria/MemoriaEquip.html,template/memoria/PieceArchive.html,template/memoria/UserMemoriaList.html
+デフォルト名			3	template/memoria/MemoriaSetList.html,template/memoria/PieceArchive.html,template/memoria/UserMemoriaList.html
+いいね		疑似碎片	3	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html,template/regularEvent/groupBattle/RegularEventGroupBattleUser.html,template/regularEvent/groupBattle/RegularEventGroupCommon.html
+グループ			3	template/regularEvent/groupBattle/RegularEventGroupBattleLog.html,template/regularEvent/groupBattle/RegularEventGroupBattleRanking.html,template/regularEvent/groupBattle/RegularEventGroupCommon.html
+キャッシュクリア			2	js/top/TopPage.js,template/top/TopPage.html
+ミッション報酬を1件受け取りました。<br><br>※魔法少女はプレゼントボックスよりお受け取りください。<br>※受け取ったアイテムは直接付与されています。		HTML片段	2	js/campaign/summer_mission/CampaignSummerMissionTopListView.js
+ストーリー確認			2	js/campaign/summer_mission/CampaignSummerMissionTopListView.js,js/view/mission/MissionTopListView.js
+ストーリーがありません			2	js/campaign/summer_mission/CampaignSummerMissionTopListView.js,js/view/mission/MissionTopListView.js
+カ月			2	js/campaign/summer_mission/CampaignSummerMissionTopView.js,js/view/mission/MissionTopView.js
+★八雲みたまのマギレコミラクルクイズ★%0a［難易度：			2	js/campaign/quiz/CampaignQuizTop.js
+］%0aマギアレコードではクイズキャンペーンを開催中！%0a			2	js/campaign/quiz/CampaignQuizTop.js
+ボックス内のすべてのアイテムを獲得したため、\\x3cbr\\x3eボックス内容をリセットして、次のボックスに変更しました。			2	js/campaign/box_gacha/CampaignBoxGachaTop.js
+バランス			2	js/card/CardPopup.js,js/util/CardUtil.js
+アタック			2	js/card/CardPopup.js,js/util/CardUtil.js
+ディフェンス			2	js/card/CardPopup.js,js/util/CardUtil.js
+ヒール		疑似碎片	2	js/card/CardPopup.js,js/util/CardUtil.js
+アルティメット			2	js/card/CardPopup.js,js/util/CardUtil.js
+円環マギア			2	js/card/CardPopup.js,js/util/CardUtil.js
+円環サポート			2	js/card/CardPopup.js,js/util/CardUtil.js
+エクシード			2	js/card/CardPopup.js,js/util/CardUtil.js
+あくま		疑似碎片	2	js/card/CardPopup.js,js/util/CardUtil.js
+あるてぃめっと			2	js/card/CardPopup.js,js/util/CardUtil.js
+インフィニット			2	js/card/CardPopup.js,js/util/CardUtil.js
+むげんだい			2	js/card/CardPopup.js,js/util/CardUtil.js
+ミスティック			2	js/card/CardPopup.js,js/util/CardUtil.js
+ラストコネクト			2	js/card/CardPopup.js,js/util/CardUtil.js
+レベル		疑似碎片	2	js/event/accomplish/EventAccomplishRecovery.js,js/util/SortUtil.js
+プレイヤー名入力			2	js/util/TutorialUtil.js
+プレイヤー名を入力してください。			2	js/util/TutorialUtil.js,template/top/TopPage.html
+その他			2	js/user/MyPage.js,template/memoria/bulkSelectPopupView.html
+ログインボーナス			2	js/user/MyPage.js,template/loginBonus/loginBonusPopupTemp.html
+カースチップ			2	js/quest/QuestUtil.js
+トップに戻る			2	js/quest/puellaHistoria/lastBattle/GroupRaid.js,js/quest/puellaHistoria/lastBattle/SingleRaid.js
+ポイント			2	js/event/EventWitch/parts/TopNativeMain.js,js/quest/puellaHistoria/lastBattle/parts/SingleRaid/NativeMain.js
+ポイント：			2	js/event/EventWalpurgis/parts/GroupRaid/NativeMain.js,js/quest/puellaHistoria/lastBattle/parts/GroupRaid/NativeMain.js
+ボス		疑似碎片	2	js/event/EventWalpurgis/parts/GroupRaid/NativeMain.js,js/quest/puellaHistoria/lastBattle/parts/GroupRaid/NativeMain.js
+クエスト選択			2	js/event/EventWalpurgis/parts/GroupRaid/SubBossPopup.js,js/quest/puellaHistoria/lastBattle/parts/GroupRaid/SubBossPopup.js
+チーム編成を解散しました			2	js/quest/secondPartLast/Formation.js,js/regularEvent/extermination/RegularEventExterminationFormation.js
+制圧中を除くチーム編成を解散します。\\x3cbr\\x3eよろしいですか？			2	js/quest/secondPartLast/Formation.js,js/regularEvent/extermination/RegularEventExterminationFormation.js
+クエスト編成コピー			2	js/quest/secondPartLast/Formation.js,js/regularEvent/extermination/RegularEventExterminationFormation.js
+とじる		疑似碎片	2	js/quest/secondPartLast/Formation.js,js/regularEvent/extermination/RegularEventExterminationFormation.js
+チーム編成入れ替え			2	js/quest/secondPartLast/Formation.js,js/regularEvent/extermination/RegularEventExterminationFormation.js
+編成にレンタルメモリアセットが含まれています。\\x3cbr\\x3e入れ替えるとレンタルメモリアセットが解除されますがよろしいですか？			2	js/quest/secondPartLast/Formation.js,js/regularEvent/extermination/RegularEventExterminationFormation.js
+このチームに\\x3cbr\\x3e入れ替え			2	js/quest/secondPartLast/Formation.js,js/regularEvent/extermination/RegularEventExterminationFormation.js
+再生する			2	js/quest/scene0/Utility.js,js/view/arena/ArenaHistoryView.js
+撮影が中断されました。			2	js/camera/CameraTop.js,js/event/aprilfool2018/EventAprilFoolTop.js
+◆ EXチャレンジクエスト			2	js/event/dailytower/EventDailyTowerTop.js,js/event/training/EventTrainingTop.js
+対戦相手の変更(無料)			2	js/event/arenaranking/view/EventArenaRankingView.js
+バトルの結果が正しく取得できませんでした。\\x3cbr\\x3eトップページに戻ります。			2	js/event/arenaranking/view/EventArenaResultView.js,js/view/arena/ArenaResultView.js
+今回のミラーズバトルを\\x3cbr\\x3eリプレイに保存しますか？			2	js/event/arenaranking/view/EventArenaResultView.js,js/view/arena/ArenaResultView.js
+リプレイに保存しました。\\x3cbr\\x3e\\x3cbr\\x3e有効期限：			2	js/event/arenaranking/view/EventArenaResultView.js,js/view/arena/ArenaResultView.js
+ストーリークエスト			2	js/event/dailytower/EventDailyTowerTop.js,js/event/tower/EventTowerTop.js
+チャレンジクエスト			2	js/event/dailytower/EventDailyTowerTop.js,js/event/tower/EventTowerTop.js
+クエスト解放スケジュール			2	js/event/dailytower/EventDailyTowerTop.js,template/event/dailytower/EventDailyTowerTop.html
+◆ チャレンジクエスト			2	js/event/dailytower/EventDailyTowerTop.js,js/event/tower/EventTowerTop.js
+マギアストーンが<span class="c_pink">		HTML片段	2	js/event/EventArenaRankMatch/parts/AttackCount.js,js/event/EventArenaRankMatch/parts/CoolTime.js
+クールタイム解除			2	js/event/EventArenaRankMatch/parts/CoolTime.js
+タイムオーバー			2	js/event/EventArenaRankMatch/parts/DeckEditCountDown.js,js/event/EventArenaRankMatch/parts/OpponentList.js
+<li class="nomatch">現在対戦可能な相手がいません。<br>しばらくしてから再度来場ください。</li>		HTML片段	2	js/event/EventArenaRankMatch/parts/OpponentList.js,js/event/arenaMission/EventArenaMissionStage.js
+を配布しました。<br>		HTML片段	2	js/event/tower/EventTowerTop.js
+を消費して<br>イベントクエストをプレイしましょう！		HTML片段	2	js/event/tower/EventTowerTop.js
+応援コメント			2	js/event/storyraid/EventStoryRaidTop.js
+イベントトップページへ			2	js/event/arenaMission/EventArenaMissionStage.js
+を各種１つずつ配布しました。<br>使用してバトルを有利に進めましょう！		HTML片段	2	js/event/arenaMission/EventArenaMissionTop.js
+戦闘不能の魔法少女が含まれています。			2	js/event/accomplish/EventAccomplishDeck.js,js/formation/DeckFormationUtil.js
+クローズ			2	js/event/accomplish/EventAccomplishEnemyDetail.js,js/regularEvent/accomplish/RegularEventAccomplishTop.js
+<div id='totalMissionValidityMask' class='c_pink'>全体撃破報酬は自分で発見したボスを<br>【		HTML片段	2	js/event/raid/EventRaidCloseTop.js,js/event/raid/EventRaidTop.js
+体以上撃破】すると解放されます</div>		HTML片段	2	js/event/raid/EventRaidCloseTop.js,js/event/raid/EventRaidTop.js
+ミッション報酬を1件受け取りました。<br><br>※受け取ったアイテムは直接付与されています。		HTML片段	2	js/event/raid/EventRaidCloseTop.js,js/event/raid/EventRaidTop.js
+フォロー上限			2	js/follow/FollowPopup.js,js/view/follow/FollowTopListView.js
+フォロー上限に達しています\\x3cbr\\x3eこれ以上フォローできません。\\x3cbr\\x3e\\x3cbr\\x3e			2	js/follow/FollowPopup.js,js/view/follow/FollowTopListView.js
+\\x3cspan class\\x3d'c_pink popUserName'\\x3e\\x3c/span\\x3eをフォローしました。\\x3cbr\\x3e\\x3cbr\\x3e			2	js/follow/FollowPopup.js,js/view/follow/FollowTopListView.js
+デイリーミッションは毎日0時に更新されます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+衣装切り替え			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+魔法少女の衣装を入手した場合@ホーム画面の魔法少女の衣装を切り替えることができます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+引き継ぎ用パスワードの設定			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+引き継ぎ用パスワードを設定しておくことで@端末が壊れてしまっても、データの引き継ぎができます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+機種変更の前に			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+引き継ぎ用IDをメモ等で控え@パスワードの設定をお忘れなく			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+Chargeディスク			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+Chargeディスクを連続して使用すると@チャージが溜まり、大ダメージを与えられます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+同じ魔法少女で攻撃すると@Puella Comboとなりダメージが上昇します			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+敵をタップするとターゲットすることができます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+同じ魔法少女で3回攻撃すると@コネクトが発動できるようになります			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+陣形の前列は敵の攻撃を受けやすくなるため@防御力が高い魔法少女を配置しましょう			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+フォローしていないユーザーのサポートは@マギアとスキルが使用できないため注意が必要です			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+Accele Comboを決めると@チーム全員のマギアゲージが増加します			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+Blast Comboを決めたターンは@ダメージ量が大きくなります			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+同じディスクでPuella Comboを決めると@更に大きなダメージを与えることができます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+ディスクキャンセル			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+選択されたディスクをタッチするとキャンセルされて@ディスクを選び直すことができます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+マギアゲージが100以上溜まると@いつでもマギアが発動できます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+ディスク選択中でもスキルを@発動することができます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+一度クリアしたバトルは二回目以降@オートバトルで進行することができます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+オートを解除した場合、次のターンから@手動操作することができます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+クエストでサポートとして使用された場合@翌日のログイン時にサポートPtが獲得できます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+ディスクのデザイン変更			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+魔法少女詳細画面の設定から@ディスクのデザインを変更することができます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+すでに所持している魔法少女を再度獲得した場合@その魔法少女のデスティニージェムを獲得できます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+デスティニージェムは魔法少女の魔力解放に使用します@魔力解放をおこなうとメモリア装備枠が増加します			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+マギアチップ			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+デスティニージェムはマギアチップに変換できます@マギアチップはショップでアイテムと交換できます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+ターゲットは3枚のディスクを選択する際に@毎回変更することができます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+アクセルディスクで最初に攻撃すると@以降のディスクでマギアゲージが溜まりやすくなります			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+2枚め、3枚めのAcceleディスクほど@マギアゲージが溜まりやすくなります			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+Blastディスクは2枚め、3枚めで@攻撃するほどダメージが上昇します			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+Blastディスクには縦攻撃、横攻撃の@2種類が存在します			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+Blastディスクで攻撃すると@マギアゲージが溜まらないので注意が必要です			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+ディスクの出現			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+リーダーに指定した魔法少女は@ディスクが出現しやすくなります			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+敵の情報			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+敵を長押しすると敵の情報を@表示することができます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+Chargeが溜まっている状態でAcceleを放つと@マギアゲージ獲得量が上昇します			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+Chargeが溜まっている状態でBlastを放つと@与えるダメージ量が上昇します			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+★5かつマギアLv5の魔法少女の@ドッペルクエストをクリアすることで解放されます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+メモリアはスキル・アビリティ2枚ずつ@最大4枚まで装備することができます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+Charge Comboを決めるとCharge数が2増加します			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+魔法少女の情報			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+クエスト中に魔法少女を長押しすると@その魔法少女の情報を表示します			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+他プレイヤーがサポートとして使用できる魔法少女を@サポート編成で設定することができます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+マギアパスポート30			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+マギアパスポート30を購入すると30日間@毎日のログイン時にマギアストーン5個を獲得できます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+ガチャ提供一覧			2	js/gacha/GachaProbability.js,template/gacha/GachaTop.html
+マギア強化できません			2	js/chara/CharaComposeMagia.js
+魔力解放できません			2	js/chara/CharaEquip.js
+以下のアイテムを使って強化しますか？			2	js/chara/CharaComposeAttribute/ComposeAttributeList.js,template/chara/CharaComposeAttribute/popupAllItemConfirm.html
+クエストへ			2	js/chara/CharaComposeAttribute/popupCheckMaterial.js,template/chara/CharaEnhancementMaterialPopup.html
+ヘルプ		疑似碎片	2	js/view/etc/HelpPopupView.js,template/etc/Help.html
+プレイヤーID			2	js/view/etc/HelpView.js,js/view/user/MyProfilePopup.js
+メモリアについて			2	js/view/user/GlobalMenuView.js,template/base/GlobalMenu.html
+帰還しました			2	js/view/user/GlobalMenuView.js
+完了まで			2	js/view/user/GlobalMenuView.js
+エンブレムの表示設定を\\x3cbr\\x3e変更しました			2	js/view/user/MyProfilePopup.js
+コメント編集			2	js/view/user/MyProfilePopup.js
+称号を非表示にします			2	js/view/user/MyProfilePopup.js,template/user/SetTitlePopup.html
+※シリアルコードは12桁で入力してください。			2	js/view/config/ConfigTopView.js
+話までのあらすじ			2	js/view/quest/MainQuestView.js,js/view/quest/SubQuestView.js
+クエスト情報			2	js/view/quest/QuestListPartsView.js
+リプレイ再生			2	js/view/arena/ArenaHistoryView.js
+ミラーズランクマッチの結果集計中			2	js/view/arena/ArenaTopView.js
+現在、ミラーズランクマッチの結果集計中です。\\x3cbr\\x3e集計中はミラーズバトルはプレイできません。			2	js/view/arena/ArenaTopView.js
+現在、ミラーズランキングの結果集計中です。\\x3cbr\\x3e集計中はミラーズバトルはプレイできません。			2	js/view/arena/ArenaTopView.js
+開始予定です。			2	js/view/arena/ArenaTopView.js
+ブロック中			2	js/view/follow/FollowTopListView.js
+フォロワー			2	js/view/follow/FollowTopView.js
+マギアストーン購入			2	js/view/gacha/GachaBtnView.js,js/view/purchase/PurchasePopup.js
+特定商取引法・資金決済法に関して		法条勿动	2	js/view/purchase/PurchasePopup.js,template/purchase/PurchasePop.html
+月の購入限度額を超える為、\\x3cbr\\x3e購入することができません。			2	js/view/purchase/PurchasePopup.js,js/view/purchase/PurchasePopupPartView.js
+の魔力解放に使用するアイテム			2	js/view/shop/ShopTopView.js,js/view/shop/q.js
+期間外のため\\x3cbr\\x3e対象のショップは存在しません			2	js/view/shop/ShopTopView.js,js/view/shop/q.js
+メモリア強化			2	js/view/memoria/MemoriaComposeTopCardListView.js,template/memoria/MemoriaComposeTop.html
+先に強化対象を選択してください。			2	js/view/memoria/MemoriaComposeTopUseItemView.js,js/view/memoria/MemoriaComposeTopUseMaterialView.js
+\\x3c/span\\x3eに移動します。\\x3cbr\\x3eよろしいですか？			2	js/view/memoria/PieceArchiveView.js
+\\x3c/span\\x3eへ移動しました。			2	js/view/memoria/PieceArchiveView.js
+装備するメモリアを選んでください			2	js/view/memoria/UserMemoriaListView.js
+変更を破棄			2	js/formation/FormationSupport.js,js/memoria/MemoriaEquip.js
+変更を保存			2	js/formation/FormationSupport.js,js/memoria/MemoriaEquip.js
+ロック		疑似碎片	2	js/memoria/MemoriaPopup.js,template/memoria/bulkSelectPopupView.html
+ロック中			2	js/memoria/MemoriaPopup.js,template/memoria/bulkSelectPopupView.html
+メモリアセット「			2	js/memoria/MemoriaSetEquip.js
+」を装備します。\\x3c/br\\x3e			2	js/memoria/MemoriaSetEquip.js
+バトル開始には、3人以上の魔法少女が\\x3cbr\\x3e編成に含まれている必要があります。			2	js/formation/DeckFormation.js,js/formation/DeckFormationUtil.js
+人以上の魔法少女が\\x3cbr\\x3e編成に含まれている必要があります。			2	js/formation/DeckFormation.js,js/formation/DeckFormationUtil.js
+メインメンバーに魔法少女を１体以上編成してください。			2	js/formation/DeckFormation.js,js/formation/DeckFormationUtil.js
+編成コピー確認			2	js/formation/DeckFormation.js,js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+魔法少女・メモリア装備の変更を保存して\\x3c/br\\x3eチーム編成を終了しますか？			2	js/formation/DeckFormation.js,js/formation/FormationQuest.js
+チーム名変更			2	js/formation/FormationQuest.js,template/event/accomplish/EventAccomplishDeck.html
+キモチ戦参加条件			2	js/regularEvent/RegularEventTop.js,js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+まで開催します。\\x3cbr\\x3e\\x3cbr\\x3eキモチ戦に参加するには\\x3cbr\\x3e\\x3cspan class\\x3d'c_red'\\x3e			2	js/regularEvent/RegularEventTop.js,js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+\\x3c/span\\x3e\\x3cbr\\x3eしている必要があります。			2	js/regularEvent/RegularEventTop.js,js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+メインストーリー			2	js/regularEvent/RegularEventTop.js,js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+第一の結界			2	js/regularEvent/extermination/RegularEventExterminationBattleSelect.js,js/regularEvent/extermination/RegularEventExterminationFormation.js
+第二の結界			2	js/regularEvent/extermination/RegularEventExterminationBattleSelect.js,js/regularEvent/extermination/RegularEventExterminationFormation.js
+第三の結界			2	js/regularEvent/extermination/RegularEventExterminationBattleSelect.js,js/regularEvent/extermination/RegularEventExterminationFormation.js
+第四の結界			2	js/regularEvent/extermination/RegularEventExterminationBattleSelect.js,js/regularEvent/extermination/RegularEventExterminationFormation.js
+解放スケジュール			2	js/regularEvent/extermination/RegularEventExterminationBattleSelect.js,js/regularEvent/extermination/RegularEventExterminationTop.js
+グループ名変更			2	js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+お問い合わせ			2	template/etc/Help.html,template/top/NewVersionRecommend.html
+を行います。			2	template/campaign/box_gacha/CampaignBoxGachaTop.html,template/gacha/GachaTop.html
+不足しています。			2	template/campaign/box_gacha/CampaignBoxGachaTop.html,template/gacha/GachaTop.html
+を使ってAPを回復します。			2	template/user/APPopup2.html,template/user/APPopupForMoney.html
+決定後、すぐにアイテムが購入されマギアストーンが消費されます。			2	template/shop/ShopTop.html,template/user/APPopupForMoney.html
+parseCurrent) return;\n\n\t\t\t\t// 3ヶ月前まで表示\n\t\t\t\t//if(parseStartAt + 7776000000			2	template/user/AnnounceTemp.html,template/user/AnnounceTempMainte.html
+さらに続きを表示			2	template/user/AnnounceTemp.html,template/user/AnnounceTempMainte.html
+クリア		疑似碎片	2	template/arena/ArenaHistory.html,template/user/AnnounceTemp.html
+バトル開始			2	template/event/raid/EventRaidTop.html,template/quest/PreQuestPopup.html
+【魂の器】			2	template/quest/puellaHistoria/MirrorParts_debug.html
+データ更新テスト			2	template/event/EventWalpurgis/GroupRaidNativeParts.html,template/quest/puellaHistoria/lastBattle/GroupRaidNativeParts.html
+象徴の魔女			2	template/quest/puellaHistoria/lastBattle/MainBossPopup.html,template/quest/puellaHistoria/lastBattle/SubBossList.html
+グループレイドに戻る			2	template/event/EventWalpurgis/QuestResultSubBoss.html,template/quest/puellaHistoria/lastBattle/QuestResultSubBoss.html
+スタンプ			2	template/event/EventWalpurgis/Stamp.html,template/quest/puellaHistoria/lastBattle/Stamp.html
+最近使ったスタンプ			2	template/event/EventWalpurgis/Stamp.html,template/quest/puellaHistoria/lastBattle/Stamp.html
+表示できるスタンプはありません			2	template/event/EventWalpurgis/Stamp.html,template/quest/puellaHistoria/lastBattle/Stamp.html
+EXチャレンジ			2	template/event/dailytower/EventDailyTowerTop.html,template/event/training/EventTrainingTop.html
+エピソード			2	template/chara/CharaCompose.html,template/event/training/EventTrainingTop.html
+戦績がありません			2	template/event/EventArenaRankMatch/History.html,template/event/arenaranking/EventArenaRankingHistory.html
+百禍チャレンジ			2	template/event/dailytower/EventDailyTowerTop.html
+◆ クエスト			2	template/event/dailytower/EventDailyTowerTop.html,template/event/tower/EventTowerTop.html
+ミラーズランクマッチの対戦回数を			2	template/event/EventArenaRankMatch/parts/AttackCountItemPopup.html,template/event/EventArenaRankMatch/parts/AttackCountPopup.html
+回復できます。			2	template/arena/ArenaRanking.html,template/event/EventArenaRankMatch/parts/AttackCountItemPopup.html
+決定後、すぐにマギアストーンが消費されます。			2	template/event/EventArenaRankMatch/parts/AttackCountPopup.html,template/event/EventArenaRankMatch/parts/CoolTimePopup.html
+応援コメントを送ることで、バトル時の攻撃力がアップします！			2	template/event/storyraid/EventStoryRaidBoss.html
+を手に入れました			2	template/event/arenaMission/EventArenaMissionResult.html
+ステージクリアまで			2	template/event/arenaMission/EventArenaMissionResult.html,template/event/arenaMission/EventArenaMissionStage.html
+クリア済のステージでは			2	template/event/arenaMission/EventArenaMissionResult.html,template/event/arenaMission/EventArenaMissionTop.html
+連勝ボーナス			2	template/arena/ArenaResult.html,template/event/arenaMission/EventArenaMissionResult.html
+ターンボーナス			2	template/arena/ArenaResult.html,template/event/arenaMission/EventArenaMissionResult.html
+相手ボーナス			2	template/arena/ArenaResult.html,template/event/arenaMission/EventArenaMissionResult.html
+魔法陣形を選択してください			2	template/event/accomplish/EventAccomplishDeck.html,template/formation/FormationQuest.html
+現在編成中のチームのプレビューです			2	template/event/accomplish/EventAccomplishDeck.html,template/formation/FormationQuest.html
+セット呼び出し			2	template/event/accomplish/EventAccomplishDeck.html,template/formation/DeckFormation.html
+X座標を入力			2	template/event/accomplish/EventAccomplishEnemyDetail.html,template/regularEvent/accomplish/RegularEventAccomplishTop.html
+Y座標を入力			2	template/event/accomplish/EventAccomplishEnemyDetail.html,template/regularEvent/accomplish/RegularEventAccomplishTop.html
+拡縮を入力			2	template/event/accomplish/EventAccomplishEnemyDetail.html,template/regularEvent/accomplish/RegularEventAccomplishTop.html
+敵の現在HP			2	template/event/accomplish/EventAccomplishEnemyDetail.html,template/regularEvent/accomplish/RegularEventAccomplishTop.html
+バトル評価			2	template/arena/ArenaResult.html
+戦力ボーナス			2	template/arena/ArenaResult.html
+アニメーション中…			2	template/card/ComposeAnimation.html,template/memoria/MemoriaComposeAnimation.html
+このチームでまとめてパトロールを開始します			2	template/patrol/PatrolLumpFormation.html
+あと&nbsp;			2	template/patrol/PatrolLumpResult.html,template/patrol/PatrolResult.html
+マギアストーンは無償分から先に消費され、			2	template/gacha/GachaTop.html,template/shop/ShopTop.html
+決定後のキャンセルはできません。			2	template/gacha/GachaTop.html,template/shop/ShopTop.html
+タイプ		疑似碎片	2	template/gacha/SelectableGachaCharaSelect.html,template/memoria/bulkSelectPopupView.html
+全てはずす			2	template/gacha/SelectableGachaPieceSelect.html,template/memoria/MemoriaEquip.html
+発動可能ターン&nbsp;			2	template/gacha/SelectableGachaPieceSelect.html,template/memoria/MemoriaEquipInfo.html
+獲得したアイテムは直接付与されています			2	template/loginBonus/loginBonusCampaignPopupTemp.html,template/regularEvent/groupBattle/RegularEventGroupBattleEnd.html
+残り回数			2	template/shop/ShopTop.html
+まとめて選択			2	template/memoria/MemoriaComposeTop.html,template/memoria/PieceArchive.html
+★3以上のメモリアが含まれています。			2	template/memoria/MemoriaComposeTop.html,template/memoria/UserMemoriaList.html
+保管庫へ移動			2	template/memoria/PieceArchive.html,template/memoria/UserMemoriaList.html
+★1を全て選択			2	template/memoria/PieceArchive.html,template/memoria/UserMemoriaList.html
+保管庫名を入力してください			2	template/memoria/PieceArchive.html,template/memoria/UserMemoriaList.html
+魔法少女の詳細情報です			2	template/formation/FormationQuest.html,template/formation/FormationSupport.html
+グレード			2	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html,template/regularEvent/groupBattle/RegularEventGroupCommon.html
+ダメージ			2	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html,template/regularEvent/groupBattle/RegularEventGroupCommon.html
+デイリーダメージ			2	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html,template/regularEvent/groupBattle/RegularEventGroupBattleRanking.html
+ランキング			2	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html,template/regularEvent/groupBattle/RegularEventGroupBattleUser.html
+チャージ数			2	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html,template/regularEvent/groupBattle/RegularEventGroupCommon.html
+合計ダメージ			2	template/regularEvent/groupBattle/RegularEventGroupBattleLog.html,template/regularEvent/groupBattle/RegularEventGroupBattleResult.html
+デイリー			2	template/regularEvent/groupBattle/RegularEventGroupBattleRanking.html,template/regularEvent/groupBattle/RegularEventGroupCommon.html
+TOPへ移動			2	template/regularEvent/groupBattle/RegularEventGroupBattleRanking.html,template/regularEvent/groupBattle/RegularEventGroupBattleUser.html
+引き継ぎMP			2	template/regularEvent/groupBattle/RegularEventGroupBattleResult.html,template/regularEvent/groupBattle/RegularEventGroupCommon.html
+キャッシュクリアしました。			1	js/top/TopPage.js
+パスワードは8文字以上15文字以内です。			1	js/top/TopPage.js
+引き継ぎ・連携を行います。\\x3cbr\\x3eよろしいですか？			1	js/top/TopPage.js
+引き継ぎ・連携が完了しました。			1	js/top/TopPage.js
+サービス利用規約		法条勿动	1	js/top/TopPage.js
+ゲーム開始			1	js/top/TopPage.js
+件受け取りました。<br><br>※魔法少女はプレゼントボックスよりお受け取りください。<br>※受け取ったアイテムは直接付与されています。		HTML片段	1	js/campaign/summer_mission/CampaignSummerMissionTopView.js
+マギレコミラクルクイズ～＠あなたは全問正解できるかしら＠解答速度も計るから注意してね♪			1	js/campaign/quiz/CampaignQuizTop.js
+お疲れさまぁ＠チャンスは１回だけじゃないから＠良ければ再チャレンジしてみてね			1	js/campaign/quiz/CampaignQuizTop.js
+パフパフパフー♪＠パーフェクトおめでとう！＠全部解けるとすっきりするわよね			1	js/campaign/quiz/CampaignQuizTop.js
+マギレコ,マギレコ５周年,マギレコミラクルクイズ			1	js/campaign/quiz/CampaignQuizTop.js
+ボックス内容一覧			1	js/campaign/box_gacha/CampaignBoxGachaTop.js
+ボックス内の目玉報酬を獲得したため、次のボックスへの変更が可能です。\\x3cbr\\x3eボックス内容をリセットして次のボックスに変更しますか？\\x3cspan class\\x3d'caution c_red'\\x3e※現在のボックス内の報酬アイテムは引くことができなくなります。\\x3c/span\\x3e			1	js/campaign/box_gacha/CampaignBoxGachaTop.js
+ガチャ結果			1	js/campaign/box_gacha/CampaignBoxGachaTop.js
+キャンペーンガチャ			1	js/campaign/box_gacha/CampaignBoxGachaTop.js
+全て引く			1	js/campaign/box_gacha/CampaignBoxGachaTop.js
+オーブ・ブック一覧			1	js/util/SearchQuest.js
+\\x3cp\\x3eタッチしてストーリーを\\x3cbr\\x3e開始しましょう\\x3c/p\\x3e			1	js/util/TutorialUtil.js
+\\x3cp\\x3eクエストをサポートしてくれる魔法少女を選択しましょう\\x3cbr\\x3eサポートしてもらうことでサポートポイントを獲得できます\\x3c/p\\x3e			1	js/util/TutorialUtil.js
+\\x3cp\\x3eメインメニューが使用可能になりました。\\x3cbr\\x3eMENUをタッチしてください\\x3c/p\\x3e			1	js/util/TutorialUtil.js
+\\x3cp\\x3eメインメニューからは様々な画面に移動することができます\\x3cbr\\x3e「ガチャ」に移動してみましょう\\x3c/p\\x3e			1	js/util/TutorialUtil.js
+\\x3cp\\x3eガチャでは魔法少女やメモリアを手に入れることができます\\x3cbr\\x3e特別に選んだ魔法少女1体を必ずもらえるガチャを用意しました\\x3cbr\\x3e好きな魔法少女を選んでみましょう\\x3c/p\\x3e			1	js/util/TutorialUtil.js
+\\x3cp\\x3e魔法少女を選んだらガチャを引いて仲間にしてみましょう\\x3cbr\\x3e★4魔法少女は選んだ1体のみ出現します\\x3cbr\\x3eガチャを引くまでは魔法少女を選びなおすことが可能です\\x3c/p\\x3e			1	js/util/TutorialUtil.js
+\\x3cp\\x3e仲間にした魔法少女を\\x3cbr\\x3eチームに入れてみましょう\\x3c/p\\x3e			1	js/util/TutorialUtil.js
+\\x3cp\\x3eクエスト用のチームを編成しましょう\\x3c/p\\x3e			1	js/util/TutorialUtil.js
+\\x3cp\\x3e未設定をタッチしてください\\x3c/p\\x3e			1	js/util/TutorialUtil.js
+\\x3cp\\x3e先ほど仲間にした魔法少女をタッチしてください\\x3c/p\\x3e			1	js/util/TutorialUtil.js
+\\x3cp\\x3e魔法少女をチームに参加させることができました\\x3cbr\\x3e「決定」をタッチしてください\\x3c/p\\x3e			1	js/util/TutorialUtil.js
+\\x3cp\\x3e他の魔法少女も編成してみましょう\\x3cbr\\x3eお任せ編成ボタンをタッチすることで、\\x3cbr\\x3e自動でチームを編成できます\\x3c/p\\x3e			1	js/util/TutorialUtil.js
+\\x3cp\\x3e編成したチームで\\x3cbr\\x3e次のクエストに進みましょう\\x3c/p\\x3e			1	js/util/TutorialUtil.js
+マギアレポート 第			1	js/collection/MagiRepo.js
+進む			1	js/collection/MagiRepoDetail.js
+\\x3c/span\\x3eが\\x3cspan class\\x3d'c_pink'\\x3e１個\\x3c/span\\x3e不足しています。			1	js/collection/StoryCollection.js
+\\x3e"+A+"\\x3c/span\\x3eが\\x3cspan class\\x3d			1	js/collection/StoryCollection.js
+\\x3e１個\\x3c/span\\x3e不足しています。",\nl&&(f+="You are missing \\x3cspan class\\x3d			1	js/collection/StoryCollection.js
+を\\x3cbr\\x3eホーム背景に設定しました。			1	js/user/BackgroundSet.js
+\\x3cp class\\x3d'noList ts_white'\\x3e戦歴がありません\\x3c/p\\x3e			1	js/user/EventRecord.js
+画面上のボタンを非表示にします。\\x3cbr\\x3e\\x3cbr\\x3e非表示に切り替え後は\\x3cbr\\x3e画面長押しでボタンが表示されます。			1	js/user/MyPage.js
+非表示にする			1	js/user/MyPage.js
+アクセス時:			1	js/user/MyPage.js
+確認しました			1	js/user/MyPage.js
+引き継ぎ・連携用パスワードの設定について			1	js/user/MyPage.js
+あとで設定			1	js/user/MyPage.js
+設定する			1	js/user/MyPage.js
+プレゼントを受け取りました。			1	js/user/MyPage.js
+キャンペーンのプレゼントが受け取れませんでした。[			1	js/user/MyPage.js
+コード不正			1	js/user/MyPage.js
+キャンペーンのプレゼントを受け取りました。\\x3cbr\\x3eプレゼントをご確認ください。			1	js/user/MyPage.js
+ユーザーが存在しません			1	js/user/MyPage.js
+トップページに戻ります			1	js/user/MyPage.js
+\\x3cdiv class\\x3d"scrollInnerWrap"\\x3e引き継ぎ・連携用パスワードを設定しておくことで\\x3cbr\\x3e機種変更時や、端末が壊れてしまった場合など\\x3cbr\\x3eデータを新しい端末に引き継ぐことができます。\\x3cbr\\x3e\\x3cbr\\x3eいますぐパスワードを設定しますか？\\x3cbr\\x3e\\x3cbr\\x3e\\x3cspan class\\x3d"c_red"\\x3e※パスワードを設定していない場合\\x3cbr\\x3eこの端末のデータを引き継ぐことはできません。\\x3c/span\\x3e\\x3c/div\\x3e			1	js/user/MyPage.js
+未クリア優先			1	js/quest/CharaQuest.js
+未コンプリート			1	js/quest/CharaQuest.js
+ソートなし			1	js/quest/CharaQuest.js
+既読ストーリーの再生設定			1	js/quest/QuestBattleSelect.js
+クエストをプレイする際に\\x3cbr\\x3e一度見たストーリー			1	js/quest/QuestBattleSelect.js
+設定に変更します。			1	js/quest/QuestBattleSelect.js
+を\\x3cspan class\\x3d"c_pink"\\x3e再生する\\x3c/span\\x3e			1	js/quest/QuestBattleSelect.js
+は\\x3cspan class\\x3d"c_pink"\\x3e再生しない\\x3c/span\\x3e			1	js/quest/QuestBattleSelect.js
+このクエストには以下の開始条件があります\\x3cbr\\x3e			1	js/quest/QuestUtil.js
+\\x3cbr\\x3eのみのチームでクエストを開始			1	js/quest/QuestUtil.js
+\\x3cbr\\x3eを含むチームでクエストを開始			1	js/quest/QuestUtil.js
+メインストーリー 第			1	js/quest/QuestUtil.js
+今後追加のストーリーをクリア			1	js/quest/QuestUtil.js
+ボーナス順			1	js/quest/SupportSelect.js
+\\x3cp class\\x3d"supportCation ts_white"\\x3e対象の魔法少女は存在しません\\x3c/p\\x3e			1	js/quest/SupportSelect.js
+時代を進める			1	js/quest/puellaHistoria/MirrorPartsView.js
+現代神浜編 ストーリー解放			1	js/quest/puellaHistoria/MirrorPartsView.js
+現代神浜編のストーリーが解放されました。			1	js/quest/puellaHistoria/MirrorPartsView.js
+次の『ピュエラ・ヒストリア』イベントをお待ち下さい。			1	js/quest/puellaHistoria/MirrorPartsView.js
+クリア演出確認			1	js/quest/puellaHistoria/MirrorPartsView.js
+クエスト開始条件を<br>満たしていません		HTML片段	1	js/quest/puellaHistoria/lastBattle/GroupRaid.js
+天気輪の魔力			1	js/quest/puellaHistoria/lastBattle/Model.js
+クエスト開始条件を\\x3cbr\\x3e満たしていません			1	js/quest/puellaHistoria/lastBattle/SingleRaid.js
+<option value="0">▼ コメントを選ぶ</option>		HTML片段	1	js/quest/puellaHistoria/lastBattle/parts/GroupRaid/Stamp.js
+魔法少女の編成が完了いたしました。			1	js/quest/secondPartLast/Formation.js
+制圧中の編成以外を以下の編成へと入れ替えます。よろしいですか？\\x3cbr\\x3e\\x3cdiv id\\x3d'autoFormationContainer'\\x3e\\x3c/div\\x3e			1	js/quest/secondPartLast/Formation.js
+鏡の魔女との戦いには専用の編成が必要です。\\x3cbr\\x3eクエスト編成をコピーして編成を行いますか？			1	js/quest/secondPartLast/Formation.js
+鏡の魔女			1	js/quest/secondPartLast/parts/StagePartsView.js
+鏡の魔女の腕を\\x3cspan class\\x3d'attention'\\x3e全て制圧すると挑戦\\x3c/span\\x3eできます。			1	js/quest/secondPartLast/parts/StagePartsView.js
+リコールランプ			1	js/quest/scene0/Utility.js
+ドアプライズフィルム			1	js/quest/scene0/Utility.js
+ストーリー再生			1	js/quest/scene0/Utility.js
+個\\x3c/span\\x3e消費して\\x3cbr\\x3eストーリーを再生しますか？			1	js/quest/scene0/Utility.js
+アイテム不足			1	js/quest/scene0/Utility.js
+ストーリー開放に必要なアイテムが足りません。			1	js/quest/scene0/Utility.js
+\\x3c/span\\x3eを\\x3cspan class\\x3d"c_pink"\\x3e			1	js/quest/scene0/Utility.js
+イベントで指定された特訓対象の魔法少女は変更できません。			1	js/event/training/EventTrainingCharaSelect.js
+◆ 強化クエスト			1	js/event/training/EventTrainingTop.js
+◆ エピソードクエスト			1	js/event/training/EventTrainingTop.js
+◆ エクストラクエスト			1	js/event/training/EventTrainingTop.js
+いずれかの特訓クエストをクリアすると、<br>特訓対象の魔法少女を変更することができなくなります。<br>よろしいですか？		HTML片段	1	js/event/training/EventTrainingTop.js
+特訓する魔法少女の決定			1	js/event/training/EventTrainingTop.js
+<br><br><span class="c_red selectCaution">※Lv、エピソードLvが最大の魔法少女が選択されています。<br>これ以上EXP、エピソードPtを入手することはできません。</span>		HTML片段	1	js/event/training/EventTrainingTop.js
+<br><br><span class="c_red selectCaution">※Lvが最大の魔法少女が選択されています。<br>これ以上EXPを入手することはできません。</span>		HTML片段	1	js/event/training/EventTrainingTop.js
+<br><br><span class="c_red selectCaution">※エピソードLvが最大の魔法少女が選択されています。<br>これ以上エピソードPtを入手することはできません。</span>		HTML片段	1	js/event/training/EventTrainingTop.js
+ー		疑似碎片	1	js/event/singleraid/EventSingleRaidTop.js
+チャレンジエリア			1	js/event/singleraid/EventSingleRaidTop.js
+章 エリア			1	js/event/singleraid/EventSingleRaidTop.js
+時間経過の為、対戦相手に変更がありました。\\x3cbr\\x3eミラーズトップに戻ります			1	js/event/arenaranking/view/EventArenaConfirmView.js
+時間経過の為、対戦可能時間を超過しました。\\x3cbr\\x3eミラーズトップに戻ります			1	js/event/arenaranking/view/EventArenaConfirmView.js
+対戦相手の変更(BP回復薬)			1	js/event/arenaranking/view/EventArenaRankingView.js
+対戦回数を回復しました。\\x3cbr\\x3e0　\\x26#8594;　\\x3cspan class\\x3d'c_red'\\x3e			1	js/event/arenaranking/view/EventArenaRankingView.js
+対戦相手の変更（BP回復薬）			1	js/event/arenaranking/view/EventArenaRankingView.js
+現在対戦可能な相手がいないため\\x3cbr\\x3e変更を行うことができません。\\x3cbr\\x3eもう１度本画面に入り直してください。			1	js/event/arenaranking/view/EventArenaRankingView.js
+対戦相手を変更しますか？\\x3cbr\\x3e(対戦相手の再抽選まであと			1	js/event/arenaranking/view/EventArenaRankingView.js
+\\x3cli class\\x3d"nomatch"\\x3e現在対戦可能な相手がいません。\\x3cbr\\x3eしばらくしてから再度来場ください。\\x3c/li\\x3e			1	js/event/arenaranking/view/EventArenaRankingView.js
+ランキングバトルのプレイ期間外のため\\x3cbr\\x3eプレイ結果は反映されません。\\x3cbr\\x3eトップページに戻ります。			1	js/event/arenaranking/view/EventArenaResultView.js
+EXチャレンジクエスト			1	js/event/dailytower/EventDailyTowerTop.js
+百禍チャレンジクエスト			1	js/event/dailytower/EventDailyTowerTop.js
+◆ 百禍チャレンジクエスト			1	js/event/dailytower/EventDailyTowerTop.js
+クエスト解放			1	js/event/dailytower/EventDailyTowerTop.js
+は\\x3cbr /\\x3e			1	js/event/dailytower/EventDailyTowerTop.js
+に解放されます			1	js/event/dailytower/EventDailyTowerTop.js
+を配布しました。\\x3cbr\\x3e			1	js/event/dailytower/EventDailyTowerTop.js
+を消費して\\x3cbr\\x3eイベントクエストをプレイしましょう！			1	js/event/dailytower/EventDailyTowerTop.js
+チャレンジ\\x3cbr /\\x3e			1	js/event/dailytower/EventDailyTowerTop.js
+特殊ルールはありません			1	js/event/EventArenaRankMatch/Model.js
+バトルの所要時間が一定時間を超えたため<br>このバトルは無効になります。<br>イベントTOPに戻ります。		HTML片段	1	js/event/EventArenaRankMatch/Result.js
+ミラーズランクマッチ			1	js/event/EventArenaRankMatch/Result.js
+ランキングバトルのプレイ期間外のため<br>プレイ結果は反映されません。<br>トップページに戻ります。		HTML片段	1	js/event/EventArenaRankMatch/Result.js
+バトルの結果が正しく取得できませんでした。<br>トップページに戻ります。		HTML片段	1	js/event/EventArenaRankMatch/Result.js
+今回のミラーズバトルを<br>リプレイに保存しますか？		HTML片段	1	js/event/EventArenaRankMatch/Result.js
+リプレイに保存しました。<br><br>有効期限：		HTML片段	1	js/event/EventArenaRankMatch/Result.js
+・		疑似碎片	1	js/event/EventArenaRankMatch/Utility.js
+それぞれ			1	js/event/EventArenaRankMatch/Utility.js
+アップ		疑似碎片	1	js/event/EventArenaRankMatch/Utility.js
+ダウン		疑似碎片	1	js/event/EventArenaRankMatch/Utility.js
+属性魔法少女の			1	js/event/EventArenaRankMatch/Utility.js
+個</span>不足しているため<br>回復できません。		HTML片段	1	js/event/EventArenaRankMatch/parts/AttackCount.js
+ミラーズランクマッチの対戦回数を<br>		HTML片段	1	js/event/EventArenaRankMatch/parts/AttackCount.js
+回回復しました。			1	js/event/EventArenaRankMatch/parts/AttackCount.js
+対戦回数が残っていないので対戦できません。			1	js/event/EventArenaRankMatch/parts/AttackCount.js
+個</span>不足しているため<br>クールタイムを解除できません。		HTML片段	1	js/event/EventArenaRankMatch/parts/CoolTime.js
+クールタイム終了			1	js/event/EventArenaRankMatch/parts/CoolTime.js
+クールタイムが終了しました。			1	js/event/EventArenaRankMatch/parts/CoolTime.js
+クールタイムを解除しました。			1	js/event/EventArenaRankMatch/parts/CoolTime.js
+デイリー報酬			1	js/event/EventArenaRankMatch/parts/DailyPresent.js
+編成時間をタイムオーバーしました。\\x3cbr\\x3e対戦相手を選択する画面に戻ります。			1	js/event/EventArenaRankMatch/parts/DeckEditCountDown.js
+防衛編成を設定するまで<br>ミラーズランクマッチのバトルは行えません。<br>防衛編成を設定してください。		HTML片段	1	js/event/EventArenaRankMatch/parts/DefenseDeckEditPopup.js
+防衛編成画面へ			1	js/event/EventArenaRankMatch/parts/DefenseDeckEditPopup.js
+マッチング時間をタイムオーバーしました。<br>対戦相手を変更します。		HTML片段	1	js/event/EventArenaRankMatch/parts/OpponentList.js
+<li class="nomatch"><div class="textSec">残り対戦回数がありません。<br>対戦回数は毎日16:00にリセットされるほか<br>マギアストーンやランクマッチバトルチケットを<br>使用することで回復できます。<br></div></li>		HTML片段	1	js/event/EventArenaRankMatch/parts/OpponentList.js
+特殊ルール			1	js/event/EventArenaRankMatch/parts/SpRule.js
+<span class="b_screen"></span>回復する		HTML片段	1	js/event/EventArenaRankMatch/parts/recoverAttackCountBtnView.js
+ストーリークリア			1	js/event/tower/EventTowerTop.js
+チャレンジクエストが解放されました。			1	js/event/tower/EventTowerTop.js
+チャレンジクエスト解放			1	js/event/EventWitch/page/Top.js
+チャレンジクエストが\\x3cbr\\x3e解放されました。			1	js/event/EventWitch/page/Top.js
+メモリア獲得			1	js/event/EventWitch/parts/ExchangeMemoria.js
+のメモリアを獲得します。			1	js/event/EventWitch/parts/ExchangeMemoria.js
+獲得する			1	js/event/EventWitch/parts/ExchangeMemoria.js
+メモリア詳細			1	js/event/EventWitch/parts/MemoriaDetailPopup.js
+可能性の因子			1	js/event/EventWitch/parts/TopBattleInfo.js
+目にした嘆き			1	js/event/EventWitch/parts/TopBattleInfo.js
+耳にした驚き			1	js/event/EventWitch/parts/TopBattleInfo.js
+臭った諦め			1	js/event/EventWitch/parts/TopBattleInfo.js
+味わった苦しみ			1	js/event/EventWitch/parts/TopBattleInfo.js
+触れた悲しみ			1	js/event/EventWitch/parts/TopBattleInfo.js
+現在第2部は公開されておりません。<br>公開までお待ちください。		HTML片段	1	js/event/branch/EventBranchTop.js
+<span>または</span>		HTML片段	1	js/event/branch/EventBranchTop.js
+希望の羽			1	js/event/EventWalpurgis/Model.js
+\\x3coption value\\x3d"0"\\x3e▼ コメントを選ぶ\\x3c/option\\x3e			1	js/event/EventWalpurgis/parts/GroupRaid/Stamp.js
+ポイントの移動			1	js/event/dungeon/EventDungeonMap.js
+次のポイントに進みますか？			1	js/event/dungeon/EventDungeonMap.js
+戦闘不能でない魔法少女を<br>メインメンバーに編成してください。		HTML片段	1	js/event/dungeon/EventDungeonMap.js
+</span>のHPは最大です。		HTML片段	1	js/event/dungeon/EventDungeonMap.js
+エリア攻略失敗			1	js/event/dungeon/EventDungeonTop.js
+チーム全員が戦闘不能になったため<br>エリアからリタイアしました		HTML片段	1	js/event/dungeon/EventDungeonTop.js
+CPが不足しています。			1	js/event/dungeon/EventDungeonTop.js
+CPを回復しました。			1	js/event/dungeon/view/EventDungeonCpCureView.js
+プレーヤー名７８			1	js/event/storyraid/EventStoryRaidTop.js
+１ユーザー名７８			1	js/event/storyraid/EventStoryRaidTop.js
+かきくけこ６７８９０＠かきくけこ６７８９０			1	js/event/storyraid/EventStoryRaidTop.js
+２ユーザー名７８			1	js/event/storyraid/EventStoryRaidTop.js
+２コメント６７８９０１２３４５６７８９０			1	js/event/storyraid/EventStoryRaidTop.js
+３ユーザー名７８			1	js/event/storyraid/EventStoryRaidTop.js
+３コメント６７８９０１２３４５６７８９０			1	js/event/storyraid/EventStoryRaidTop.js
+４ユーザー名７８			1	js/event/storyraid/EventStoryRaidTop.js
+４コメント６７８９０１２３４５６７８９０			1	js/event/storyraid/EventStoryRaidTop.js
+５ユーザー名７８			1	js/event/storyraid/EventStoryRaidTop.js
+５コメント６７８９０１２３４５６７８９０			1	js/event/storyraid/EventStoryRaidTop.js
+【DEBUG】もらったJsonそのまま			1	js/event/storyraid/EventStoryRaidTop.js
+【DEBUG】エリア解放			1	js/event/storyraid/EventStoryRaidTop.js
+【DEBUG】マップエフェクト			1	js/event/storyraid/EventStoryRaidTop.js
+【DEBUG】BOSSコマンド（			1	js/event/storyraid/EventStoryRaidTop.js
+【DEBUG】ボス交戦中(2回目以降)			1	js/event/storyraid/EventStoryRaidTop.js
+【DEBUG】ボス交戦中(初回)			1	js/event/storyraid/EventStoryRaidTop.js
+【DEBUG】ボス最終戦HELP			1	js/event/storyraid/EventStoryRaidTop.js
+コメントを入力してください。			1	js/event/storyraid/EventStoryRaidTop.js
+イベント参加条件			1	js/event/storyraid/EventStoryRaidTop.js
+イベント『			1	js/event/storyraid/EventStoryRaidTop.js
+』は<br>		HTML片段	1	js/event/storyraid/EventStoryRaidTop.js
+まで開催します。<br><br>イベントに参加するためには<br>【		HTML片段	1	js/event/storyraid/EventStoryRaidTop.js
+】<br>している必要があります。		HTML片段	1	js/event/storyraid/EventStoryRaidTop.js
+メインストーリーへ			1	js/event/storyraid/EventStoryRaidTop.js
+バトルの結果が正しく取得できませんでした。<br>イベントトップページに戻ります。		HTML片段	1	js/event/arenaMission/EventArenaMissionResult.js
+BPを1消費して対戦相手を変更しますか？<br>(対戦相手の再抽選まであと		HTML片段	1	js/event/arenaMission/EventArenaMissionStage.js
+イベントページへ			1	js/event/arenaMission/view/ArenaConfirmView.js
+バトル開始には、3人以上の魔法少女が<br>編成に含まれている必要があります。		HTML片段	1	js/event/accomplish/EventAccomplishDeck.js
+魔法少女・メモリア装備の変更を保存して</br>チーム編成を終了しますか？		HTML片段	1	js/event/accomplish/EventAccomplishDeck.js
+本日分の回復回数の上限に達しています。<br>回復回数は		HTML片段	1	js/event/accomplish/EventAccomplishRecovery.js
+に更新されます。			1	js/event/accomplish/EventAccomplishRecovery.js
+選択された魔法少女は回復が完了しています			1	js/event/accomplish/EventAccomplishRecovery.js
+」を回復しますか？<br>		HTML片段	1	js/event/accomplish/EventAccomplishRecovery.js
+<br><br>本日の回復		HTML片段	1	js/event/accomplish/EventAccomplishRecovery.js
+回復が完了しました			1	js/event/accomplish/EventAccomplishRecovery.js
+回復まであと <span id="popupTimer">		HTML片段	1	js/event/accomplish/EventAccomplishRecovery.js
+クリアセクション			1	js/event/accomplish/EventAccomplishTop.js
+ストーリー最後			1	js/event/accomplish/EventAccomplishTop.js
+チャレンジ最後			1	js/event/accomplish/EventAccomplishTop.js
+逃亡しました			1	js/event/raid/EventRaidTop.js
+RPが不足しています。			1	js/event/raid/EventRaidTop.js
+戦ったボスはまだ倒すことができていません。<br>他のプレイヤーに救援要請を送って<br>ボスの撃破に協力してもらいましょう。<br><br><span class='c_red'>※救援要請することで他のプレイヤーがボスを攻撃できるようになります</span>		HTML片段	1	js/event/raid/EventRaidTop.js
+救援要請する			1	js/event/raid/EventRaidTop.js
+救援要請を送りました。			1	js/event/raid/EventRaidTop.js
+RPを回復しました。			1	js/event/raid/view/EventRaidRpCureView.js
+ブロック中です			1	js/follow/FollowPopup.js
+BPが足りません			1	js/follow/FollowPopup.js
+BPを回復してもう一度お試しください。			1	js/follow/FollowPopup.js
+フォロー解除			1	js/follow/FollowPopup.js
+\\x3cspan class\\x3d'popUserName'\\x3e\\x3c/span\\x3eのフォローを解除しました。\\x3cbr\\x3e\\x3cbr\\x3e			1	js/follow/FollowPopup.js
+ミッション報酬を1件受け取りました。\\x3cbr\\x3e\\x3cbr\\x3e※受け取ったアイテムは直接付与されています。			1	js/mission/DoppelMissionTop.js
+\\x3cp class\\x3d"noMission"\\x3e挑戦できるミッションがありません\\x3c/p\\x3e			1	js/mission/DoppelMissionTop.js
+一括パトロール			1	js/patrol/PatrolTop.js
+パトロールに出発できる魔法少女が不足しています。			1	js/patrol/PatrolTop.js
+パトロール完了			1	js/patrol/PatrolTop.js
+\\x3cspan\\x3e完了まで\\x3c/span\\x3e			1	js/patrol/PatrolTop.js
+エリア未解放			1	js/patrol/PatrolTop.js
+条件を満たしていません			1	js/patrol/PatrolTop.js
+パトロールに出発できる魔法少女がいません。			1	js/patrol/view/PatrolDeckView.js
+パトロールに出発するには\\x3cbr\\x3e魔法少女が\\x3cspan class\\x3d'c_red'\\x3e1\\x3c/span\\x3e体以上必要です。			1	js/patrol/view/PatrolDeckView.js
+\\x3cspan class\\x3d'c_red'\\x3eパトロール中\\x3c/span\\x3eの魔法少女がいます。			1	js/patrol/view/PatrolDeckView.js
+通信エラーが発生しました。<span style='display:block;margin-top:20px;font-size:20px'>※内部処理は実行されている可能性がございます。</span>		HTML片段	1	js/_common/_common.js
+現在、アクセスが集中しております。\\x3cbr\\x3eしばらくたってからアクセスをお願いいたします。			1	js/_common/ajaxControl.js
+予期せぬエラー			1	js/_common/ajaxControl.js
+予期せぬエラーが発生しました。\\x3cbr /\\x3eご迷惑をおかけし、申し訳ございません。[			1	js/_common/ajaxControl.js
+データ更新			1	js/_common/ajaxControl.js
+データが更新されました。\\x3cbr\\x3eトップページに遷移します。			1	js/_common/ajaxControl.js
+通信エラーのポップアップ出したい			1	js/_common/ajaxControl.js
+新しい称号を獲得しました			1	js/_common/backboneCommon.js
+エラーが発生しました。トップページに遷移します。			1	js/_common/base.js
+\\nクエストスタブページへ遷移します。			1	js/_common/isBrowser.js
+\\nアリーナスタブページへ遷移します。			1	js/_common/isBrowser.js
+\\nイベントアリーナスタブページへ遷移します。			1	js/_common/isBrowser.js
+デスティニージェムをマギアチップに変換			1	js/_common/nativeCommand.js
+余ったデスティニージェムは、アイテムリスト画面と@魔力解放画面でマギアチップに交換できます			1	js/_common/nativeCommand.js
+ドッペルを持つ魔法少女は@マギアゲージが150まで溜まると発動できます			1	js/_common/nativeCommand.js
+マギアLvを5にするとマギアゲージ上限が@150まで解放されます			1	js/_common/nativeCommand.js
+デスティニークリスタルの入手方法			1	js/_common/nativeCommand.js
+初期レアリティが★4で最大まで魔力解放した魔法少女の@デスティニージェムを変換する際に付与されます			1	js/_common/nativeCommand.js
+ムービーデータのダウンロードを開始します。			1	js/_common/nativeCommand.js
+ボイスデータのダウンロードを開始します。			1	js/_common/nativeCommand.js
+※ムービーデータは、後からダウンロードすることも可能です。\\n※Wi-Fi環境でのダウンロードをお勧めします。			1	js/_common/nativeCommand.js
+ドッペルを持つ魔法少女は@マギアゲージが200まで溜まると発動できます			1	js/_common/nativeCommand2.js
+マギアLvを5にするとマギアゲージ上限が@200まで解放されます			1	js/_common/nativeCommand2.js
+アプリを終了しますか？			1	js/_common/router.js
+※10連ガチャのうち1枚は、魔法少女確定時の確率で抽選されます。\\x3cbr\\x3e※10連ガチャのうち1枚は、★3以上確定時の確率で抽選されます。\\x3cbr\\x3e※10連ガチャのうち★3以上確定時、魔法少女確定時を除いた8枚は、通常の確率で抽選されます。\\x3cbr\\x3e\\x3cbr\\x3e※提供魔法少女、メモリアは重複する可能性があります。\\x3cbr\\x3e※既に所有している魔法少女を獲得した場合、獲得した魔法少女は、獲得した魔法少女のデスティニージェム\\x3cbr\\x3e　1個に変わります。\\x3cbr\\x3e\\x3cbr\\x3e※個別の魔法少女、メモリアの確率については、小数点第6位を切り捨てしているため、\\x3cbr\\x3e　合計しても100％にならないことがあります。			1	js/gacha/GachaProbability.js
+※10連ガチャのうち1枚は、魔法少女確定時の確率で抽選されます。\\x3cbr\\x3e※10連ガチャのうち1枚は、★3以上確定時の確率で抽選されます。\\x3cbr\\x3e※10連ガチャのうち★3以上確定時、魔法少女確定時を除いた8枚は、通常の確率で抽選されます。\\x3cbr\\x3e※99回連続で★4魔法少女が排出されなかった場合、100回目は★4魔法少女確定時の確率で抽選されます。\\x3cbr\\x3e\\x3cbr\\x3e※提供魔法少女、メモリアは重複する可能性があります。\\x3cbr\\x3e※既に所有している魔法少女を獲得した場合、獲得した魔法少女は、獲得した魔法少女のデスティニージェム\\x3cbr\\x3e　1個に変わります。\\x3cbr\\x3e\\x3cbr\\x3e※個別の魔法少女、メモリアの確率については、小数点第6位を切り捨てしているため、\\x3cbr\\x3e　合計しても100％にならないことがあります。			1	js/gacha/GachaProbability.js
+※既に所有している魔法少女を獲得した場合、獲得した魔法少女は、獲得した魔法少女のデスティニージェム\\x3cbr\\x3e　1個に変わります。			1	js/gacha/GachaProbability.js
+レベルが上限に達しています			1	js/chara/CharaCompose.js
+素材を選択してください			1	js/chara/CharaCompose.js
+エピソードLv強化			1	js/chara/CharaCompose.js
+します。\\x3c/br\\x3eよろしいですか？\\x3c/p\\x3e			1	js/chara/CharaCompose.js
+使用ジェム選択			1	js/chara/CharaCompose.js
+マギアレベルが上限に達しています			1	js/chara/CharaComposeMagia.js
+マギア強化確認			1	js/chara/CharaComposeMagia.js
+のマギアを強化します。\\x3c/br\\x3eよろしいですか？\\x3cp\\x3e			1	js/chara/CharaComposeMagia.js
+マギアLvは最大です			1	js/chara/CharaComposeMagia.js
+エピソードLvを上げると\\x3c/br\\x3eマギアLvの上限が解放されます			1	js/chara/CharaComposeMagia.js
+覚醒素材をセットしてください			1	js/chara/CharaCustomize.js
+覚醒可能なLvに達していません			1	js/chara/CharaCustomize.js
+上限まで覚醒されています			1	js/chara/CharaCustomize.js
+覚醒できません			1	js/chara/CharaCustomize.js
+を覚醒します。\\x3cbr\\x3eよろしいですか？\\x3c/p\\x3e			1	js/chara/CharaCustomize.js
+精神強化されていないためリセットはできません。			1	js/chara/CharaEnhancementTree.js
+精神強化をリセットしました。			1	js/chara/CharaEnhancementTree.js
+原点の器を1個消費して、\\x3cspan class\\x3d'c_pink'\\x3e			1	js/chara/CharaEnhancementTree.js
+\\x3c/span\\x3eの\\x3cbr\\x3e精神強化をすべてリセットします。よろしいですか？\\x3cbr\\x3e\\x3cspan class\\x3d'resetCaution c_red'\\x3e※精神強化に使用した素材は返還されますが、CCは返還されません\\x3c/span\\x3e\\x3cdiv class\\x3d'resetItem pointFrame'\\x3e\\x3cspan class\\x3d'hasIcons'\\x3e\\x3cimg src\\x3d'/magica/resource/image_web/common/icon/icon_reset_enhance_f.png'\\x3e\\x3c/span\\x3e\\x3cspan class\\x3d'itemCount'\\x3e			1	js/chara/CharaEnhancementTree.js
+リセット			1	js/chara/CharaEnhancementTree.js
+精神強化のリセットには原点の器が必要です。\\x3cdiv class\\x3d'resetItem pointFrame'\\x3e\\x3cspan class\\x3d'hasIcons'\\x3e\\x3cimg src\\x3d'/magica/resource/image_web/common/icon/icon_reset_enhance_f.png'\\x3e\\x3c/span\\x3e\\x3cspan class\\x3d'itemCount'\\x3e			1	js/chara/CharaEnhancementTree.js
+\\x3cp\\x3e精神強化に必要な素材が不足しています。\\x3cp\\x3e\\x3cp class\\x3d'c_red multiCaution'\\x3e※前提条件を含む、			1	js/chara/CharaEnhancementTree.js
+マス分の精神強化素材が必要です。			1	js/chara/CharaEnhancementTree.js
+の能力解放を行います。\\x3c/br\\x3eよろしいですか？\\x3cp\\x3e\\x3cp class\\x3d'c_red multiCaution'\\x3e※前提条件を含む			1	js/chara/CharaEnhancementTree.js
+マスの精神強化が解放されます。			1	js/chara/CharaEnhancementTree.js
+\\x3cp\\x3e精神強化に必要な素材が不足しています。			1	js/chara/CharaEnhancementTree.js
+の能力解放を行います。\\x3c/br\\x3eよろしいですか？\\x3cp\\x3e			1	js/chara/CharaEnhancementTree.js
+精神強化に必要なCCが不足しています。			1	js/chara/CharaEnhancementTree.js
+HP最大能力値アップ			1	js/chara/CharaEnhancementTree.js
+ATK最大能力値アップ			1	js/chara/CharaEnhancementTree.js
+DEF最大能力値アップ			1	js/chara/CharaEnhancementTree.js
+Accele性能アップ			1	js/chara/CharaEnhancementTree.js
+Blast性能アップ			1	js/chara/CharaEnhancementTree.js
+Charge性能アップ			1	js/chara/CharaEnhancementTree.js
+のジェム\\x3cbr\\x3e\\x3cspan class\\x3d'c_red'\\x3eディスティニージェムが不足しています\\x3c/span\\x3e\\x3cp\\x3e			1	js/chara/CharaEquip.js
+イノセント・ジェム			1	js/chara/CharaEquip.js
+ジェム		疑似碎片	1	js/chara/CharaEquip.js
+を使用して\\x3cbr\\x3e			1	js/chara/CharaEquip.js
+を魔力解放します。\\x3cbr\\x3eよろしいですか？\\x3cp\\x3e			1	js/chara/CharaEquip.js
+お気に入り			1	js/chara/CharaTop.js
+に設定しました。			1	js/chara/CharaTop.js
+素材が足りないため強化できません			1	js/chara/CharaComposeAttribute/ComposeAttributeList.js
+\\x3cp class\\x3d"text"\\x3eすでに強化済みです\\x3c/p\\x3e			1	js/chara/CharaComposeAttribute/ComposeAttributeList.js
+\\x3cp class\\x3d"text"\\x3e強化できる魔力印がありません\\x3c/p\\x3e			1	js/chara/CharaComposeAttribute/ComposeAttributeList.js
+で解除されます			1	js/chara/CharaComposeAttribute/ComposeAttributeListModel.js
+イラスト			1	js/view/collection/CollectionDetailView.js
+APはこれ以上回復できません。\\x3cbr\\x3eクエストをプレイしてAPを消費することで\\x3cbr\\x3e再度回復が可能になります。			1	js/view/user/APPopup.js
+クエスト			1	js/view/user/APPopup.js
+年末ドリームマギアくじ			1	js/view/user/BannerView.js
+\\x3c/p\\x3e当選者につきましては12/30放送予定の年末特別番組\\x3cbr\\x3e「アニメ放送直前SP〜マギレコ夜噺〜」\\x3cbr\\x3eにて発表いたします。			1	js/view/user/BannerView.js
+あなたの抽選番号は\\x3cp class\\x3d"c_pink" style\\x3d"width:80%;font-size:30px;margin:20px auto;border:1px solid #CCC;padding:10px 0px;text-align:center"\\x3e			1	js/view/user/BannerView.js
+魔法少女について			1	js/view/user/GlobalMenuView.js
+魔法少女強化について			1	js/view/user/GlobalMenuView.js
+精神強化について			1	js/view/user/GlobalMenuView.js
+属性強化について			1	js/view/user/GlobalMenuView.js
+ガチャについて			1	js/view/user/GlobalMenuView.js
+ミッションについて			1	js/view/user/GlobalMenuView.js
+ショップについて			1	js/view/user/GlobalMenuView.js
+チームについて			1	js/view/user/GlobalMenuView.js
+プレゼントについて			1	js/view/user/GlobalMenuView.js
+アイテムについて			1	js/view/user/GlobalMenuView.js
+フォローについて			1	js/view/user/GlobalMenuView.js
+メモリアセットについて			1	js/view/user/GlobalMenuView.js
+ストーリーアーカイブについて			1	js/view/user/GlobalMenuView.js
+パトロールについて			1	js/view/user/GlobalMenuView.js
+ただいま集計中です。\\x3cbr\\x3e最終結果は			1	js/view/user/GlobalMenuView.js
+から確認いただけます。			1	js/view/user/GlobalMenuView.js
+ただいま集計中です。\\x3cbr\\x3e後半戦は			1	js/view/user/GlobalMenuView.js
+から開始いたします。			1	js/view/user/GlobalMenuView.js
+前回集計時の圏内まであと：			1	js/view/user/MyProfilePopup.js
+魔法少女　総合戦力について			1	js/view/user/MyProfilePopup.js
+コメントを編集しました。			1	js/view/user/MyProfilePopup.js
+称号を変更しました			1	js/view/user/MyProfilePopup.js
+入力されたシリアルコードに誤りがあります。\\x3cbr\\x3e※シリアルコードは、ー（ハイフン）を除いた12桁の半角英数字です。			1	js/view/config/ConfigTopView.js
+入力されたシリアルコードは特典受取り済です。\\x3cbr\\x3e※特典はプレゼントボックスよりお受け取りください。			1	js/view/config/ConfigTopView.js
+入力されたシリアルコードは有効期間外です。			1	js/view/config/ConfigTopView.js
+シリアルコード			1	js/view/config/ConfigTopView.js
+受け取りが完了しました。\\x3cbr\\x3e特典はプレゼントボックスよりお受け取りください。			1	js/view/config/ConfigTopView.js
+プレゼントを			1	js/view/present/PresentListPageView.js
+件受け取りました			1	js/view/present/PresentListPageView.js
+プレゼントを1件受け取りました			1	js/view/present/PresentListPartsView.js
+modelがaddされました			1	js/view/quest/PreQuestPopupView.js
+modelがremoveされました			1	js/view/quest/PreQuestPopupView.js
+魔法少女が選択されていません			1	js/view/quest/PreQuestPopupView.js
+日付が変わったため\\x3cbr\\x3e対象のクエストをプレイすることはできません			1	js/view/quest/QuestListPartsView.js
+クエストに必要なアイテムは\\x3cbr\\x3eメイン・アナザー・魔法少女・曜日クエストの\\x3cbr\\x3e各クエストで入手できます。			1	js/view/quest/QuestListPartsView.js
+クエストに必要なアイテムは\\x3cbr\\x3e『アニメ2nd SEASON』放送期間中\\x3cbr\\x3e毎週土曜日・日曜日に\\x3cbr\\x3eゲームにログインすることで入手できます。			1	js/view/quest/QuestListPartsView.js
+アイテムが足りません			1	js/view/quest/QuestListPartsView.js
+セクション内に未クリアクエストがあります。選択画面に遷移します。			1	js/view/quest/QuestResultView.js
+クエスト結果が正しく取得できませんでした。\\x3cbr\\x3eトップページに戻ります。			1	js/view/quest/QuestResultView.js
+\\x3cspan class\\x3d'c_pink popUserName'\\x3e\\x3c/span\\x3eをフォローしました。			1	js/view/quest/QuestResultView.js
+このストーリーは再挑戦できません。			1	js/view/quest/QuestSectionListPartsView.js
+全てのクエストをクリアしています。			1	js/view/quest/SubQuestView.js
+BPを回復しました。			1	js/view/arena/ArenaBpCureView.js
+\\x3cbr\\x3e\\x3cbr\\x3e\\x3cbr\\x3e\\x3cspan class\\x3d'c_red'\\x3e※演習を行うにはBPを1以上所持している必要があります。\\x3c/span\\x3e			1	js/view/arena/ArenaConfirmView.js
+BPを1消費して対戦相手を変更しますか？\\x3cbr\\x3e(対戦相手の再抽選まであと			1	js/view/arena/ArenaFreeRankView.js
+\\x3cli class\\x3d"nomatch"\\x3e現在対戦可能な相手がいません\\x3cbr\\x3eしばらくしてから再度来場ください\\x3c/li\\x3e			1	js/view/arena/ArenaFreeRankView.js
+リプレイのバージョンが古いため、再生できません。			1	js/view/arena/ArenaHistoryView.js
+リプレイIDをコピーしました。\\x3cbr\\x3e\\x3cbr\\x3e\\x3cdl class\\x3d'colWrap common_dl'\\x3e\\x3cdt class\\x3d'colLeft'\\x3eリプレイID\\x3c/dt\\x3e\\x3cdd class\\x3d'colRight'\\x3e\\x3cspan class\\x3d'black'\\x3e			1	js/view/arena/ArenaHistoryView.js
+リプレイIDを正しく入力してください			1	js/view/arena/ArenaHistoryView.js
+<p class="nomatch commonFrame4">現在対戦可能な相手がいません<br>しばらくしてから再度来場ください</p>		HTML片段	1	js/view/arena/ArenaRankingView.js
+チーム力順			1	js/view/arena/ArenaSimulateView.js
+プレーヤー名順			1	js/view/arena/ArenaSimulateView.js
+ミラーズIDを正しく入力してください			1	js/view/arena/ArenaSimulateView.js
+ミラーズID対戦			1	js/view/arena/ArenaSimulateView.js
+\\x3cli class\\x3d"nomatch"\\x3e対戦可能な相手が存在しません\\x3cbr\\x3e\\x3cbr\\x3eミラーズ解放済みの相手と戦うことができます\\x3c/li\\x3e			1	js/view/arena/ArenaSimulateView.js
+ミラーズイベント			1	js/view/arena/ArenaTopView.js
+ミラーズイベントは現在開催しておりません。\\x3cbr\\x3e次回開催をお待ちください。			1	js/view/arena/ArenaTopView.js
+本日分の対戦回数の上限に達しています。\\x3cbr\\x3e対戦回数は16:00にリセットされます。			1	js/view/arena/ArenaTopView.js
+本日分の対戦回数の上限に達しています。\\x3cbr\\x3e本戦は			1	js/view/arena/ArenaTopView.js
+本戦の対戦回数の上限に達しています。\\x3cbr\\x3e結果発表をお待ちください。			1	js/view/arena/ArenaTopView.js
+現在、ミラーズランキングの結果集計中です。\\x3cbr\\x3e集計中はミラーズバトルはプレイできません。\\x3cbr\\x3e本戦は			1	js/view/arena/ArenaTopView.js
+ミラーズランキングは現在開催しておりません。\\x3cbr\\x3e次回開催をお待ちください。			1	js/view/arena/ArenaTopView.js
+前日の防衛ボーナス			1	js/view/arena/ArenaTopView.js
+・ストーリー解放条件			1	js/view/arena/ArenaTopView.js
+ブロック			1	js/view/follow/FollowTopView.js
+検索条件が入力されていません。			1	js/view/follow/FollowTopView.js
+メインストーリー2章を\\x3cbr\\x3eクリアすることで解放されます。			1	js/view/mission/MissionTopListView.js
+\\x3cspan\\x3eドッペル解放\\x3cbr\\x3eチャレンジ\\x3c/span\\x3e			1	js/view/mission/MissionTopView.js
+ドッペル解放チャレンジ			1	js/view/mission/MissionTopView.js
+\\x3cspan\\x3eスタンプカード\\x3c/span\\x3e			1	js/view/mission/MissionTopView.js
+スタンプカード			1	js/view/mission/MissionTopView.js
+現在、以下のメモリアを選択しています。\\x3cbr\\x3e\\x3cdiv id\\x3d'pieceImgList' class\\x3d'commonFrame2'\\x3e			1	js/view/gacha/GachaBtnView.js
+)\\x3c/span\\x3eを選択しています。\\x3cbr\\x3e			1	js/view/gacha/GachaBtnView.js
+\\x3c/span\\x3eを選択しています。\\x3cbr\\x3e			1	js/view/gacha/GachaBtnView.js
+1日1回無料10連ノーマルガチャを行います。\\x3cbr\\x3eよろしいですか？\\x3cdiv id\\x3d'saleSettingBtn' class\\x3d'sb_gold_02 TE se_decide'\\x3e自動設定\\x3c/div\\x3e			1	js/view/gacha/GachaBtnView.js
+1日1回無料10連ノーマルガチャを行います。\\x3cbr\\x3eよろしいですか？\\x3cdiv class\\x3d'gachaAttentionArea commonFrame3'\\x3e本日、\\x3cspan class\\x3d'c_pink'\\x3e残り			1	js/view/gacha/GachaBtnView.js
+回無料\\x3c/span\\x3eでガチャを行うことができます\\x3c/div\\x3e\\x3cdiv id\\x3d'saleSettingBtn' class\\x3d'sb_gold_02 TE se_decide'\\x3e自動設定\\x3c/div\\x3e			1	js/view/gacha/GachaBtnView.js
+期間外のため\\x3cbr\\x3e対象のガチャは存在しません			1	js/view/gacha/GachaTopView2.js
+サポート Pt			1	js/view/gacha/GachaTopView2.js
+\\x3cp class\\x3d"noItems"\\x3e素材を所持していません\\x3c/p\\x3e			1	js/view/item/ItemListView.js
+ありがとうございます。\\x3cbr\\x3e年齢認証が完了しました。\\x3cbr\\x3e引き続きゲームをお楽しみください。			1	js/view/purchase/PurchasePopup.js
+年齢認証が必要です			1	js/view/purchase/PurchasePopup.js
+このアイテムは現在購入できません。\\x3cbr\\x3e少し時間を空けてから、\\x3cbr\\x3eアプリの再起動をお試しください。			1	js/view/purchase/PurchasePopupPartView.js
+プロフィールON			1	js/view/chara/CharaDetailView.js
+プロフィールOFF			1	js/view/chara/CharaDetailView.js
+期間外のため\\x3cbr\\x3e対象のアイテムを購入することはできません			1	js/view/shop/ShopPopupView.js
+購入可能上限に達しています。			1	js/view/shop/ShopPopupView.js
+マギアストーン(有償)			1	js/view/shop/ShopPopupView.js
+購入に必要なアイテム			1	js/view/shop/ShopPopupView.js
+が\\x3cbr\\x3e不足しています。			1	js/view/shop/ShopPopupView.js
+購入個数を選択してください。			1	js/view/shop/ShopPopupView.js
+限界突破済のメモリアが含まれています。\\x3cbr\\x3eよろしいですか？			1	js/view/memoria/MemoriaComposeTopCardListView.js
+カースチップが不足しています。			1	js/view/memoria/MemoriaComposeTopView.js
+素材が選択されていません			1	js/view/memoria/MemoriaComposeTopView.js
+対象が選択されていません			1	js/view/memoria/MemoriaComposeTopView.js
+保管庫に送る			1	js/view/memoria/PieceArchiveView.js
+一覧に送る			1	js/view/memoria/PieceArchiveView.js
+強化するメモリアを選んでください			1	js/view/memoria/UserMemoriaListView.js
+限界突破するメモリアを選んでください			1	js/view/memoria/UserMemoriaListView.js
+ロック/解除するメモリアを選んでください			1	js/view/memoria/UserMemoriaListView.js
+詳細を確認するメモリアを選んでください			1	js/view/memoria/UserMemoriaListView.js
+売却するメモリアを選んでください			1	js/view/memoria/UserMemoriaListView.js
+売却するメモリアが選択されていません。			1	js/view/memoria/UserMemoriaListView.js
+売却しました			1	js/view/memoria/UserMemoriaListView.js
+メモリアセット編集の終了			1	js/memoria/MemoriaEquip.js
+メモリアセットの内容が変更されています。			1	js/memoria/MemoriaEquip.js
+メモリア装備確認			1	js/memoria/MemoriaEquip.js
+メモリアの装備の内容が変更されています。			1	js/memoria/MemoriaEquip.js
+変更を破棄して編成に戻る			1	js/memoria/MemoriaEquip.js
+変更を保持して編成に戻る			1	js/memoria/MemoriaEquip.js
+このメモリアは既に他のセットへ登録中です。\\x3cbr\\x3eセット登録しますか？			1	js/memoria/MemoriaEquip.js
+メモリアロック解除			1	js/memoria/MemoriaPopup.js
+イベント期間中にこのメモリアのロックを\\x3cbr\\x3e解除することはできません。			1	js/memoria/MemoriaPopup.js
+レンタルメモリアセット			1	js/memoria/MemoriaSetEquip.js
+」を上書きします。\\x3c/br\\x3e			1	js/memoria/MemoriaSetEquip.js
+メモリアセット上書き確認			1	js/memoria/MemoriaSetEquip.js
+よろしいですか？\\x3c/p\\x3e			1	js/memoria/MemoriaSetEquip.js
+\\x3cp\\x3e現在の装備メモリアの代わりに、\\x3c/br\\x3e			1	js/memoria/MemoriaSetEquip.js
+\\x3cp\\x3e現在の装備メモリアをはずして、\\x3c/br\\x3e			1	js/memoria/MemoriaSetEquip.js
+メモリアセット確認			1	js/memoria/MemoriaSetEquip.js
+装備したいセットを選んでください			1	js/memoria/MemoriaSetEquip.js
+登録したいセットを選んでください			1	js/memoria/MemoriaSetEquip.js
+よろしいですか？\\x3c/p\\x3e\\x3cp class\\x3d"c_red"\\x3e※現在装備しているメモリアのレンタルを外すと\\x3c/br\\x3e元のメモリアを装備した状態になります。\\x3c/p\\x3e			1	js/memoria/MemoriaSetEquip.js
+よろしいですか？\\x3c/p\\x3e\\x3cp class\\x3d"c_red"\\x3e※同じチームの魔法少女が装備しているメモリアが含まれる場合、\\x3c/br\\x3e自動的にその魔法少女から装備がはずされます。\\x3c/p\\x3e			1	js/memoria/MemoriaSetEquip.js
+殲滅戦のチームに編成されていない、\\x3cbr\\x3e★4または★5まで覚醒済みの魔法少女が、\\x3cbr\\x3e1体以上編成されているチームを選択してください。			1	js/formation/DeckFormation.js
+鏡の魔女との戦いに編成されていない魔法少女が、\\x3cbr\\x3e1体以上編成されているチームを選択してください。			1	js/formation/DeckFormation.js
+人未満の魔法少女の\\x3cbr\\x3e編成である必要があります。			1	js/formation/DeckFormation.js
+\\x3c/span\\x3eを\\x3cspan class\\x3d'c_pink'\\x3e			1	js/formation/DeckFormation.js
+\\x3c/span\\x3eへコピーしました。\\x3cbr\\x3e\\x3cbr\\x3e\\x3cspan class\\x3d'c_red'\\x3e決定ボタンをタップすることで確定されます。\\x3c/span\\x3e			1	js/formation/DeckFormation.js
+属性は最低１種類選ぶ必要があります。			1	js/formation/DeckFormation.js
+選んだ属性の魔法少女を所持していないため\\x3cbr\\x3e編成することができません。			1	js/formation/DeckFormation.js
+この編成を殲滅戦の編成にコピーします。\\x3cbr\\x3e\\x3cbr\\x3e\\x3cspan class\\x3d"c_red"\\x3e※★4まで覚醒していない魔法少女、\\x3cbr\\x3e殲滅戦のチームに編成に編成されている魔法少女は\\x3cbr\\x3eコピーされません。\\x3c/span\\x3e			1	js/formation/DeckFormation.js
+この編成をコピーします。\\x3cbr\\x3e\\x3cbr\\x3e\\x3cspan class\\x3d"c_red"\\x3e※鏡の魔女との戦いに編成されている\\x3cbr\\x3e魔法少女はコピーされません。\\x3c/span\\x3e			1	js/formation/DeckFormation.js
+サポートチーム			1	js/formation/DeckFormationUtil.js
+ミラーズチーム			1	js/formation/DeckFormationUtil.js
+イベントミラーズチーム			1	js/formation/DeckFormationUtil.js
+レベル40未満の魔法少女がチームに含まれています。			1	js/formation/DeckFormationUtil.js
+チーム変更			1	js/formation/FormationQuest.js
+』を解散します。\\x3cbr\\x3eよろしいですか？			1	js/formation/FormationQuest.js
+イベントのチーム			1	js/formation/FormationQuest.js
+ミラーズのチーム			1	js/formation/FormationQuest.js
+クエストスタート:			1	js/formation/FormationQuest.js
+サポート変更確認			1	js/formation/FormationSupport.js
+サポートが変更されています。			1	js/formation/FormationSupport.js
+サポート設定をリセットします。\\x3cbr\\x3eよろしいですか？			1	js/formation/FormationSupport.js
+次回開催をお待ちください			1	js/regularEvent/RegularEventTop.js
+タップで最終ランキングページへ移動します			1	js/regularEvent/RegularEventTop.js
+ステージの攻略中を中断して、トップ画面に戻ります。\\x3cbr\\x3e\\x3cbr\\x3e\\x3cspan class\\x3d'c_red'\\x3e※クエストの攻略状態は保存されません。\\x3c/span\\x3e			1	js/regularEvent/extermination/RegularEventExterminationBattleSelect.js
+魔法少女の編成が完了いたしました。\\x3cbr\\x3e\\x3cbr\\x3e\\x3cdiv class\\x3d'c_red'\\x3e※メモリアは特別な効果があるものが\\x3cbr\\x3e優先的に装備されます。\\x3c/div\\x3e			1	js/regularEvent/extermination/RegularEventExterminationFormation.js
+制圧中の編成以外を以下の編成へと入れ替えます。よろしいですか？\\x3cbr\\x3e\\x3cdiv class\\x3d'c_red'\\x3e※メモリアは特別な効果があるものが優先的に装備されます。\\x3c/div\\x3e\\x3cdiv id\\x3d'autoFormationContainer'\\x3e\\x3c/div\\x3e			1	js/regularEvent/extermination/RegularEventExterminationFormation.js
+各メモリア			1	js/regularEvent/extermination/RegularEventExterminationFormation.js
+殲滅戦には専用の編成が必要です。\\x3cbr\\x3eクエスト編成をコピーして殲滅戦の編成を行いますか？			1	js/regularEvent/extermination/RegularEventExterminationFormation.js
+ステージ			1	js/regularEvent/extermination/RegularEventExterminationTop.js
+へ再度挑戦します。\\x3cbr\\x3eよろしいですか？			1	js/regularEvent/extermination/RegularEventExterminationTop.js
+\\x3cbr\\x3eに解放			1	js/regularEvent/extermination/RegularEventExterminationTop.js
+クリア\\x3cbr\\x3eで解放			1	js/regularEvent/extermination/RegularEventExterminationTop.js
+殲滅戦に参加するには\\x3cbr\\x3e★4以上の魔法少女が\\x3cspan class\\x3d'c_red'\\x3e5\\x3c/span\\x3e体必要です。			1	js/regularEvent/extermination/RegularEventExterminationTop.js
+他の結界を\\x3cspan class\\x3d'attention'\\x3e全て制圧すると挑戦\\x3c/span\\x3eできます。			1	js/regularEvent/extermination/view/RegularEventExterminationBattleSelectStagePartsView.js
+所属勢力の詳細			1	js/regularEvent/groupBattle/RegularEventGroupBattleSelectUnion.js
+所属勢力の決定			1	js/regularEvent/groupBattle/RegularEventGroupBattleSelectUnion.js
+でグループBATTLEを開始します。<br>よろしいですか？<br><br><p class='c_red'>※所属勢力は次回開催まで変更できません。</p>		HTML片段	1	js/regularEvent/groupBattle/RegularEventGroupBattleSelectUnion.js
+開始する			1	js/regularEvent/groupBattle/RegularEventGroupBattleSelectUnion.js
+所属グループ決定			1	js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+\\x3cp class\\x3d'noLog ts_white'\\x3e該当するログがありません\\x3c/p\\x3e			1	js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+チームコピー確認			1	js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+該当の魔法少女が１体もいないため、コピーできません			1	js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+チーム４に編成をコピーします。\\x3cbr\\x3e編成画面に移動した段階ではまだ保存されていません。\\x3cbr\\x3e所持していない魔法少女・魔法陣形はコピーされません。			1	js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+件受け取りました。\\x3cbr\\x3e\\x3cbr\\x3e※受け取ったアイテムは直接付与されています。			1	js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+グレード報酬			1	js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+グループ撃退数報酬			1	js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+デイリーダメージ報酬			1	js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+グループランキング報酬			1	js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+所属グループ報酬			1	js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+グループ内ランキング報酬			1	js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+グループ名の変更が完了しました。			1	js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+に終了しました。			1	js/regularEvent/groupBattle/RegularEventGroupBattleTop.js
+前日の結果			1	js/regularEvent/groupBattle/view/BossPageView.js
+マミ		疑似碎片	1	js/regularEvent/groupBattle/view/BossPageView.js
+きらり		疑似碎片	1	js/regularEvent/groupBattle/view/BossPageView.js
+さやか		疑似碎片	1	js/regularEvent/groupBattle/view/BossPageView.js
+いろは・やちよ			1	js/regularEvent/groupBattle/view/BossPageView.js
+ほむら		疑似碎片	1	js/regularEvent/groupBattle/view/BossPageView.js
+まどか		疑似碎片	1	js/regularEvent/groupBattle/view/BossPageView.js
+本日の挑戦回数が残っていません。\\x3cbr\\x3e\\x3cbr\\x3e毎日16:00に挑戦回数が回復します。\\x3cbr\\x3e\\x3cp class\\x3d'c_red'\\x3e※模擬戦では何度でもバトルすることができます。\\x3c/p\\x3e			1	js/regularEvent/groupBattle/view/BossPageView.js
+\\x3cp class\\x3d'noLog ts_white'\\x3eランキング集計中\\x3c/p\\x3e			1	js/regularEvent/groupBattle/view/RankingPageView.js
+ターン情報			1	js/regularEvent/groupBattle/view/ResultPageView.js
+\\x3c/span\\x3eに「いいね」をしました！\\x3cbr\\x3e\\x3cbr\\x3e\\x3cspan class\\x3d'c_red'\\x3eMPを			1	js/regularEvent/groupBattle/view/UserPageView.js
+獲得しました。\\x3c/span\\x3e\\x3cbr\\x3e※獲得したMPはバトルに引き継がれます。			1	js/regularEvent/groupBattle/view/UserPageView.js
+\\x3c/span\\x3eに「いいね」します！\\x3cbr\\x3e\\x3cbr\\x3e\\x3cspan class\\x3d'c_red'\\x3e※いいねは1日			1	js/regularEvent/groupBattle/view/UserPageView.js
+回できます。\\x3c/span\\x3e			1	js/regularEvent/groupBattle/view/UserPageView.js
+\\x3cp class\\x3d"noRank ts_white"\\x3eランキングは現在集計中です。\\x3cbr\\x3eランキングは毎日16時に更新されます。\\x3c/p\\x3e			1	js/regularEvent/groupBattle/view/UserPageView.js
+バトル ミュージアム			1	js/regularEvent/accomplish/RegularEventAccomplishTop.js
+バトルに参加するには\\x3cbr\\x3eレベル40以上の魔法少女が\\x3cspan class\\x3d'c_red'\\x3e1\\x3c/span\\x3e体以上必要です。			1	js/regularEvent/accomplish/RegularEventAccomplishTop.js
+すでにイベント期間に回復済です。			1	js/regularEvent/accomplish/view/RegularEventAccomplishRecoverView.js
+回復可能な魔法少女がいません。			1	js/regularEvent/accomplish/view/RegularEventAccomplishRecoverView.js
+全てのステージをクリア済です。			1	js/regularEvent/accomplish/view/RegularEventAccomplishRecoverView.js
+全ての魔法少女のHPを回復します。			1	js/regularEvent/accomplish/view/RegularEventAccomplishRecoverView.js
+全ての魔法少女のHPを回復しました			1	js/regularEvent/accomplish/view/RegularEventAccomplishRecoverView.js
+\\x3cdiv id\\x3d"cautionWrap" class\\x3d"flexBox se_tabs"\\x3e\\x3cdiv class\\x3d"checkBox"\\x3e\\x3c/div\\x3e\\x3cdiv\\x3e\\x3cdiv class\\x3d"c_red"\\x3eイベント期間中一度しか回復できません。\\x3c/div\\x3e本当に回復しますか。\\x3c/div\\x3e\\x3c/div\\x3e			1	js/regularEvent/accomplish/view/RegularEventAccomplishRecoverView.js
+新しいバージョンがあります。ストアで最新版をダウンロードしてください。			1	template/top/NewVersionRecommend.html
+ストアに最新版が公開されていない場合は暫くお待ちください。			1	template/top/NewVersionRecommend.html
+アプリを削除してしまうとデータが初期化されてしまいますのでご注意ください。			1	template/top/NewVersionRecommend.html
+ダウンロードへ			1	template/top/NewVersionRecommend.html
+現在のバージョン:			1	template/top/NewVersionRecommend.html
+最新のバージョン:			1	template/top/NewVersionRecommend.html
+第2部OPムービー			1	template/top/TopPage.html
+プレイヤーID：			1	template/top/TopPage.html
+引き継ぎ・連携ID			1	template/top/TopPage.html
+パスワード			1	template/top/TopPage.html
+※パスワードは8文字以上15文字以内です			1	template/top/TopPage.html
+データの引き継ぎ・連携元となる引き継ぎ・連携IDと設定したパスワードを入力するとデータの引き継ぎ・連携が完了します。			1	template/top/TopPage.html
+第1章3話のストーリーにて、プレイヤー名入力が完了しませんでした。			1	template/top/TopPage.html
+※後から変更可能です（当日中の変更はできません）			1	template/top/TopPage.html
+※第1章3話のストーリーはアーカイブから参照できます			1	template/top/TopPage.html
+次回のミッション追加は			1	template/campaign/summer_mission/CampaignSummerMissionTop.html
+です		疑似碎片	1	template/campaign/summer_mission/CampaignSummerMissionTop.html
+受け取り期限			1	template/campaign/summer_mission/CampaignSummerMissionTop.html
+より		疑似碎片	1	template/campaign/quiz/CampaignQuizTop.html
+結果をツイートする			1	template/campaign/quiz/CampaignQuizTop.html
+※報酬は直接付与されます			1	template/campaign/quiz/CampaignQuizTop.html
+クイズトップへ			1	template/campaign/quiz/CampaignQuizTop.html
+ボックス			1	template/campaign/box_gacha/CampaignBoxGachaTop.html
+各ボックス内の目玉報酬を獲得すると、次のボックスへの切り替えが可能になります。			1	template/campaign/box_gacha/CampaignBoxGachaTop.html
+回ガチャ			1	template/campaign/box_gacha/CampaignBoxGachaTop.html
+を引きます。			1	template/campaign/box_gacha/CampaignBoxGachaTop.html
+もう一回引く			1	template/campaign/box_gacha/CampaignBoxGachaTop.html
+FAQ/お問い合わせサイト			1	template/etc/Help.html
+あなたのプレイヤーIDは&nbsp;			1	template/etc/Help.html
+&nbsp;です			1	template/etc/Help.html
+プレイヤーIDをコピーする			1	template/etc/Help.html
+まで&nbsp;▼			1	template/user/AnnounceTemp.html
+アカウント停止			1	template/user/Ban.html
+このたび、お客様のアカウントにおきまして、以下のいずれかの行為が確認されたため、運営の判断によりアカウントを停止いたしました。			1	template/user/Ban.html
+【対象となる行為】			1	template/user/Ban.html
+・利用規約に違反する行為。		法条勿动	1	template/user/Ban.html
+・過度の連続アクセスにより、サーバーに負担をかける行為。			1	template/user/Ban.html
+・不正アクセスを行い本サービス、または他ユーザー様に不利益を与える行為。			1	template/user/Ban.html
+・本サービスにおいて誹謗中傷など他ユーザー様に不快感を与える行為。			1	template/user/Ban.html
+・プログラムの不具合を利用した不正行為(アイテムを不正に取得する等の特に悪質な行為)、およびそれを助長する行為(故意に不具合を利用したと運営が判断した場合を含む)により本サービスの運営、提供を妨害し、それらに支障をきたす行為。			1	template/user/Ban.html
+無期限停止措置を行ったアカウントにつきましては、今後ご利用いただくことは出来ません。			1	template/user/Ban.html
+※本件に関するお問い合わせにつきましては、上記の報告をもって回答と代えさせていただきます。			1	template/user/Ban.html
+キモチ戦　戦績			1	template/user/EventRecord.html
+デイリーダメージエンブレム			1	template/user/EventRecord.html
+「マギアレコード 魔法少女まどか☆マギカ外伝」を			1	template/user/ReviewPopTemp.html
+遊んでいただき誠にありがとうございます。			1	template/user/ReviewPopTemp.html
+ランク10到達を記念してマギアストーン25個を			1	template/user/ReviewPopTemp.html
+プレゼントいたします。			1	template/user/ReviewPopTemp.html
+よろしければこれまでの感想をお聞かせいただけると幸いです。			1	template/user/ReviewPopTemp.html
+レビューする			1	template/user/ReviewPopTemp.html
+◆ 現在の称号			1	template/user/SetTitlePopup.html
+◆ 変更する称号			1	template/user/SetTitlePopup.html
+・Story Voices			1	template/config/ConfigTop.html
+・Transformation Videos			1	template/config/ConfigTop.html
+結界スケジュール			1	template/quest/EventQuest.html
+強化ジェム			1	template/quest/EventQuest.html
+ブック・覚醒素材			1	template/quest/EventQuest.html
+フレンド一覧			1	template/quest/PreQuestPopup.html
+魂と鏡を調整する			1	template/quest/puellaHistoria/MirrorParts_debug.html
+概要ポップ			1	template/quest/puellaHistoria/MirrorParts_debug.html
+解放ポップ			1	template/quest/puellaHistoria/MirrorParts_debug.html
+クリア演出表示			1	template/quest/puellaHistoria/MirrorParts_debug.html
+鏡の幅:			1	template/quest/puellaHistoria/MirrorParts_debug.html
+鏡の縦のズレ:			1	template/quest/puellaHistoria/MirrorParts_debug.html
+※縮尺は「1」が100%になります			1	template/quest/puellaHistoria/MirrorParts_debug.html
+※isClearには「true」「false」を入れてください			1	template/quest/puellaHistoria/MirrorParts_debug.html
+マップへ戻る			1	template/quest/puellaHistoria/lastBattle/GroupRaid.html
+天気輪の魔力を使用する			1	template/quest/puellaHistoria/lastBattle/MainBossPopup.html
+株分け			1	template/quest/puellaHistoria/lastBattle/SubBossList.html
+制圧中の腕をタップすることで制圧状態を解除できます			1	template/quest/secondPartLast/Top.html
+特訓したい魔法少女を選んでください			1	template/event/training/EventTrainingCharaSelect.html
+エクストラ			1	template/event/training/EventTrainingTop.html
+ミッションクリア			1	template/event/singleraid/EventSingleRaidSelect.html
+エリア解放条件			1	template/event/singleraid/EventSingleRaidTop.html
+ランキングPt			1	template/event/arenaranking/EventArenaRankingHistory.html
+解放されていく枠内のクエストを全てクリアすることで特別な報酬が入手できます。			1	template/event/dailytower/EventDailyTowerTop.html
+を解放			1	template/event/dailytower/EventDailyTowerTop.html
+クリアターン数			1	template/event/dailytower/EventDailyTowerTop.html
+該当するログはありません			1	template/event/dailytower/EventDailyTowerTop.html
+イベントトップに戻る			1	template/event/EventArenaRankMatch/Result.html
+クールタイム			1	template/event/EventArenaRankMatch/Top.html
+いくつ使用しますか？			1	template/event/EventArenaRankMatch/parts/AttackCountItemPopup.html
+回復します。			1	template/event/EventArenaRankMatch/parts/AttackCountPopup.html
+クールタイムを解除します。よろしいですか？			1	template/event/EventArenaRankMatch/parts/CoolTimePopup.html
+デイリー報酬を受け取りました。			1	template/event/EventArenaRankMatch/parts/DailyPresentPopup.html
+※受け取ったアイテムは直接付与されています。			1	template/event/EventArenaRankMatch/parts/DailyPresentPopup.html
+報酬なし			1	template/event/EventArenaRankMatch/parts/EventRewardLastRankTable.html
+現在の順位			1	template/event/EventArenaRankMatch/parts/EventRewardPopup.html
+■ランクアップ報酬			1	template/event/EventArenaRankMatch/parts/EventRewardPopup.html
+ランキングの最高順位を更新すると、マギアストーンが獲得できます。			1	template/event/EventArenaRankMatch/parts/EventRewardPopup.html
+■デイリー報酬			1	template/event/EventArenaRankMatch/parts/EventRewardPopup.html
+イベント期間中に到達したランキングの最高順位に応じて			1	template/event/EventArenaRankMatch/parts/EventRewardPopup.html
+1日1回「ランクメダル」が獲得できます。			1	template/event/EventArenaRankMatch/parts/EventRewardPopup.html
+イベント終了後に決定したランキングの順位に応じて			1	template/event/EventArenaRankMatch/parts/EventRewardPopup.html
+エンブレムと「みたまの勲章」が獲得できます。			1	template/event/EventArenaRankMatch/parts/EventRewardPopup.html
+エンブレム			1	template/event/EventArenaRankMatch/parts/EventRewardPopup.html
+みたまの勲章			1	template/event/EventArenaRankMatch/parts/EventRewardPopup.html
+クエストクリア数			1	template/event/branch/EventBranchTop.html
+ウィンドウ外タップで閉じる			1	template/event/branch/EventBranchTop.html
+舞台装置の魔女			1	template/event/EventWalpurgis/MainBossPopup.html
+希望の羽を使用する			1	template/event/EventWalpurgis/MainBossPopup.html
+舞台装置の魔女の手下			1	template/event/EventWalpurgis/SubBossList.html
+CPは最大です。			1	template/event/dungeon/EventDungeonCurePopupParts.html
+CP回復薬がありません。			1	template/event/dungeon/EventDungeonCurePopupParts.html
+CP回復薬を使用して全回復しますか？			1	template/event/dungeon/EventDungeonCurePopupParts.html
+チーム情報			1	template/event/dungeon/EventDungeonMap.html
+メンバー入れ替え			1	template/event/dungeon/EventDungeonMap.html
+回復したい魔法少女を選んでください			1	template/event/dungeon/EventDungeonMap.html
+進むポイントを選択してください			1	template/event/dungeon/EventDungeonMap.html
+回復アイテムを１つ使用して			1	template/event/dungeon/EventDungeonMap.html
+を回復しますか？			1	template/event/dungeon/EventDungeonMap.html
+回復アイテムがありません。			1	template/event/dungeon/EventDungeonMap.html
+回復アイテムは毎日16:00に補充されます。			1	template/event/dungeon/EventDungeonMap.html
+このエリアをリタイアしますか？			1	template/event/dungeon/EventDungeonMap.html
+※これまでに獲得したEXP・カースチップ（CC）・宝箱のアイテムは入手できます。			1	template/event/dungeon/EventDungeonMap.html
+※エリアミッションのクリア状況はリセットされます。			1	template/event/dungeon/EventDungeonMap.html
+クリア(初クリア・初コンプ)			1	template/event/dungeon/EventDungeonTop.html
+クリア(獲得済・未コンプ)			1	template/event/dungeon/EventDungeonTop.html
+クリア(獲得済・コンプ済)			1	template/event/dungeon/EventDungeonTop.html
+ユニット編成Navi			1	template/event/dungeon/EventDungeonTop.html
+30秒デバッグメニュー非表示			1	template/event/dungeon/EventDungeonTop.html
+全ポイント通過済			1	template/event/dungeon/EventDungeonTop.html
+通過ポイント数			1	template/event/dungeon/EventDungeonTop.html
+バトル数			1	template/event/dungeon/EventDungeonTop.html
+エリアクリア報酬			1	template/event/dungeon/EventDungeonTop.html
+コメントアニメ			1	template/event/storyraid/EventStoryRaidBoss.html
+コメント			1	template/event/storyraid/EventStoryRaidBoss.html
+同じエリアで戦うプレイヤーに応援コメントを送りましょう！			1	template/event/storyraid/EventStoryRaidBoss.html
+※攻撃力アップは、本エリア内の交戦中バトルのみ有効となり、			1	template/event/storyraid/EventStoryRaidBoss.html
+2回目以降の投稿には適応されません。			1	template/event/storyraid/EventStoryRaidBoss.html
+投稿する			1	template/event/storyraid/EventStoryRaidBoss.html
+サンプルまま			1	template/event/storyraid/EventStoryRaidTop.html
+移動カットイン			1	template/event/storyraid/EventStoryRaidTop.html
+移動カットイン（最終）			1	template/event/storyraid/EventStoryRaidTop.html
+撃破カットイン			1	template/event/storyraid/EventStoryRaidTop.html
+マップエフェクト			1	template/event/storyraid/EventStoryRaidTop.html
+参加条件ポップ			1	template/event/storyraid/EventStoryRaidTop.html
+フィナーレ演出			1	template/event/storyraid/EventStoryRaidTop.html
+手に入れた衣装に着替えることができます			1	template/event/arenaMission/EventArenaMissionResult.html
+メモリア「			1	template/event/arenaMission/EventArenaMissionResult.html
+」を手に入れました			1	template/event/arenaMission/EventArenaMissionResult.html
+メモリアは直接付与されています			1	template/event/arenaMission/EventArenaMissionResult.html
+のデスティニージェムを手に入れました			1	template/event/arenaMission/EventArenaMissionResult.html
+デスティニージェムは直接付与されています			1	template/event/arenaMission/EventArenaMissionResult.html
+アイテムは直接付与されています			1	template/event/arenaMission/EventArenaMissionResult.html
+は獲得できません			1	template/event/arenaMission/EventArenaMissionResult.html
+パーティPt +			1	template/event/arenaMission/EventArenaMissionStage.html
+ミッション内容確認			1	template/event/arenaMission/EventArenaMissionStage.html
+が獲得できません			1	template/event/arenaMission/EventArenaMissionTop.html
+ステージクリア報酬一覧			1	template/event/arenaMission/EventArenaMissionTop.html
+クリア条件			1	template/event/arenaMission/EventArenaMissionTop.html
+クリア報酬			1	template/event/arenaMission/EventArenaMissionTop.html
+チャレンジクエストを解放しました！			1	template/event/accomplish/CompleteAnimation.html
+チーム切替			1	template/event/accomplish/EventAccomplishDeck.html
+を解散しますか？			1	template/event/accomplish/EventAccomplishDeck.html
+※装備中のメモリアも全てはずれます			1	template/event/accomplish/EventAccomplishDeck.html
+スキル効果			1	template/event/accomplish/EventAccomplishEnemyDetail.html
+回復回数は16時にリセット			1	template/event/accomplish/EventAccomplishRecovery.html
+回復したい魔法少女を選択してください			1	template/event/accomplish/EventAccomplishRecovery.html
+回復が必要な魔法少女は存在しません			1	template/event/accomplish/EventAccomplishRecovery.html
+セクションクリア報酬一覧			1	template/event/accomplish/EventAccomplishTop.html
+5クエスト毎に現れるボスを撃破することで特別な報酬が入手できます。			1	template/event/accomplish/EventAccomplishTop.html
+チャレンジクエストは、全てのストーリークエストをクリア後に解放されます。			1	template/event/accomplish/EventAccomplishTop.html
+RPは最大です。			1	template/event/raid/EventRaidCurePopupParts.html
+RP回復薬がありません。			1	template/event/raid/EventRaidCurePopupParts.html
+RP回復薬を使用して全回復しますか？			1	template/event/raid/EventRaidCurePopupParts.html
+手下タップ			1	template/event/raid/EventRaidTop.html
+ボスタップ			1	template/event/raid/EventRaidTop.html
+サスペンド			1	template/event/raid/EventRaidTop.html
+手下再湧き			1	template/event/raid/EventRaidTop.html
+バトル回数			1	template/event/raid/EventRaidTop.html
+援護ボーナス！			1	template/event/raid/EventRaidTop.html
+バトル参加			1	template/event/raid/EventRaidTop.html
+ダメージ値			1	template/event/raid/EventRaidTop.html
+ミラーズPt+			1	template/arena/ArenaFreeRank.html
+リプレイがありません			1	template/arena/ArenaHistory.html
+対戦履歴がありません			1	template/arena/ArenaHistory.html
+再生するリプレイのIDを入力してください。			1	template/arena/ArenaHistory.html
+貼り付け			1	template/arena/ArenaHistory.html
+これ以上、対戦相手を変更することはできません。			1	template/arena/ArenaRanking.html
+BP回復薬を1個使用することで対戦回数を			1	template/arena/ArenaRanking.html
+以下の時間が経過すると、自動で対戦相手が再抽選されます。			1	template/arena/ArenaRanking.html
+(対戦相手の再抽選まであと			1	template/arena/ArenaRanking.html
+次の鏡層まで			1	template/arena/ArenaResult.html
+次の鏡層が解放されていないため、ミラーズPtは加算されません			1	template/arena/ArenaResult.html
+演習ではミラーズコイン・ミラーズPtを獲得できません			1	template/arena/ArenaResult.html
+ブレイクチャンス			1	template/arena/ArenaResult.html
+基本スコア			1	template/arena/ArenaResult.html
+ミラーズコイン×			1	template/arena/ArenaResult.html
+◆ ランキング			1	template/arena/ArenaReward.html
+クラス		疑似碎片	1	template/arena/ArenaReward.html
+演習で対戦するプレイヤーのミラーズIDを入力してください。			1	template/arena/ArenaSimulate.html
+ミラーズID発行			1	template/arena/ArenaSimulate.html
+ミラーズIDは、発行後1時間有効です。			1	template/arena/ArenaSimulate.html
+※ミラーズID発行中は、再発行はできません。有効期限終了後から再発行が可能です。			1	template/arena/ArenaSimulate.html
+※対戦を行ったプレイヤーとは10分間は再戦を行うことができません。			1	template/arena/ArenaSimulate.html
+サポートLV			1	template/follow/FollowSearch.html
+ユーザー名			1	template/follow/FollowSearch.html
+サポート属性			1	template/follow/FollowSearch.html
+フレンドID			1	template/follow/FollowSearch.html
+最終ログイン			1	template/follow/FollowSearch.html
+おすすめ検索			1	template/follow/FollowSearch.html
+検索する			1	template/follow/FollowSearch.html
+ログイン時間&nbsp;			1	template/follow/FollowSearch.html
+初期ディスク			1	template/card/CardPopup.html
+ComposeTopへ			1	template/card/ComposeResult.html
+エピソードLv:			1	template/card/ComposeTop.html
+次のレベルまで:			1	template/card/ComposeTop.html
+限界突破しますか？			1	template/card/ComposeTop.html
+遊び方詳細			1	template/tutorial/TutorialNavi.html
+コンプリート報酬GET			1	template/mission/PanelMissionTop.html
+パトロール編成			1	template/patrol/PatrolDeckView.html
+パトロール			1	template/patrol/PatrolTop.html
+GachaResultへ			1	template/gacha/GachaAnimation.html
+ガチャ提供割合			1	template/gacha/GachaProbabilityPop.html
+ピックアップ対象魔法少女			1	template/gacha/GachaProbabilityPop.html
+ピックアップ対象メモリア			1	template/gacha/GachaProbabilityPop.html
+ガチャから取得したメモリアを			1	template/gacha/GachaSaleSettingPopup.html
+自動的に売却することができます。			1	template/gacha/GachaSaleSettingPopup.html
+チェックを付けた項目のメモリアのみ売却されます。			1	template/gacha/GachaSaleSettingPopup.html
+イベントBONUS			1	template/gacha/GachaSaleSettingPopup.html
+3 が自動売却の対象に選択されています。			1	template/gacha/GachaSaleSettingPopup.html
+無料で			1	template/gacha/GachaTop.html
+を行います。よろしいですか？			1	template/gacha/GachaTop.html
+でガチャを行うことができます			1	template/gacha/GachaTop.html
+決定後、すぐにガチャが実行されマギアストーンが消費されます。			1	template/gacha/GachaTop.html
+選べる魔法少女一覧			1	template/gacha/GachaTop.html
+選べる★4メモリア一覧			1	template/gacha/GachaTop.html
+※表示されているステータスはLv最大(4回限界突破)時のものです。			1	template/gacha/GachaTop.html
+変更するメモリアを選択してください			1	template/gacha/SelectableGachaPieceSelect.html
+タッチしてガチャ対象のメモリアを選んで下さい			1	template/gacha/SelectableGachaPieceSelect.html
+※表示されているステータスは最大時のものです。			1	template/gacha/SelectableGachaPieceSelect.html
+マギアストーンの販売は終了いたしました。			1	template/purchase/PurchasePop.html
+詳しくは以下のお知らせをご確認ください。			1	template/purchase/PurchasePop.html
+・【重要】サービス終了のお知らせ			1	template/purchase/PurchasePop.html
+・【重要】「有償マギアストーン」の払戻し手続きのお知らせ			1	template/purchase/PurchasePop.html
+有料アイテムを購入するには年齢認証が必要です。			1	template/purchase/PurchaseTemps.html
+1カ月あたりの限度額は15歳以下が5,000			1	template/purchase/PurchaseTemps.html
+DMMポイント、			1	template/purchase/PurchaseTemps.html
+が30,000			1	template/purchase/PurchaseTemps.html
+DMMポイント			1	template/purchase/PurchaseTemps.html
+です。			1	template/purchase/PurchaseTemps.html
+未成年の方は保護者の同意を得て下さい。		法条勿动	1	template/purchase/PurchaseTemps.html
+この登録は1度のみで次回は不要です。			1	template/purchase/PurchaseTemps.html
+また、登録情報は年齢確認以外に使用しません。			1	template/purchase/PurchaseTemps.html
+年齢認証へ			1	template/purchase/PurchaseTemps.html
+お客様の生年月日を入力してください。			1	template/purchase/PurchaseTemps.html
+覚醒素材セット			1	template/chara/CharaBulkCustomizePopup.html
+全ての素材をまとめてセットします。			1	template/chara/CharaBulkCustomizePopup.html
+マギア強化			1	template/chara/CharaComposeMagia.html
+まとめて			1	template/chara/CharaCustomize.html
+能力は既に解放済みです			1	template/chara/CharaEnhancementTree.html
+解放可能数の上限に達しています			1	template/chara/CharaEnhancementTree.html
+メモリア枠			1	template/chara/CharaLimitBreakParts.html
+余ったデスティニージェムは			1	template/chara/CharaLimitBreakParts.html
+マギアチップに変換できます			1	template/chara/CharaLimitBreakParts.html
+使用する			1	template/chara/CharaLimitBreakParts.html
+イノセント・ジェムは貴重なアイテムです。			1	template/chara/CharaLimitBreakParts.html
+本当によろしいですか？			1	template/chara/CharaLimitBreakParts.html
+マギア強化素材確認			1	template/chara/CharaMagiaComposePopup.html
+まとめて解放			1	template/chara/CharaComposeAttribute/ComposeAttributeList.html
+属性全員のステータスがアップ！			1	template/chara/CharaComposeAttribute/popupAllItemConfirm.html
+属性全員の			1	template/chara/CharaComposeAttribute/popupItemConfirm.html
+アップ！			1	template/chara/CharaComposeAttribute/popupItemConfirm.html
+ログイン			1	template/loginBonus/loginBonusCampaignPopupTemp.html
+サポートボーナス			1	template/loginBonus/loginBonusPopupTemp.html
+マギアパスポート			1	template/loginBonus/loginBonusPopupTemp.html
+Day1から7日間経過すると次のログインボーナスに切り替わります			1	template/loginBonus/loginBonusPopupTemp.html
+ログインボーナスで貰ったアイテムは直接付与されます			1	template/loginBonus/loginBonusPopupTemp.html
+購入しました。			1	template/shop/ShopTop.html
+※プレゼントボックスよりお受け取りください。			1	template/shop/ShopTop.html
+※購入したアイテムは直接付与されています。			1	template/shop/ShopTop.html
+強化トップに戻る			1	template/memoria/MemoriaComposeAnimation.html
+メモリア限界突破			1	template/memoria/MemoriaComposeTop.html
+アイテム			1	template/memoria/MemoriaComposeTop.html
+タッチして素材メモリアを選んでください			1	template/memoria/MemoriaComposeTop.html
+アイテム素材を使用して強化します			1	template/memoria/MemoriaComposeTop.html
+★1・★2			1	template/memoria/MemoriaComposeTop.html
+獲得できるEXP			1	template/memoria/MemoriaComposeTop.html
+メモリアを			1	template/memoria/MemoriaComposeTop.html
+します。よろしいですか？			1	template/memoria/MemoriaComposeTop.html
+装備中のメモリアは素材メモリアとして使用できません。			1	template/memoria/MemoriaComposeTop.html
+メモリアをセットする枠を選択してください			1	template/memoria/MemoriaEquip.html
+編集したいセットを選んでください			1	template/memoria/MemoriaSetList.html
+セット編集			1	template/memoria/MemoriaSetList.html
+メモリアセット名入力			1	template/memoria/MemoriaSetList.html
+メモリアセット名を入力してください			1	template/memoria/MemoriaSetList.html
+売却する場所を選択			1	template/memoria/MemoriaTop.html
+一覧を表示する保管庫を選択			1	template/memoria/MemoriaTop.html
+移動したいメモリアを選び、決定ボタンで移動先を決めてください			1	template/memoria/PieceArchive.html
+装備中のメモリアは保管庫への移動はできません。			1	template/memoria/PieceArchive.html
+移動する場所を選択			1	template/memoria/PieceArchive.html
+強化アイテム			1	template/memoria/UserMemoriaList.html
+装備中のメモリアは売却できません。			1	template/memoria/UserMemoriaList.html
+装備を外して選択中の装備枠に装備しますか？			1	template/memoria/UserMemoriaList.html
+枚のメモリアを			1	template/memoria/UserMemoriaList.html
+CCで売却します。			1	template/memoria/UserMemoriaList.html
+チェックをつけた項目のみ選択します			1	template/memoria/bulkSelectPopupView.html
+ロックなし			1	template/memoria/bulkSelectPopupView.html
+アビリティ			1	template/memoria/bulkSelectPopupView.html
+イベント			1	template/memoria/bulkSelectPopupView.html
+選択する			1	template/memoria/bulkSelectPopupView.html
+レンタル解除			1	template/formation/DeckFormation.html
+チーム切り替え			1	template/formation/FormationQuest.html
+入れ替えたい魔法少女をタッチしてください			1	template/formation/FormationQuest.html
+チーム詳細			1	template/formation/FormationQuest.html
+プレビュー			1	template/formation/FormationQuest.html
+各属性のサポートキャラを設定してください			1	template/formation/FormationSupport.html
+サポート解散			1	template/formation/FormationSupport.html
+サポート詳細			1	template/formation/FormationSupport.html
+制圧中の結界名をタップすることで制圧状態を解除できます			1	template/regularEvent/extermination/RegularEventExterminationBattleSelect.html
+全クリア			1	template/regularEvent/extermination/RegularEventExterminationTop.html
+クリア済みのステージに再度挑戦できます			1	template/regularEvent/extermination/RegularEventExterminationTop.html
+クリア済みのステージにもう一度挑戦できるようになりました			1	template/regularEvent/extermination/RegularEventExterminationTop.html
+グループ戦			1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+攻略のヒント			1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+グループ順位			1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+「いいね」			1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+をして		疑似碎片	1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+を獲得！			1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+次のグレードまで			1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+最高グレードに到達しました			1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+前回ダメージ			1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+ショップ			1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+引継ぎMP			1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+キモチ戦の挑戦回数が回復しました。			1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+前日のデイリーダメージ			1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+の評価			1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+を獲得しました。			1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+が出現！			1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+】グレードに達しました！			1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+次のグレードまでの必要GPは			1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+最高グレードへ到達しました			1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+グループバトル終了			1	template/regularEvent/groupBattle/RegularEventGroupBattleEnd.html
+最終グレード			1	template/regularEvent/groupBattle/RegularEventGroupBattleEnd.html
+到達グレード報酬			1	template/regularEvent/groupBattle/RegularEventGroupBattleEnd.html
+グループバトルミッション			1	template/regularEvent/groupBattle/RegularEventGroupBattleMission.html
+トータル			1	template/regularEvent/groupBattle/RegularEventGroupBattleRanking.html
+自分の順位			1	template/regularEvent/groupBattle/RegularEventGroupBattleRanking.html
+キモチ撃退数			1	template/regularEvent/groupBattle/RegularEventGroupBattleRanking.html
+ボスLvボーナス			1	template/regularEvent/groupBattle/RegularEventGroupBattleResult.html
+バトル評価ボーナス			1	template/regularEvent/groupBattle/RegularEventGroupBattleResult.html
+引き継ぎチャージ数			1	template/regularEvent/groupBattle/RegularEventGroupBattleResult.html
+獲得メダル			1	template/regularEvent/groupBattle/RegularEventGroupBattleResult.html
+合計補助ダメージ			1	template/regularEvent/groupBattle/RegularEventGroupBattleResult.html
+合計攻撃ダメージ			1	template/regularEvent/groupBattle/RegularEventGroupBattleResult.html
+スキル数			1	template/regularEvent/groupBattle/RegularEventGroupBattleResult.html
+攻撃ダメージ			1	template/regularEvent/groupBattle/RegularEventGroupBattleResult.html
+グループTOP			1	template/regularEvent/groupBattle/RegularEventGroupBattleUnionLog.html
+グループメンバー			1	template/regularEvent/groupBattle/RegularEventGroupBattleUser.html
+自分へ移動			1	template/regularEvent/groupBattle/RegularEventGroupBattleUser.html
+キモチの最大Lv			1	template/regularEvent/groupBattle/RegularEventGroupBattleUser.html
+グループ内の順位			1	template/regularEvent/groupBattle/RegularEventGroupBattleUser.html
+新しく設定するグループ名を入力してください。			1	template/regularEvent/groupBattle/RegularEventGroupCommon.html
+※グループ名は何度でも変更可能です			1	template/regularEvent/groupBattle/RegularEventGroupCommon.html
+ミッション報酬			1	template/regularEvent/groupBattle/RegularEventGroupCommon.html
+受け取る			1	template/regularEvent/groupBattle/RegularEventGroupCommon.html
+キモチ		疑似碎片	1	template/regularEvent/groupBattle/RegularEventGroupCommon.html
+ダメージ報酬			1	template/regularEvent/groupBattle/RegularEventGroupCommon.html
+所属グループ			1	template/regularEvent/groupBattle/RegularEventGroupCommon.html
+グループ内			1	template/regularEvent/groupBattle/RegularEventGroupCommon.html
+自分の所有 GP			1	template/regularEvent/groupBattle/RegularEventGroupCommon.html
+自分のデイリーダメージ			1	template/regularEvent/groupBattle/RegularEventGroupCommon.html
+グループグレード			1	template/regularEvent/groupBattle/RegularEventGroupCommon.html
+前日のデイリーダメージに基づいてグループ内順位が確定しました。			1	template/regularEvent/groupBattle/RegularEventGroupCommon.html
+キモチ戦で所属するグループが決定しました。			1	template/regularEvent/groupBattle/RegularEventGroupCommon.html
+前日のグループ内順位が1位のユーザーはグループ名を変更することが可能です。			1	template/regularEvent/groupBattle/RegularEventGroupCommon.html
+1日1回、グループメンバーに			1	template/regularEvent/groupBattle/RegularEventGroupCommon.html
+を送ることで、引き継ぎMPを			1	template/regularEvent/groupBattle/RegularEventGroupCommon.html
+獲得できます			1	template/regularEvent/groupBattle/RegularEventGroupCommon.html
+クリア演出			1	template/regularEvent/accomplish/RegularEventAccomplishTop.html
+解放済ステージ：			1	template/regularEvent/accomplish/RegularEventAccomplishTop.html
+挑戦する			1	template/regularEvent/accomplish/RegularEventAccomplishTop.html
+最高ステージに到達しています			1	template/regularEvent/accomplish/RegularEventAccomplishTop.html
+更新をお待ちください			1	template/regularEvent/accomplish/RegularEventAccomplishTop.html
+オールクリア			1	template/regularEvent/accomplish/RegularEventAccomplishTop.html
