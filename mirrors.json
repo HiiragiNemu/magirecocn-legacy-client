@@ -1,7 +1,7 @@
 {
   "schema": 2,
-  "updated": "2026-08-01T23:15:00Z",
-  "comment": "客户端从 https://assets.example.test/mirrors.json 读取本文件。settings 与 mirrors 都是可选的：settings 缺省时用客户端内置默认值；mirrors 为空或整个文件拉取失败时，客户端回退到内置默认线路 https://assets.example.test/ ，行为与加入换线功能之前一致。",
+  "updated": "2026-08-03T12:30:00Z",
+  "comment": "客户端从 https://assets.example.test/mirrors.json 读取本文件。settings 与 mirrors 都是可选的：settings 缺省时用客户端内置默认值；mirrors 为空或整个文件拉取失败时，客户端回退到内置默认线路 https://assets.example.test/ ，行为与加入换线功能之前一致。client 段也是可选的：缺省时客户端跳过版本检查。",
 
   "settings": {
     "chunks": 4,
@@ -10,6 +10,12 @@
     "stall_seconds": 25,
     "min_speed_kbps": 6400,
     "cooldown_ms": 60000
+  },
+
+  "client": {
+    "version": "1.0.0",
+    "apk_url": "https://assets.example.test/legacy-client.apk",
+    "note": "客户端强制更新通道：每次启动时客户端先读本段，version 高于本端内置版本（硬编码在 libMagiaLegacy.so，与 APK 的 versionName/versionCode 无关）就弹窗引导去 apk_url 下载新包。发布新客户端包时把 version 抬高即可；本端内置版本随包递增。note 会显示在弹窗里，可留空。"
   },
 
   "mirrors": [

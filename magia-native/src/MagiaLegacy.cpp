@@ -112,6 +112,7 @@ static JavaVM* gJvm = nullptr;
 static jclass gClsDownloaderFix   = nullptr; // io.kamihama.magianative.CNDownloaderFix
 static jclass gClsRestClient      = nullptr; // io.kamihama.magianative.RestClient
 static jclass gClsTutorialPrompt  = nullptr; // io.kamihama.magianative.CNTutorialPrompt
+static jclass gClsVersionCheck    = nullptr; // io.kamihama.magianative.CNVersionCheck
 
 namespace cocos2d {
     struct Data { unsigned char* _bytes; ssize_t _size; };
@@ -667,6 +668,19 @@ static void setMaxConnectionNumNew(void* _this, int n) {
     setMaxConnectionNumOld(_this, patched);
 }
 
+// ─── 客户端版本号 ────────────────────────────────────────
+//
+// 本客户端自己的版本号硬编码在这里，不读也不改 APK 的 versionName/versionCode
+// （那是上游包的身份，动了会影响覆盖安装）。每次发布新客户端包时递增它，
+// 并把云端 mirrors.json 的 client.version 同步抬高——启动时的强制更新检查
+// （Java 侧 CNVersionCheck）就靠这两个值的比较。
+static const char* CLIENT_VERSION = "1.0.0";
+
+// 经 RegisterNatives 绑给 CNVersionCheck.nativeClientVersion()。
+static jstring nativeClientVersion(JNIEnv* env, jclass) {
+    return env->NewStringUTF(CLIENT_VERSION);
+}
+
 // ─── JNI_OnLoad ──────────────────────────────────────────
 extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     (void)reserved;
@@ -684,6 +698,7 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
             { "io/kamihama/magianative/CNDownloaderFix",   &gClsDownloaderFix  },
             { "io/kamihama/magianative/RestClient",        &gClsRestClient     },
             { "io/kamihama/magianative/CNTutorialPrompt",  &gClsTutorialPrompt },
+            { "io/kamihama/magianative/CNVersionCheck",    &gClsVersionCheck   },
         };
         for (size_t i = 0; i < sizeof(want) / sizeof(want[0]); i++) {
             jclass local = env->FindClass(want[i].name);
@@ -694,6 +709,20 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
             } else {
                 if (env->ExceptionCheck()) env->ExceptionClear();
                 LOGE("[JNI] 找不到 %s —— 相关功能将不可用", want[i].name);
+            }
+        }
+
+        // 把 nativeClientVersion 绑到 CNVersionCheck 上（客户端版本号硬编码在
+        // 本文件，见 CLIENT_VERSION 的注释）。找不到类就跳过——Java 侧读不到
+        // 版本会按「不强制更新」放行，不会崩。
+        if (gClsVersionCheck) {
+            JNINativeMethod m[] = {
+                { (char*)"nativeClientVersion", (char*)"()Ljava/lang/String;",
+                  (void*)nativeClientVersion },
+            };
+            if (env->RegisterNatives(gClsVersionCheck, m, 1) != 0) {
+                if (env->ExceptionCheck()) env->ExceptionClear();
+                LOGE("[JNI] RegisterNatives(CNVersionCheck) 失败——版本检查将放行");
             }
         }
     }

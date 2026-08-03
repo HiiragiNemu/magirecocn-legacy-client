@@ -1422,6 +1422,132 @@ public class CNCNDownloadUI {
         }
     }
 
+    // ==================================================================
+    // 强制更新弹窗（客户端版本检查）
+    // ==================================================================
+
+    /** 强制更新弹窗的模态框。非空即表示正在显示，用于防重入。 */
+    private static FrameLayout versionModal;
+
+    /**
+     * 强制更新弹窗：云端客户端版本高于本端时由 {@link CNVersionCheck} 调用。
+     * 模态、不可点框外关闭——玩家的去路只有「前往更新」（调起系统浏览器）和
+     * 「退出游戏」两条；下次启动还会再查再拦，这就是「强制」的含义。
+     *
+     * <p>用浮层自己的调色板与圆角，与教程询问框同一套模态框样式；宿主是引擎的
+     * Activity，系统 AlertDialog 在上面格格不入。
+     *
+     * <p>可在任意线程调用，内部会切到 UI 线程。浮层没建起来时无处可挂，记日志
+     * 了事（版本检查的日志里已有完整的版本与地址信息）。
+     *
+     * @param local  本端版本（native 内置）
+     * @param cloud  云端版本（mirrors.json 的 client.version）
+     * @param url    新包下载地址（client.apk_url）
+     * @param note   云端附言（client.note，可为空串）
+     */
+    public static void showVersionUpdateDialog(final Activity act, final String local,
+                                               final String cloud, final String url,
+                                               final String note) {
+        final FrameLayout host = overlayView;
+        if (act == null || host == null) {
+            CNLog.w("界面", "浮层不在，无法显示强制更新框");
+            return;
+        }
+        act.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                try { buildVersionUpdateDialog(act, host, local, cloud, url, note); }
+                catch (Throwable t) { CNLog.e("界面", "构建强制更新框失败", t); }
+            }
+        });
+    }
+
+    /** 在 UI 线程上真正把强制更新框建出来。 */
+    private static void buildVersionUpdateDialog(final Activity act, FrameLayout host,
+                                                 String local, String cloud,
+                                                 final String url, String note) {
+        if (versionModal != null) return;      // 已经开着，别叠第二层
+
+        final FrameLayout modal = new FrameLayout(act);
+        modal.setBackgroundColor(COLOR_DIM);
+        modal.setClickable(true);              // 吃掉点击，不许点框外关掉
+        modal.setFocusable(true);
+
+        LinearLayout panel = new LinearLayout(act);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(act, 22), dp(act, 20), dp(act, 22), dp(act, 18));
+        GradientDrawable panelBg = new GradientDrawable();
+        panelBg.setColor(COLOR_LOG_PANEL_BG);
+        panelBg.setCornerRadius(dp(act, 16));
+        panelBg.setStroke(dp(act, 1), COLOR_CARD_STK);
+        panel.setBackground(panelBg);
+        FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
+                dp(act, 330), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        panelLp.leftMargin = panelLp.rightMargin = dp(act, 20);
+        modal.addView(panel, panelLp);
+
+        TextView title = new TextView(act);
+        title.setText("客户端更新");
+        title.setTextColor(COLOR_ACCENT);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f);
+        title.setTypeface(title.getTypeface(), Typeface.BOLD);
+        panel.addView(title, lpRow(0, dp(act, 10)));
+
+        TextView msg = new TextView(act);
+        String text = "发现新版本客户端：v" + cloud + "（当前 v" + local + "）\n\n"
+                + "客户端版本过旧，继续游戏可能无法正常运行，请下载并安装最新版本。\n\n"
+                + "· 「前往更新」：打开浏览器下载新包（覆盖安装即可，数据不丢）\n"
+                + "· 「退出游戏」：本次不玩，下次启动会再次提醒";
+        if (note != null && !note.isEmpty()) text += "\n\n" + note;
+        msg.setText(text);
+        msg.setTextColor(COLOR_LOG_PANEL_TEXT);
+        msg.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
+        msg.setLineSpacing(dp(act, 2), 1f);
+        panel.addView(msg, lpRow(0, dp(act, 18)));
+
+        LinearLayout row = new LinearLayout(act);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.END);
+        panel.addView(row, lpRow(0, 0));
+
+        TextView quit = dialogButton(act, "退出游戏", COLOR_LOG_PANEL_TEXT, 0x00000000, true);
+        TextView go   = dialogButton(act, "前往更新", 0xFFFFFFFF, COLOR_ACCENT, false);
+        LinearLayout.LayoutParams goLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        goLp.leftMargin = dp(act, 10);
+        row.addView(quit, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        row.addView(go, goLp);
+
+        quit.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                CNLog.i("界面", "玩家在强制更新框选择退出游戏");
+                try { act.finishAffinity(); }
+                catch (Throwable t) {
+                    try { act.finish(); } catch (Throwable ignore) {}
+                }
+            }
+        });
+        go.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                CNLog.i("界面", "玩家在强制更新框选择前往更新: " + url);
+                try {
+                    Intent it = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                    it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    act.startActivity(it);
+                } catch (Throwable t) {
+                    CNLog.w("界面", "打开更新地址失败: " + url, t);
+                    toast(act, "无法打开链接：" + url);
+                }
+            }
+        });
+
+        host.addView(modal, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        versionModal = modal;
+        CNLog.i("界面", "强制更新框已显示：本端 v" + local + " → 云端 v" + cloud);
+    }
+
     /**
      * 造一个显示开关胶囊并挂到 {@code row} 上。
      *

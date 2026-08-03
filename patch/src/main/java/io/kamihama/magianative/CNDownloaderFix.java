@@ -156,13 +156,13 @@ public final class CNDownloaderFix {
                         CNLog.initEarly();
                         File finalFlag = new File(FINAL_FLAG);
                         if (finalFlag.isFile()) {
-                            CNLog.i(TAG, "triggerInstaller: flag 已存在，无需安装，转入热更检查");
-                            // 资源已就位的正常启动，唯一还要做的就是热更检查。
-                            // 旧版由 libcn_hook 在 JNI_OnLoad 末尾经 JNI 叫起
-                            // RestClient.checkAndApplyHotUpdate；那条路真机上
+                            CNLog.i(TAG, "triggerInstaller: flag 已存在，无需安装，转入版本与热更检查");
+                            // 资源已就位的正常启动：先查客户端版本，再（需要时）
+                            // 接力热更检查。旧版由 libcn_hook 在 JNI_OnLoad 末尾经
+                            // JNI 叫起 RestClient.checkAndApplyHotUpdate；那条路真机上
                             // 浮层建不出来（详见 CNHotUpdateCheck 的类注释），
                             // 现在改由 Java 侧自己跑，时机与等待条件都可控。
-                            CNHotUpdateCheck.start();
+                            CNVersionCheck.startBeforeHotUpdate();
                             // 玩家选过「教程战斗」的话无需 Java 侧动作：标记由
                             // native 在引擎首个「进主页」命令上消费（MagiaLegacy
                             // 的 pushSceneTop 闸门），比前端导航可靠得多。
