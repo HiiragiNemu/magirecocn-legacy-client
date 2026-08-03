@@ -321,6 +321,11 @@ jobs:
           # 每个 .so 的 DT_NEEDED 都要能在包内或系统里解析到，
           # 否则 dlopen 只在真机启动那一刻才失败，静态自检全都发现不了
           python3 tools/check-so-deps.py "$APK"
+          # 包里的 .so 与补丁类必须都是这次构建的产物。踩过两次「编译了却没进包」：
+          # CNBgm 不在任何一组 d8 输入里；libMagiaLegacy.so 忘了拷进 lib/。
+          # 两次都能打包、能签名、能安装，只有真机跑起来才暴露，而且现象会把人
+          # 引向去查功能逻辑而不是查产物
+          python3 tools/check-apk-freshness.py "$APK"
           # 签名指纹必须是 AOSP testkey，否则装不上既有设备
           FP=$("${BT_DIR}/apksigner" verify --print-certs "$APK" \
                 | grep -m1 'SHA-256 digest' | awk '{print $NF}')
