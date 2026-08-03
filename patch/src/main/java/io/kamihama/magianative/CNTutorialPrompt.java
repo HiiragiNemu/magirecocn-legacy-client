@@ -104,15 +104,23 @@ public final class CNTutorialPrompt {
         }
     }
 
-    /** 递归找 Cocos2dxWebView 并设置可见性，返回命中个数。 */
+    /**
+     * 递归找 WebView 并设置可见性，返回命中个数。
+     *
+     * <p>判据是 {@code instanceof android.webkit.WebView}，不是类名前缀。
+     * 第一版按 {@code org.cocos2dx.lib.Cocos2dxWebView} 匹配，真机日志给出的
+     * 是「命中 0 个 WebView」——包里确实有 cocos 那套，但游戏主界面用的是
+     * {@code jp.f4samurai.web.WebViewImpl}（同样继承 android.webkit.WebView，
+     * 由 jp.f4samurai.web.WebViewHelper 管理）。认基类就两者通吃，将来换实现
+     * 也不会再漏。
+     */
     private static int applyVisibility(View v, boolean visible) {
         int hit = 0;
-        String cn = v.getClass().getName();
-        if (cn.startsWith("org.cocos2dx.lib.Cocos2dxWebView")) {
+        if (v instanceof android.webkit.WebView) {
             v.setVisibility(visible ? View.VISIBLE : View.INVISIBLE);
-            hit++;
+            CNLog.i(TAG, (visible ? "显示" : "隐藏") + " " + v.getClass().getName());
             // 命中即返回：WebView 内部还有一堆子 View，没必要再往下钻
-            return hit;
+            return 1;
         }
         if (v instanceof ViewGroup) {
             ViewGroup g = (ViewGroup) v;
