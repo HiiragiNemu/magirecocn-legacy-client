@@ -513,7 +513,7 @@ AP回復	AP回复		2	js/view/user/APPopup.js
 開催期間：	举办期间:		2	template/campaign/story_mission/CampaignStoryMission.html,template/regularEvent/RegularEventTop.html
 を使ってAPを回復します。	回复AP。		2	template/user/APPopup2.html,template/user/APPopupForMoney.html
 決定後、すぐにアイテムが購入されマギアストーンが消費されます。	确定后将立即购买道具并消耗魔法石。		2	template/shop/ShopTop.html,template/user/APPopupForMoney.html
-parseCurrent) return;\n\n\t\t\t\t// 3ヶ月前まで表示\n\t\t\t\t//if(parseStartAt + 7776000000			2	template/user/AnnounceTemp.html,template/user/AnnounceTempMainte.html
+parseCurrent) return;\n\n\t\t\t\t// 3ヶ月前まで表示\n\t\t\t\t//if(parseStartAt + 7776000000	parseCurrent) return;\n\n\t\t\t\t// 显示3个月内的\n\t\t\t\t//if(parseStartAt + 7776000000		2	template/user/AnnounceTemp.html,template/user/AnnounceTempMainte.html
 さらに続きを表示	显示更多		2	template/user/AnnounceTemp.html,template/user/AnnounceTempMainte.html
 クリア	通关	疑似碎片	2	template/arena/ArenaHistory.html,template/user/AnnounceTemp.html
 バトル開始	战斗开始		2	template/event/raid/EventRaidTop.html,template/quest/PreQuestPopup.html
@@ -639,8 +639,8 @@ TOPへ移動	移至TOP		2	template/regularEvent/groupBattle/RegularEventGroupBat
 三		疑似碎片	1	js/collection/MagiRepo.js
 進む	前进		1	js/collection/MagiRepoDetail.js
 \\x3c/span\\x3eが\\x3cspan class\\x3d'c_pink'\\x3e１個\\x3c/span\\x3e不足しています。	\\x3c/span\\x3e还差\\x3cspan class\\x3d'c_pink'\\x3e1个\\x3c/span\\x3e。		1	js/collection/StoryCollection.js
-\\x3e"+A+"\\x3c/span\\x3eが\\x3cspan class\\x3d			1	js/collection/StoryCollection.js
-\\x3e１個\\x3c/span\\x3e不足しています。",\nl&&(f+="You are missing \\x3cspan class\\x3d			1	js/collection/StoryCollection.js
+\\x3e"+A+"\\x3c/span\\x3eが\\x3cspan class\\x3d	\\x3e"+A+"\\x3c/span\\x3e还差\\x3cspan class\\x3d		1	js/collection/StoryCollection.js
+\\x3e１個\\x3c/span\\x3e不足しています。",\nl&&(f+="You are missing \\x3cspan class\\x3d	\\x3e1个\\x3c/span\\x3e。",\nl&&(f+="You are missing \\x3cspan class\\x3d		1	js/collection/StoryCollection.js
 を\\x3cbr\\x3eホーム背景に設定しました。	\\x3cbr\\x3e设为主页背景。		1	js/user/BackgroundSet.js
 \\x3cp class\\x3d'noList ts_white'\\x3e戦歴がありません\\x3c/p\\x3e	\\x3cp class\\x3d'noList ts_white'\\x3e没有战绩\\x3c/p\\x3e		1	js/user/EventRecord.js
 画面上のボタンを非表示にします。\\x3cbr\\x3e\\x3cbr\\x3e非表示に切り替え後は\\x3cbr\\x3e画面長押しでボタンが表示されます。	隐藏画面上的按钮。\\x3cbr\\x3e\\x3cbr\\x3e切换为隐藏后,\\x3cbr\\x3e长按画面即可显示按钮。		1	js/user/MyPage.js
@@ -805,23 +805,23 @@ CPが不足しています。	CP不足。		1	js/event/dungeon/EventDungeonTop.js
 CPを回復しました。	CP已回复。		1	js/event/dungeon/view/EventDungeonCpCureView.js
 プレーヤー名７８	玩家名78		1	js/event/storyraid/EventStoryRaidTop.js
 １ユーザー名７８	1用户名78		1	js/event/storyraid/EventStoryRaidTop.js
-かきくけこ６７８９０＠かきくけこ６７８９０			1	js/event/storyraid/EventStoryRaidTop.js
+かきくけこ６７８９０＠かきくけこ６７８９０	测试文字６７８９０＠测试文字６７８９０		1	js/event/storyraid/EventStoryRaidTop.js
 ２ユーザー名７８	2用户名78		1	js/event/storyraid/EventStoryRaidTop.js
-２コメント６７８９０１２３４５６７８９０			1	js/event/storyraid/EventStoryRaidTop.js
+２コメント６７８９０１２３４５６７８９０	２评论６７８９０１２３４５６７８９０		1	js/event/storyraid/EventStoryRaidTop.js
 ３ユーザー名７８	3用户名78		1	js/event/storyraid/EventStoryRaidTop.js
-３コメント６７８９０１２３４５６７８９０			1	js/event/storyraid/EventStoryRaidTop.js
+３コメント６７８９０１２３４５６７８９０	３评论６７８９０１２３４５６７８９０		1	js/event/storyraid/EventStoryRaidTop.js
 ４ユーザー名７８	4用户名78		1	js/event/storyraid/EventStoryRaidTop.js
-４コメント６７８９０１２３４５６７８９０			1	js/event/storyraid/EventStoryRaidTop.js
+４コメント６７８９０１２３４５６７８９０	４评论６７８９０１２３４５６７８９０		1	js/event/storyraid/EventStoryRaidTop.js
 ５ユーザー名７８	5用户名78		1	js/event/storyraid/EventStoryRaidTop.js
-５コメント６７８９０１２３４５６７８９０			1	js/event/storyraid/EventStoryRaidTop.js
-【DEBUG】もらったJsonそのまま			1	js/event/storyraid/EventStoryRaidTop.js
+５コメント６７８９０１２３４５６７８９０	５评论６７８９０１２３４５６７８９０		1	js/event/storyraid/EventStoryRaidTop.js
+【DEBUG】もらったJsonそのまま	【DEBUG】原样输出收到的Json		1	js/event/storyraid/EventStoryRaidTop.js
 【DEBUG】エリア解放	【DEBUG】区域解放		1	js/event/storyraid/EventStoryRaidTop.js
 【DEBUG】撃破演出	【DEBUG】击破演出		1	js/event/storyraid/EventStoryRaidTop.js
-【DEBUG】マップエフェクト			1	js/event/storyraid/EventStoryRaidTop.js
-【DEBUG】BOSSコマンド（			1	js/event/storyraid/EventStoryRaidTop.js
-【DEBUG】ボス交戦中(2回目以降)			1	js/event/storyraid/EventStoryRaidTop.js
-【DEBUG】ボス交戦中(初回)			1	js/event/storyraid/EventStoryRaidTop.js
-【DEBUG】ボス最終戦HELP			1	js/event/storyraid/EventStoryRaidTop.js
+【DEBUG】マップエフェクト	【DEBUG】地图特效		1	js/event/storyraid/EventStoryRaidTop.js
+【DEBUG】BOSSコマンド（	【DEBUG】BOSS指令(		1	js/event/storyraid/EventStoryRaidTop.js
+【DEBUG】ボス交戦中(2回目以降)	【DEBUG】BOSS交战中(第2次起)		1	js/event/storyraid/EventStoryRaidTop.js
+【DEBUG】ボス交戦中(初回)	【DEBUG】BOSS交战中(首次)		1	js/event/storyraid/EventStoryRaidTop.js
+【DEBUG】ボス最終戦HELP	【DEBUG】BOSS最终战HELP		1	js/event/storyraid/EventStoryRaidTop.js
 コメントを入力してください。	请输入留言。		1	js/event/storyraid/EventStoryRaidTop.js
 イベント参加条件	活动参加条件		1	js/event/storyraid/EventStoryRaidTop.js
 イベント『	活动『		1	js/event/storyraid/EventStoryRaidTop.js
@@ -995,8 +995,8 @@ APはこれ以上回復できません。\\x3cbr\\x3eクエストをプレイし
 プレゼントを	礼物		1	js/view/present/PresentListPageView.js
 件受け取りました	件已领取		1	js/view/present/PresentListPageView.js
 プレゼントを1件受け取りました	已领取1件礼物		1	js/view/present/PresentListPartsView.js
-modelがaddされました			1	js/view/quest/PreQuestPopupView.js
-modelがremoveされました			1	js/view/quest/PreQuestPopupView.js
+modelがaddされました	model已添加		1	js/view/quest/PreQuestPopupView.js
+modelがremoveされました	model已移除		1	js/view/quest/PreQuestPopupView.js
 魔法少女が選択されていません	未选择魔法少女		1	js/view/quest/PreQuestPopupView.js
 日付が変わったため\\x3cbr\\x3e対象のクエストをプレイすることはできません	日期已变更,\\x3cbr\\x3e无法游玩该关卡		1	js/view/quest/QuestListPartsView.js
 クエストに必要なアイテムは\\x3cbr\\x3eメイン・アナザー・魔法少女・曜日クエストの\\x3cbr\\x3e各クエストで入手できます。	关卡所需道具可在\\x3cbr\\x3e主线·支线·魔法少女·曜日关卡的\\x3cbr\\x3e各关卡中获得。		1	js/view/quest/QuestListPartsView.js
@@ -1112,7 +1112,7 @@ BPを1消費して対戦相手を変更しますか？\\x3cbr\\x3e(対戦相手�
 イベントミラーズチーム	活动镜界队伍		1	js/formation/DeckFormationUtil.js
 レベル40未満の魔法少女がチームに含まれています。	队伍中包含未满40级的魔法少女。		1	js/formation/DeckFormationUtil.js
 チーム変更	更换队伍		1	js/formation/FormationQuest.js
-eventEffect調査:			1	js/formation/FormationQuest.js
+eventEffect調査:	eventEffect调查:		1	js/formation/FormationQuest.js
 』を解散します。\\x3cbr\\x3eよろしいですか？	』将被解散。\\x3cbr\\x3e确定吗?		1	js/formation/FormationQuest.js
 イベントのチーム	活动队伍		1	js/formation/FormationQuest.js
 ミラーズのチーム	镜界队伍		1	js/formation/FormationQuest.js
@@ -1283,11 +1283,11 @@ Y座標:	Y坐标:		1	template/quest/puellaHistoria/MirrorParts_debug.html
 鏡の幅:	镜宽:		1	template/quest/puellaHistoria/MirrorParts_debug.html
 【ipad用】	【iPad用】		1	template/quest/puellaHistoria/MirrorParts_debug.html
 鏡の縦のズレ:	镜纵向偏移:		1	template/quest/puellaHistoria/MirrorParts_debug.html
-※縮尺は「1」が100%になります			1	template/quest/puellaHistoria/MirrorParts_debug.html
+※縮尺は「1」が100%になります	※缩放比例「1」为100%		1	template/quest/puellaHistoria/MirrorParts_debug.html
 【鏡:1】	【镜:1】		1	template/quest/puellaHistoria/MirrorParts_debug.html
 【鏡:2】	【镜:2】		1	template/quest/puellaHistoria/MirrorParts_debug.html
 【鏡:3】	【镜:3】		1	template/quest/puellaHistoria/MirrorParts_debug.html
-※isClearには「true」「false」を入れてください			1	template/quest/puellaHistoria/MirrorParts_debug.html
+※isClearには「true」「false」を入れてください	※isClear请填入「true」「false」		1	template/quest/puellaHistoria/MirrorParts_debug.html
 マップへ戻る	返回地图		1	template/quest/puellaHistoria/lastBattle/GroupRaid.html
 天気輪の魔力を使用する	使用天气轮魔力		1	template/quest/puellaHistoria/lastBattle/MainBossPopup.html
 株分け	分株		1	template/quest/puellaHistoria/lastBattle/SubBossList.html
