@@ -756,10 +756,12 @@ static void setMaxConnectionNumNew(void* _this, int n) {
 
 // ─── 客户端版本号 ────────────────────────────────────────
 //
-// 本客户端自己的版本号硬编码在这里，不读也不改 APK 的 versionName/versionCode
-// （那是上游包的身份，动了会影响覆盖安装）。每次发布新客户端包时递增它，
-// 并把云端 mirrors.json 的 client.version 同步抬高——启动时的强制更新检查
-// （Java 侧 CNVersionCheck）就靠这两个值的比较。
+// 本客户端自己的版本号，不读也不改 APK 的 versionName/versionCode（那是上游
+// 包的身份，动了会影响覆盖安装）。**CI 构建时会把这个常量改写成
+// 1.0.<run_number>**（见 build-apk.yml 的「注入客户端版本号」步骤，每个构建
+// 单调递增）——这里的字面量只是本地构建（tools/build-local.sh）的兜底，
+// 发版不需要手改本文件。云端 mirrors.json 的 client.version 抬过某个构建号，
+// 低于它的包启动时就弹强制更新框（Java 侧 CNVersionCheck）。
 static const char* CLIENT_VERSION = "1.0.0";
 
 // 经 RegisterNatives 绑给 CNVersionCheck.nativeClientVersion()。

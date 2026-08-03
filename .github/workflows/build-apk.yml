@@ -17,6 +17,8 @@ name: 🏗️ 构建 APK
 # ║                                                                    ║
 # ║ 构建流程                                                            ║
 # ║ ───────                                                            ║
+# ║   0. 注入客户端版本号 1.0.<run_number>（强制更新通道的本端版本，       ║
+# ║      与 APK 自身 versionName/versionCode 无关）                     ║
 # ║   1. 编译 patch/src/main/java/ 下的 Java 补丁源码                   ║
 # ║   2. d8 转成 dex，baksmali 解码回 smali                           ║
 # ║   3. 用生成的 smali 覆盖 smali_classes2/ 与 smali_classes3/ 中       ║
@@ -118,6 +120,22 @@ jobs:
 
       - name: 🚧 校验 native 入口保护（异常绝不外泄）
         run: python3 tools/check-entry-guard.py
+
+      - name: 🔢 注入客户端版本号（构建号）
+        run: |
+          set -euo pipefail
+          # 客户端版本通道的「本端版本」在这里定：1.0.<run_number>，每个构建
+          # 单调递增，可回溯到具体 workflow run。mirrors.json 的 client.version
+          # 抬过它，旧包启动时就会弹强制更新框。
+          # 注意这与 APK 的 versionName/versionCode 无关——那是上游包的身份，
+          # 不能动。cpp 里的字面量只是本地构建（build-local.sh）的兜底。
+          VER="1.0.${GITHUB_RUN_NUMBER}"
+          echo "客户端版本号: ${VER}"
+          sed -i -E "s/CLIENT_VERSION = \"[^\"]+\"/CLIENT_VERSION = \"${VER}\"/" \
+            magia-native/src/MagiaLegacy.cpp
+          grep -q "CLIENT_VERSION = \"${VER}\"" magia-native/src/MagiaLegacy.cpp \
+            || { echo "::error::版本号注入失败（CLIENT_VERSION 常量没匹配上）"; exit 1; }
+          echo "CLIENT_VERSION=${VER}" >> "$GITHUB_ENV"
 
       - name: 🛠 编译 libMagiaLegacy.so（magia-native）
         run: |
@@ -357,6 +375,7 @@ jobs:
             echo
             if [ -f .build/legacy-client.apk ]; then
               echo "- 状态：✅ 成功"
+              echo "- 客户端版本：\`${CLIENT_VERSION}\`（云端 mirrors.json 的 client.version 抬过它即触发旧包强制更新）"
               echo "- sha256：\`$(sha256sum .build/legacy-client.apk | cut -d' ' -f1)\`"
               echo "- 大小：$(( $(stat -c%s .build/legacy-client.apk) / 1024 / 1024 )) MB"
               echo "- 签名：AOSP testkey（v1+v2+v3）"

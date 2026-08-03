@@ -15,7 +15,7 @@
   "client": {
     "version": "1.0.0",
     "apk_url": "https://assets.example.test/legacy-client.apk",
-    "note": "客户端强制更新通道：每次启动时客户端先读本段，version 高于本端内置版本（硬编码在 libMagiaLegacy.so，与 APK 的 versionName/versionCode 无关）就弹窗引导去 apk_url 下载新包。发布新客户端包时把 version 抬高即可；本端内置版本随包递增。note 会显示在弹窗里，可留空。"
+    "note": "客户端强制更新通道：每次启动时客户端先读本段，version 高于本端内置版本（CI 构建时注入，1.0.<run_number>，与 APK 的 versionName/versionCode 无关）就弹窗引导去 apk_url 下载新包。要强制旧包更新时，把 version 抬到目标构建号之上即可；note 会显示在弹窗里，可留空。"
   },
 
   "mirrors": [
