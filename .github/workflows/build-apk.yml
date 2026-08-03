@@ -125,7 +125,7 @@ jobs:
         run: |
           set -euo pipefail
           # 客户端版本通道的「本端版本」在这里定：1.0.<run_number>，每个构建
-          # 单调递增，可回溯到具体 workflow run。mirrors.json 的 client.version
+          # 单调递增，可回溯到具体 workflow run。config.json 的 client.version
           # 抬过它，旧包启动时就会弹强制更新框。
           # 注意这与 APK 的 versionName/versionCode 无关——那是上游包的身份，
           # 不能动。cpp 里的字面量只是本地构建（build-local.sh）的兜底。
@@ -375,7 +375,7 @@ jobs:
             echo
             if [ -f .build/legacy-client.apk ]; then
               echo "- 状态：✅ 成功"
-              echo "- 客户端版本：\`${CLIENT_VERSION}\`（云端 mirrors.json 的 client.version 抬过它即触发旧包强制更新）"
+              echo "- 客户端版本：\`${CLIENT_VERSION}\`（云端 config.json 的 client.version 抬过它即触发旧包强制更新）"
               echo "- sha256：\`$(sha256sum .build/legacy-client.apk | cut -d' ' -f1)\`"
               echo "- 大小：$(( $(stat -c%s .build/legacy-client.apk) / 1024 / 1024 )) MB"
               echo "- 签名：AOSP testkey（v1+v2+v3）"

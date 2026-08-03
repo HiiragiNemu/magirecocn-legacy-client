@@ -43,7 +43,7 @@ import org.json.JSONObject;
  * <ul>
  *   <li>版本号记在 SharedPreferences {@code MagiaCN} 的
  *       {@code scenario_version} / {@code js_version} 两个 int 键上；</li>
- *   <li>两份 version json <b>直连主线</b>（与 {@code mirrors.json} 同理，
+ *   <li>两份 version json <b>直连主线</b>（与 {@code config.json} 同理，
  *       配置类请求不换线）；</li>
  *   <li>分发文件本身走支线：交给 {@link CNHotUpdate#download} —— 与首次安装
  *       同一套选线 + 分片 + 失败换线；</li>
@@ -370,7 +370,7 @@ public final class CNHotUpdateCheck {
     // 版本号
     // ==================================================================
 
-    /** 直连主线取版本 json。配置类请求一律不换线，与 {@code mirrors.json} 同理。 */
+    /** 直连主线取版本 json。配置类请求一律不换线，与 {@code config.json} 同理。 */
     private static int fetchVersion(String url) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection(Proxy.NO_PROXY);
         try {

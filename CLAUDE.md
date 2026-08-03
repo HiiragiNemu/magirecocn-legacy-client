@@ -23,7 +23,7 @@
    接口（如 `Comparator<T>`）——当前 d8 版本会以 NPE 崩掉。用具名静态类代替。
    这不是猜测，是本仓库构建时实测撞过三次的问题。
 
-5. **配置直连主线，支线只分发文件**。`mirrors.json` / `version_js.json` /
+5. **配置直连主线，支线只分发文件**。`config.json` / `version_js.json` /
    `version_scenario.json` 必须直连 `assets.example.test`，不得经过任何支线。
    改动涉及下载路径时，对照 README 的「网络出口」表逐条确认。
 

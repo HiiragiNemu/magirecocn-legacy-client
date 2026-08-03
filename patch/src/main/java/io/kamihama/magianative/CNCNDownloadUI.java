@@ -1441,7 +1441,7 @@ public class CNCNDownloadUI {
      * 了事（版本检查的日志里已有完整的版本与地址信息）。
      *
      * @param local  本端版本（native 内置）
-     * @param cloud  云端版本（mirrors.json 的 client.version）
+     * @param cloud  云端版本（config.json 的 client.version）
      * @param url    新包下载地址（client.apk_url）
      * @param note   云端附言（client.note，可为空串）
      */

@@ -145,7 +145,7 @@ public final class CNMirrors {
             String body = fetch(MIRRORS_URL, direct);
             List<Mirror> parsed = parse(body);
             if (parsed.isEmpty()) {
-                CNLog.w(TAG, "mirrors.json 未包含任何可用线路，沿用默认线路");
+                CNLog.w(TAG, "config.json 未包含任何可用线路，沿用默认线路");
                 return;
             }
             mirrors = parsed;
@@ -176,7 +176,7 @@ public final class CNMirrors {
         try {
             int code = c.getResponseCode();
             if (code < 200 || code >= 300) {
-                throw new IOException("mirrors.json HTTP " + code);
+                throw new IOException("config.json HTTP " + code);
             }
             is = c.getInputStream();
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
@@ -184,7 +184,7 @@ public final class CNMirrors {
             int total = 0, n;
             while ((n = is.read(buf)) >= 0) {
                 total += n;
-                if (total > MAX_JSON_BYTES) throw new IOException("mirrors.json 过大");
+                if (total > MAX_JSON_BYTES) throw new IOException("config.json 过大");
                 bos.write(buf, 0, n);
             }
             return new String(bos.toByteArray(), StandardCharsets.UTF_8);

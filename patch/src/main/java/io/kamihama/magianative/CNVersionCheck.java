@@ -22,13 +22,13 @@ import java.net.URL;
  * 刻意不读也不改 APK 的 versionName / versionCode——那是上游包的身份，
  * 动了会影响覆盖安装；客户端更新通道的版本号是我们自己的一套。
  *
- * <p>云端版本与下载地址记在 {@code mirrors.json} 的 {@code client} 段
+ * <p>云端版本与下载地址记在 {@code config.json} 的 {@code client} 段
  * （{@code version} / {@code apk_url}）。配置类请求一律直连主线，与
  * {@link CNHotUpdateCheck#fetchVersion} 同理。
  *
  * <h3>失败放行</h3>
  *
- * 拉不到 mirrors.json、解析不了、读不到 native 版本——任何一种异常都<b>放行</b>
+ * 拉不到 config.json、解析不了、读不到 native 版本——任何一种异常都<b>放行</b>
  * （日志照记），绝不让玩家因为一次网络抖动进不了游戏。强制更新拦的是
  * 「明确知道云端更新了」这一种情况，其余一律当作没有更新。
  *
@@ -116,13 +116,13 @@ public final class CNVersionCheck {
         try {
             client = fetchClientSection(CNMirrors.MIRRORS_URL);
         } catch (Throwable t) {
-            CNLog.w(TAG, "mirrors.json 拉取/解析失败，按不强制更新放行: " + t);
+            CNLog.w(TAG, "config.json 拉取/解析失败，按不强制更新放行: " + t);
             CNHotUpdateCheck.start();
             return;
         }
         if (client == null) {
-            // 线上 mirrors.json 还没有 client 段：旧服务端配置，按不强制更新放行。
-            CNLog.i(TAG, "mirrors.json 无 client 段，跳过版本检查");
+            // 线上 config.json 还没有 client 段：旧服务端配置，按不强制更新放行。
+            CNLog.i(TAG, "config.json 无 client 段，跳过版本检查");
             CNHotUpdateCheck.start();
             return;
         }
@@ -200,7 +200,7 @@ public final class CNVersionCheck {
     // ==================================================================
 
     /**
-     * 直连主线拉 mirrors.json 并取出 client 段。配置类请求一律不换线。
+     * 直连主线拉 config.json 并取出 client 段。配置类请求一律不换线。
      * 没有 client 段时返回 null；网络/解析异常向上抛（调用方按放行处理）。
      */
     private static JSONObject fetchClientSection(String url) throws Exception {
@@ -215,7 +215,7 @@ public final class CNVersionCheck {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             byte[] buf = new byte[8192];
             int n;
-            // mirrors.json 只有几 KB；设个上限免得对面返回一坨东西把内存吃了
+            // config.json 只有几 KB；设个上限免得对面返回一坨东西把内存吃了
             while ((n = in.read(buf)) >= 0 && bos.size() < 262144) bos.write(buf, 0, n);
             in.close();
             return new JSONObject(bos.toString("UTF-8")).optJSONObject("client");

@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit;
  * 拿它拼支线 URL 会拼错；而从 URL 自身推导则不会。也保证了将来若有别处调用这个
  * 方法去取非主线的东西，不会被意外重定向。
  *
- * <p>「配置直连主线」的约定不受影响：{@code mirrors.json}、{@code version_js.json}、
+ * <p>「配置直连主线」的约定不受影响：{@code config.json}、{@code version_js.json}、
  * {@code version_scenario.json} 都不经过这里，它们由各自的调用点直连主线。
  * 本类只负责「分发文件」。
  */
