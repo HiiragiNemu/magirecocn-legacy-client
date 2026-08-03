@@ -4,10 +4,10 @@
 エラー	错误	疑似碎片	30	js/_common/base.js,js/camera/CameraTop.js,js/event/EventArenaRankMatch/Result.js,…共19处
 遊び方	玩法		27	template/arena/ArenaRanking.html,template/campaign/box_gacha/CampaignBoxGachaTop.html,template/campaign/quiz/CampaignQuizTop.html,…共27处
 ミッション	任务		25	js/_common/nativeCommand.js,js/_common/nativeCommand2.js,js/event/dungeon/EventDungeonMap.js,…共22处
-まで		疑似碎片	23	js/event/EventArenaRankMatch/Result.js,js/event/EventWitch/Model.js,js/event/arenaranking/view/EventArenaResultView.js,…共18处
+まで	为止	疑似碎片	23	js/event/EventArenaRankMatch/Result.js,js/event/EventWitch/Model.js,js/event/arenaranking/view/EventArenaResultView.js,…共18处
 チーム	队伍	疑似碎片	22	js/event/accomplish/EventAccomplishDeck.js,js/formation/DeckFormation.js,js/formation/DeckFormationUtil.js,…共7处
-個		疑似碎片	20	js/event/accomplish/EventAccomplishDeck.js,js/formation/DeckFormation.js,js/formation/FormationQuest.js,…共10处
-位		疑似碎片	19	js/event/EventArenaRankMatch/Utility.js,js/view/arena/ArenaTopView.js,template/event/EventArenaRankMatch/History.html,…共9处
+個	个	疑似碎片	20	js/event/accomplish/EventAccomplishDeck.js,js/formation/DeckFormation.js,js/formation/FormationQuest.js,…共10处
+位	名	疑似碎片	19	js/event/EventArenaRankMatch/Utility.js,js/view/arena/ArenaTopView.js,template/event/EventArenaRankMatch/History.html,…共9处
 決定	确定		19	js/chara/CharaCompose.js,js/event/dungeon/EventDungeonMap.js,js/view/memoria/MemoriaComposeTopCardListView.js,…共15处
 編成エラー	编成错误		19	js/event/accomplish/EventAccomplishDeck.js,js/formation/DeckFormation.js,js/formation/DeckFormationUtil.js,…共5处
 所持数	持有数		17	js/view/gacha/GachaTopView2.js,template/arena/ArenaRanking.html,template/campaign/box_gacha/CampaignBoxGachaTop.html,…共11处
@@ -23,7 +23,7 @@
 期間外	不在期间内		10	js/campaign/summer_mission/CampaignSummerMissionTopListView.js,js/campaign/summer_mission/CampaignSummerMissionTopView.js,js/view/gacha/GachaTopView2.js,…共8处
 日		疑似碎片	10	js/_common/backboneCommon.js,js/campaign/summer_mission/CampaignSummerMissionTopView.js,js/event/storyraid/EventStoryRaidTop.js,…共7处
 APが不足しています	AP 不足		10	js/event/EventWalpurgis/Utility.js,js/event/EventWitch/Utility.js,js/event/branch/EventBranchTop.js,…共7处
-あと		疑似碎片	10	js/chara/CharaCompose.js,js/view/user/GlobalMenuView.js,template/arena/ArenaFreeRank.html,…共9处
+あと	还有	疑似碎片	10	js/chara/CharaCompose.js,js/view/user/GlobalMenuView.js,template/arena/ArenaFreeRank.html,…共9处
 \\x3cp class\\x3d"noMission ts_white"\\x3e挑戦できるミッションがありません\\x3c/p\\x3e	\\x3cp class\\x3d"noMission ts_white"\\x3e没有可以挑战的任务\\x3c/p\\x3e		10	js/regularEvent/groupBattle/RegularEventGroupBattleTop.js,js/view/mission/MissionTopListView.js,js/view/mission/MissionTopView.js
 アーカイブ	回顾		10	template/event/EventWitch/page/Top.html,template/event/accomplish/EventAccomplishTop.html,template/event/branch/EventBranchTop.html,…共9处
 マイページへ	返回主页		9	js/campaign/summer_mission/CampaignSummerMissionTopListView.js,js/user/BackgroundSet.js,js/view/mission/MissionTopListView.js,…共7处
@@ -151,7 +151,7 @@ BPが不足しています。	BP 不足。		4	js/event/arenaMission/EventArenaMi
 最低1キャラは設定してください	请至少设置 1 名角色		4	js/event/accomplish/EventAccomplishDeck.js,js/formation/FormationQuest.js,js/formation/FormationSupport.js
 個数	个数		4	js/event/accomplish/EventAccomplishDeck.js,js/formation/DeckFormation.js,js/formation/FormationQuest.js,…共4处
 回復確認	回复确认		4	js/event/accomplish/EventAccomplishRecovery.js,js/view/user/APPopup.js
-回		疑似碎片	4	js/event/accomplish/EventAccomplishRecovery.js,template/arena/ArenaRanking.html,template/event/EventArenaRankMatch/parts/AttackCountPopup.html,…共4处
+回	次	疑似碎片	4	js/event/accomplish/EventAccomplishRecovery.js,template/arena/ArenaRanking.html,template/event/EventArenaRankMatch/parts/AttackCountPopup.html,…共4处
 ミッション報酬を1件受け取りました。\\x3cbr\\x3e\\x3cbr\\x3e※魔法少女はプレゼントボックスよりお受け取りください。\\x3cbr\\x3e※受け取ったアイテムは直接付与されています。	已领取1件任务报酬。\\x3cbr\\x3e\\x3cbr\\x3e※魔法少女请到礼物盒领取。\\x3cbr\\x3e※领取的道具已直接发放。		4	js/mission/PanelMissionTop.js,js/view/mission/MissionTopListView.js
 ターゲットの選択	选择目标		4	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
 オートバトル	自动战斗		4	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
@@ -199,7 +199,7 @@ CCが不足しています	CC 不足		4	js/chara/CharaCompose.js,js/chara/CharaC
 メモリアへ	前往记忆结晶		3	js/campaign/box_gacha/CampaignBoxGachaTop.js,js/view/gacha/GachaBtnView.js
 衣装一覧	服装一览		3	js/campaign/story_mission/CampaignStoryMission.js,template/camera/CameraTop.html,template/event/aprilfool2018/EventAprilFoolTop.html
 全属性			3	js/quest/EventQuest.js,js/util/SearchQuest.js
-話		疑似碎片	3	js/util/SearchQuest.js,template/collection/StoryCollection.html,template/quest/PreQuestPopup.html
+話	话	疑似碎片	3	js/util/SearchQuest.js,template/collection/StoryCollection.html,template/quest/PreQuestPopup.html
 初級	初级		3	js/event/training/EventTrainingTop.js,js/quest/EventQuest.js,js/util/SearchQuest.js
 中級	中级		3	js/event/training/EventTrainingTop.js,js/quest/EventQuest.js,js/util/SearchQuest.js
 上級	上级		3	js/event/training/EventTrainingTop.js,js/quest/EventQuest.js,js/util/SearchQuest.js
@@ -355,7 +355,7 @@ BATTLE ◆ 超級	BATTLE ◆ 超级		2	js/event/training/EventTrainingTop.js,js/
 チャレンジクエスト	挑战关卡		2	js/event/dailytower/EventDailyTowerTop.js,js/event/tower/EventTowerTop.js
 クエスト解放スケジュール	关卡开放日程		2	js/event/dailytower/EventDailyTowerTop.js,template/event/dailytower/EventDailyTowerTop.html
 ◆ チャレンジクエスト	◆ 挑战关卡		2	js/event/dailytower/EventDailyTowerTop.js,js/event/tower/EventTowerTop.js
-編		疑似碎片	2	js/event/dailytower/EventDailyTowerTop.js,js/event/tower/EventTowerTop.js
+編	篇	疑似碎片	2	js/event/dailytower/EventDailyTowerTop.js,js/event/tower/EventTowerTop.js
 位〜	名〜		2	js/event/EventArenaRankMatch/Utility.js
 火		疑似碎片	2	js/chara/CharaComposeAttribute/ComposeAttributeList.js,js/event/EventArenaRankMatch/Utility.js
 水		疑似碎片	2	js/chara/CharaComposeAttribute/ComposeAttributeList.js,js/event/EventArenaRankMatch/Utility.js
@@ -596,7 +596,7 @@ Y座標を入力	输入Y坐标		2	template/event/accomplish/EventAccomplishEnemy
 合計ダメージ	合计伤害		2	template/regularEvent/groupBattle/RegularEventGroupBattleLog.html,template/regularEvent/groupBattle/RegularEventGroupBattleResult.html
 デイリー	每日		2	template/regularEvent/groupBattle/RegularEventGroupBattleRanking.html,template/regularEvent/groupBattle/RegularEventGroupCommon.html
 TOPへ移動	移至TOP		2	template/regularEvent/groupBattle/RegularEventGroupBattleRanking.html,template/regularEvent/groupBattle/RegularEventGroupBattleUser.html
-体		疑似碎片	2	template/regularEvent/groupBattle/RegularEventGroupBattleRanking.html,template/regularEvent/groupBattle/RegularEventGroupCommon.html
+体	个	疑似碎片	2	template/regularEvent/groupBattle/RegularEventGroupBattleRanking.html,template/regularEvent/groupBattle/RegularEventGroupCommon.html
 引き継ぎMP	继承MP		2	template/regularEvent/groupBattle/RegularEventGroupBattleResult.html,template/regularEvent/groupBattle/RegularEventGroupCommon.html
 キャッシュクリアしました。	已清除缓存。		1	js/top/TopPage.js
 パスワードは8文字以上15文字以内です。	密码为8~15个字符。		1	js/top/TopPage.js
@@ -878,7 +878,7 @@ BPを回復してもう一度お試しください。	请回复BP后再试一次
 データ更新	数据更新		1	js/_common/ajaxControl.js
 データが更新されました。\\x3cbr\\x3eトップページに遷移します。	数据已更新。\\x3cbr\\x3e即将前往首页。		1	js/_common/ajaxControl.js
 通信エラーのポップアップ出したい	想弹出通信错误提示		1	js/_common/ajaxControl.js
-時		疑似碎片	1	js/_common/backboneCommon.js
+時	时	疑似碎片	1	js/_common/backboneCommon.js
 日月火水木金土	日一二三四五六		1	js/_common/backboneCommon.js
 新しい称号を獲得しました	获得了新称号		1	js/_common/backboneCommon.js
 エラーが発生しました。トップページに遷移します。	发生错误。即将前往首页。		1	js/_common/base.js
@@ -1058,7 +1058,7 @@ BPを1消費して対戦相手を変更しますか？\\x3cbr\\x3e(対戦相手�
 が\\x3cbr\\x3e不足しています。	\\x3cbr\\x3e不足。		1	js/view/shop/ShopPopupView.js
 購入個数を選択してください。	请选择购买个数。		1	js/view/shop/ShopPopupView.js
 1体	1个		1	js/view/shop/ShopPopupView.js
-枚		疑似碎片	1	js/view/shop/ShopPopupView.js
+枚	张	疑似碎片	1	js/view/shop/ShopPopupView.js
 購入完了	购买完成		1	js/view/shop/ShopPopupView.js
 限界突破済のメモリアが含まれています。\\x3cbr\\x3eよろしいですか？	包含已界限突破的记忆结晶。\\x3cbr\\x3e确定吗?		1	js/view/memoria/MemoriaComposeTopCardListView.js
 カースチップが不足しています。	诅咒碎片不足。		1	js/view/memoria/MemoriaComposeTopView.js
@@ -1424,7 +1424,7 @@ RP回復薬を使用して全回復しますか？	要使用RP回复药全部回
 対戦履歴がありません	没有对战记录		1	template/arena/ArenaHistory.html
 再生するリプレイのIDを入力してください。	请输入要播放的回放ID。		1	template/arena/ArenaHistory.html
 貼り付け	粘贴		1	template/arena/ArenaHistory.html
-戦		疑似碎片	1	template/arena/ArenaRanking.html
+戦	战	疑似碎片	1	template/arena/ArenaRanking.html
 これ以上、対戦相手を変更することはできません。	无法再更换对战对手。		1	template/arena/ArenaRanking.html
 BP回復薬を1個使用することで対戦回数を	使用1个BP回复药即可将对战次数		1	template/arena/ArenaRanking.html
 以下の時間が経過すると、自動で対戦相手が再抽選されます。	经过以下时间后,对战对手将自动重新抽选。		1	template/arena/ArenaRanking.html
@@ -1514,7 +1514,7 @@ GachaResultへ	前往扭蛋结果		1	template/gacha/GachaAnimation.html
 DMMポイント、	DMM点数,		1	template/purchase/PurchaseTemps.html
 16〜17歳	16〜17岁		1	template/purchase/PurchaseTemps.html
 が30,000	为30,000		1	template/purchase/PurchaseTemps.html
-円		疑似碎片	1	template/purchase/PurchaseTemps.html
+円	日元	疑似碎片	1	template/purchase/PurchaseTemps.html
 DMMポイント	DMM点数		1	template/purchase/PurchaseTemps.html
 です。	。		1	template/purchase/PurchaseTemps.html
 未成年の方は保護者の同意を得て下さい。		法条勿动	1	template/purchase/PurchaseTemps.html
