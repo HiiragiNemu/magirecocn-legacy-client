@@ -99,6 +99,8 @@ public final class CNPrologueNav {
 
     /** 导航之后确认是否真的跳过去了。 */
     private static final int  CONFIRM_TRIES = 20;
+    /** 到了标题页之后，等序章真正开始推进的轮数（每轮 1 秒）。 */
+    private static final int  ADVANCE_TRIES = 45;
 
     private static final java.util.concurrent.atomic.AtomicBoolean STARTED =
             new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -142,40 +144,89 @@ public final class CNPrologueNav {
         CNLog.i(TAG, "主页已稳定，" + SETTLE_MS + "ms 后开始");
         sleep(SETTLE_MS);
 
-        // 设 tutorialId 与跳转**必须在同一次执行里**，而且要用同步形式取模块。
+        // 一次注入干三件事：挂错误捕获、钉住 tutorialId、跳转。
         //
-        // 上一版分成两次 evaluateJavascript，并且用了 require([...], cb) 的
-        // 异步形式——RequireJS 即使模块已加载也会异步回调。于是两件事的先后
-        // 完全不保证，读回的值也必然是 null。真机表现正是「跳回了标题页，
-        // 但没进序章」：hash 先变了，tutorialId 还没写上，TopPage 一 init
-        // 读到的仍是旧值。
+        // 为什么要「钉住」：光写一次不够。真机日志显示，跳到 TopPage 之后它
+        // 自己会拉 api/page/TopPage?value=user,gameUser——Totentanz 是 stateless
+        // 的，必然又返回满级号的 tutorialId=TU999，经 responseSetStorage 把
+        // 我们写的 OP000 覆盖回去。表现就是「ゲーム開始」弹窗闪一下就回标题。
+        // （GameStartPopup.html 确实被加载了，说明 OP000 分支命中过，只是没能
+        // 保持住。）
         //
-        // require('name') 的 CommonJS 同步形式对**已加载**的模块直接返回，
-        // backboneCommon 是全站基础模块，此刻必定已加载。
-        String r = evalSync(wv,
+        // 所以包一层 storage.user.set：钉住期间，任何把 tutorialId 改成非 OP*
+        // 的写入都改回 OP000。
+        //
+        // 什么时候松开：一旦看到有人把它设成**别的 OP 值**（OP010…），说明游戏
+        // 自己在推进序章，立刻解除——否则序章永远停在第一段。另加 120 秒兜底，
+        // 绝不把客户端永久钉死。
+        //
+        // 顺带挂 window.onerror / unhandledrejection：上一轮前端往
+        // api/test/logger/error 报了两条错，而日志里只有 URL 没有 body，
+        // 什么都看不到。现在自己收，探测时一并回传。
+        String inject =
             "(function(){try{"
             + "var a=require('backboneCommon');"
-            + "var b=a.storage.user.get('tutorialId');"
-            + "a.storage.user.set('tutorialId','" + PROLOGUE_ID + "');"
-            + "var c=a.storage.user.get('tutorialId');"
+            + "if(!window.__cnvErrHook){window.__cnvErrHook=1;window.__cnvErr=[];"
+            + "window.addEventListener('error',function(e){try{window.__cnvErr.push("
+            + "(e.message||'?')+' @'+((e.filename||'').split('/').pop())+':'+(e.lineno||0));}catch(x){}});"
+            + "window.addEventListener('unhandledrejection',function(e){try{"
+            + "window.__cnvErr.push('reject:'+e.reason);}catch(x){}});}"
+            + "var u=a.storage.user;"
+            + "if(!u.__cnvPin){u.__cnvPin=1;var os=u.set;"
+            + "u.set=function(k,v,o){try{var pin=window.__cnvPinTu;if(pin){"
+            + "var isObj=(k&&typeof k==='object');"
+            + "var inc=isObj?k.tutorialId:(k==='tutorialId'?v:undefined);"
+            + "if(inc!==undefined){"
+            + "if(String(inc).indexOf('OP')===0){window.__cnvPinTu=null;}"
+            + "else if(isObj){var n={};for(var q in k)n[q]=k[q];n.tutorialId=pin;k=n;}"
+            + "else{v=pin;}}}}catch(x){}"
+            + "return os.call(this,k,v,o);};}"
+            + "window.__cnvPinTu='" + PROLOGUE_ID + "';"
+            + "setTimeout(function(){window.__cnvPinTu=null;},120000);"
+            + "var b=u.get('tutorialId');"
+            + "u.set('tutorialId','" + PROLOGUE_ID + "');"
+            + "var c=u.get('tutorialId');"
             + "location.hash='" + ROUTE_HASH + "';"
             + "return 'before='+b+' after='+c;"
-            + "}catch(e){return 'ERR:'+e;}})()");
-        CNLog.i(TAG, "设 tutorialId 并跳转：" + r);
+            + "}catch(e){return 'ERR:'+e;}})()";
+        CNLog.i(TAG, "钉住 tutorialId 并跳转：" + evalSync(wv, inject));
 
+        boolean arrived = false;
         for (int i = 0; i < CONFIRM_TRIES; i++) {
             sleep(500L);
             String st = probe(wv);
             if (st != null && st.contains(ROUTE) && rendered(st)) {
-                CNLog.i(TAG, "已回到标题页并渲染：" + st);
-                CNTutorialPrompt.set(false);   // 一次性：消费掉标记
-                return;
+                CNLog.i(TAG, "已回到标题页：" + st);
+                arrived = true;
+                break;
             }
         }
-        // 没回到标题页就别留个烂摊子：退回主页，标记保留下次再试。
-        CNLog.e(TAG, "未确认回到标题页，退回主页（标记保留）最后一次探测=" + probe(wv));
-        eval(wv, "(function(){try{location.hash='" + HOME_HASH + "';return 'OK';}"
-                 + "catch(e){return 'ERR:'+e;}})()");
+        if (!arrived) {
+            // 没回到标题页就别留个烂摊子：退回主页，标记保留下次再试。
+            CNLog.e(TAG, "未确认回到标题页，退回主页（标记保留）。最后一次探测=" + probe(wv));
+            eval(wv, "(function(){try{location.hash='" + HOME_HASH + "';return 'OK';}"
+                     + "catch(e){return 'ERR:'+e;}})()");
+            return;
+        }
+
+        // 到标题页只是开始。真正算成功的判据是**序章确实推进了**——游戏自己把
+        // tutorialId 从 OP000 改成别的 OP 值（OP010…），那一刻注入脚本里的钉住
+        // 会自动松开。
+        //
+        // 上一版一到标题页就把标记消费掉，结果流程随后被服务端刷回 TU999、
+        // 什么都没播，而标记已经没了，下次启动也不会重试。
+        for (int i = 0; i < ADVANCE_TRIES; i++) {
+            sleep(1000L);
+            String st = probe(wv);
+            if (st != null && st.contains("|tu=OP") && !st.contains("|tu=" + PROLOGUE_ID)) {
+                CNLog.i(TAG, "序章已开始推进：" + st);
+                CNTutorialPrompt.set(false);   // 确认跑起来了才消费标记
+                return;
+            }
+            if (i % 5 == 0) CNLog.i(TAG, "等待序章开始…" + st);
+        }
+        CNLog.w(TAG, "等满 " + ADVANCE_TRIES + " 秒序章仍未推进，标记保留下次再试。"
+                + "最后一次探测=" + probe(wv));
     }
 
     /**
@@ -191,7 +242,10 @@ public final class CNPrologueNav {
             // 同步形式：异步回调拿不到值，探测串里永远是 '?'
             + "var t='?';try{t=require('backboneCommon').storage.user.get('tutorialId');}"
             + "catch(e2){}"
-            + "return String(location.href)+'|'+(m?m.childElementCount:-1)+'|tu='+t;}"
+            + "var er=(window.__cnvErr&&window.__cnvErr.length)?"
+            + "(' err='+window.__cnvErr.slice(-3).join(' ; ')):'';"
+            + "return String(location.href)+'|'+(m?m.childElementCount:-1)+'|tu='+t"
+            + "+'|pin='+(window.__cnvPinTu||'-')+er;}"
             + "catch(e){return 'ERR|-1|tu=?';}})()");
     }
 
