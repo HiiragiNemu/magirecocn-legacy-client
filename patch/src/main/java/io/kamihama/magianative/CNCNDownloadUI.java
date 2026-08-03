@@ -1182,7 +1182,7 @@ public class CNCNDownloadUI {
         TextView p = vTutorialPill;
         if (p == null) return;
         boolean armed = CNTutorialPrompt.isArmed();
-        p.setText(armed ? "▶ 教程" : "教程");
+        p.setText(armed ? "▶ 序章" : "序章");
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(dp(act, 20));
         if (armed) {
@@ -1210,13 +1210,13 @@ public class CNCNDownloadUI {
     public static void askTutorialOnce(Activity act, Runnable onDone) {
         try {
             if (CNTutorialPrompt.askedOnce()) {
-                CNLog.i("教程", "自动询问已问过，跳过");
+                CNLog.i("序章", "自动询问已问过，跳过");
                 if (onDone != null) onDone.run();
                 return;
             }
             showTutorialDialog(act, onDone);
         } catch (Throwable t) {
-            CNLog.e("教程", "自动询问失败", t);
+            CNLog.e("序章", "自动询问失败", t);
             if (onDone != null) {
                 try { onDone.run(); } catch (Throwable ignore) {}
             }
@@ -1233,7 +1233,7 @@ public class CNCNDownloadUI {
     private static void showTutorialDialog(final Activity act, final Runnable onDone) {
         final FrameLayout host = overlayView;
         if (act == null || host == null) {
-            CNLog.w("教程", "浮层不在，无法显示教程询问");
+            CNLog.w("序章", "浮层不在，无法显示教程询问");
             if (onDone != null) onDone.run();
             return;
         }
@@ -1241,7 +1241,7 @@ public class CNCNDownloadUI {
             @Override public void run() {
                 try { buildTutorialDialog(act, host, onDone); }
                 catch (Throwable t) {
-                    CNLog.e("教程", "构建教程询问框失败", t);
+                    CNLog.e("序章", "构建教程询问框失败", t);
                     if (onDone != null) onDone.run();
                 }
             }
@@ -1274,17 +1274,17 @@ public class CNCNDownloadUI {
         modal.addView(panel, panelLp);
 
         TextView title = new TextView(act);
-        title.setText("新手教程");
+        title.setText("序章");
         title.setTextColor(COLOR_ACCENT);
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f);
         title.setTypeface(title.getTypeface(), Typeface.BOLD);
         panel.addView(title, lpRow(0, dp(act, 10)));
 
         TextView msg = new TextView(act);
-        msg.setText("是否播放新手教程（序章）？\n\n"
-                  + "· 「是」：无视账号进度，从头播放序章。\n"
+        msg.setText("是否播放序章（第 0 章）？\n\n"
+                  + "· 「是」：进游戏后自动跳到第 0 章，从头看。\n"
                   + "· 「否」：正常进入游戏。\n\n"
-                  + "选完之后都会重启一次游戏才能生效。");
+                  + "走的是游戏自己的章节页面，和手动点进去一样。");
         msg.setTextColor(COLOR_LOG_PANEL_TEXT);
         msg.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
         msg.setLineSpacing(dp(act, 2), 1f);
@@ -1358,12 +1358,12 @@ public class CNCNDownloadUI {
             try {
                 boolean armed = CNTutorialPrompt.set(yes);
                 CNTutorialPrompt.markAsked();
-                CNLog.i("教程", yes ? ("玩家选择播放序章，标记就位=" + armed)
+                CNLog.i("序章", yes ? ("玩家选择播放序章，标记就位=" + armed)
                                     : "玩家选择跳过序章");
                 closeTutorialDialog();
                 styleTutorialPill(act);
             } catch (Throwable t) {
-                CNLog.e("教程", "处理教程选择失败", t);
+                CNLog.e("序章", "处理教程选择失败", t);
                 try { closeTutorialDialog(); } catch (Throwable ignore) {}
             } finally {
                 if (onDone != null) {
@@ -1381,11 +1381,11 @@ public class CNCNDownloadUI {
      */
     private static void restartAfterTutorialChoice(final Activity act, final boolean yes) {
         try {
-            final String head = yes ? "已设为播放序章" : "已设为正常进入游戏";
+            final String head = yes ? "已设为进游戏后播放序章" : "已设为正常进入游戏";
             // 安装还在跑：不能重启，会把下载打断。安装收尾自己会重启一次，
             // 那时这个设置照样生效，等它就好。
             if (CNDownloaderFix.isInstalling()) {
-                CNLog.i("教程", "安装进行中，改完教程设置不立刻重启，等安装收尾");
+                CNLog.i("序章", "安装进行中，改完教程设置不立刻重启，等安装收尾");
                 toast(act, head + "，安装完成后重启生效");
                 return;
             }
@@ -1393,7 +1393,7 @@ public class CNCNDownloadUI {
             // 收尾上去做。
             final String msg = head + "，3 秒后自动重启游戏";
             if (CNHotUpdateCheck.requestRestartWhenDone(msg)) {
-                CNLog.i("教程", "热更检查进行中，重启接力给检查收尾");
+                CNLog.i("序章", "热更检查进行中，重启接力给检查收尾");
                 toast(act, head + "，热更检查完成后重启");
                 return;
             }
@@ -1402,14 +1402,14 @@ public class CNCNDownloadUI {
                     try {
                         CNDownloaderFix.noticeAndRestart(msg);
                     } catch (Throwable th) {
-                        CNLog.e("教程", "改完教程设置后重启失败", th);
+                        CNLog.e("序章", "改完教程设置后重启失败", th);
                     }
                 }
             };
             t.setDaemon(true);
             t.start();
         } catch (Throwable t) {
-            CNLog.e("教程", "起不了重启线程", t);
+            CNLog.e("序章", "起不了重启线程", t);
             toast(act, "设置已保存，请手动重启游戏生效");
         }
     }

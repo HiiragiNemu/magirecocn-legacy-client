@@ -1,49 +1,51 @@
 package io.kamihama.magianative;
 
-import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.view.View;
-import android.view.ViewGroup;
 
 import java.io.File;
 import java.io.FileOutputStream;
 
 /**
- * 强制新手教程的状态：标记文件的读写，以及「自动询问只问一次」的记忆。
+ * 「下次启动去看序章」这个意愿的状态：标记文件的读写，以及「自动询问只问一次」
+ * 的记忆。
  *
- * <h3>为什么需要这个功能</h3>
+ * <h3>为什么需要</h3>
  *
- * 复刻服对任何账号都下发「已通关」的存档，引擎的正常流程<b>永远</b>不会播新手
- * 教程——即使是第一次玩的人也直接落到主页。想看序章只能靠外力。
+ * 复刻服对任何账号都下发「已通关」的存档，玩家进游戏直接落到主页，序章不会自己
+ * 播。想看得有个入口。
  *
  * <h3>分工</h3>
  *
- * 本类只管「标记在不在」。真正改场景的是 native 侧：{@code libMagiaLegacy.so}
- * 拦下引擎首个「进主页」命令（{@code web::SceneCommand::pushSceneTop}），看到
- * 标记就改调 {@code pushScenePrologue} 进序章。标记<b>一次性消费</b>——native
- * 读到就立刻删除，所以序章放完回主页时不会被再打回去。
+ * 本类只管「标记在不在」。真正去播的是 {@link CNScene0Nav}：等前端起来之后把
+ * WebView 的 hash 设成游戏自己的第 0 章路由（{@code Scene0Top}），跟玩家自己点
+ * 进去完全一样。标记<b>一次性消费</b>——确认跳进去之后就清掉。
+ *
+ * <p>（早先试过从 native 拦 {@code pushSceneTop} 改调 {@code pushScenePrologue}，
+ * 真机上只放得出最后那场战斗、剧情文字一句都没有。原因见
+ * {@link CNScene0Nav} 的类注释：序章是前端驱动的流程，native 只是播放器。）
  *
  * <p>询问的界面在 {@link CNCNDownloadUI}：它拥有浮层的调色板与模态框样式，
- * 教程询问就用那一套，不另起一个长得不一样的对话框。
+ * 这个询问就用那一套，不另起一个长得不一样的对话框。
  *
  * <h3>两个触发口</h3>
  * <ul>
  *   <li><b>自动询问</b>：只在「首次安装跑完、完成标记落盘」那一瞬间弹一次，
  *       答过就记住，之后再也不问。见 {@link CNDownloaderFix} 的收尾。</li>
- *   <li><b>教程胶囊</b>：常驻浮层左上角，任何时候都能点开重新选择——
+ *   <li><b>序章胶囊</b>：常驻浮层左上角，任何时候都能点开重新选择——
  *       自动询问已经答过之后，这是唯一的入口。</li>
  * </ul>
  */
 public final class CNTutorialPrompt {
 
-    private static final String TAG = "MagiaCNTutorial";
+    private static final String TAG = "MagiaCNScene0";
 
     /**
-     * 强制教程标记。⚠ 必须与 {@code MagiaLegacy.cpp} 的
-     * {@code FORCE_TUTORIAL_FLAG_PATH} 逐字一致。
+     * 「下次启动去第 0 章」的标记。放在安装标记的同一个目录：资源装完时该目录
+     * 必定存在，不必额外建。
      *
-     * <p>放在安装标记的同一个目录：资源装完时该目录必定存在，不必额外建。
+     * <p>文件名沿用 cn_force_tutorial.flag 没改——早先 native 侧读的是这个名字，
+     * 改名只会让升级上来的设备留下一个永远没人读的残留文件。
      */
     private static final String FORCE_TUTORIAL_FLAG =
             "/data/data/io.kamihama.totentanz/files/madomagi/magica/cn_force_tutorial.flag";
@@ -55,87 +57,10 @@ public final class CNTutorialPrompt {
     private CNTutorialPrompt() {}
 
     // ==================================================================
-    // 序章期间隐藏前端界面
-    // ==================================================================
-
-    /**
-     * 序章开始/结束时由 native 经 JNI 调用，隐藏/恢复前端界面。
-     *
-     * <h3>为什么需要</h3>
-     *
-     * 游戏主界面是 {@code org.cocos2dx.lib.Cocos2dxWebView}——一个普通的
-     * Android View，<b>盖在 GL SurfaceView 之上</b>。引擎的场景图层都画在 GL 里，
-     * 在它下面。
-     *
-     * <p>正常走剧情时，是前端 JS 自己发起跳转、顺手把自己藏起来的。我们是从
-     * native 直接压场景，前端根本不知道发生了什么，于是主界面照旧盖在最上层，
-     * 序章就成了它的背景——真机上看到的正是这个。
-     *
-     * <p>所以由我们代劳：序章图层构造时把 WebView 藏起来，析构时放回来。
-     *
-     * <p>用类名匹配而不是 {@code instanceof}：{@code Cocos2dxWebView} 在
-     * smali_classes2 里，补丁源码编译期看不到它，也不该为此建个桩。
-     *
-     * @param visible true 恢复显示，false 隐藏
-     */
-    public static void setGameUiVisible(final boolean visible) {
-        try {
-            final Activity act = RestClient.getCurrentActivity();
-            if (act == null) {
-                CNLog.w(TAG, "取不到 Activity，无法切换前端界面可见性");
-                return;
-            }
-            act.runOnUiThread(new Runnable() {
-                @Override public void run() {
-                    try {
-                        View root = act.getWindow() == null
-                                ? null : act.getWindow().peekDecorView();
-                        if (root == null) return;
-                        int n = applyVisibility(root, visible);
-                        CNLog.i(TAG, (visible ? "恢复" : "隐藏") + "前端界面，命中 "
-                                + n + " 个 WebView");
-                    } catch (Throwable t) {
-                        CNLog.e(TAG, "切换前端界面可见性失败", t);
-                    }
-                }
-            });
-        } catch (Throwable t) {
-            CNLog.e(TAG, "setGameUiVisible 失败", t);
-        }
-    }
-
-    /**
-     * 递归找 WebView 并设置可见性，返回命中个数。
-     *
-     * <p>判据是 {@code instanceof android.webkit.WebView}，不是类名前缀。
-     * 第一版按 {@code org.cocos2dx.lib.Cocos2dxWebView} 匹配，真机日志给出的
-     * 是「命中 0 个 WebView」——包里确实有 cocos 那套，但游戏主界面用的是
-     * {@code jp.f4samurai.web.WebViewImpl}（同样继承 android.webkit.WebView，
-     * 由 jp.f4samurai.web.WebViewHelper 管理）。认基类就两者通吃，将来换实现
-     * 也不会再漏。
-     */
-    private static int applyVisibility(View v, boolean visible) {
-        int hit = 0;
-        if (v instanceof android.webkit.WebView) {
-            v.setVisibility(visible ? View.VISIBLE : View.INVISIBLE);
-            CNLog.i(TAG, (visible ? "显示" : "隐藏") + " " + v.getClass().getName());
-            // 命中即返回：WebView 内部还有一堆子 View，没必要再往下钻
-            return 1;
-        }
-        if (v instanceof ViewGroup) {
-            ViewGroup g = (ViewGroup) v;
-            for (int i = 0; i < g.getChildCount(); i++) {
-                hit += applyVisibility(g.getChildAt(i), visible);
-            }
-        }
-        return hit;
-    }
-
-    // ==================================================================
     // 标记
     // ==================================================================
 
-    /** 标记是否已就位（= 下次进主页时会被改成进序章）。 */
+    /** 标记是否已就位（= 本次/下次启动进主页后会自动跳到第 0 章）。 */
     public static boolean isArmed() {
         try { return new File(FORCE_TUTORIAL_FLAG).isFile(); }
         catch (Throwable t) { return false; }
@@ -144,7 +69,7 @@ public final class CNTutorialPrompt {
     /**
      * 按选择落地标记。
      *
-     * @param on true 写出标记（进序章），false 清除标记（正常进主页）
+     * @param on true 写出标记（去第 0 章），false 清除标记（正常留在主页）
      * @return 落地后的实际状态，便于调用方据此刷新界面
      */
     public static boolean set(boolean on) {
@@ -157,7 +82,7 @@ public final class CNTutorialPrompt {
             File f = new File(FORCE_TUTORIAL_FLAG);
             File dir = f.getParentFile();
             if (dir != null && !dir.isDirectory() && !dir.mkdirs() && !dir.isDirectory()) {
-                CNLog.e(TAG, "建不出目录 " + dir + "，强制教程标记写不了");
+                CNLog.e(TAG, "建不出目录 " + dir + "，序章标记写不了");
                 return;
             }
             FileOutputStream fos = new FileOutputStream(f);
@@ -168,17 +93,17 @@ public final class CNTutorialPrompt {
             } finally {
                 try { fos.close(); } catch (Throwable ignore) {}
             }
-            CNLog.i(TAG, "已写出强制教程标记：" + f.getAbsolutePath());
+            CNLog.i(TAG, "已写出序章标记：" + f.getAbsolutePath());
         } catch (Throwable t) {
-            CNLog.e(TAG, "写强制教程标记失败", t);
+            CNLog.e(TAG, "写序章标记失败", t);
         }
     }
 
-    /** 清掉可能残留的标记，免得上次没消费干净的标记误触发。 */
+    /** 清掉标记：玩家选「否」，或者已经成功跳进第 0 章。 */
     private static void clearFlag() {
         try {
             File f = new File(FORCE_TUTORIAL_FLAG);
-            if (f.exists() && f.delete()) CNLog.i(TAG, "已清除强制教程标记");
+            if (f.exists() && f.delete()) CNLog.i(TAG, "已清除序章标记");
         } catch (Throwable ignore) {}
     }
 
