@@ -33,7 +33,10 @@
 ## 提交约定
 
 - commit 信息用**中文**；一功能一 commit；直接提交 **main**（无 PR 流程，除非明确要求）。
-- 不要把模型标识写进 commit、PR、代码注释或任何入库产物。
+- 署名固定：作者一律 `CyberNova2333 <295488275+CyberNova2333@users.noreply.github.com>`
+  （已写入本仓库的 `git config`），实际执笔的 Agent 以 `Co-authored-by` trailer
+  署名（`Claude <noreply@anthropic.com>` / `Kimi <noreply@moonshot.cn>`）。
+  历史提交已按此约定重写（2026-08，除首个提交外）。
 - 改了下载/续传/换线逻辑，跑一遍 `tools/` 下的测试套件再提交。
 
 ## 指令优先级
