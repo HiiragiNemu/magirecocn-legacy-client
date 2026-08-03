@@ -22,11 +22,11 @@ APが不足しています	AP 不足		10	js/event/EventWalpurgis/Utility.js,js/e
 を		疑似碎片	9	js/chara/CharaCompose.js,js/chara/CharaTop.js,template/campaign/box_gacha/CampaignBoxGachaTop.html,…共8处
 ミラーズトップへ	返回镜界首页		8	js/event/arenaranking/view/EventArenaConfirmView.js,js/event/arenaranking/view/EventArenaRankingView.js,js/view/arena/ArenaConfirmView.js,…共4处
 <p class="noMission ts_white">全てのミッションをクリアしました</p>		HTML片段	8	js/event/raid/EventRaidCloseTop.js,js/event/raid/EventRaidTop.js
-サポートPt	支援点数		8	js/_common/nativeCommand.js,js/_common/nativeCommand2.js,js/gacha/GachaResult.js,…共6处
+サポートPt	支援Pt		8	js/_common/nativeCommand.js,js/_common/nativeCommand2.js,js/gacha/GachaResult.js,…共6处
 マギアストーン	魔法石		8	js/gacha/GachaResult.js,js/view/gacha/GachaTopView2.js,js/view/user/APPopup.js,…共6处
 \\x3cdiv class\\x3d'noUser'\\x3e該当するプレイヤーが存在しません\\x3c/div\\x3e			8	js/view/follow/FollowSearchResultView.js,js/view/follow/FollowTopView.js
 残り			8	template/campaign/box_gacha/CampaignBoxGachaTop.html,template/campaign/summer_mission/CampaignSummerMissionTop.html,template/formation/DeckFormation.html,…共5处
-マギア		疑似碎片	7	js/_common/nativeCommand.js,js/_common/nativeCommand2.js,js/card/CardPopup.js,…共7处
+マギア	Magia	疑似碎片	7	js/_common/nativeCommand.js,js/_common/nativeCommand2.js,js/card/CardPopup.js,…共7处
 カ月前			7	js/event/arenaMission/EventArenaMissionResult.js,js/event/arenaranking/view/EventArenaResultView.js,js/quest/SupportSelect.js,…共7处
 入れ替え	替换		7	js/quest/secondPartLast/Formation.js,js/regularEvent/extermination/RegularEventExterminationFormation.js,template/patrol/PatrolLumpFormation.html,…共5处
 メモリア	记忆结晶		7	js/_common/nativeCommand.js,js/_common/nativeCommand2.js,js/view/memoria/MemoriaComposeTopView.js,…共5处
@@ -97,7 +97,7 @@ BPが不足しています。	BP 不足。		4	js/event/arenaMission/EventArenaMi
 オートバトル	自动战斗		4	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
 デスティニージェム	命运宝石		4	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
 Acceleディスク	Accele 圆盘		4	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
-ドッペル			4	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+ドッペル	魔女化身		4	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
 Chargeの効果	Charge 效果		4	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
 有償マギアストーン	付费魔法石		4	js/gacha/GachaResult.js,js/view/gacha/GachaTopView2.js
 CCが不足しています	CC 不足		4	js/chara/CharaCompose.js,js/chara/CharaComposeMagia.js,js/chara/CharaCustomize.js,…共4处
@@ -213,7 +213,7 @@ CCが不足しています	CC 不足		4	js/chara/CharaCompose.js,js/chara/CharaC
 プレイヤー名を入力してください。			2	js/util/TutorialUtil.js,template/top/TopPage.html
 その他			2	js/user/MyPage.js,template/memoria/bulkSelectPopupView.html
 ログインボーナス			2	js/user/MyPage.js,template/loginBonus/loginBonusPopupTemp.html
-カースチップ			2	js/quest/QuestUtil.js
+カースチップ	诅咒晶片（CC）		2	js/quest/QuestUtil.js
 トップに戻る			2	js/quest/puellaHistoria/lastBattle/GroupRaid.js,js/quest/puellaHistoria/lastBattle/SingleRaid.js
 ポイント			2	js/event/EventWitch/parts/TopNativeMain.js,js/quest/puellaHistoria/lastBattle/parts/SingleRaid/NativeMain.js
 ポイント：			2	js/event/EventWalpurgis/parts/GroupRaid/NativeMain.js,js/quest/puellaHistoria/lastBattle/parts/GroupRaid/NativeMain.js
@@ -282,7 +282,7 @@ Blast Comboを決めたターンは@ダメージ量が大きくなります			2	
 魔法少女詳細画面の設定から@ディスクのデザインを変更することができます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
 すでに所持している魔法少女を再度獲得した場合@その魔法少女のデスティニージェムを獲得できます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
 デスティニージェムは魔法少女の魔力解放に使用します@魔力解放をおこなうとメモリア装備枠が増加します			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
-マギアチップ			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
+マギアチップ	魔法碎片		2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
 デスティニージェムはマギアチップに変換できます@マギアチップはショップでアイテムと交換できます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
 ターゲットは3枚のディスクを選択する際に@毎回変更することができます			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
 アクセルディスクで最初に攻撃すると@以降のディスクでマギアゲージが溜まりやすくなります			2	js/_common/nativeCommand.js,js/_common/nativeCommand2.js
@@ -520,7 +520,7 @@ TOPへ移動			2	template/regularEvent/groupBattle/RegularEventGroupBattleRankin
 <br><br><span class="c_red selectCaution">※Lv、エピソードLvが最大の魔法少女が選択されています。<br>これ以上EXP、エピソードPtを入手することはできません。</span>		HTML片段	1	js/event/training/EventTrainingTop.js
 <br><br><span class="c_red selectCaution">※Lvが最大の魔法少女が選択されています。<br>これ以上EXPを入手することはできません。</span>		HTML片段	1	js/event/training/EventTrainingTop.js
 <br><br><span class="c_red selectCaution">※エピソードLvが最大の魔法少女が選択されています。<br>これ以上エピソードPtを入手することはできません。</span>		HTML片段	1	js/event/training/EventTrainingTop.js
-ー		疑似碎片	1	js/event/singleraid/EventSingleRaidTop.js
+ー	ー	疑似碎片	1	js/event/singleraid/EventSingleRaidTop.js
 チャレンジエリア			1	js/event/singleraid/EventSingleRaidTop.js
 章 エリア			1	js/event/singleraid/EventSingleRaidTop.js
 時間経過の為、対戦相手に変更がありました。\\x3cbr\\x3eミラーズトップに戻ります			1	js/event/arenaranking/view/EventArenaConfirmView.js
