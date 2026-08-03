@@ -121,6 +121,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('root', help='含 js/ 与 template/ 的前端根目录')
     ap.add_argument('table', help='对照表 TSV')
+    ap.add_argument('--overrides', help='按文件的译文覆盖表（见 i18n/overrides.tsv）')
     ap.add_argument('--dry-run', action='store_true', help='只报告，不落盘')
     ap.add_argument('--out', help='改动文件的清单落到这个文件（供打包用）')
     args = ap.parse_args()
@@ -138,6 +139,19 @@ def main():
         return 1
     print('对照表 %d 条译文' % len(table))
 
+    # 按文件的覆盖：同一原文在不同界面含义不同时用它。
+    # 例：サポート 在 charaType 映射里是角色类型「辅助」，在好友支援语境里是
+    # 「支援」——包里恰好一半一半，全局表按精确原文索引表达不了，硬选一个必错一半。
+    overrides = []
+    if args.overrides and os.path.isfile(args.overrides):
+        for line in open(args.overrides, encoding='utf-8'):
+            if line.startswith('#'):
+                continue
+            col = line.rstrip('\n').split('\t')
+            if len(col) >= 3 and col[0] and col[1] and col[2]:
+                overrides.append((col[0], col[1], col[2]))
+        print('按文件的覆盖 %d 条' % len(overrides))
+
     stat = {}
     changed = []
     for cur, _dirs, files in os.walk(args.root):
@@ -149,10 +163,16 @@ def main():
                 orig = open(path, encoding='utf-8', errors='strict').read()
             except (OSError, UnicodeDecodeError):
                 continue
-            new = apply_html(orig, table, stat) if name.endswith('.html') \
-                else apply_js(orig, table, stat)
+            rel = os.path.relpath(path, args.root).replace(os.sep, '/')
+            eff = table
+            hit = [(s_, d_) for pre, s_, d_ in overrides if rel.startswith(pre)]
+            if hit:
+                eff = dict(table)
+                eff.update(hit)
+            new = apply_html(orig, eff, stat) if name.endswith('.html') \
+                else apply_js(orig, eff, stat)
             if new != orig:
-                changed.append(os.path.relpath(path, args.root))
+                changed.append(rel)
                 if not args.dry_run:
                     open(path, 'w', encoding='utf-8').write(new)
 
