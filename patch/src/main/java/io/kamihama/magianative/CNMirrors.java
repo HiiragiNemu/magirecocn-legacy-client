@@ -27,7 +27,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 重试都会换到下一条健康线路，从而实现自动换线。
  *
  * <p>线路只影响「从哪里取字节」。安装完成标记（marker）里记录的始终是规范 URL
- * （{@code DEFAULT_BASE + 文件名}），所以换线不会让既有安装失效、也不会导致
+ * （{@code CNDownloaderFix.RESOURCE_BASE_URL + 文件名}——那是身份标识，不是
+ * 实际下载地址），所以换线/换默认线路不会让既有安装失效、也不会导致
  * 已装好的文件被重新下载。
  */
 public final class CNMirrors {
@@ -37,8 +38,8 @@ public final class CNMirrors {
     /** 线路列表地址。 */
     public static final String MIRRORS_URL = "https://api.example.test/legacy/config.json";
 
-    /** 内置兜底线路：与改版前使用的地址一致。 */
-    public static final String DEFAULT_BASE = "https://assets.example.test/";
+    /** 内置兜底线路：拉不到线路表时的默认可用下载路径。 */
+    public static final String DEFAULT_BASE = "https://r2.assets.example.test/";
 
     private static final int CONNECT_TIMEOUT_MS = 15000;
     private static final int READ_TIMEOUT_MS    = 30000;
