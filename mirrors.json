@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "updated": "2026-08-03T12:30:00Z",
-  "comment": "客户端从 https://assets.example.test/mirrors.json 读取本文件。settings 与 mirrors 都是可选的：settings 缺省时用客户端内置默认值；mirrors 为空或整个文件拉取失败时，客户端回退到内置默认线路 https://assets.example.test/ ，行为与加入换线功能之前一致。client 段也是可选的：缺省时客户端跳过版本检查。",
+  "comment": "客户端从 https://api.example.test/legacy/config.json 读取本文件。settings 与 mirrors 都是可选的：settings 缺省时用客户端内置默认值；mirrors 为空或整个文件拉取失败时，客户端回退到内置默认线路 https://assets.example.test/ ，行为与加入换线功能之前一致。client 段也是可选的：缺省时客户端跳过版本检查。",
 
   "settings": {
     "chunks": 4,

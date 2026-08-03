@@ -35,7 +35,7 @@ public final class CNMirrors {
     private static final String TAG = "MagiaCNMirrors";
 
     /** 线路列表地址。 */
-    public static final String MIRRORS_URL = "https://assets.example.test/mirrors.json";
+    public static final String MIRRORS_URL = "https://api.example.test/legacy/config.json";
 
     /** 内置兜底线路：与改版前使用的地址一致。 */
     public static final String DEFAULT_BASE = "https://assets.example.test/";
