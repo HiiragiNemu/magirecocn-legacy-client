@@ -69,8 +69,23 @@ def pick_zh_cn(value):
 
 
 def parse_switch(text):
-    """从 #switch 正文里抠出 {日文: 中文}。"""
+    """从 #switch 正文里抠出 {日文: 中文}。
+
+    两种写法都要认：
+      · 分行写（效果中文/素材中文那样，每行一个 `| 日 = 中`）
+      · 挤在一行（角色类型那样，`|ヒール=治疗|バランス=均衡|…`）
+    只处理分行的话，角色类型那张表会整个漏掉——而它恰好是界面上「均衡/攻击/
+    防御/辅助/极限/究极」这些天天见的词。
+    """
     out = {}
+    # 先把挤在一行的拆开：只在「|键=值」这种形态处断，避免误伤值里的竖线
+    for m in re.finditer(r'\|\s*([^|=\n{}]{1,40}?)\s*=\s*([^|\n{}]{1,60})', text):
+        k, v = m.group(1).strip(), pick_zh_cn(m.group(2).strip())
+        if not k or not v or k.startswith('#') or v.startswith('#'):
+            continue
+        if '{{' in v or '[[' in v or '&#' in v:
+            continue
+        out.setdefault(k, v)
     for line in text.splitlines():
         line = line.strip()
         if not line.startswith('|') or '=' not in line:
@@ -83,10 +98,13 @@ def parse_switch(text):
         key, val = key.strip(), pick_zh_cn(val.strip())
         if not key or not val or key.startswith('#') or key.startswith('{'):
             continue
-        # 值里若还残留模板/参数语法，说明这条不是纯文本映射，跳过
-        if '{{' in val or '}}' in val:
+        # 值里若还残留模板/参数/实体语法，说明这条不是纯文本映射，跳过。
+        # `&#10;` 这一条尤其要拦：角色类型模板里第一个 #switch 是鼠标悬停的
+        # 提示浮层（「バランス&#10;攻击时获得MP：90%…」），真正的译名在最后一个
+        # #switch 里。不拦的话行式解析会用提示文本把译名覆盖掉。
+        if '{{' in val or '}}' in val or '[[' in val or '&#' in val:
             continue
-        out[key] = val
+        out.setdefault(key, val)
     return out
 
 
@@ -102,7 +120,7 @@ def main():
         return 2
 
     # 这几个模板是规范点名的对照表来源
-    WANT = re.compile(r'^Template:(效果|素材|记忆|声优|画师|学校|原案监修)中文$')
+    WANT = re.compile(r'^Template:((效果|素材|记忆|声优|画师|学校|原案监修)中文|角色类型)$')
     glossary = {}
     per = {}
     with gzip.open(arch, 'rt', encoding='utf-8') as f:
@@ -120,6 +138,11 @@ def main():
             # 先到先得：与站方「禁止无故修改已长期使用的译名」的原则一致，
             # 同一个词在多张表里出现时不互相覆盖
             for k, v in m.items():
+                # 译文与原文相同的条目没有意义（模板里确实有，例如
+                # 角色类型第一个 #switch 的「ラストコネクト = ラストコネクト」），
+                # 留着只会在回填时做一次无用替换
+                if k == v:
+                    continue
                 glossary.setdefault(k, v)
 
     # ── 第二个来源：重定向 ──

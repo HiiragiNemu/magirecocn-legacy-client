@@ -16,8 +16,10 @@
 
 ## 拒绝会破坏结构的译文
 
-译文里若出现引号（" 或 '）、反斜杠、尖括号，直接拒绝并报错，不做转义硬塞。
-中文 UI 文案本来就不该有这些；出现了多半是填表时手滑，当场拦下比事后排查便宜。
+判据不是「译文里不许有危险字符」，而是**不许引入原文没有的**，外加转义序列的
+个数必须与原文一致。第一版一刀切禁反斜杠，把一批合法译文全拦了——原文形如
+`…できませんでした。\\x3cbr\\x3eトップページに戻ります。`，那个 `\\x3cbr\\x3e`
+是 JS 源码里写死的 `<br>`，译文当然得原样带着，否则换行就没了。
 
 ## 幂等
 
@@ -31,8 +33,6 @@ import argparse
 import os
 import re
 import sys
-
-BAD_IN_TRANSLATION = re.compile(r'["\'\\<>]')
 
 JS_LIT = re.compile(r'(["\'])((?:(?!\1)[^\\]|\\.)*)\1')
 HTML_TEXT = re.compile(r'>([^<>{}]*)<')
@@ -51,12 +51,39 @@ def load_table(path):
             if len(col) < 2 or not col[1]:
                 continue
             src = col[0].replace('\\t', '\t').replace('\\n', '\n').replace('\\\\', '\\')
-            dst = col[1]
-            if BAD_IN_TRANSLATION.search(dst):
-                bad.append((lineno, src, dst))
+            dst = col[1].replace('\\t', '\t').replace('\\n', '\n').replace('\\\\', '\\')
+            why = unsafe_reason(src, dst)
+            if why:
+                bad.append((lineno, src, dst, why))
                 continue
             table[src] = dst
     return table, bad
+
+
+def unsafe_reason(src, dst):
+    """译文若会破坏结构就说明原因，安全则返回 None。
+
+    判据不是「译文里不许有危险字符」，而是**不许引入原文没有的**。
+
+    第一版是一刀切禁反斜杠，结果把一批合法译文全拦了：原文形如
+    `…できませんでした。\\x3cbr\\x3eトップページに戻ります。`——那个
+    `\\x3cbr\\x3e` 是 JS 源码里写死的 `<br>` 转义，译文当然也得原样带着它，
+    否则换行就没了。
+
+    所以逐类比对：引号、反斜杠、尖括号，只有在**原文里也有**时才准出现。
+    这样既拦得住手滑引入的破坏性字符，又不挡合法的原样保留。
+    """
+    for ch, name in (('"', '双引号'), ("'", '单引号'),
+                     ('\\', '反斜杠'), ('<', '左尖括号'), ('>', '右尖括号')):
+        if ch in dst and ch not in src:
+            return '译文引入了原文没有的%s' % name
+    # 转义序列的个数也要对得上：少一个 \x3cbr\x3e 就少一个换行，
+    # 多一个则可能拼出意料之外的标签
+    for esc in (r'\x3c', r'\x3e', r'\x26', r'\n', r'\t'):
+        if src.count(esc) != dst.count(esc):
+            return '转义序列 %s 的个数与原文不一致（原文 %d，译文 %d）' % (
+                esc, src.count(esc), dst.count(esc))
+    return None
 
 
 def apply_js(text, table, stat):
@@ -100,10 +127,11 @@ def main():
 
     table, bad = load_table(args.table)
     if bad:
-        print('✘ 以下译文含会破坏结构的字符（引号/反斜杠/尖括号），请先改掉：',
+        print('✘ 以下译文会破坏结构（引入了原文没有的字符，或转义个数对不上），请先改掉：',
               file=sys.stderr)
-        for lineno, src, dst in bad[:20]:
-            print('   第%d行  %s → %s' % (lineno, src[:30], dst[:30]), file=sys.stderr)
+        for lineno, src, dst, why in bad[:20]:
+            print('   第%d行  %s → %s' % (lineno, src[:26], dst[:26]), file=sys.stderr)
+            print('           %s' % why, file=sys.stderr)
         return 1
     if not table:
         print('对照表里没有已填写的译文', file=sys.stderr)
