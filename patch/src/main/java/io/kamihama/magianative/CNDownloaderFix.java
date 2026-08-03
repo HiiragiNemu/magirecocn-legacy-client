@@ -163,8 +163,9 @@ public final class CNDownloaderFix {
                             // 浮层建不出来（详见 CNHotUpdateCheck 的类注释），
                             // 现在改由 Java 侧自己跑，时机与等待条件都可控。
                             CNHotUpdateCheck.start();
-                            // 玩家选过「看序章」的话，等前端起来后把它导航过去
-                            CNPrologueNav.startIfPending();
+                            // 玩家选过「教程战斗」的话无需 Java 侧动作：标记由
+                            // native 在引擎首个「进主页」命令上消费（MagiaLegacy
+                            // 的 pushSceneTop 闸门），比前端导航可靠得多。
                             return;
                         }
                         CNLog.i(TAG, "triggerInstaller: flag 不存在，由 Java 侧启动安装器");

@@ -26,10 +26,11 @@
 // 去掉了 cnv 专有的部分：
 //   - setURI 代理后端（ProxyBackends 是复兴客户端自己的服务端设施）
 // 保留资源下载流水线，并补回 libcn_hook 特有的「叫起 Java 安装器」触发。
-// 强制新手教程也去掉了：序章是**前端 JS 驱动**的流程，native 只是它的播放器
-// （PrologueSceneLayer::notifyJs 把控制权经 WebViewManager::evaluateJS 交回前端）。
-// 从 native 硬压场景只能放出战斗、放不出剧情，已由真机验证；改为 Java 侧把
-// 前端导航到游戏自己的第 0 章页面，见 CNScene0Nav。
+// 强制新手教程曾经走过两个版本：v1 从 native 拦 pushSceneTop 改调
+// pushScenePrologue（真机上只放得出战斗、放不出剧情）；v2 改走前端路由播
+// 完整序章（CNPrologueNav），完整序章太难维护，弃用。现在是 v3：复活 v1
+// 的 native 入口、**只触发教程战斗**，并修掉 v1 的 bug——pushScenePrologue
+// 的 JSON 补回 callback 字段（见下文「强制教程战斗」小节的分析）。
 //
 // ## 端点重定向（原 libuwasa 的核心职责）已接管
 //
@@ -110,6 +111,7 @@ static JavaVM* gJvm = nullptr;
 //     E/MagiaCN_Legacy: [UrlConfig] 找不到 CNDownloaderFix
 static jclass gClsDownloaderFix   = nullptr; // io.kamihama.magianative.CNDownloaderFix
 static jclass gClsRestClient      = nullptr; // io.kamihama.magianative.RestClient
+static jclass gClsTutorialPrompt  = nullptr; // io.kamihama.magianative.CNTutorialPrompt
 
 namespace cocos2d {
     struct Data { unsigned char* _bytes; ssize_t _size; };
@@ -120,6 +122,13 @@ namespace cocos2d {
 // 一致（已逐字节核对）。
 static const std::string FLAG_PATH =
     "/data/data/io.kamihama.totentanz/files/madomagi/magica/cn_base_done.flag";
+
+// 强制教程战斗标记。由 Java 侧 CNTutorialPrompt 在玩家选「是」时写出，
+// 我们在引擎首个「进主页」命令上消费它。放在与安装标记同一个目录，
+// 那个目录在资源装完时必定存在，不必额外 mkdir。
+// ⚠ 必须与 CNTutorialPrompt.FORCE_TUTORIAL_FLAG 逐字一致。
+static const std::string FORCE_TUTORIAL_FLAG_PATH =
+    "/data/data/io.kamihama.totentanz/files/madomagi/magica/cn_force_tutorial.flag";
 
 // ─── 原函数指针 ──────────────────────────────────────────
 static bool (*checkParseJsonOld)(void*, const cocos2d::Data&) = nullptr;
@@ -145,6 +154,14 @@ static void (*setMaxConnectionNumOld)(void*, int)    = nullptr;
 
 // 端点重定向：返回 const std::string&，故原型返回 const std::string*
 static const std::string* (*urlConfigResourceOld)(void*, int) = nullptr;
+
+// 强制教程战斗：拦「进主页」，改走引擎自己的序章场景
+static void (*pushSceneTopOld)(void*, const std::string&)     = nullptr;
+static void (*notifyJsOld)(void*, const std::string&)         = nullptr;
+static void (*prologueCtorOld)(void*, void*)                  = nullptr;
+static void (*prologueDtorOld)(void*)                         = nullptr;
+// 只取地址、不装 hook：命中标记时直接调它
+static void (*pushScenePrologueFn)(void*, const std::string&) = nullptr;
 
 // ─── info/layer 映射 ─────────────────────────────────────
 static std::unordered_map<void*, std::function<void()>> g_infoCallbackMap;
@@ -426,6 +443,213 @@ static void mainSceneOnErrNew(void* a, void* b, int code) {
     mainSceneOnErrOld(a, b, code);
 }
 
+// ─── 强制教程战斗 ────────────────────────────────────────
+//
+// 复刻服对任何账号都下发「已通关」的存档，引擎的正常流程永远不会播教程。
+// 唯一可靠的入口是拦下前端那条「进主页」命令（web::SceneCommand::pushSceneTop），
+// 命中标记时改为进序章场景。
+//
+// ## 这版（v3）与历史两版的关系
+//
+// v1 从 native 压序章场景，真机上只放得出最后那场战斗、剧情文字一句都没有。
+// 当时把这判定为失败，于是有了 v2（Java 侧前端路由播完整序章，CNPrologueNav）。
+// v2 的完整序章太难维护，弃用。维护者要的就是 v1 那个「只有战斗」的行为，
+// 所以 v3 复活 v1 的 native 入口，并修掉它真正的 bug：
+//
+// ## v1 的 bug：pushScenePrologue 的 JSON 缺 callback 字段
+//
+// v1 调的是 pushScenePrologue("{\"beginningId\":\"OP020\"}")。反汇编
+// PrologueSceneLayerInfo 的构造（0xd1ecbc 起）可知 JSON 认两个字段：
+// "beginningId" 与 "callback"，缺省都有兜底——callback 的兜底是一个单字符
+// 的串。于是 PrologueSceneLayer::notifyJs 每次经 WebViewManager::evaluateJS
+// 下发的语句都形如  x("OP020");  ——页面里没有这个函数，句句话都是
+// ReferenceError，前端从头到尾收不到任何段通知，包括最后的完成信号。
+//
+// 修复是给上 callback："nativeCallback"。它是前端 js/_common/base.js 里
+// 定义的全局函数（引擎二进制里也硬编码着这个名字），会把参数转发成
+// #commandDiv 的 jQuery 事件。我们这条路上没有任何监听者——前端真正播剧情
+// 的监听只在新号 OP000 流程里才注册——所以剧情段通知全部空转，只有战斗
+// （native 自驱）照常播放；这正是「只触发教程战斗」。
+//
+// ## 为什么调 pushScenePrologue 而不是自己 new 一个 Info
+//
+// （旧 native 层） 那边是逐字段复刻调试菜单「播放序章」的构造：
+//     new PrologueSceneLayerInfo(0x58 字节) → ctor(9, "OP020", "{}")
+//     → SceneLayerManager::getInstance() → 虚表 [vptr+0x18] 压栈
+// 这套在本仓库的 arm64 引擎上逐字节核对过，是对的（0xd1f054 起那段）。
+// 但它把**结构体大小**和**虚表下标**写死了，而这两个值在 armeabi-v7a 上
+// 必然不同（指针 4 字节），得再逆一遍 arm32 才敢用。
+//
+// 引擎自己的 web::SceneCommand::pushScenePrologue(const std::string& json)
+// 干的就是同一件事——解析 json，然后走上面那段构造。两个 ABI 都导出这个
+// 符号，直接调它就把「结构体多大、虚表第几项」整件事交还给引擎，一份代码
+// 两个 ABI 通用。
+//
+// ## 为什么要一直吞掉 pushSceneTop，而不是只吞第一次
+//
+// 第一版只在命中标记时把首个 pushSceneTop 换成序章，之后放行。真机结果是
+// **序章被压在主界面后面，成了主界面的背景**。
+//
+// 原因在 SceneLayerManager::pushSceneLayer（0xb82610）：它不按 ESceneLayerType
+// 排层序，只是把任务塞进一个 deque，之后按**入队顺序**处理。也就是说后 push
+// 的盖在先 push 的上面。序章（type=9）先入队，随后又来的 pushSceneTop
+// （type=11）后入队，于是主页盖在序章上。
+//
+// 所以：从强制那一刻起，到序章图层真正销毁为止，期间所有 pushSceneTop 一律
+// 吞掉。销毁时把最后吞掉的那次原样补放回去，保证序章结束后能回到主页——
+// 我们把中间的 Top 全吞了，栈里没有主页可以退回去。
+static std::atomic<bool> g_tutorialForced{false};
+// 强制教程进行中：置位于强制那一刻，清除于 PrologueSceneLayer 析构。
+// 必须比「序章图层存在」更宽——push 只是入队，图层要等队列被处理才构造，
+// 这中间的窗口同样不能放主页进来。
+static std::atomic<bool> g_tutorialActive{false};
+// 被吞掉的最后一次 pushSceneTop，供序章结束后原样补放
+static std::mutex   g_savedTopMutex;
+static void*        g_savedTopSelf = nullptr;
+static std::string  g_savedTopArg;
+static bool         g_savedTopValid = false;
+
+// 消费标记：存在则删除（一次性）并返回 true。
+// 删除是关键——只强制一次；序章结束后的 pushSceneTop 必须放行，
+// 否则就卡在序章里出不来。
+static bool consumeForceTutorial() {
+    if (!fileExists(FORCE_TUTORIAL_FLAG_PATH)) return false;
+    if (::remove(FORCE_TUTORIAL_FLAG_PATH.c_str()) != 0) {
+        // 删不掉就不能强制——否则每次进主页都会被打回序章，玩家永远进不去。
+        LOGE("[Tutorial] 标记删不掉（%s），本次不强制，以免陷入死循环",
+             FORCE_TUTORIAL_FLAG_PATH.c_str());
+        return false;
+    }
+    return true;
+}
+
+static void saveTop(void* self, const std::string& arg) {
+    std::lock_guard<std::mutex> lk(g_savedTopMutex);
+    g_savedTopSelf  = self;
+    g_savedTopArg   = arg;
+    g_savedTopValid = true;
+}
+
+static void pushSceneTopNew(void* self, const std::string& arg) {
+    // 教程进行中：一律吞掉，别让主页盖在序章上面（理由见上）
+    if (g_tutorialActive.load()) {
+        LOGI("[Tutorial] 教程进行中，吞掉 pushSceneTop(arg=%s)", arg.c_str());
+        saveTop(self, arg);
+        return;
+    }
+    // ⚠ 绝不在「与引擎无关的时刻」自己往队列里塞场景跳转——那才会和引擎
+    // 正在进行的切场景撞车（两条切换命令都入了队，谁后处理谁盖上面，白屏
+    // 就是这么来的）。本函数只在引擎**自己**发起 pushSceneTop 的这一刻被
+    // 调用，我们把这条命令**原替换**成 pushScenePrologue：同一时刻队列里
+    // 永远只有一条切换命令，不存在撞车窗口。引擎侧 SceneCommand 全部走
+    // 游戏主线程的 deque（见 0xb82610），入队动作本身是串行的。
+    if (pushScenePrologueFn && consumeForceTutorial()) {
+        // callback=nativeCallback 是 v1 缺的字段，缺了它 notifyJs 下发的
+        // JS 全是残的，前端收不到任何段通知（见本节开头的 bug 分析）。
+        static const std::string kPrologueArg =
+            "{\"beginningId\":\"OP020\",\"callback\":\"nativeCallback\"}";
+        LOGI("[Tutorial] 命中强制教程标记 → 改走 pushScenePrologue(OP020)"
+             "（原 pushSceneTop arg=%s）", arg.c_str());
+        saveTop(self, arg);
+        g_tutorialForced.store(true);
+        g_tutorialActive.store(true);
+        pushScenePrologueFn(self, kPrologueArg);
+        return;
+    }
+    LOGI("[SceneCmd] pushSceneTop(arg=%s) 放行", arg.c_str());
+    pushSceneTopOld(self, arg);
+}
+
+// 切换前端界面（Cocos2dxWebView）的可见性。
+//
+// 主界面是个盖在 GL SurfaceView 之上的 Android WebView，引擎的场景图层都画在
+// 它下面。正常走剧情时是前端 JS 自己发起跳转、顺手把自己藏起来；我们从 native
+// 直接压场景，前端不知情，于是主界面照旧盖在最上层，序章成了它的背景。
+// 由我们代劳：序章开始时藏，结束时放回来。
+static void setGameUiVisible(bool visible) {
+    if (!gClsTutorialPrompt) {
+        LOGE("[Tutorial] CNTutorialPrompt 全局引用缺失，无法隐藏前端界面");
+        return;
+    }
+    bool attached = false;
+    JNIEnv* env = attachEnv(attached);
+    if (!env) { LOGE("[Tutorial] 拿不到 JNIEnv"); return; }
+    jmethodID mid = env->GetStaticMethodID(gClsTutorialPrompt, "setGameUiVisible", "(Z)V");
+    if (mid) {
+        env->CallStaticVoidMethod(gClsTutorialPrompt, mid, (jboolean)visible);
+        if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
+    } else {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        LOGE("[Tutorial] 找不到 setGameUiVisible(Z)V");
+    }
+    if (attached) gJvm->DetachCurrentThread();
+}
+
+// 序章图层的构造/析构。析构是「序章真的结束了」最可靠的信号——比 notifyJs
+// 可靠，后者在序章过程中可能发多次。
+static void prologueCtorNew(void* _this, void* info) {
+    prologueCtorOld(_this, info);
+    bool forced = g_tutorialForced.load();
+    LOGI("[Tutorial] PrologueSceneLayer 已构造 _this=%p（forced=%d）", _this, (int)forced);
+    if (forced) setGameUiVisible(false);
+}
+
+static void prologueDtorNew(void* _this) {
+    bool wasActive = g_tutorialActive.exchange(false);
+    LOGI("[Tutorial] PrologueSceneLayer 析构 _this=%p（active=%d）",
+         _this, (int)wasActive);
+    if (g_tutorialForced.load()) setGameUiVisible(true);   // 序章完了，前端界面放回来
+    if (wasActive) {
+        // 把吞掉的那次 pushSceneTop 补放回去。序章期间的 Top 全被我们吞了，
+        // 栈里没有主页可退，不补的话玩家会停在空场景上。
+        //
+        // 这里只是往 SceneLayerManager 的 deque 里再排一个任务（pushSceneLayer
+        // 就是个入队函数，见 0xb82610），引擎自己也常在图层里 push 别的图层，
+        // 不是重入路径。
+        void* self = nullptr;
+        std::string arg;
+        bool ok = false;
+        {
+            std::lock_guard<std::mutex> lk(g_savedTopMutex);
+            if (g_savedTopValid) { self = g_savedTopSelf; arg = g_savedTopArg; ok = true; }
+            g_savedTopValid = false;
+        }
+        if (ok && pushSceneTopOld) {
+            LOGI("[Tutorial] 序章结束，补放 pushSceneTop(arg=%s)", arg.c_str());
+            pushSceneTopOld(self, arg);
+        } else {
+            LOGE("[Tutorial] 序章结束但没有可补放的 pushSceneTop，可能停在空场景");
+        }
+    }
+    prologueDtorOld(_this);
+}
+
+// 序章向前端发通知。无条件记录：callback 修好之后这些信号应该真的到达前端，
+// 日志里要能看到 OP 段与最终的「prologue」完成信号逐个过去。
+static void notifyJsNew(void* _this, const std::string& arg) {
+    LOGI("[Tutorial::notifyJs] arg=%s", arg.c_str());
+    notifyJsOld(_this, arg);
+}
+
+// 解析 pushScenePrologue 的地址。它在两个 ABI 的 .dynsym 里都是
+// GLOBAL DEFAULT，普通 dlsym 就能拿到，不必动用 shadowhook 的符号解析。
+static void resolvePrologueEntry(const char* lib) {
+    void* h = ::dlopen(lib, RTLD_NOW | RTLD_NOLOAD);   // 引擎早已加载，只取句柄
+    if (!h) h = ::dlopen(lib, RTLD_NOW);
+    if (!h) { LOGE("[Tutorial] dlopen(%s) 失败：%s", lib, ::dlerror()); return; }
+    void* p = ::dlsym(h,
+        "_ZN3web12SceneCommand17pushScenePrologueERKNSt6__ndk1"
+        "12basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE");
+    if (p) {
+        pushScenePrologueFn =
+            reinterpret_cast<void(*)(void*, const std::string&)>(p);
+        LOGI("[Tutorial] pushScenePrologue = %p", p);
+    } else {
+        LOGE("[Tutorial] 找不到 pushScenePrologue，强制教程将不可用");
+    }
+    ::dlclose(h);
+}
+
 // ─── 从 libuwasa 逆向移植的两个（其余一概不移植）──────────
 //
 // ADX2 在初始化时查硬件采样率；部分设备返回 44100，导致内部重采样后音调
@@ -459,6 +683,7 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
         struct { const char* name; jclass* slot; } want[] = {
             { "io/kamihama/magianative/CNDownloaderFix",   &gClsDownloaderFix  },
             { "io/kamihama/magianative/RestClient",        &gClsRestClient     },
+            { "io/kamihama/magianative/CNTutorialPrompt",  &gClsTutorialPrompt },
         };
         for (size_t i = 0; i < sizeof(want) / sizeof(want[0]); i++) {
             jclass local = env->FindClass(want[i].name);
@@ -549,6 +774,32 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     H("_ZNK9UrlConfig8resourceENS_8Resource4TypeE",
       (void*)urlConfigResourceNew, (void**)&urlConfigResourceOld,
       "UrlConfig::resource(端点重定向)");
+
+    // ── 强制教程战斗：拦「进主页」，命中标记时改走序章场景 ──
+    // 先解析 pushScenePrologue：拿不到就别装 hook，省得白拦一道。
+    resolvePrologueEntry(LIB);
+    if (pushScenePrologueFn) {
+        H("_ZN3web12SceneCommand12pushSceneTopERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
+          (void*)pushSceneTopNew, (void**)&pushSceneTopOld,
+          "SceneCommand::pushSceneTop(强制教程闸门)");
+        // 序章完成信号日志。替换编号是 NS0_ 而非 NS1_：Itanium mangling 的
+        // S_/S0_/S1_ 按首次出现顺序编号，本符号在 std::__ndk1 之前只出现过
+        // PrologueSceneLayer 一个名字（S_），故 std::__ndk1 是 S0_。
+        // 对照 pushSceneTop 用 NS1_ 才对（web=S_、web::SceneCommand=S0_、
+        // std::__ndk1=S1_）——两者不能照抄，写错了查不到符号、hook 静默失效。
+        H("_ZN18PrologueSceneLayer8notifyJsERKNSt6__ndk112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE",
+          (void*)notifyJsNew, (void**)&notifyJsOld,
+          "PrologueSceneLayer::notifyJs(教程信号日志)");
+        // 序章图层的生存期。析构是「序章真的结束了」最可靠的信号；D1 与 D2
+        // 在两个 ABI 上都是同一个地址（别名），删除型析构 D0 也走 D2，
+        // 所以只 hook D2 就能覆盖全部销毁路径。
+        H("_ZN18PrologueSceneLayerC1EP22PrologueSceneLayerInfo",
+          (void*)prologueCtorNew, (void**)&prologueCtorOld,
+          "PrologueSceneLayer::ctor");
+        H("_ZN18PrologueSceneLayerD2Ev",
+          (void*)prologueDtorNew, (void**)&prologueDtorOld,
+          "PrologueSceneLayer::dtor(序章结束闸门)");
+    }
 
     // 尽早发起 SNAA 查询：引擎很快就会问资源地址。取不到就保持 ready=false，
     // resource() 会一路回落到原版，不会卡住也不会崩。
