@@ -96,20 +96,26 @@ public final class CNVersionCheck {
     private static void runInner() {
         CNLog.i(TAG, "客户端版本检查开始");
 
-        String local = localVersion();
-        if (local == null) {
-            // 读不到本端版本就没法比较——放行，别误伤。
-            CNLog.w(TAG, "拿不到本端版本，跳过版本检查");
-            CNHotUpdateCheck.start();
-            return;
-        }
-
+        // 先等界面。这不只是为了弹窗——libMagiaLegacy 是在 Cocos2dxActivity
+        // 启动时才链式加载的（onLoadNativeLibraries），本线程由
+        // MyApplication.onCreate 拉起，那时 native 库还没就位，native 方法一
+        // 调就是 UnsatisfiedLinkError。等到带 decorView 的 Activity 出现，
+        // 库必然已加载（第一版就踩了这个时序坑：版本读取永远失败，fail-open
+        // 把检查整个吞了，表现为「云端版本更高也不弹窗」）。
         Activity act = awaitUsableActivity();
         if (act != null) {
             showOverlay(act);
             CNCNDownloadUI.updateSimple("检查客户端版本", "正在检查客户端版本…", 0);
         } else {
             CNLog.w(TAG, "等不到可用的 Activity，本次版本检查将无浮层运行");
+        }
+
+        String local = awaitClientVersion();
+        if (local == null) {
+            // 读不到本端版本就没法比较——放行，别误伤。
+            CNLog.w(TAG, "拿不到本端版本，跳过版本检查");
+            CNHotUpdateCheck.start();
+            return;
         }
 
         JSONObject client;
@@ -154,14 +160,26 @@ public final class CNVersionCheck {
     // ==================================================================
 
     /** 本端版本；读不到返回 null（放行信号）。 */
-    private static String localVersion() {
-        try {
-            String v = nativeClientVersion();
-            if (v != null && !v.isEmpty()) return v;
-            CNLog.w(TAG, "native 客户端版本为空");
-        } catch (Throwable t) {
-            CNLog.w(TAG, "读不到 native 客户端版本（native 库未提供？）: " + t);
+    private static String awaitClientVersion() {
+        // libMagiaLegacy 在引擎 Activity 启动时才加载，第一次调用多半撞上
+        // UnsatisfiedLinkError——重试吸收掉这段启动窗口；真没有（比如库没
+        // 带这个函数）才放行。
+        for (int i = 0; i < 40; i++) {   // 40 × 500ms = 20 秒上限
+            try {
+                String v = nativeClientVersion();
+                if (v != null && !v.isEmpty()) {
+                    if (i > 0) CNLog.i(TAG, "读到本端版本 " + v + "（第 " + (i + 1) + " 次）");
+                    return v;
+                }
+            } catch (UnsatisfiedLinkError e) {
+                if (i == 0) CNLog.i(TAG, "native 库尚未加载，等待就位…");
+            } catch (Throwable t) {
+                CNLog.w(TAG, "读 native 版本出错: " + t);
+                return null;
+            }
+            sleep(500L);
         }
+        CNLog.w(TAG, "等满 20 秒仍读不到 native 客户端版本");
         return null;
     }
 
