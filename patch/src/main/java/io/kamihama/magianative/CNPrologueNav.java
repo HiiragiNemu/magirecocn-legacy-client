@@ -142,19 +142,26 @@ public final class CNPrologueNav {
         CNLog.i(TAG, "主页已稳定，" + SETTLE_MS + "ms 后开始");
         sleep(SETTLE_MS);
 
-        // 第一步：把前端自己的 tutorialId 改成 OP000。
-        // a.storage.user 是 Backbone 模型，纯客户端状态，改它不碰服务端。
+        // 设 tutorialId 与跳转**必须在同一次执行里**，而且要用同步形式取模块。
+        //
+        // 上一版分成两次 evaluateJavascript，并且用了 require([...], cb) 的
+        // 异步形式——RequireJS 即使模块已加载也会异步回调。于是两件事的先后
+        // 完全不保证，读回的值也必然是 null。真机表现正是「跳回了标题页，
+        // 但没进序章」：hash 先变了，tutorialId 还没写上，TopPage 一 init
+        // 读到的仍是旧值。
+        //
+        // require('name') 的 CommonJS 同步形式对**已加载**的模块直接返回，
+        // backboneCommon 是全站基础模块，此刻必定已加载。
         String r = evalSync(wv,
-            "(function(){try{var d=null;require(['backboneCommon'],function(a){"
+            "(function(){try{"
+            + "var a=require('backboneCommon');"
+            + "var b=a.storage.user.get('tutorialId');"
             + "a.storage.user.set('tutorialId','" + PROLOGUE_ID + "');"
-            + "d=a.storage.user.get('tutorialId');});"
-            + "return 'set='+d;}catch(e){return 'ERR:'+e;}})()");
-        CNLog.i(TAG, "写入 tutorialId：" + r);
-
-        // 第二步：回标题页。它 init 时读 tutorialId，看到 OP000 就弹「ゲーム開始」，
-        // 确认后由 native 逐段播序章。
-        eval(wv, "(function(){try{location.hash='" + ROUTE_HASH + "';return 'OK';}"
-                 + "catch(e){return 'ERR:'+e;}})()");
+            + "var c=a.storage.user.get('tutorialId');"
+            + "location.hash='" + ROUTE_HASH + "';"
+            + "return 'before='+b+' after='+c;"
+            + "}catch(e){return 'ERR:'+e;}})()");
+        CNLog.i(TAG, "设 tutorialId 并跳转：" + r);
 
         for (int i = 0; i < CONFIRM_TRIES; i++) {
             sleep(500L);
@@ -181,8 +188,9 @@ public final class CNPrologueNav {
     private static String probe(WebView wv) {
         return evalSync(wv,
             "(function(){try{var m=document.getElementById('mainContent');"
-            + "var t='?';try{require(['backboneCommon'],function(a){"
-            + "t=a.storage.user.get('tutorialId');});}catch(e2){}"
+            // 同步形式：异步回调拿不到值，探测串里永远是 '?'
+            + "var t='?';try{t=require('backboneCommon').storage.user.get('tutorialId');}"
+            + "catch(e2){}"
             + "return String(location.href)+'|'+(m?m.childElementCount:-1)+'|tu='+t;}"
             + "catch(e){return 'ERR|-1|tu=?';}})()");
     }
