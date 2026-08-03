@@ -29,9 +29,12 @@
 
 ## 判据
 
-- **只认假名**（平假名 / 片假名）。汉字不算——中日共用，误判会把已经汉化好的
-  中文串一起抓进来。代价是纯汉字的日文串（如「戦闘」）抓不到，那部分靠人工
-  补进 TSV。
+- 默认**只认假名**（平假名 / 片假名）。汉字中日共用，拿它当判据会把已经汉化好
+  的中文串一起抓回来。
+- `--cjk` 打开后连**纯汉字**的串一起抓（`選択` `戦闘` `確認` `設定` 这类，
+  只认假名时一条都抓不到）。之所以敢这么抓：**上游那棵树本来就全是日文**，
+  里面不存在中文，除非是我们自己回填进去的。为了不把自己的译文抓回来，
+  该模式会跳过「已经作为译文出现在对照表里」的串——所以对已汉化的树重跑也安全。
 - JS 只扫**字符串字面量**（成对引号内），不扫注释与标识符。
 - HTML 扫标签之间的正文，外加 placeholder/title/alt/value 四个常见属性。
 
@@ -49,6 +52,7 @@ import sys
 from collections import Counter, defaultdict
 
 KANA = re.compile(r'[\u3040-\u30ff]')
+CJK  = re.compile(r'[\u4e00-\u9fff]')
 
 # 这些目录/文件默认排除，理由各不相同，都写在这里免得以后有人纳闷：
 #   test / Backdoor —— 调试页，要 window.isDebug 为真才注册路由，玩家看不到
@@ -116,13 +120,19 @@ def risk_of(s):
     # 判成碎片（第一版就是这么误伤的，95 处的「閉じる」被挡在批量之外）。
     if len(s) <= 3 and re.fullmatch(r'[぀-ヿ]+', s):
         return '疑似碎片'
+    # 单个汉字：--cjk 打开后冒出来的一类量词/序数碎片（個 位 月 日 分 人 第 問），
+    # 代码里是 n + "個" 这种拼法。界限画在「单字」而不是「两字以内」——
+    # 「決定」「合計」「報酬」都是两字的完整词，一并挡掉又是一次误伤。
+    if len(s) == 1 and CJK.fullmatch(s):
+        return '疑似碎片'
     return ''
 
 
-def scan(root, skip):
+def scan(root, skip, cjk=False, known_translations=None):
     """返回 {原文: [出现位置…]}，位置形如 rel/path。"""
     hits = defaultdict(list)
     scanned = 0
+    known = known_translations or set()
     for cur, _dirs, files in os.walk(root):
         for name in sorted(files):
             path = os.path.join(cur, name)
@@ -139,7 +149,19 @@ def scan(root, skip):
             cands = html_texts(text) if name.endswith('.html') else js_literals(text)
             for s in cands:
                 s = s.strip()
-                if s and KANA.search(s):
+                if not s:
+                    continue
+                if s in known:
+                    # 我们自己回填进去的译文，任何模式下都不该再被当成待翻内容。
+                    # 假名分支也要查：中点「・」(U+30FB) 落在假名区间里，
+                    # 而译文「数据转移・关联」正好含它——只在汉字分支查的话，
+                    # 这一条每次重抽都会漏回来。
+                    continue
+                if KANA.search(s):
+                    hits[s].append(rel)
+                elif cjk and CJK.search(s):
+                    # 纯汉字：上游树里这就是日文。跳过 known 是为了不把我们
+                    # 自己回填进去的译文当成待翻内容再抓一遍。
                     hits[s].append(rel)
     return hits, scanned
 
@@ -150,13 +172,48 @@ def main():
     ap.add_argument('-o', '--out', default='frontend-strings.tsv')
     ap.add_argument('--all', action='store_true',
                     help='连调试页与条款一起抽（默认排除）')
+    ap.add_argument('--cjk', action='store_true',
+                    help='连纯汉字的日文串一起抓（只对未汉化的上游树使用）')
+    ap.add_argument('--overrides',
+                    help='按文件的覆盖表；--cjk 下要靠它把那些译文也排除在外')
     args = ap.parse_args()
 
     if not os.path.isdir(args.root):
         print('目录不存在: ' + args.root, file=sys.stderr)
         return 2
 
-    hits, scanned = scan(args.root, None if args.all else DEFAULT_SKIP)
+    # 先读一遍已有译文：--cjk 模式要靠它把我们自己的产出排除在外。
+    #
+    # ⚠ 两处都踩过：
+    #   · 译文列在表里是**转义存**的（\\x3cbr\\x3e），而文件里是未转义的形态，
+    #     不还原就对不上，重抽会把自己的译文当成待翻内容再抓一遍；
+    #   · 按文件的覆盖表里也有译文（如「辅助」），同样要算进来。
+    # 修之前对已汉化的树重抽会多出 304 条，其中 303 条是我们自己的产出。
+    def unesc(x):
+        return x.replace('\\t', '\t').replace('\\n', '\n').replace('\\\\', '\\')
+
+    prior = {}
+    known = set()
+    if os.path.exists(args.out):
+        for line in open(args.out, encoding='utf-8'):
+            if line.startswith('#'):
+                continue
+            c = line.rstrip('\n').split('\t')
+            if len(c) >= 2 and c[1]:
+                prior[c[0]] = c[1]
+                # 自映射（译文与原文相同，如「魔法少女」）不算「我们的产出」——
+                # 算进去的话，下次重抽会连原文一起挡掉，那一行就凭空消失了。
+                if c[1] != c[0]:
+                    known.add(unesc(c[1]))
+    if args.overrides and os.path.exists(args.overrides):
+        for line in open(args.overrides, encoding='utf-8'):
+            if line.startswith('#'):
+                continue
+            c = line.rstrip('\n').split('\t')
+            if len(c) >= 3 and c[2]:
+                known.add(unesc(c[2]))
+    hits, scanned = scan(args.root, None if args.all else DEFAULT_SKIP,
+                         cjk=args.cjk, known_translations=known)
     freq = Counter({s: len(v) for s, v in hits.items()})
 
     # 增量合并：已有译文必须留住。
