@@ -509,7 +509,7 @@ AP回復	AP回复		2	js/view/user/APPopup.js
 参加報酬	参与报酬		2	template/campaign/quiz/CampaignQuizTop.html
 挑戦	挑战		2	template/campaign/quiz/CampaignQuizTop.html
 を行います。	进行中。		2	template/campaign/box_gacha/CampaignBoxGachaTop.html,template/gacha/GachaTop.html
-不足しています。	不足。		2	template/campaign/box_gacha/CampaignBoxGachaTop.html,template/gacha/GachaTop.html
+不足しています。	。		2	template/campaign/box_gacha/CampaignBoxGachaTop.html,template/gacha/GachaTop.html
 開催期間：	举办期间:		2	template/campaign/story_mission/CampaignStoryMission.html,template/regularEvent/RegularEventTop.html
 を使ってAPを回復します。	回复AP。		2	template/user/APPopup2.html,template/user/APPopupForMoney.html
 決定後、すぐにアイテムが購入されマギアストーンが消費されます。	确定后将立即购买道具并消耗魔法石。		2	template/shop/ShopTop.html,template/user/APPopupForMoney.html
@@ -945,7 +945,7 @@ Charge性能アップ	Charge性能提升		1	js/chara/CharaEnhancementTree.js
 を使用して\\x3cbr\\x3e	来\\x3cbr\\x3e		1	js/chara/CharaEquip.js
 を魔力解放します。\\x3cbr\\x3eよろしいですか？\\x3cp\\x3e	进行魔力解放。\\x3cbr\\x3e确定吗?\\x3cp\\x3e		1	js/chara/CharaEquip.js
 お気に入り	收藏		1	js/chara/CharaTop.js
-に設定しました。	已设置。		1	js/chara/CharaTop.js
+に設定しました。	。		1	js/chara/CharaTop.js
 素材が足りないため強化できません	素材不足,无法强化		1	js/chara/CharaComposeAttribute/ComposeAttributeList.js
 一括属性強化	一键属性强化		1	js/chara/CharaComposeAttribute/ComposeAttributeList.js
 一括強化	一键强化		1	js/chara/CharaComposeAttribute/ComposeAttributeList.js
@@ -1194,13 +1194,13 @@ eventEffect調査:	eventEffect调查:		1	js/formation/FormationQuest.js
 ※後から変更可能です（当日中の変更はできません）	※之后可以更改(当天内无法更改)		1	template/top/TopPage.html
 ※第1章3話のストーリーはアーカイブから参照できます	※第1章3话的剧情可从存档中查看		1	template/top/TopPage.html
 次回のミッション追加は	下次任务追加时间为		1	template/campaign/summer_mission/CampaignSummerMissionTop.html
-です		疑似碎片	1	template/campaign/summer_mission/CampaignSummerMissionTop.html
+です	。	疑似碎片	1	template/campaign/summer_mission/CampaignSummerMissionTop.html
 受け取り期限	领取期限		1	template/campaign/summer_mission/CampaignSummerMissionTop.html
 最高記録	最高纪录		1	template/campaign/quiz/CampaignQuizTop.html
 -/10問	-/10题		1	template/campaign/quiz/CampaignQuizTop.html
 /10問	/10题		1	template/campaign/quiz/CampaignQuizTop.html
 全問正解	全部答对		1	template/campaign/quiz/CampaignQuizTop.html
-より		疑似碎片	1	template/campaign/quiz/CampaignQuizTop.html
+より	起	疑似碎片	1	template/campaign/quiz/CampaignQuizTop.html
 挑戦可能	可以挑战		1	template/campaign/quiz/CampaignQuizTop.html
 &nbsp;問	&nbsp;题		1	template/campaign/quiz/CampaignQuizTop.html
 15/15問	15/15题		1	template/campaign/quiz/CampaignQuizTop.html
@@ -1546,7 +1546,7 @@ DMMポイント	DMM点数		1	template/purchase/PurchaseTemps.html
 まとめて解放	批量解放		1	template/chara/CharaComposeAttribute/ComposeAttributeList.html
 属性全員のステータスがアップ！	属性全员的状态提升!		1	template/chara/CharaComposeAttribute/popupAllItemConfirm.html
 属性全員の	属性全体的		1	template/chara/CharaComposeAttribute/popupItemConfirm.html
-アップ！	提升!		1	template/chara/CharaComposeAttribute/popupItemConfirm.html
+アップ！	!		1	template/chara/CharaComposeAttribute/popupItemConfirm.html
 ログイン	登录		1	template/loginBonus/loginBonusCampaignPopupTemp.html
 サポートボーナス	支援加成		1	template/loginBonus/loginBonusPopupTemp.html
 マギアパスポート	Magia通行证		1	template/loginBonus/loginBonusPopupTemp.html
@@ -1612,7 +1612,7 @@ CCで売却します。	以CC出售。		1	template/memoria/UserMemoriaList.html
 グループ順位	小组排名		1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
 個人順位	个人排名		1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
 「いいね」	「点赞」		1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
-をして		疑似碎片	1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
+をして	一下	疑似碎片	1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
 を獲得！	到手!		1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
 次のグレードまで	距下一等级		1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html
 最高グレードに到達しました	已达最高等级		1	template/regularEvent/groupBattle/RegularEventGroupBattleBoss.html

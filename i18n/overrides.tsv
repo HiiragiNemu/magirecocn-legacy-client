@@ -11,3 +11,22 @@
 js/util/CardUtil.js	サポート	辅助
 js/card/CardPopup.js	サポート	辅助
 template/gacha/SelectableGachaCharaSelect.html	サポート	辅助
+
+#
+# 助词碎片的按文件译法。を/が 在全局表里没有唯一译法（同一字节在不同
+# 弹窗里语法角色不同），全局留空、按文件点名：
+#   が→还缺   —— 扭蛋货币不足弹窗「Xが N個 不足しています。」，
+#                连带全局译文「不足しています。→。」，得「X还缺 N 个。」
+#   が→提高   —— 属性强化确认「Yが Z アップ！」，
+#                连带全局译文「アップ！→!」，得「Y提高 Z!」
+#   を→已设为 —— 设置收藏完成「Xをお気に入りに設定しました。」，
+#                连带全局译文「に設定しました。→。」，得「X已设为收藏。」
+#   を→进行   —— 强化确认「Xを魔力強化します。」，得「X进行魔力强化。」
+# 其余助词碎片仍不译：消耗确认型「Xを N個 使用して…」（宾语前置，道具名
+# 变量在助词之前）与纹章效果型「…が N アップ/ダウン」（数值变量夹在动词
+# 之前）语序对不上，需改代码调结构，非整串替换能解。
+template/campaign/box_gacha/CampaignBoxGachaTop.html	が	还缺
+template/gacha/GachaTop.html	が	还缺
+template/chara/CharaComposeAttribute/popupItemConfirm.html	が	提高
+js/chara/CharaTop.js	を	已设为
+js/chara/CharaCompose.js	を	进行
