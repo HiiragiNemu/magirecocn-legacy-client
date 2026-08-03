@@ -7,52 +7,63 @@ import android.webkit.ValueCallback;
 import android.webkit.WebView;
 
 /**
- * 把前端导航到游戏自己的**第 0 章（序章）** 页面。
+ * 让前端从头播放<b>开场序章</b>（OP000 → OP010 → … → OP999）。
  *
- * <h3>为什么改成这条路</h3>
+ * <h3>此路不通：从 native 硬压场景</h3>
  *
- * 之前是从 native 硬压场景：拦 {@code web::SceneCommand::pushSceneTop}，命中标记
- * 就改调 {@code pushScenePrologue}。真机结果是——序章直接从最后那场战斗开始，
+ * 最早的做法是拦 {@code web::SceneCommand::pushSceneTop}、改调
+ * {@code pushScenePrologue}。真机结果是序章直接从最后那场战斗开始，
  * <b>剧情文字一句都不出现</b>。
  *
- * <p>反汇编 {@code PrologueSceneLayer::notifyJs} 说明了原因：它调的是
- * {@code web::WebViewManager::evaluateJS}，把控制权**交回前端 JS**，下发的语句
- * 形如 {@code <callback>("OP020");}。而那个 {@code callback} 正是
- * {@code PrologueSceneLayerInfo} 的第三个构造参数、也就是 {@code pushScenePrologue}
- * 那个 JSON 里的 {@code callback} 字段——我们没给，引擎兜底成一个单字符的串，
- * 生成的 JS 是残的，前端从头到尾没收到任何通知。日志里
- * 「图层构造 → 0.26 秒后 notifyJs(OP020)」也印证了：那不是「OP020 播完了」，
- * 是「JS，去放 OP020」。
+ * <p>反汇编 {@code PrologueSceneLayer::notifyJs} 说明了原因：它调
+ * {@code web::WebViewManager::evaluateJS}，把控制权**交回前端**，下发的语句
+ * 形如 {@code <callback>("OP020");}。而 {@code callback} 正是
+ * {@code PrologueSceneLayerInfo} 的第三个构造参数、也就是
+ * {@code pushScenePrologue} 那个 JSON 里的 {@code callback} 字段——我们没给，
+ * 引擎兜底成一个单字符的串，生成的 JS 是残的，前端从头到尾没收到任何通知。
+ * 日志里「图层构造 → 0.26 秒后 notifyJs(OP020)」也印证了：那不是「OP020 播完
+ * 了」，是「JS，去放 OP020」。序章是前端驱动的流程，native 只是它的播放器。
  *
- * <p>换句话说：<b>序章是前端驱动的流程，native 只是它的播放器</b>。从 native
- * 单方面压场景，原理上就只能放出 native 自己能放的部分（战斗），放不出剧情。
+ * <h3>此路也不通：跳 Scene0Top</h3>
  *
- * <h3>现在怎么做</h3>
+ * 路由表里有一整套 {@code Scene0*}，但 <b>Scene 0 是搭载在本作里的另一个衍生
+ * 作品的名字，不是序章</b>。按名字望文生义会把玩家送进那个衍生作品的页面。
  *
- * 走游戏自己的路由。前端是 Backbone Router + hash 路由（{@code js/_common/router.js}
- * 里 {@code Backbone.Router.extend}），路由表 {@code js/_common/routes.js} 中本来
- * 就有第 0 章的一整套页面：
+ * <h3>现在的做法：走真实新号的那条路</h3>
+ *
+ * 前端 {@code js/top/TopPage.js} 里写得很清楚：
  *
  * <pre>
- *   Scene0Top / Scene0StorySelectBeforeFilm1 / Scene0StorySelectAfterFilm1
- *   Scene0BattleSelect / Scene0SideStorySelect
+ *   if ("OP000" == a.storage.user.get("tutorialId"))
+ *       var f = new a.PopupClass({title:"ゲーム開始", content:v}, null, d);
+ *   else c();
  * </pre>
  *
- * 所以只要把 WebView 的 hash 设成 {@code Scene0Top}，前端就当作玩家自己点进来
- * 一样，剧情、演出、战斗全按正常流程走。
+ * 也就是说——标题页发现账号的 {@code tutorialId} 是 {@code OP000} 时，会弹
+ * 「ゲーム開始」，确认后走 {@code d()}：挂上 {@code #commandDiv} 的
+ * {@code nativeCallback} 监听，再由 native 逐段播序章，每段结束回调一次
+ * （{@code "prologue"} 表示整套放完）。这正是新号第一次进游戏的路径。
  *
- * <p>（顺带一提，{@code routes.js} 里那套 {@code Backdoor*} 调试路由要
- * {@code window.isDebug} 为真才注册；第 0 章不需要，它是正式路由。）
+ * <p>{@code a.storage.user} 是前端自己的 Backbone 模型，可以直接改。所以：
+ * <ol>
+ *   <li>{@code require(["backboneCommon"], a => a.storage.user.set("tutorialId","OP000"))}</li>
+ *   <li>导航到 {@code #/TopPage}，让它按 OP000 重新走一遍</li>
+ * </ol>
+ *
+ * 不碰服务端：{@code tutorialIdRegist} 只在 id 前进时才 POST
+ * {@code prologueRegister}，而 {@code "OP010".split("TU")[1]|0 == 0} 小于
+ * {@code TU999} 的 999，条件不成立，本来也不会上报。
  *
  * <h3>时机</h3>
  *
- * 前端要先起来。这里等到 WebView 出现、且 {@code location.href} 已经进到主页
- * （{@code MyPage}）才导航——那时路由与登录态都就绪了。等不到就放弃，标记留着
- * 下次启动再试，不会把玩家卡住。
+ * 要等主页真的渲染稳定才动手。第一版只要 href 里出现 MyPage 就跳，结果白屏：
+ * 那一刻前端正在加载主页自己的模块，两次切页叠在一起，前端 router 的
+ * {@code a.interrupt} 分支让被打断的那次 {@code pageObj.init()} 不会跑，
+ * 两个页面都没 init 完。
  */
-public final class CNScene0Nav {
+public final class CNPrologueNav {
 
-    private static final String TAG = "MagiaCNScene0";
+    private static final String TAG = "MagiaCNPrologue";
 
     /**
      * 第 0 章首页的路由名，取自前端 routes.js。
@@ -61,8 +72,11 @@ public final class CNScene0Nav {
      * {@code index.html#/TopPage}）。不带斜杠 Backbone 也能路由——上一版就是
      * 这么跳成的——但没必要跟它自己的 history 记录长得不一样。
      */
-    private static final String ROUTE      = "Scene0Top";
-    private static final String ROUTE_HASH = "/Scene0Top";
+    /** 目标页面：标题页。序章由它按 tutorialId 拉起。 */
+    private static final String ROUTE      = "TopPage";
+    private static final String ROUTE_HASH = "/TopPage";
+    /** 触发序章的 tutorialId。见 TopPage.js 里那句 if ("OP000" == ...)。 */
+    private static final String PROLOGUE_ID = "OP000";
     /** 出问题时退回这里，别把玩家留在白屏上。 */
     private static final String HOME_HASH  = "/MyPage";
 
@@ -92,7 +106,7 @@ public final class CNScene0Nav {
     /** evaluateJavascript 的返回值（异步）落在这里。 */
     private static volatile String lastJsResult;
 
-    private CNScene0Nav() {}
+    private CNPrologueNav() {}
 
     /**
      * 若「本次启动要去第 0 章」的标记还在，就起一个线程等前端就绪并导航。
@@ -102,7 +116,7 @@ public final class CNScene0Nav {
         try {
             if (!CNTutorialPrompt.isArmed()) return;
             if (!STARTED.compareAndSet(false, true)) return;
-            CNLog.i(TAG, "标记存在，本次启动将导航到第 0 章");
+            CNLog.i(TAG, "标记存在，本次启动将从头播放开场序章");
             Thread t = new Thread(new NavTask(), "cnv-scene0-nav");
             t.setDaemon(true);
             t.start();
@@ -114,7 +128,7 @@ public final class CNScene0Nav {
     private static final class NavTask implements Runnable {
         @Override public void run() {
             try { run0(); }
-            catch (Throwable th) { CNLog.e(TAG, "导航第 0 章失败: " + th, th); }
+            catch (Throwable th) { CNLog.e(TAG, "序章导航失败: " + th, th); }
         }
     }
 
@@ -122,42 +136,37 @@ public final class CNScene0Nav {
         WebView wv = awaitFrontEnd();
         if (wv == null) {
             // 标记不清：下次启动再试。玩家不会因此卡住，只是这次没跳成。
-            CNLog.w(TAG, "等不到主页稳定，本次不导航（标记保留，下次启动再试）");
+            CNLog.w(TAG, "等不到主页稳定，本次不动作（标记保留，下次启动再试）");
             return;
         }
-        CNLog.i(TAG, "主页已稳定，" + SETTLE_MS + "ms 后导航到 " + ROUTE);
+        CNLog.i(TAG, "主页已稳定，" + SETTLE_MS + "ms 后开始");
         sleep(SETTLE_MS);
 
-        // Backbone 的 hash 路由：设置 location.hash 即触发路由回调。
+        // 第一步：把前端自己的 tutorialId 改成 OP000。
+        // a.storage.user 是 Backbone 模型，纯客户端状态，改它不碰服务端。
+        String r = evalSync(wv,
+            "(function(){try{var d=null;require(['backboneCommon'],function(a){"
+            + "a.storage.user.set('tutorialId','" + PROLOGUE_ID + "');"
+            + "d=a.storage.user.get('tutorialId');});"
+            + "return 'set='+d;}catch(e){return 'ERR:'+e;}})()");
+        CNLog.i(TAG, "写入 tutorialId：" + r);
+
+        // 第二步：回标题页。它 init 时读 tutorialId，看到 OP000 就弹「ゲーム開始」，
+        // 确认后由 native 逐段播序章。
         eval(wv, "(function(){try{location.hash='" + ROUTE_HASH + "';return 'OK';}"
                  + "catch(e){return 'ERR:'+e;}})()");
 
-        boolean arrived = false;
         for (int i = 0; i < CONFIRM_TRIES; i++) {
             sleep(500L);
             String st = probe(wv);
-            if (st != null && st.contains(ROUTE)) {
-                CNLog.i(TAG, "已进入第 0 章：" + st);
-                arrived = true;
-                break;
-            }
-        }
-        if (!arrived) {
-            CNLog.w(TAG, "导航后未确认到第 0 章，标记保留，下次启动再试");
-            return;
-        }
-
-        // 到了 URL 不等于页面画出来了。上一版白屏时 URL 也是对的——所以再确认
-        // 一次「主内容区真的有东西」，没有就退回主页，别把玩家留在白屏上。
-        for (int i = 0; i < CONFIRM_TRIES; i++) {
-            sleep(500L);
-            if (rendered(probe(wv))) {
-                CNLog.i(TAG, "第 0 章已渲染，收工");
+            if (st != null && st.contains(ROUTE) && rendered(st)) {
+                CNLog.i(TAG, "已回到标题页并渲染：" + st);
                 CNTutorialPrompt.set(false);   // 一次性：消费掉标记
                 return;
             }
         }
-        CNLog.e(TAG, "第 0 章页面始终空白，退回主页（标记保留，下次启动再试）");
+        // 没回到标题页就别留个烂摊子：退回主页，标记保留下次再试。
+        CNLog.e(TAG, "未确认回到标题页，退回主页（标记保留）最后一次探测=" + probe(wv));
         eval(wv, "(function(){try{location.hash='" + HOME_HASH + "';return 'OK';}"
                  + "catch(e){return 'ERR:'+e;}})()");
     }
@@ -172,16 +181,23 @@ public final class CNScene0Nav {
     private static String probe(WebView wv) {
         return evalSync(wv,
             "(function(){try{var m=document.getElementById('mainContent');"
-            + "return String(location.href)+'|'+(m?m.childElementCount:-1);}"
-            + "catch(e){return 'ERR|-1';}})()");
+            + "var t='?';try{require(['backboneCommon'],function(a){"
+            + "t=a.storage.user.get('tutorialId');});}catch(e2){}"
+            + "return String(location.href)+'|'+(m?m.childElementCount:-1)+'|tu='+t;}"
+            + "catch(e){return 'ERR|-1|tu=?';}})()");
     }
 
-    /** 探测结果是否表示「当前页已渲染」。 */
+    /**
+     * 探测结果是否表示「当前页已渲染」。
+     *
+     * <p>探测串形如 {@code <href>|<childElementCount>|tu=<tutorialId>}，
+     * 这里取中间那段。
+     */
     private static boolean rendered(String st) {
         if (st == null) return false;
-        int i = st.lastIndexOf('|');
-        if (i < 0) return false;
-        try { return Integer.parseInt(st.substring(i + 1).trim()) > 0; }
+        String[] parts = st.split("\\|");
+        if (parts.length < 2) return false;
+        try { return Integer.parseInt(parts[1].trim()) > 0; }
         catch (NumberFormatException e) { return false; }
     }
 
@@ -250,7 +266,7 @@ public final class CNScene0Nav {
 
     // ⚠ 下面这几个都写成**具名**内部类，不用匿名类。
     // 匿名类套匿名类（Runnable 里再放一个 ValueCallback）会让 d8 8.2.2 直接崩：
-    //     Error in ...CNScene0Nav$3$1.class:
+    //     Error in ...CNPrologueNav$3$1.class:
     //     java.lang.NullPointerException: Cannot invoke "String.length()"
     // 这个工程别处也一律用具名内部类，照做。
 
@@ -281,7 +297,7 @@ public final class CNScene0Nav {
 
     // ⚠ 实现的是**原始类型** ValueCallback，不是 ValueCallback<String>。
     // 带泛型时 javac 会生成 Signature 属性，而 d8 8.2.2 处理它时直接崩：
-    //     Error in ...CNScene0Nav$ResultCallback.class:
+    //     Error in ...CNPrologueNav$ResultCallback.class:
     //     java.lang.NullPointerException: Cannot invoke "String.length()"
     // 去掉泛型即绕开；运行期传进来的本来就是 String，转型是安全的。
     @SuppressWarnings({"rawtypes", "unchecked"})

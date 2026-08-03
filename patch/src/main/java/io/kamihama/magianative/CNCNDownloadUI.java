@@ -1281,10 +1281,10 @@ public class CNCNDownloadUI {
         panel.addView(title, lpRow(0, dp(act, 10)));
 
         TextView msg = new TextView(act);
-        msg.setText("是否播放序章（第 0 章）？\n\n"
-                  + "· 「是」：进游戏后自动跳到第 0 章，从头看。\n"
+        msg.setText("是否从头播放开场序章？\n\n"
+                  + "· 「是」：进游戏后回到标题页，按新号的流程从头播。\n"
                   + "· 「否」：正常进入游戏。\n\n"
-                  + "走的是游戏自己的章节页面，和手动点进去一样。");
+                  + "走的是游戏自己的新手流程，只改本机状态，不动账号。");
         msg.setTextColor(COLOR_LOG_PANEL_TEXT);
         msg.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
         msg.setLineSpacing(dp(act, 2), 1f);

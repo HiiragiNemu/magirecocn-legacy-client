@@ -17,13 +17,13 @@ import java.io.FileOutputStream;
  *
  * <h3>分工</h3>
  *
- * 本类只管「标记在不在」。真正去播的是 {@link CNScene0Nav}：等前端起来之后把
+ * 本类只管「标记在不在」。真正去播的是 {@link CNPrologueNav}：等前端起来之后把
  * WebView 的 hash 设成游戏自己的第 0 章路由（{@code Scene0Top}），跟玩家自己点
  * 进去完全一样。标记<b>一次性消费</b>——确认跳进去之后就清掉。
  *
  * <p>（早先试过从 native 拦 {@code pushSceneTop} 改调 {@code pushScenePrologue}，
  * 真机上只放得出最后那场战斗、剧情文字一句都没有。原因见
- * {@link CNScene0Nav} 的类注释：序章是前端驱动的流程，native 只是播放器。）
+ * {@link CNPrologueNav} 的类注释：序章是前端驱动的流程，native 只是播放器。）
  *
  * <p>询问的界面在 {@link CNCNDownloadUI}：它拥有浮层的调色板与模态框样式，
  * 这个询问就用那一套，不另起一个长得不一样的对话框。

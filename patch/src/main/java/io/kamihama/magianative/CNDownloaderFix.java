@@ -164,7 +164,7 @@ public final class CNDownloaderFix {
                             // 现在改由 Java 侧自己跑，时机与等待条件都可控。
                             CNHotUpdateCheck.start();
                             // 玩家选过「看序章」的话，等前端起来后把它导航过去
-                            CNScene0Nav.startIfPending();
+                            CNPrologueNav.startIfPending();
                             return;
                         }
                         CNLog.i(TAG, "triggerInstaller: flag 不存在，由 Java 侧启动安装器");
