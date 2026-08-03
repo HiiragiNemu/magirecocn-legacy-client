@@ -22,11 +22,14 @@ template/gacha/SelectableGachaCharaSelect.html	サポート	辅助
 #   を→已设为 —— 设置收藏完成「Xをお気に入りに設定しました。」，
 #                连带全局译文「に設定しました。→。」，得「X已设为收藏。」
 #   を→进行   —— 强化确认「Xを魔力強化します。」，得「X进行魔力强化。」
-# 其余助词碎片仍不译：消耗确认型「Xを N個 使用して…」（宾语前置，道具名
-# 变量在助词之前）与纹章效果型「…が N アップ/ダウン」（数值变量夹在动词
-# 之前）语序对不上，需改代码调结构，非整串替换能解。
+#   を→<DELETE> —— ShopTop 购买完成「Xを<br>已购买。」的 を 在中文里没有
+#                对应物，显式删除（区别于「留空=未翻译」），得「X<br>已购买。」
+# 消耗确认型「Xを N個 使用して…」与纹章效果型「…が N アップ/ダウン」语序
+# 对不上（变量夹在助词与谓语之间），由 i18n/fragments.tsv 的片段补丁整段
+# 调序，见 tools/i18n-fragments.py。
 template/campaign/box_gacha/CampaignBoxGachaTop.html	が	还缺
 template/gacha/GachaTop.html	が	还缺
 template/chara/CharaComposeAttribute/popupItemConfirm.html	が	提高
 js/chara/CharaTop.js	を	已设为
 js/chara/CharaCompose.js	を	进行
+template/shop/ShopTop.html	を	<DELETE>

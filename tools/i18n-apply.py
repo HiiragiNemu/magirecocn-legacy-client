@@ -142,6 +142,10 @@ def main():
     # 按文件的覆盖：同一原文在不同界面含义不同时用它。
     # 例：サポート 在 charaType 映射里是角色类型「辅助」，在好友支援语境里是
     # 「支援」——包里恰好一半一半，全局表按精确原文索引表达不了，硬选一个必错一半。
+    #
+    # 译文列写 <DELETE> 表示**显式删除**：该原文在这些文件里替换成空串。
+    # 用于中文里没有对应物的助词(如 ShopTop 购买完成弹窗里「Xを<br>已购买。」
+    # 的 を)——注意与「译文留空=未翻译」区分,留空的行永远不会被处理。
     overrides = []
     if args.overrides and os.path.isfile(args.overrides):
         for line in open(args.overrides, encoding='utf-8'):
@@ -149,7 +153,8 @@ def main():
                 continue
             col = line.rstrip('\n').split('\t')
             if len(col) >= 3 and col[0] and col[1] and col[2]:
-                overrides.append((col[0], col[1], col[2]))
+                dst = '' if col[2] == '<DELETE>' else col[2]
+                overrides.append((col[0], col[1], dst))
         print('按文件的覆盖 %d 条' % len(overrides))
 
     stat = {}
