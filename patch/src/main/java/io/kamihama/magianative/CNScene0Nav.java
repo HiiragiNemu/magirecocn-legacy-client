@@ -81,16 +81,18 @@ public final class CNScene0Nav {
             if (!CNTutorialPrompt.isArmed()) return;
             if (!STARTED.compareAndSet(false, true)) return;
             CNLog.i(TAG, "标记存在，本次启动将导航到第 0 章");
-            Thread t = new Thread("cnv-scene0-nav") {
-                @Override public void run() {
-                    try { run0(); }
-                    catch (Throwable th) { CNLog.e(TAG, "导航第 0 章失败: " + th, th); }
-                }
-            };
+            Thread t = new Thread(new NavTask(), "cnv-scene0-nav");
             t.setDaemon(true);
             t.start();
         } catch (Throwable t) {
             try { android.util.Log.e(TAG, "startIfPending 失败", t); } catch (Throwable ignore) {}
+        }
+    }
+
+    private static final class NavTask implements Runnable {
+        @Override public void run() {
+            try { run0(); }
+            catch (Throwable th) { CNLog.e(TAG, "导航第 0 章失败: " + th, th); }
         }
     }
 
@@ -176,43 +178,67 @@ public final class CNScene0Nav {
         return null;
     }
 
+    // ⚠ 下面这几个都写成**具名**内部类，不用匿名类。
+    // 匿名类套匿名类（Runnable 里再放一个 ValueCallback）会让 d8 8.2.2 直接崩：
+    //     Error in ...CNScene0Nav$3$1.class:
+    //     java.lang.NullPointerException: Cannot invoke "String.length()"
+    // 这个工程别处也一律用具名内部类，照做。
+
     /** 在 UI 线程上跑一段 JS，不等结果。 */
-    private static void eval(final WebView wv, final String js) {
-        try {
-            wv.post(new Runnable() {
-                @Override public void run() {
-                    try { wv.evaluateJavascript(js, null); }
-                    catch (Throwable t) { CNLog.w(TAG, "evaluateJavascript 失败: " + t); }
-                }
-            });
-        } catch (Throwable t) {
-            CNLog.w(TAG, "post 到 WebView 失败: " + t);
+    private static final class EvalTask implements Runnable {
+        private final WebView wv;
+        private final String  js;
+        EvalTask(WebView wv, String js) { this.wv = wv; this.js = js; }
+        @Override public void run() {
+            try { wv.evaluateJavascript(js, null); }
+            catch (Throwable t) { CNLog.w(TAG, "evaluateJavascript 失败: " + t); }
         }
+    }
+
+    /** 跑一段 JS 并把结果交给闩。 */
+    private static final class EvalSyncTask implements Runnable {
+        private final WebView wv;
+        private final String  js;
+        private final java.util.concurrent.CountDownLatch latch;
+        EvalSyncTask(WebView wv, String js, java.util.concurrent.CountDownLatch latch) {
+            this.wv = wv; this.js = js; this.latch = latch;
+        }
+        @Override public void run() {
+            try { wv.evaluateJavascript(js, new ResultCallback(latch)); }
+            catch (Throwable t) { latch.countDown(); }
+        }
+    }
+
+    // ⚠ 实现的是**原始类型** ValueCallback，不是 ValueCallback<String>。
+    // 带泛型时 javac 会生成 Signature 属性，而 d8 8.2.2 处理它时直接崩：
+    //     Error in ...CNScene0Nav$ResultCallback.class:
+    //     java.lang.NullPointerException: Cannot invoke "String.length()"
+    // 去掉泛型即绕开；运行期传进来的本来就是 String，转型是安全的。
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static final class ResultCallback implements ValueCallback {
+        private final java.util.concurrent.CountDownLatch latch;
+        ResultCallback(java.util.concurrent.CountDownLatch latch) { this.latch = latch; }
+        @Override public void onReceiveValue(Object value) {
+            lastJsResult = (value == null) ? null : String.valueOf(value);
+            latch.countDown();
+        }
+    }
+
+    private static void eval(WebView wv, String js) {
+        try { wv.post(new EvalTask(wv, js)); }
+        catch (Throwable t) { CNLog.w(TAG, "post 到 WebView 失败: " + t); }
     }
 
     /**
      * 跑一段 JS 并等它的返回值。{@code evaluateJavascript} 的回调在 UI 线程上，
      * 而本类跑在工作线程，所以拿个闩等；超时返回 null，绝不把工作线程卡死。
      */
-    private static String evalSync(final WebView wv, final String js) {
+    private static String evalSync(WebView wv, String js) {
         final java.util.concurrent.CountDownLatch latch =
                 new java.util.concurrent.CountDownLatch(1);
         lastJsResult = null;
         try {
-            wv.post(new Runnable() {
-                @Override public void run() {
-                    try {
-                        wv.evaluateJavascript(js, new ValueCallback<String>() {
-                            @Override public void onReceiveValue(String value) {
-                                lastJsResult = value;
-                                latch.countDown();
-                            }
-                        });
-                    } catch (Throwable t) {
-                        latch.countDown();
-                    }
-                }
-            });
+            wv.post(new EvalSyncTask(wv, js, latch));
             if (!latch.await(3, java.util.concurrent.TimeUnit.SECONDS)) return null;
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
