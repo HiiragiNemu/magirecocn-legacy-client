@@ -10,26 +10,28 @@ import java.io.File;
 import java.io.FileOutputStream;
 
 /**
- * 「下次启动去打教程战斗」这个意愿的状态：标记文件的读写，以及「自动询问
+ * 「下次启动去播序章」这个意愿的状态：标记文件的读写，以及「自动询问
  * 只问一次」的记忆；外加给 native 侧用的「隐藏/恢复前端界面」入口。
  *
  * <h3>为什么需要</h3>
  *
- * 复刻服对任何账号都下发「已通关」的存档，玩家进游戏直接落到主页，教程战斗
- * 不会自己触发。想打得有个入口。
+ * 复刻服对任何账号都下发「已通关」的存档，玩家进游戏直接落到主页，序章
+ * 不会自己播。想看得有个入口。
  *
  * <h3>分工</h3>
  *
  * 本类只管「标记在不在」。真正去触发的是 <b>native 侧</b>
  * （magia-native/src/MagiaLegacy.cpp）：拦引擎首个「进主页」命令
  * （{@code web::SceneCommand::pushSceneTop}），命中标记就改调
- * {@code pushScenePrologue}——从 native 压序章场景，放得出战斗、放不出剧情，
- * 而这正是本版要的行为（只触发教程战斗）。标记由 native 在消费时删除，
- * <b>一次性</b>。
+ * {@code pushScenePrologue}。序章的剧情与战斗都由序章场景自己播放
+ * （callback 字段修复后，段通知经前端的 nativeCallback 全局函数到达）。
+ * 标记由 native 在消费时删除，<b>一次性</b>。
  *
  * <p>序章场景是 native 图层，画在 GL 层上；主界面 WebView 盖在它上面会把它
- * 变成背景。所以 native 在序章图层构造/析构时经 JNI 调本类的
- * {@link #setGameUiVisible(boolean)} 把前端界面藏起来/放回来。
+ * 变成背景，而且剧情段放完后 WebView 还会自己复出——所以 native 在序章全程
+ * 反复经 JNI 调本类的 {@link #setGameUiVisible(boolean)} 把前端界面按住，
+ * 序章结束时再调 {@link #restartAfterPrologue()} 走「Toast + 3 秒 + 重启」
+ * 回到干净主页（前端那时状态不可知，就地收拾不如重启）。
  *
  * <p>询问的界面在 {@link CNCNDownloadUI}：它拥有浮层的调色板与模态框样式，
  * 这个询问就用那一套，不另起一个长得不一样的对话框。
@@ -47,7 +49,7 @@ public final class CNTutorialPrompt {
     private static final String TAG = "MagiaCNScene0";
 
     /**
-     * 「进主页时改走教程战斗」的标记。放在安装标记的同一个目录：资源装完时该目录
+     * 「进主页时改走序章」的标记。放在安装标记的同一个目录：资源装完时该目录
      * 必定存在，不必额外建。
      *
      * <p>文件名沿用 cn_force_tutorial.flag 没改——早先 native 侧读的是这个名字，
@@ -88,8 +90,12 @@ public final class CNTutorialPrompt {
                                 ? null : act.getWindow().peekDecorView();
                         if (root == null) return;
                         int n = applyVisibility(root, visible);
-                        CNLog.i(TAG, (visible ? "恢复" : "隐藏") + "前端界面，命中 "
-                                + n + " 个 WebView");
+                        // 只在真的按回去了才记：序章期间 native 看门狗每 250ms
+                        // 调一次，状态没变时记日志纯属噪音。
+                        if (n > 0) {
+                            CNLog.i(TAG, (visible ? "恢复" : "隐藏") + "前端界面，按回 "
+                                    + n + " 个 WebView");
+                        }
                     } catch (Throwable t) {
                         CNLog.e(TAG, "切换前端界面可见性失败", t);
                     }
@@ -101,7 +107,8 @@ public final class CNTutorialPrompt {
     }
 
     /**
-     * 递归找 WebView 并设置可见性，返回命中个数。
+     * 递归找 WebView 并设置可见性，返回<b>状态被改变</b>的个数（已经是对的
+     * 状态就不动也不算）。
      *
      * <p>判据是 {@code instanceof android.webkit.WebView}，不是类名前缀。
      * 第一版按 {@code org.cocos2dx.lib.Cocos2dxWebView} 匹配，真机日志给出的
@@ -111,27 +118,53 @@ public final class CNTutorialPrompt {
      * 也不会再漏。
      */
     private static int applyVisibility(View v, boolean visible) {
-        int hit = 0;
         if (v instanceof android.webkit.WebView) {
-            v.setVisibility(visible ? View.VISIBLE : View.INVISIBLE);
+            int want = visible ? View.VISIBLE : View.INVISIBLE;
+            if (v.getVisibility() == want) return 0;
+            v.setVisibility(want);
             CNLog.i(TAG, (visible ? "显示" : "隐藏") + " " + v.getClass().getName());
             // 命中即返回：WebView 内部还有一堆子 View，没必要再往下钻
             return 1;
         }
         if (v instanceof ViewGroup) {
             ViewGroup g = (ViewGroup) v;
+            int hit = 0;
             for (int i = 0; i < g.getChildCount(); i++) {
                 hit += applyVisibility(g.getChildAt(i), visible);
             }
+            return hit;
         }
-        return hit;
+        return 0;
+    }
+
+    /**
+     * 序章放完后的收尾：Toast + 3 秒 + 重启（与安装完成同一套）。由 native
+     * 在序章图层析构时经 JNI 调用——调用方是游戏线程，而重启要睡 3 秒，
+     * 所以挪到自己的线程上做，别堵游戏线程。
+     */
+    public static void restartAfterPrologue() {
+        try {
+            Thread t = new Thread("cnv-prologue-restart") {
+                @Override public void run() {
+                    try {
+                        CNDownloaderFix.noticeAndRestart("序章播放完毕，3 秒后自动重启游戏");
+                    } catch (Throwable t2) {
+                        CNLog.e(TAG, "序章后的重启失败", t2);
+                    }
+                }
+            };
+            t.setDaemon(true);
+            t.start();
+        } catch (Throwable t) {
+            CNLog.e(TAG, "restartAfterPrologue 起不了线程", t);
+        }
     }
 
     // ==================================================================
     // 标记
     // ==================================================================
 
-    /** 标记是否已就位（= 下一次「进主页」会被 native 改成教程战斗）。 */
+    /** 标记是否已就位（= 下一次「进主页」会被 native 改成序章）。 */
     public static boolean isArmed() {
         try { return new File(FORCE_TUTORIAL_FLAG).isFile(); }
         catch (Throwable t) { return false; }
@@ -140,7 +173,7 @@ public final class CNTutorialPrompt {
     /**
      * 按选择落地标记。
      *
-     * @param on true 写出标记（进主页时打教程战斗），false 清除标记（正常留在主页）
+     * @param on true 写出标记（进主页时播序章），false 清除标记（正常留在主页）
      * @return 落地后的实际状态，便于调用方据此刷新界面
      */
     public static boolean set(boolean on) {
@@ -153,7 +186,7 @@ public final class CNTutorialPrompt {
             File f = new File(FORCE_TUTORIAL_FLAG);
             File dir = f.getParentFile();
             if (dir != null && !dir.isDirectory() && !dir.mkdirs() && !dir.isDirectory()) {
-                CNLog.e(TAG, "建不出目录 " + dir + "，教程战斗标记写不了");
+                CNLog.e(TAG, "建不出目录 " + dir + "，序章标记写不了");
                 return;
             }
             FileOutputStream fos = new FileOutputStream(f);
@@ -164,9 +197,9 @@ public final class CNTutorialPrompt {
             } finally {
                 try { fos.close(); } catch (Throwable ignore) {}
             }
-            CNLog.i(TAG, "已写出教程战斗标记：" + f.getAbsolutePath());
+            CNLog.i(TAG, "已写出序章标记：" + f.getAbsolutePath());
         } catch (Throwable t) {
-            CNLog.e(TAG, "写教程战斗标记失败", t);
+            CNLog.e(TAG, "写序章标记失败", t);
         }
     }
 
@@ -174,7 +207,7 @@ public final class CNTutorialPrompt {
     private static void clearFlag() {
         try {
             File f = new File(FORCE_TUTORIAL_FLAG);
-            if (f.exists() && f.delete()) CNLog.i(TAG, "已清除教程战斗标记");
+            if (f.exists() && f.delete()) CNLog.i(TAG, "已清除序章标记");
         } catch (Throwable ignore) {}
     }
 

@@ -163,7 +163,7 @@ public final class CNDownloaderFix {
                             // 浮层建不出来（详见 CNHotUpdateCheck 的类注释），
                             // 现在改由 Java 侧自己跑，时机与等待条件都可控。
                             CNVersionCheck.startBeforeHotUpdate();
-                            // 玩家选过「教程战斗」的话无需 Java 侧动作：标记由
+                            // 玩家选过「序章」的话无需 Java 侧动作：标记由
                             // native 在引擎首个「进主页」命令上消费（MagiaLegacy
                             // 的 pushSceneTop 闸门），比前端导航可靠得多。
                             return;

@@ -28,9 +28,12 @@
 // 保留资源下载流水线，并补回 libcn_hook 特有的「叫起 Java 安装器」触发。
 // 强制新手教程曾经走过两个版本：v1 从 native 拦 pushSceneTop 改调
 // pushScenePrologue（真机上只放得出战斗、放不出剧情）；v2 改走前端路由播
-// 完整序章（CNPrologueNav），完整序章太难维护，弃用。现在是 v3：复活 v1
-// 的 native 入口、**只触发教程战斗**，并修掉 v1 的 bug——pushScenePrologue
-// 的 JSON 补回 callback 字段（见下文「强制教程战斗」小节的分析）。
+// 完整序章（CNPrologueNav），完整序章太难维护，弃用。v3 复活 v1 的 native
+// 入口并修掉它的 bug——pushScenePrologue 的 JSON 补回 callback 字段。真机
+// 意外收获：callback 一修，**完整序章（剧情 + 战斗）都能播了**。v4（当前）
+// 解决 v3 真机暴露的两个问题：序章剧情段放完后 WebView 自己复出、把战斗
+// 盖成背景板（改为序章全程压住 WebView）；序章结束后前端状态不可知（改为
+// Toast + 3 秒 + 重启，回到干净主页）。见下文「强制序章」小节。
 //
 // ## 端点重定向（原 libuwasa 的核心职责）已接管
 //
@@ -92,6 +95,7 @@
 #include <pthread.h>
 #include <dlfcn.h>
 #include <stdio.h>
+#include <unistd.h>
 
 #define LOG_TAG "MagiaCN_Legacy"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
@@ -124,7 +128,7 @@ namespace cocos2d {
 static const std::string FLAG_PATH =
     "/data/data/io.kamihama.totentanz/files/madomagi/magica/cn_base_done.flag";
 
-// 强制教程战斗标记。由 Java 侧 CNTutorialPrompt 在玩家选「是」时写出，
+// 强制序章标记。由 Java 侧 CNTutorialPrompt 在玩家选「是」时写出，
 // 我们在引擎首个「进主页」命令上消费它。放在与安装标记同一个目录，
 // 那个目录在资源装完时必定存在，不必额外 mkdir。
 // ⚠ 必须与 CNTutorialPrompt.FORCE_TUTORIAL_FLAG 逐字一致。
@@ -156,7 +160,7 @@ static void (*setMaxConnectionNumOld)(void*, int)    = nullptr;
 // 端点重定向：返回 const std::string&，故原型返回 const std::string*
 static const std::string* (*urlConfigResourceOld)(void*, int) = nullptr;
 
-// 强制教程战斗：拦「进主页」，改走引擎自己的序章场景
+// 强制序章：拦「进主页」，改走引擎自己的序章场景
 static void (*pushSceneTopOld)(void*, const std::string&)     = nullptr;
 static void (*notifyJsOld)(void*, const std::string&)         = nullptr;
 static void (*prologueCtorOld)(void*, void*)                  = nullptr;
@@ -444,18 +448,28 @@ static void mainSceneOnErrNew(void* a, void* b, int code) {
     mainSceneOnErrOld(a, b, code);
 }
 
-// ─── 强制教程战斗 ────────────────────────────────────────
+// ─── 强制序章 ────────────────────────────────────────
 //
 // 复刻服对任何账号都下发「已通关」的存档，引擎的正常流程永远不会播教程。
 // 唯一可靠的入口是拦下前端那条「进主页」命令（web::SceneCommand::pushSceneTop），
 // 命中标记时改为进序章场景。
 //
-// ## 这版（v3）与历史两版的关系
+// ## 这版（v4）与历史几版的关系
 //
 // v1 从 native 压序章场景，真机上只放得出最后那场战斗、剧情文字一句都没有。
 // 当时把这判定为失败，于是有了 v2（Java 侧前端路由播完整序章，CNPrologueNav）。
-// v2 的完整序章太难维护，弃用。维护者要的就是 v1 那个「只有战斗」的行为，
-// 所以 v3 复活 v1 的 native 入口，并修掉它真正的 bug：
+// v2 的完整序章太难维护，弃用。v3 复活 v1 的 native 入口并修掉它真正的 bug
+// （见下），真机意外发现：**callback 一修，剧情和战斗就全都能播了**。
+// v4（本版）解决 v3 真机暴露的两个收尾问题：
+//
+//   1. 剧情段放完后 WebView 自己复出（前端加载收尾或引擎界面管理所至，
+//      没去细查——不必查，压住就行），把战斗盖成背景板。v3 只在序章图层
+//      构造时藏一次，不够；v4 改为**序章全程**每 250ms 把前端界面按回隐藏，
+//      直到图层析构。
+//   2. 序章放完时前端状态不可知（主页加载到一半、被藏了整场、还收了一堆
+//      段通知）。v3 的「补放吞掉的 pushSceneTop」并不能保证回到的主页是
+//      好的；v4 改为与「安装完成」同一套的 Toast + 3 秒 + 重启，重启后
+//      是干净的主页。标记在触发时已删，重启后不会再进序章。
 //
 // ## v1 的 bug：pushScenePrologue 的 JSON 缺 callback 字段
 //
@@ -468,9 +482,9 @@ static void mainSceneOnErrNew(void* a, void* b, int code) {
 //
 // 修复是给上 callback："nativeCallback"。它是前端 js/_common/base.js 里
 // 定义的全局函数（引擎二进制里也硬编码着这个名字），会把参数转发成
-// #commandDiv 的 jQuery 事件。我们这条路上没有任何监听者——前端真正播剧情
-// 的监听只在新号 OP000 流程里才注册——所以剧情段通知全部空转，只有战斗
-// （native 自驱）照常播放；这正是「只触发教程战斗」。
+// #commandDiv 的 jQuery 事件。v3 真机验证：修好之后段通知真的到达前端，
+// 剧情与战斗都按序章自己的流程播放——所谓「序章是前端驱动的流程」，
+// 前端要的就是这条能用的通知信道。
 //
 // ## 为什么调 pushScenePrologue 而不是自己 new 一个 Info
 //
@@ -497,8 +511,8 @@ static void mainSceneOnErrNew(void* a, void* b, int code) {
 // （type=11）后入队，于是主页盖在序章上。
 //
 // 所以：从强制那一刻起，到序章图层真正销毁为止，期间所有 pushSceneTop 一律
-// 吞掉。销毁时把最后吞掉的那次原样补放回去，保证序章结束后能回到主页——
-// 我们把中间的 Top 全吞了，栈里没有主页可以退回去。
+// 吞掉。销毁时不再补放（v4 改为 Toast + 重启，见本节开头），但吞掉的最后
+// 一次仍留着——重启通道万一 JNI 不通，补放是别把玩家留在黑屏上的兜底。
 static std::atomic<bool> g_tutorialForced{false};
 // 强制教程进行中：置位于强制那一刻，清除于 PrologueSceneLayer 析构。
 // 必须比「序章图层存在」更宽——push 只是入队，图层要等队列被处理才构造，
@@ -531,6 +545,22 @@ static void saveTop(void* self, const std::string& arg) {
     g_savedTopValid = true;
 }
 
+static void setGameUiVisible(bool visible);   // 前向声明：定义在 pushSceneTopNew 之后
+
+// 序章全程压住前端界面的看门狗。置位于触发那一刻，收尾于序章图层析构
+// （g_tutorialActive 清零）。v3 真机发现：剧情段放完后 WebView 会自己复出，
+// 把战斗盖成背景板——只在图层构造时藏一次不够，得全程按回去。
+// 日志不吵：Java 侧只在「真的又被放出来了」时才记（见 setGameUiVisible）。
+static std::atomic<bool> g_uiWatchdogOn{false};
+static void* uiWatchdogMain(void*) {
+    while (g_tutorialActive.load()) {
+        setGameUiVisible(false);
+        usleep(250 * 1000);
+    }
+    g_uiWatchdogOn.store(false);
+    return nullptr;
+}
+
 static void pushSceneTopNew(void* self, const std::string& arg) {
     // 教程进行中：一律吞掉，别让主页盖在序章上面（理由见上）
     if (g_tutorialActive.load()) {
@@ -554,6 +584,17 @@ static void pushSceneTopNew(void* self, const std::string& arg) {
         saveTop(self, arg);
         g_tutorialForced.store(true);
         g_tutorialActive.store(true);
+        // 序章全程压住前端界面的看门狗：v3 真机发现剧情段放完后 WebView 会
+        // 自己复出把战斗盖成背景板，只藏一次不够。
+        if (!g_uiWatchdogOn.exchange(true)) {
+            pthread_t t;
+            if (pthread_create(&t, nullptr, uiWatchdogMain, nullptr) == 0) {
+                pthread_detach(t);
+            } else {
+                g_uiWatchdogOn.store(false);
+                LOGE("[Tutorial] 界面看门狗线程起不来（ctor 的一次性隐藏仍在）");
+            }
+        }
         pushScenePrologueFn(self, kPrologueArg);
         return;
     }
@@ -586,6 +627,55 @@ static void setGameUiVisible(bool visible) {
     if (attached) gJvm->DetachCurrentThread();
 }
 
+// 序章结束后的重启通道：JNI 叫起 Java 侧的「Toast + 3 秒 + 重启」
+// （CNTutorialPrompt.restartAfterPrologue，与安装完成同一套收尾）。
+// 重启要睡 3 秒，Java 侧自己另起线程，不堵游戏线程。
+// 返回 false 表示 JNI 不通，调用方走兜底。
+static bool requestPrologueRestart() {
+    if (!gClsTutorialPrompt) {
+        LOGE("[Tutorial] CNTutorialPrompt 全局引用缺失，无法叫起重启");
+        return false;
+    }
+    bool attached = false;
+    JNIEnv* env = attachEnv(attached);
+    if (!env) { LOGE("[Tutorial] 拿不到 JNIEnv"); return false; }
+    jmethodID mid = env->GetStaticMethodID(gClsTutorialPrompt, "restartAfterPrologue", "()V");
+    if (!mid) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        LOGE("[Tutorial] 找不到 restartAfterPrologue()V");
+        if (attached) gJvm->DetachCurrentThread();
+        return false;
+    }
+    env->CallStaticVoidMethod(gClsTutorialPrompt, mid);
+    bool ok = true;
+    if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); ok = false; }
+    if (attached) gJvm->DetachCurrentThread();
+    return ok;
+}
+
+// 兜底：把吞掉的那次 pushSceneTop 补放回去。序章期间的 Top 全被我们吞了，
+// 栈里没有主页可退，不补的话玩家会停在空场景上。
+//
+// 这里只是往 SceneLayerManager 的 deque 里再排一个任务（pushSceneLayer
+// 就是个入队函数，见 0xb82610），引擎自己也常在图层里 push 别的图层，
+// 不是重入路径。
+static void replaySavedTop() {
+    void* self = nullptr;
+    std::string arg;
+    bool ok = false;
+    {
+        std::lock_guard<std::mutex> lk(g_savedTopMutex);
+        if (g_savedTopValid) { self = g_savedTopSelf; arg = g_savedTopArg; ok = true; }
+        g_savedTopValid = false;
+    }
+    if (ok && pushSceneTopOld) {
+        LOGI("[Tutorial] 序章结束，补放 pushSceneTop(arg=%s)", arg.c_str());
+        pushSceneTopOld(self, arg);
+    } else {
+        LOGE("[Tutorial] 序章结束但没有可补放的 pushSceneTop，可能停在空场景");
+    }
+}
+
 // 序章图层的构造/析构。析构是「序章真的结束了」最可靠的信号——比 notifyJs
 // 可靠，后者在序章过程中可能发多次。
 static void prologueCtorNew(void* _this, void* info) {
@@ -597,29 +687,25 @@ static void prologueCtorNew(void* _this, void* info) {
 
 static void prologueDtorNew(void* _this) {
     bool wasActive = g_tutorialActive.exchange(false);
-    LOGI("[Tutorial] PrologueSceneLayer 析构 _this=%p（active=%d）",
-         _this, (int)wasActive);
-    if (g_tutorialForced.load()) setGameUiVisible(true);   // 序章完了，前端界面放回来
-    if (wasActive) {
-        // 把吞掉的那次 pushSceneTop 补放回去。序章期间的 Top 全被我们吞了，
-        // 栈里没有主页可退，不补的话玩家会停在空场景上。
+    bool forced = g_tutorialForced.load();
+    LOGI("[Tutorial] PrologueSceneLayer 析构 _this=%p（active=%d forced=%d）",
+         _this, (int)wasActive, (int)forced);
+    if (wasActive && forced) {
+        // 序章放完了。前端此刻状态不可知（主页加载到一半、被我们藏了整场、
+        // 还收了一堆段通知），就地收拾不如干脆重启——与「安装完成」同一套
+        // Toast + 3 秒 + 重启，回来是干净的主页。标记在触发时已删，
+        // 重启后不会再进序章。
         //
-        // 这里只是往 SceneLayerManager 的 deque 里再排一个任务（pushSceneLayer
-        // 就是个入队函数，见 0xb82610），引擎自己也常在图层里 push 别的图层，
-        // 不是重入路径。
-        void* self = nullptr;
-        std::string arg;
-        bool ok = false;
-        {
-            std::lock_guard<std::mutex> lk(g_savedTopMutex);
-            if (g_savedTopValid) { self = g_savedTopSelf; arg = g_savedTopArg; ok = true; }
-            g_savedTopValid = false;
-        }
-        if (ok && pushSceneTopOld) {
-            LOGI("[Tutorial] 序章结束，补放 pushSceneTop(arg=%s)", arg.c_str());
-            pushSceneTopOld(self, arg);
+        // 前端界面**保持隐藏**直到进程退出：恢复出来也只会把加载到一半的
+        // 主页亮给玩家看 3 秒，不如不亮。Toast 是系统级窗口，不受影响。
+        if (requestPrologueRestart()) {
+            LOGI("[Tutorial] 序章结束，已叫起 Toast + 3 秒 + 重启");
         } else {
-            LOGE("[Tutorial] 序章结束但没有可补放的 pushSceneTop，可能停在空场景");
+            // JNI 不通时的兜底：恢复前端界面 + 补放吞掉的 pushSceneTop，
+            // 至少别把玩家留在黑屏上。
+            LOGE("[Tutorial] 重启通道不通，退兜底：恢复界面 + 补放 pushSceneTop");
+            setGameUiVisible(true);
+            replaySavedTop();
         }
     }
     prologueDtorOld(_this);
@@ -804,7 +890,7 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       (void*)urlConfigResourceNew, (void**)&urlConfigResourceOld,
       "UrlConfig::resource(端点重定向)");
 
-    // ── 强制教程战斗：拦「进主页」，命中标记时改走序章场景 ──
+    // ── 强制序章：拦「进主页」，命中标记时改走序章场景 ──
     // 先解析 pushScenePrologue：拿不到就别装 hook，省得白拦一道。
     resolvePrologueEntry(LIB);
     if (pushScenePrologueFn) {
