@@ -54,12 +54,34 @@ public final class CNScene0Nav {
 
     private static final String TAG = "MagiaCNScene0";
 
-    /** 第 0 章首页的路由名，取自前端 routes.js。 */
-    private static final String ROUTE = "Scene0Top";
+    /**
+     * 第 0 章首页的路由名，取自前端 routes.js。
+     *
+     * <p>hash 带前导斜杠，与前端自己的形态一致（真机上看到的是
+     * {@code index.html#/TopPage}）。不带斜杠 Backbone 也能路由——上一版就是
+     * 这么跳成的——但没必要跟它自己的 history 记录长得不一样。
+     */
+    private static final String ROUTE      = "Scene0Top";
+    private static final String ROUTE_HASH = "/Scene0Top";
+    /** 出问题时退回这里，别把玩家留在白屏上。 */
+    private static final String HOME_HASH  = "/MyPage";
 
     /** 等前端就绪的上限：180 × 500ms = 90 秒（要覆盖登录 + 资源校验）。 */
     private static final int  WAIT_TRIES   = 180;
     private static final long WAIT_STEP_MS = 500L;
+
+    /**
+     * 主页要连续这么多轮都「已渲染」才算稳定（6 × 500ms = 3 秒）。
+     *
+     * <p>上一版只要 href 里出现 MyPage 就立刻跳，结果白屏。日志显示那一刻前端
+     * 正在加载主页自己的模块（MemoriaUtil / QuestUtil / puellaHistoria/CreateModel
+     * …），我们的跳转和它的初始化叠在了一起。前端 router 里有个 {@code a.interrupt}
+     * 分支专门处理「切页被打断」，被打断的那次 {@code pageObj.init()} 就不会跑
+     * ——两个页面都没 init 完，屏幕自然是白的。
+     */
+    private static final int STABLE_ROUNDS = 6;
+    /** 稳定之后再多等一会儿，给收尾动画和延迟请求留余量。 */
+    private static final long SETTLE_MS = 2000L;
 
     /** 导航之后确认是否真的跳过去了。 */
     private static final int  CONFIRM_TRIES = 20;
@@ -100,44 +122,92 @@ public final class CNScene0Nav {
         WebView wv = awaitFrontEnd();
         if (wv == null) {
             // 标记不清：下次启动再试。玩家不会因此卡住，只是这次没跳成。
-            CNLog.w(TAG, "等不到前端就绪，本次不导航（标记保留，下次启动再试）");
+            CNLog.w(TAG, "等不到主页稳定，本次不导航（标记保留，下次启动再试）");
             return;
         }
-        CNLog.i(TAG, "前端已就绪，导航到 " + ROUTE);
+        CNLog.i(TAG, "主页已稳定，" + SETTLE_MS + "ms 后导航到 " + ROUTE);
+        sleep(SETTLE_MS);
+
         // Backbone 的 hash 路由：设置 location.hash 即触发路由回调。
-        // 用 try/catch 包住并把结果回传，免得 WebView 里抛异常我们这边一无所知。
-        eval(wv, "(function(){try{location.hash='" + ROUTE + "';return 'OK';}"
+        eval(wv, "(function(){try{location.hash='" + ROUTE_HASH + "';return 'OK';}"
                  + "catch(e){return 'ERR:'+e;}})()");
 
+        boolean arrived = false;
         for (int i = 0; i < CONFIRM_TRIES; i++) {
             sleep(500L);
-            String href = evalSync(wv, "(function(){try{return String(location.href);}"
-                                       + "catch(e){return 'ERR';}})()");
-            if (href != null && href.contains(ROUTE)) {
-                CNLog.i(TAG, "已进入第 0 章：" + href);
+            String st = probe(wv);
+            if (st != null && st.contains(ROUTE)) {
+                CNLog.i(TAG, "已进入第 0 章：" + st);
+                arrived = true;
+                break;
+            }
+        }
+        if (!arrived) {
+            CNLog.w(TAG, "导航后未确认到第 0 章，标记保留，下次启动再试");
+            return;
+        }
+
+        // 到了 URL 不等于页面画出来了。上一版白屏时 URL 也是对的——所以再确认
+        // 一次「主内容区真的有东西」，没有就退回主页，别把玩家留在白屏上。
+        for (int i = 0; i < CONFIRM_TRIES; i++) {
+            sleep(500L);
+            if (rendered(probe(wv))) {
+                CNLog.i(TAG, "第 0 章已渲染，收工");
                 CNTutorialPrompt.set(false);   // 一次性：消费掉标记
                 return;
             }
         }
-        CNLog.w(TAG, "导航后未确认到第 0 章，标记保留，下次启动再试");
+        CNLog.e(TAG, "第 0 章页面始终空白，退回主页（标记保留，下次启动再试）");
+        eval(wv, "(function(){try{location.hash='" + HOME_HASH + "';return 'OK';}"
+                 + "catch(e){return 'ERR:'+e;}})()");
     }
 
     /**
-     * 等前端就绪：既要有 WebView，又要它已经进到主页。
+     * 探一次前端状态，返回 {@code <href>|<#mainContent 的子元素个数>}。
      *
-     * <p>只判断「WebView 存在」不够——刚建出来时还在加载标题画面，此时改 hash
-     * 会被随后的正常跳转冲掉。等到 href 里出现 MyPage（主页）再动手。
+     * <p>光看 href 不够：URL 改了不代表页面画出来了，上一版白屏时 URL 就是对的。
+     * {@code #mainContent} 是前端的主内容容器（TutorialUtil.js 里也是按这个 id
+     * 取的），它有子元素才说明当前页真的渲染过了。
+     */
+    private static String probe(WebView wv) {
+        return evalSync(wv,
+            "(function(){try{var m=document.getElementById('mainContent');"
+            + "return String(location.href)+'|'+(m?m.childElementCount:-1);}"
+            + "catch(e){return 'ERR|-1';}})()");
+    }
+
+    /** 探测结果是否表示「当前页已渲染」。 */
+    private static boolean rendered(String st) {
+        if (st == null) return false;
+        int i = st.lastIndexOf('|');
+        if (i < 0) return false;
+        try { return Integer.parseInt(st.substring(i + 1).trim()) > 0; }
+        catch (NumberFormatException e) { return false; }
+    }
+
+    /**
+     * 等主页真的稳定：href 是 MyPage、主内容区已渲染，且连续
+     * {@link #STABLE_ROUNDS} 轮都如此。
+     *
+     * <p>只判断「WebView 存在」不够——刚建出来时还在标题画面。只判断「href 里
+     * 有 MyPage」也不够——那一刻主页往往才刚开始加载自己的模块，这时跳走会把
+     * 它的初始化打断，两个页面都 init 不完，白屏。
      */
     private static WebView awaitFrontEnd() {
+        int stable = 0;
         for (int i = 0; i < WAIT_TRIES; i++) {
             WebView wv = findWebView();
             if (wv != null) {
-                String href = evalSync(wv, "(function(){try{return String(location.href);}"
-                                           + "catch(e){return 'ERR';}})()");
-                if (href != null && href.contains("MyPage")) return wv;
-                if (i % 20 == 0) CNLog.i(TAG, "等待前端进入主页…href=" + href);
-            } else if (i % 20 == 0) {
-                CNLog.i(TAG, "等待 WebView 出现…");
+                String st = probe(wv);
+                if (st != null && st.contains("MyPage") && rendered(st)) {
+                    if (++stable >= STABLE_ROUNDS) return wv;
+                } else {
+                    stable = 0;
+                    if (i % 20 == 0) CNLog.i(TAG, "等待主页渲染…" + st);
+                }
+            } else {
+                stable = 0;
+                if (i % 20 == 0) CNLog.i(TAG, "等待 WebView 出现…");
             }
             sleep(WAIT_STEP_MS);
         }
