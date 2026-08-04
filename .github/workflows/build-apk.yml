@@ -311,11 +311,34 @@ jobs:
           set -euo pipefail
           # AOSP 公开测试密钥：与上游发行包同一签名身份，产物可直接覆盖安装。
           # 它是公开的测试密钥，**不提供任何真实性保证**，仅用于保持可覆盖安装。
+          #
+          # googlesource 在 CI 上间歇性不可达（已撞两次 base64: invalid input），
+          # 所以加校验 + 多源回退：首选 googlesource（base64），
+          # 回退 GitHub aosp-mirror 的 raw 二进制（走 gh-proxy，不用解码）。
           mkdir -p .build/key
           for f in testkey.pk8 testkey.x509.pem; do
-            curl -sSL -o ".build/key/${f}.b64" \
-              "https://android.googlesource.com/platform/build/+/refs/tags/android-13.0.0_r83/target/product/security/${f}?format=TEXT"
-            base64 -d ".build/key/${f}.b64" > ".build/key/${f}"
+            ok=0
+            for attempt in 1 2 3; do
+              if curl -sSL --max-time 60 -o ".build/key/${f}.b64" \
+                  "https://android.googlesource.com/platform/build/+/refs/tags/android-13.0.0_r83/target/product/security/${f}?format=TEXT" \
+                  && base64 -d ".build/key/${f}.b64" > ".build/key/${f}" 2>/dev/null \
+                  && [ -s ".build/key/${f}" ]; then
+                ok=1; break
+              fi
+              echo "⚠ googlesource 第 $attempt 次拉取 $f 失败"
+              sleep 3
+            done
+            if [ "$ok" = 0 ]; then
+              echo "↪ 回退 gh-proxy + aosp-mirror: $f"
+              curl -sSL --max-time 120 -o ".build/key/${f}" \
+                "https://gh-proxy.org/https://raw.githubusercontent.com/aosp-mirror/platform_build/refs/tags/android-13.0.0_r83/target/product/security/${f}"
+            fi
+            # 终检：pk8 是 DER 二进制，pem 必须含 BEGIN CERTIFICATE
+            if [ "$f" = "testkey.x509.pem" ]; then
+              grep -q "BEGIN CERTIFICATE" ".build/key/${f}" || { echo "::error::$f 内容无效"; exit 1; }
+            else
+              [ -s ".build/key/${f}" ] || { echo "::error::$f 为空"; exit 1; }
+            fi
           done
           "${BT_DIR}/apksigner" sign \
             --key .build/key/testkey.pk8 \
