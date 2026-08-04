@@ -796,7 +796,6 @@ static const std::string ENGINE_I18N_PATH =
 
 static std::unordered_map<std::string, std::string> g_engineI18n;
 static std::vector<std::pair<std::string, std::string>> g_enginePrefixRules;  // '^' 前缀规则
-static std::unordered_map<std::string, std::string> g_fontMap;                // '@font:' 字体映射
 static std::atomic<bool>     g_engineI18nReady{false};
 static std::atomic<time_t>   g_engineI18nLastCheck{0};
 static time_t                g_engineI18nMtime = 0;
@@ -827,7 +826,6 @@ static void loadEngineI18n() {
     }
     std::unordered_map<std::string, std::string> fresh;
     std::vector<std::pair<std::string, std::string>> freshPrefix;
-    std::unordered_map<std::string, std::string> freshFont;
     char buf[8192];
     size_t lineno = 0, bad = 0;
     while (fgets(buf, sizeof(buf), f)) {
@@ -838,13 +836,7 @@ static void loadEngineI18n() {
         if (line.empty() || line[0] == '#') continue;
         size_t tab = line.find('\t');
         if (tab == std::string::npos) { bad++; continue; }
-        // '@font:<路径>' 行 → 字体映射；'^' 行 → 前缀规则（命中后替换前缀、保留后缀）
-        if (line.compare(0, 6, "@font:") == 0) {
-            std::string from = line.substr(6, tab - 6);
-            std::string to   = line.substr(tab + 1);
-            if (!from.empty() && !to.empty()) freshFont[from] = to;
-            continue;
-        }
+        // '^' 行 → 前缀规则（命中后替换前缀、保留后缀）
         if (line[0] == '^') {
             std::string ja = i18nUnescape(line.substr(1, tab - 1));
             std::string zh = i18nUnescape(line.substr(tab + 1));
@@ -860,10 +852,9 @@ static void loadEngineI18n() {
     if (::stat(ENGINE_I18N_PATH.c_str(), &st) == 0) g_engineI18nMtime = st.st_mtime;
     g_engineI18n.swap(fresh);
     g_enginePrefixRules.swap(freshPrefix);
-    g_fontMap.swap(freshFont);
     g_engineI18nReady.store(!g_engineI18n.empty());
-    LOGI("[i18n] 已加载 %zu 条 + %zu 前缀规则 + %zu 字体映射（第 %zu 行止，坏行 %zu）",
-         g_engineI18n.size(), g_enginePrefixRules.size(), g_fontMap.size(), lineno, bad);
+    LOGI("[i18n] 已加载 %zu 条 + %zu 前缀规则（第 %zu 行止，坏行 %zu）",
+         g_engineI18n.size(), g_enginePrefixRules.size(), lineno, bad);
 }
 
 // 节流重载检查：热更可能在我们启动后才把表放进来/换掉
@@ -1004,93 +995,6 @@ static void initLabelNew(void* node, void* label, const char* text, float f,
         }
     }
     initLabelOld(node, label, use, f, v2, i1, sz, c4b, i2);
-}
-
-// ─── 引擎字体替换 ─────────────────────────────────────────
-// 引擎 UI 字体硬编码为 fonts/MTF4a5kp.ttf（~80 处引用）与
-// fonts/mbm_20160902.ttf（~10 处），都是日文字体——渲染中文是日文字形。
-// 包内自带中文字体 fonts/TTZhiHeiGB3-W4.ttf，钩住 TTF 配置入口把
-// 日文字体路径改写到它。路径表可被翻译表里的 '@font:' 行扩充。
-//
-// 钩子点（_ttfConfig 首成员就是 std::string fontFilePath）：
-//   Label::createWithTTF(const _ttfConfig&, ...)   x1=&config
-//   Label::createWithTTF(const string& text, const string& fontFile, ...)  x2=&fontFile
-//   Label::setTTFConfigInternal(const _ttfConfig&)  x1=&config
-
-// 长驻缓冲：原地改写容量不足时顶替上去的存储（创建期一次性，放弃旧缓冲）
-static std::vector<std::unique_ptr<std::string>> g_fontHold;
-static std::mutex g_fontHoldMutex;
-
-// 原地改写 NDK libc++ std::string 的内容（short/long 两种布局都处理）
-static void ndkStrOverwrite(void* strObj, const std::string& nv) {
-    unsigned char* s = (unsigned char*)strObj;
-    if (s[0] & 1) {  // long
-        size_t cap = (*(size_t*)s) & ~(size_t)1;
-        if (nv.size() < cap) {
-            memcpy(*(char**)(s + 16), nv.data(), nv.size() + 1);
-            *(size_t*)(s + 8) = nv.size();
-            return;
-        }
-    } else if (nv.size() <= 22) {  // short 放得下
-        s[0] = (unsigned char)(nv.size() << 1);
-        memcpy(s + 1, nv.data(), nv.size() + 1);
-        return;
-    }
-    // 放不下：切/换 long，指向长驻缓冲
-    std::lock_guard<std::mutex> lk(g_fontHoldMutex);
-    g_fontHold.emplace_back(new std::string(nv));
-    const std::string* hold = g_fontHold.back().get();
-    *(const char**)(s + 16) = hold->c_str();
-    *(size_t*)(s + 8)  = hold->size();
-    *(size_t*)s        = (hold->size() + 1) | 1;
-}
-
-static void fontPathFix(void* strObj, const char* tag) {
-    NdkStrView v = ndkStrRead(strObj);
-    if (v.size == 0 || v.size > 260) return;
-    // 内置默认映射
-    static const struct { const char* from; const char* to; } kBuiltin[] = {
-        { "fonts/MTF4a5kp.ttf",        "fonts/TTZhiHeiGB3-W4.ttf" },
-        { "fonts/mbm_20160902.ttf",    "fonts/TTZhiHeiGB3-W4.ttf" },
-        { "fonts/koruri-semibold.ttf", "fonts/TTZhiHeiGB3-W4.ttf" },
-    };
-    std::string cur(v.data, v.size);
-    for (const auto& m : kBuiltin) {
-        if (cur == m.from) {
-            ndkStrOverwrite(strObj, m.to);
-            LOGI("[font] %s: %s → %s", tag, m.from, m.to);
-            return;
-        }
-    }
-    auto it = g_fontMap.find(cur);  // '@font:' 扩充规则
-    if (it != g_fontMap.end()) {
-        ndkStrOverwrite(strObj, it->second);
-        LOGI("[font] %s: %s → %s（表规则）", tag, cur.c_str(), it->second.c_str());
-    }
-}
-
-using CreateWithTtfCfgFn = void* (*)(void*, const void*, int, int);       // (cfg, text, hAlign, int)
-using CreateWithTtfStrFn = void* (*)(void*, const void*, float, void*, int, int); // (text, font, size, size*, hA, vA) 前三个够用
-using SetTtfCfgFn = void (*)(void*, const void*);
-static CreateWithTtfCfgFn createWithTtfCfgOld = nullptr;
-static CreateWithTtfStrFn createWithTtfStrOld = nullptr;
-static SetTtfCfgFn        setTtfCfgInternalOld = nullptr;
-
-// createWithTTF(const _ttfConfig& config, const std::string& text, TextHAlignment, int)
-static void* createWithTtfCfgNew(void* cfg, const void* text, int h, int i) {
-    fontPathFix(cfg, "createWithTTF(cfg)");
-    return createWithTtfCfgOld(cfg, text, h, i);
-}
-// createWithTTF(const std::string& text, const std::string& fontFile, float, ...)
-static void* createWithTtfStrNew(void* text, const void* font, float size,
-                                 void* dims, int h, int v) {
-    fontPathFix((void*)font, "createWithTTF(str)");
-    return createWithTtfStrOld(text, font, size, dims, h, v);
-}
-// Label::setTTFConfigInternal(const _ttfConfig&) — x0=this, x1=&config
-static void setTtfCfgInternalNew(void* self, const void* cfg) {
-    fontPathFix((void*)cfg, "setTTFConfigInternal");
-    setTtfCfgInternalOld(self, cfg);
 }
 
 // ─── JNI_OnLoad ──────────────────────────────────────────
@@ -1263,14 +1167,6 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       (void*)loadingSetTextNew, (void**)&loadingSetTextOld, "i18n: LoadingSceneLayerInfo::setText");
     H("_ZN9LbUtility9initLabelEPN7cocos2d4NodeERPNS0_5LabelEPKcfNS0_4Vec2EiNS0_4SizeENS0_7Color4BEi",
       (void*)initLabelNew, (void**)&initLabelOld, "i18n: LbUtility::initLabel");
-
-    // ── 引擎字体替换：日文字体路径 → 包内中文字体 ──
-    H("_ZN7cocos2d5Label13createWithTTFERKNS_10_ttfConfigERKNSt6__ndk112basic_stringIcNS4_11char_traitsIcEENS4_9allocatorIcEEEENS_14TextHAlignmentEi",
-      (void*)createWithTtfCfgNew, (void**)&createWithTtfCfgOld, "font: createWithTTF(cfg)");
-    H("_ZN7cocos2d5Label13createWithTTFERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEES9_fRKNS_4SizeENS_14TextHAlignmentENS_14TextVAlignmentE",
-      (void*)createWithTtfStrNew, (void**)&createWithTtfStrOld, "font: createWithTTF(str)");
-    H("_ZN7cocos2d5Label20setTTFConfigInternalERKNS_10_ttfConfigE",
-      (void*)setTtfCfgInternalNew, (void**)&setTtfCfgInternalOld, "font: setTTFConfigInternal");
 
     LOGI("[JNI] hooks 安装完成：成功 %d 个，失败 %d 个", hookOk, hookFail);
     return JNI_VERSION_1_6;
