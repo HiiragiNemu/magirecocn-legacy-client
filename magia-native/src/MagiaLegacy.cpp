@@ -769,6 +769,182 @@ static jstring nativeClientVersion(JNIEnv* env, jclass) {
     return env->NewStringUTF(CLIENT_VERSION);
 }
 
+// ─── 引擎硬编码串翻译（cocos2d::Label 系列钩子）────────────────────
+//
+// 背景：菜单/弹窗文本走 Web 层（热更 zip 已覆盖），但原生引擎（cocos2d-x，
+// 全在 libmadomagi_native.so 里）渲染的文本——网络报错、下载引导、战斗效果
+// 说明、关卡续玩确认等——硬编码在 .rodata，smali 层帮不上忙。
+//
+// 方案：钩住文本进入渲染管线的总闸，命中翻译表就换掉内容再放行：
+//   cocos2d::Label::setString            对话框/UI 文本主入口
+//   cocos2d::LabelAtlas::setString       战斗数字/效果文本
+//   cocos2d::MenuItemLabel::setString    菜单项
+//   LoadingSceneLayerInfo::setText       下载/加载界面
+//   LbUtility::initLabel                 游戏自建标签（const char* 直传）
+//
+// 翻译表来自热更文件，改译文不用重出 APK（铁律：补丁可热维护）：
+//   /data/data/io.kamihama.totentanz/files/madomagi/engine_i18n.tsv
+// 格式与 legacy-client 的对照表一致：每行 ja<TAB>zhCN，换行/制表/反斜杠
+// 写作 \n \t \\；zhCN 为空表示**删除**该串（拼接式文案的语序调整用）。
+// 表在启动时加载，之后每 3 秒节流行检查一次 mtime，热更替换后免重启生效。
+
+static const std::string ENGINE_I18N_PATH =
+    "/data/data/io.kamihama.totentanz/files/madomagi/engine_i18n.tsv";
+
+static std::unordered_map<std::string, std::string> g_engineI18n;
+static std::atomic<bool>     g_engineI18nReady{false};
+static std::atomic<time_t>   g_engineI18nLastCheck{0};
+static time_t                g_engineI18nMtime = 0;
+static std::atomic<uint64_t> g_engineI18nHits{0};
+
+static std::string i18nUnescape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); i++) {
+        if (s[i] == '\\' && i + 1 < s.size()) {
+            char c = s[++i];
+            if (c == 'n')      out += '\n';
+            else if (c == 't') out += '\t';
+            else               out += c;  // 含 '\\' 自身
+        } else {
+            out += s[i];
+        }
+    }
+    return out;
+}
+
+static void loadEngineI18n() {
+    FILE* f = fopen(ENGINE_I18N_PATH.c_str(), "rb");
+    if (!f) {
+        if (g_engineI18nReady || g_engineI18nMtime != 0)
+            LOGI("[i18n] 表文件暂缺，保持现状: %s", ENGINE_I18N_PATH.c_str());
+        return;
+    }
+    std::unordered_map<std::string, std::string> fresh;
+    char buf[8192];
+    size_t lineno = 0, bad = 0;
+    while (fgets(buf, sizeof(buf), f)) {
+        lineno++;
+        std::string line(buf);
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
+            line.pop_back();
+        if (line.empty() || line[0] == '#') continue;
+        size_t tab = line.find('\t');
+        if (tab == std::string::npos) { bad++; continue; }
+        std::string ja = i18nUnescape(line.substr(0, tab));
+        std::string zh = i18nUnescape(line.substr(tab + 1));
+        if (!ja.empty()) fresh[ja] = zh;
+    }
+    fclose(f);
+    struct stat st;
+    if (::stat(ENGINE_I18N_PATH.c_str(), &st) == 0) g_engineI18nMtime = st.st_mtime;
+    g_engineI18n.swap(fresh);
+    g_engineI18nReady.store(!g_engineI18n.empty());
+    LOGI("[i18n] 已加载 %zu 条（第 %zu 行止，坏行 %zu）",
+         g_engineI18n.size(), lineno, bad);
+}
+
+// 节流重载检查：热更可能在我们启动后才把表放进来/换掉
+static void maybeReloadEngineI18n() {
+    time_t now = ::time(nullptr);
+    time_t last = g_engineI18nLastCheck.load();
+    if (now - last < 3) return;
+    if (!g_engineI18nLastCheck.compare_exchange_strong(last, now)) return;
+    struct stat st;
+    if (::stat(ENGINE_I18N_PATH.c_str(), &st) != 0) return;
+    if (st.st_mtime != g_engineI18nMtime) {
+        LOGI("[i18n] 检测到表变更，重新加载");
+        loadEngineI18n();
+    }
+}
+
+// NDK libc++ std::string（arm64）只读视图。
+// __short: 首字节 = size<<1（LSB=0），数据在 +1；
+// __long : 首 size_t 的 LSB=1 作标记，+8 是 size，+16 是数据指针。
+struct NdkStrView { const char* data; size_t size; };
+static NdkStrView ndkStrRead(const void* strObj) {
+    const unsigned char* s = (const unsigned char*)strObj;
+    if (s[0] & 1) return { *(const char* const*)(s + 16), *(const size_t*)(s + 8) };
+    return { (const char*)(s + 1), (size_t)(s[0] >> 1) };
+}
+
+static const std::string* engineLookup(const void* strObj) {
+    if (!g_engineI18nReady.load()) return nullptr;
+    NdkStrView v = ndkStrRead(strObj);
+    if (v.size == 0 || v.size > 8192) return nullptr;
+    auto it = g_engineI18n.find(std::string(v.data, v.size));
+    if (it == g_engineI18n.end()) return nullptr;
+    uint64_t n = ++g_engineI18nHits;
+    if (n <= 10 || n % 100 == 0)
+        LOGI("[i18n] 替换 #%llu: %.40s", (unsigned long long)n, v.data);
+    return &it->second;
+}
+
+// 伪造一个 long 布局的 std::string 传给原函数（原函数只在调用期内读它）。
+// zh 是表内 static 存储，指针在整个调用期有效。
+struct FakeNdkStr { size_t cap; size_t size; const char* data; };
+static void fakeNdkStr(FakeNdkStr& fk, const std::string& zh) {
+    fk.cap  = (zh.size() + 1) | 1;
+    fk.size = zh.size();
+    fk.data = zh.c_str();
+}
+
+using SetStringFn = void (*)(void*, const void*);
+static SetStringFn labelSetStringOld      = nullptr;
+static SetStringFn labelAtlasSetStringOld = nullptr;
+static SetStringFn menuItemSetStringOld   = nullptr;
+static SetStringFn loadingSetTextOld      = nullptr;
+
+static void setStringTrampoline(SetStringFn old, void* self, const void* text,
+                                const char* /*label*/) {
+    maybeReloadEngineI18n();
+    const std::string* zh = engineLookup(text);
+    if (zh) {
+        FakeNdkStr fk;
+        fakeNdkStr(fk, *zh);
+        old(self, &fk);
+        return;
+    }
+    old(self, text);
+}
+static void labelSetStringNew(void* self, const void* text) {
+    setStringTrampoline(labelSetStringOld, self, text, "Label::setString");
+}
+static void labelAtlasSetStringNew(void* self, const void* text) {
+    setStringTrampoline(labelAtlasSetStringOld, self, text, "LabelAtlas::setString");
+}
+static void menuItemSetStringNew(void* self, const void* text) {
+    setStringTrampoline(menuItemSetStringOld, self, text, "MenuItemLabel::setString");
+}
+static void loadingSetTextNew(void* self, const void* text) {
+    setStringTrampoline(loadingSetTextOld, self, text, "LoadingSceneLayerInfo::setText");
+}
+
+// LbUtility::initLabel(Node*, Label*&, const char* text, float, Vec2, int, Size, Color4B, int)
+// const char* 直传，命中就换指针。钩子与原函数用完全相同的原型声明，
+// 由编译器保证两侧参数布局一致（不用变参转发，避免 HFA/小聚合体 ABI 坑）。
+struct CNVec2    { float x, y; };
+struct CNSize    { float w, h; };
+struct CNColor4B { unsigned char r, g, b; };
+using InitLabelFn = void (*)(void*, void*, const char*, float,
+                             CNVec2, int, CNSize, CNColor4B, int);
+static InitLabelFn initLabelOld = nullptr;
+static void initLabelNew(void* node, void* label, const char* text, float f,
+                         CNVec2 v2, int i1, CNSize sz, CNColor4B c4b, int i2) {
+    maybeReloadEngineI18n();
+    const char* use = text;
+    if (text && g_engineI18nReady.load()) {
+        auto it = g_engineI18n.find(text);
+        if (it != g_engineI18n.end()) {
+            uint64_t n = ++g_engineI18nHits;
+            if (n <= 10 || n % 100 == 0)
+                LOGI("[i18n] 替换 #%llu: %.40s", (unsigned long long)n, text);
+            use = it->second.c_str();
+        }
+    }
+    initLabelOld(node, label, use, f, v2, i1, sz, c4b, i2);
+}
+
 // ─── JNI_OnLoad ──────────────────────────────────────────
 extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     (void)reserved;
@@ -925,6 +1101,20 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
         if (pthread_create(&t, nullptr, endpointThreadMain, nullptr) == 0) pthread_detach(t);
         else LOGE("[UrlConfig] 端点线程起不来");
     }
+
+    // ── 引擎硬编码串翻译（cocos2d::Label 系列）──
+    // 先装表再装钩；表缺失时钩子空转放行，不影响其他功能。
+    loadEngineI18n();
+    H("_ZN7cocos2d5Label9setStringERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
+      (void*)labelSetStringNew, (void**)&labelSetStringOld, "i18n: Label::setString");
+    H("_ZN7cocos2d10LabelAtlas9setStringERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
+      (void*)labelAtlasSetStringNew, (void**)&labelAtlasSetStringOld, "i18n: LabelAtlas::setString");
+    H("_ZN7cocos2d13MenuItemLabel9setStringERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
+      (void*)menuItemSetStringNew, (void**)&menuItemSetStringOld, "i18n: MenuItemLabel::setString");
+    H("_ZN21LoadingSceneLayerInfo7setTextENSt6__ndk112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE",
+      (void*)loadingSetTextNew, (void**)&loadingSetTextOld, "i18n: LoadingSceneLayerInfo::setText");
+    H("_ZN9LbUtility9initLabelEPN7cocos2d4NodeERPNS0_5LabelEPKcfNS0_4Vec2EiNS0_4SizeENS0_7Color4BEi",
+      (void*)initLabelNew, (void**)&initLabelOld, "i18n: LbUtility::initLabel");
 
     LOGI("[JNI] hooks 安装完成：成功 %d 个，失败 %d 个", hookOk, hookFail);
     return JNI_VERSION_1_6;
