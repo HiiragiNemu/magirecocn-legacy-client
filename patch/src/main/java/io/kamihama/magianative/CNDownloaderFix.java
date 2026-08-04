@@ -68,6 +68,10 @@ public final class CNDownloaderFix {
     private static final int    MIN_SNAA_VERSION = 128;
     private static final String NO_RESTART_FLAG = "/data/data/io.kamihama.totentanz/files/madomagi/magica/.cn_installer/r128-downloader-v1/no_restart";
     private static final int    READ_TIMEOUT_MS = 30000;
+    // 低速看门狗：read timeout 管的是「完全没字节」，管不了「每秒几十 KB 的滴速」。
+    // 窗口速度持续低于 MIN_OK_BPS 超过 SLOW_FAIL_NS 就抛异常走换线。
+    private static final long   MIN_OK_BPS  = 100L * 1024L;                      // 100 KB/s
+    private static final long   SLOW_FAIL_NS = TimeUnit.SECONDS.toNanos(15L);
     /** 规范资源地址：仅用于生成完成标记里的 url 字段，不代表实际下载线路。 */
     private static final String RESOURCE_BASE_URL = "https://assets.example.test/";
     private static final String STATE_ROOT = "/data/data/io.kamihama.totentanz/files/madomagi/magica/.cn_installer/r128-downloader-v1";
@@ -913,6 +917,7 @@ public final class CNDownloaderFix {
             long windowStart   = System.nanoTime();
             long written       = 0L;
             long speedBaseline = 0L;
+            long slowSinceNs   = 0L;  // 低速看门狗：半死镜像滴速下载时主动换线
             int  n;
             while ((n = in.read(buf)) >= 0) {
                 fos.write(buf, 0, n);
@@ -922,8 +927,20 @@ public final class CNDownloaderFix {
                 updateProgress(index, offset + written, total);
                 long dt = now - windowStart;
                 if (dt >= TimeUnit.MILLISECONDS.toNanos(500L)) {
+                    long windowBytes = written - speedBaseline;
                     CNCNDownloadUI.setDownloadSpeed(index,
-                            (float) ((((written - speedBaseline) * 1.0E9d) / dt) / 1000000.0d));
+                            (float) ((windowBytes * 1.0E9d / dt) / 1000000.0d));
+                    // 持续低速（<100KB/s 超过 15s）视为镜像半死：
+                    // read timeout 只在完全无字节时触发，滴速线路会永远卡在这里
+                    if (windowBytes * 1000000000L / dt < MIN_OK_BPS) {
+                        if (slowSinceNs == 0L) slowSinceNs = now;
+                        else if (now - slowSinceNs >= SLOW_FAIL_NS) {
+                            throw new IOException("镜像速度过慢（持续低于 "
+                                    + (MIN_OK_BPS / 1024) + "KB/s），换线");
+                        }
+                    } else {
+                        slowSinceNs = 0L;
+                    }
                     speedBaseline = written;
                     windowStart   = now;
                 }
