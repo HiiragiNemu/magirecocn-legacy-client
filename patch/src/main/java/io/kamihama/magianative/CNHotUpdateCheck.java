@@ -7,6 +7,7 @@ import android.content.SharedPreferences;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.Proxy;
@@ -205,25 +206,117 @@ public final class CNHotUpdateCheck {
         running = true;
         try {
             CNCNDownloadUI.updateSimple("检查热更新", "正在查询台词与前端脚本的版本…", 0);
-            // 两个版本号并行查：串行时首条线路的慢/挂会在两个包上各吃一轮超时
+            // 版本号并行查：串行时首条线路的慢/挂会在两个包上各吃一轮超时
             final java.util.concurrent.ExecutorService pool =
                     java.util.concurrent.Executors.newFixedThreadPool(2);
-            java.util.concurrent.Future<Integer> fScenario =
-                    pool.submit(new java.util.concurrent.Callable<Integer>() {
-                        @Override public Integer call() { return fetchVersionSafe(PACKAGES[0]); }});
-            java.util.concurrent.Future<Integer> fJs =
-                    pool.submit(new java.util.concurrent.Callable<Integer>() {
-                        @Override public Integer call() { return fetchVersionSafe(PACKAGES[1]); }});
-            int[] remotes = new int[]{-1, -1};
+            java.util.concurrent.Future<VerMeta> fScenario =
+                    pool.submit(new java.util.concurrent.Callable<VerMeta>() {
+                        @Override public VerMeta call() { return fetchMetaSafe(PACKAGES[0]); }});
+            java.util.concurrent.Future<VerMeta> fJs =
+                    pool.submit(new java.util.concurrent.Callable<VerMeta>() {
+                        @Override public VerMeta call() { return fetchMetaSafe(PACKAGES[1]); }});
+            final VerMeta[] metas = new VerMeta[2];
             try {
-                remotes[0] = fScenario.get();
-                remotes[1] = fJs.get();
+                metas[0] = fScenario.get();
+                metas[1] = fJs.get();
             } catch (Throwable t) {
                 CNLog.w(TAG, "并行版本查询异常: " + t);
             }
             pool.shutdown();
+
+            // 判定哪些包要更新
+            final boolean[] needs  = new boolean[PACKAGES.length];
+            final int[]    locals  = new int[PACKAGES.length];
+            final File[]   tmpFiles = new File[PACKAGES.length];
+            boolean anyNeed = false;
             for (int i = 0; i < PACKAGES.length; i++) {
-                if (applyIfNewer(PACKAGES[i], remotes[i])) applied = true;
+                Pkg pkg = PACKAGES[i];
+                VerMeta meta = metas[i];
+                if (meta == null) continue;  // 查询失败已在 fetchMetaSafe 里提示
+                int local = readLocalVersion(pkg.versionKey);
+                locals[i] = local;
+                CNLog.i(TAG, "[" + pkg.label + "] server=" + meta.version + " local=" + local);
+                if (meta.version <= local) {
+                    CNCNDownloadUI.updateSimple("检查热更新",
+                            pkg.label + "：已是最新（v" + local + "）", 0);
+                    continue;
+                }
+                File tmp = new File(FILES_DIR, pkg.tmpName);
+                // 上一次跑到一半留下的残骸会让 download() 直接判定「目标已存在」而跳过
+                if (tmp.exists() && !tmp.delete()) {
+                    CNLog.w(TAG, "[" + pkg.label + "] 删不掉旧的临时包 " + tmp + "，放弃本项");
+                    continue;
+                }
+                tmpFiles[i] = tmp;
+                needs[i] = true;
+                anyNeed = true;
+            }
+
+            // 需要更新的包并行下载（js 小包不再被 scenario 大包拖住）
+            final java.util.Map<Integer, java.util.concurrent.Future<Boolean>> dls =
+                    new java.util.LinkedHashMap<Integer, java.util.concurrent.Future<Boolean>>();
+            if (anyNeed) {
+                final java.util.concurrent.ExecutorService dlPool =
+                        java.util.concurrent.Executors.newFixedThreadPool(2);
+                for (int i = 0; i < PACKAGES.length; i++) {
+                    if (!needs[i]) continue;
+                    final Pkg pkg = PACKAGES[i];
+                    final File tmp = tmpFiles[i];
+                    final VerMeta meta = metas[i];
+                    final int local = locals[i];
+                    CNCNDownloadUI.updateSimple("下载热更新",
+                            pkg.label + "：v" + local + " → v" + meta.version + "，正在下载…", 0);
+                    final int idx = i;
+                    dls.put(idx, dlPool.submit(new java.util.concurrent.Callable<Boolean>() {
+                        @Override public Boolean call() {
+                            return CNHotUpdate.download(pkg.zipUrl, tmp.getAbsolutePath(),
+                                                        pkg.tmpName, pkg.slot);
+                        }}));
+                }
+                dlPool.shutdown();
+            }
+
+            // 收下载结果 → md5/size 校验 → 顺序解压（磁盘友好）
+            for (java.util.Map.Entry<Integer, java.util.concurrent.Future<Boolean>> e
+                    : dls.entrySet()) {
+                int i = e.getKey();
+                Pkg pkg = PACKAGES[i];
+                File tmp = tmpFiles[i];
+                VerMeta meta = metas[i];
+                int local = locals[i];
+                boolean ok;
+                try {
+                    ok = e.getValue().get();
+                } catch (Throwable t) {
+                    ok = false;
+                }
+                if (!ok) {
+                    CNLog.e(TAG, "[" + pkg.label + "] 下载失败，本项不更新（版本号保持 " + local + "）");
+                    CNCNDownloadUI.updateSimple("下载热更新", pkg.label + "：下载失败，已跳过", 0);
+                    continue;
+                }
+                String bad = verifyZip(tmp, meta);
+                if (bad != null) {
+                    CNLog.e(TAG, "[" + pkg.label + "] 校验失败（" + bad + "），丢弃本项");
+                    CNCNDownloadUI.updateSimple("下载热更新", pkg.label + "：校验失败，已跳过", 0);
+                    deleteQuietly(tmp);
+                    continue;
+                }
+                CNCNDownloadUI.updateSimple("应用热更新", pkg.label + "：正在解压…", 0);
+                try {
+                    CNDownloaderFix.extractChecked(tmp, new File(FILES_DIR));
+                } catch (Throwable t) {
+                    // 解压失败时**不能**写新版本号，否则下次启动会以为已经更新过。
+                    CNLog.e(TAG, "[" + pkg.label + "] 解压失败，版本号保持 " + local, t);
+                    CNCNDownloadUI.updateSimple("应用热更新", pkg.label + "：解压失败，已跳过", 0);
+                    deleteQuietly(tmp);
+                    continue;
+                }
+                deleteQuietly(tmp);
+                saveLocalVersion(pkg.versionKey, meta.version);
+                CNLog.i(TAG, "[" + pkg.label + "] 更新完成，版本号记为 " + meta.version);
+                CNCNDownloadUI.updateSimple("应用热更新", pkg.label + "：已更新到 v" + meta.version, 0);
+                applied = true;
             }
         } finally {
             stopWatchdog(watchdog);
@@ -256,80 +349,45 @@ public final class CNHotUpdateCheck {
 
     /**
      * 处理单个热更包：比对版本，必要时下载 + 解压 + 记录新版本号。
-     *
-     * @return true 表示确实应用了更新
+     * 已被 runInner 内联的「并行取版本 → 并行下载 → 校验 → 顺序解压」流程取代。
      */
-    private static boolean applyIfNewer(Pkg pkg) {
-        int remote;
-        try {
-            remote = fetchVersion(pkg.versionUrl);
-        } catch (Throwable t) {
-            remote = -1;
-        }
-        return applyIfNewer(pkg, remote);
-    }
 
-    /** 供并行预取版本号用：失败返回 -1 并提示，由 applyIfNewer(pkg, -1) 走跳过路径。 */
-    private static int fetchVersionSafe(Pkg pkg) {
+    /** 供并行预取版本号用：失败返回 null 并提示，调用方按「跳过本包」处理。 */
+    private static VerMeta fetchMetaSafe(Pkg pkg) {
         try {
-            return fetchVersion(pkg.versionUrl);
+            return fetchMeta(pkg.versionUrl);
         } catch (Throwable t) {
             CNLog.w(TAG, "[" + pkg.label + "] 版本查询失败，跳过：" + t);
             CNCNDownloadUI.updateSimple("检查热更新",
                     pkg.label + "：版本查询失败，跳过本项", 0);
-            return -1;
+            return null;
         }
     }
 
-    /** 带预取版本号的 applyIfNewer：remote<=0 表示查询失败/无效，跳过本包。 */
-    private static boolean applyIfNewer(Pkg pkg, int remote) {
-        if (remote <= 0) {
-            if (remote == 0) {
-                CNLog.w(TAG, "[" + pkg.label + "] 服务端版本号无效（0），跳过");
+    /** 下载完工校验：size 对得上、md5 对得上才放行；返回 null 表示通过。 */
+    private static String verifyZip(File f, VerMeta meta) {
+        if (meta == null || f == null || !f.isFile()) return "文件缺失";
+        if (meta.size > 0 && f.length() != meta.size) {
+            return "大小不符 " + f.length() + " != " + meta.size;
+        }
+        if (meta.md5 != null && meta.md5.length() > 0) {
+            try {
+                java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
+                InputStream in = new BufferedInputStream(new FileInputStream(f), 65536);
+                byte[] buf = new byte[65536];
+                int n;
+                while ((n = in.read(buf)) >= 0) md.update(buf, 0, n);
+                in.close();
+                StringBuilder sb = new StringBuilder(32);
+                for (byte b : md.digest()) sb.append(String.format("%02x", b & 0xff));
+                if (!meta.md5.equalsIgnoreCase(sb.toString())) {
+                    return "md5 不符";
+                }
+            } catch (Throwable t) {
+                return "md5 计算失败: " + t;
             }
-            return false;
         }
-        int local = readLocalVersion(pkg.versionKey);
-        CNLog.i(TAG, "[" + pkg.label + "] server=" + remote + " local=" + local);
-        if (remote <= local) {
-            CNCNDownloadUI.updateSimple("检查热更新",
-                    pkg.label + "：已是最新（v" + local + "）", 0);
-            return false;
-        }
-
-        CNLog.i(TAG, "[" + pkg.label + "] 需要更新 " + local + " → " + remote);
-        CNCNDownloadUI.updateSimple("下载热更新",
-                pkg.label + "：v" + local + " → v" + remote + "，正在下载…", 0);
-
-        File tmp = new File(FILES_DIR, pkg.tmpName);
-        // 上一次跑到一半留下的残骸会让 download() 直接判定「目标已存在」而跳过，
-        // 于是拿旧的半截包去解压。先删掉。
-        if (tmp.exists() && !tmp.delete()) {
-            CNLog.w(TAG, "[" + pkg.label + "] 删不掉旧的临时包 " + tmp + "，放弃本项");
-            return false;
-        }
-
-        if (!CNHotUpdate.download(pkg.zipUrl, tmp.getAbsolutePath(), pkg.tmpName, pkg.slot)) {
-            CNLog.e(TAG, "[" + pkg.label + "] 下载失败，本项不更新（版本号保持 " + local + "）");
-            CNCNDownloadUI.updateSimple("下载热更新", pkg.label + "：下载失败，已跳过", 0);
-            return false;
-        }
-
-        CNCNDownloadUI.updateSimple("应用热更新", pkg.label + "：正在解压…", 0);
-        try {
-            CNDownloaderFix.extractChecked(tmp, new File(FILES_DIR));
-        } catch (Throwable t) {
-            // 解压失败时**不能**写新版本号，否则下次启动会以为已经更新过。
-            CNLog.e(TAG, "[" + pkg.label + "] 解压失败，版本号保持 " + local, t);
-            CNCNDownloadUI.updateSimple("应用热更新", pkg.label + "：解压失败，已跳过", 0);
-            deleteQuietly(tmp);
-            return false;
-        }
-        deleteQuietly(tmp);
-        saveLocalVersion(pkg.versionKey, remote);
-        CNLog.i(TAG, "[" + pkg.label + "] 更新完成，版本号记为 " + remote);
-        CNCNDownloadUI.updateSimple("应用热更新", pkg.label + "：已更新到 v" + remote, 0);
-        return true;
+        return null;
     }
 
     // ==================================================================
@@ -421,7 +479,20 @@ public final class CNHotUpdateCheck {
      * 文件名后逐条线路试，失败记冷却；全部失败才抛出（调用方按「跳过本次
      * 热更」处理，不会卡住启动）。
      */
-    private static int fetchVersion(String url) throws Exception {
+    /** 版本 json 的三元组：version 用来比对，size/md5 用于下载后的完工校验。 */
+    private static final class VerMeta {
+        final int    version;
+        final long   size;
+        final String md5;
+        VerMeta(int v, long s, String m) { version = v; size = s; md5 = m; }
+    }
+
+    /**
+     * 取版本 json（含 size/md5）。<b>走换线</b>：与资源文件同一套线路。
+     * 从规范地址取出文件名后逐条线路试，失败记冷却；全部失败才抛出
+     * （调用方按「跳过本次热更」处理，不会卡住启动）。
+     */
+    private static VerMeta fetchMeta(String url) throws Exception {
         String base = CNMirrors.DEFAULT_BASE;
         String name = url.startsWith(base) ? url.substring(base.length()) : url;
         // 线路表可能还没拉过（热更检查不一定跟在安装器后面跑）
@@ -432,7 +503,7 @@ public final class CNHotUpdateCheck {
         Exception last = null;
         for (CNMirrors.Mirror m : CNMirrors.healthy()) {
             try {
-                return fetchVersionDirect(m.urlFor(name));
+                return fetchMetaDirect(m.urlFor(name));
             } catch (Exception t) {
                 CNLog.w(TAG, "版本 json 线路失败 mirror=" + m.name + ": " + t);
                 CNMirrors.reportFailure(m, "version json");
@@ -442,8 +513,8 @@ public final class CNHotUpdateCheck {
         throw last != null ? last : new java.io.IOException("无可用线路");
     }
 
-    /** 从单条线路直取版本 json 并解析 version 字段。 */
-    private static int fetchVersionDirect(String url) throws Exception {
+    /** 从单条线路直取版本 json 并解析 version/size/md5。 */
+    private static VerMeta fetchMetaDirect(String url) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection(Proxy.NO_PROXY);
         try {
             c.setConnectTimeout(VER_CONNECT_TIMEOUT_MS);
@@ -458,7 +529,10 @@ public final class CNHotUpdateCheck {
             // 版本 json 只有几十字节；设个上限免得对面返回一坨东西把内存吃了
             while ((n = in.read(buf)) >= 0 && bos.size() < 65536) bos.write(buf, 0, n);
             in.close();
-            return new JSONObject(bos.toString("UTF-8")).getInt("version");
+            JSONObject o = new JSONObject(bos.toString("UTF-8"));
+            return new VerMeta(o.getInt("version"),
+                             o.optLong("size", -1L),
+                             o.optString("md5", ""));
         } finally {
             try { c.disconnect(); } catch (Throwable ignore) {}
         }
