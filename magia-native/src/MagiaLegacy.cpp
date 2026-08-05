@@ -550,6 +550,59 @@ static void saveTop(void* self, const std::string& arg) {
 
 static void setGameUiVisible(bool visible);   // 前向声明：定义在 pushSceneTopNew 之后
 
+// ─── 下载浮层期间的引擎闸门 ──────────────────────────────
+// 浮层（首装/热更下载）激活期间：吞掉 pushSceneTop、挂起 BGM；浮层撤掉后
+// 补推主页跳转并补放最后的 BGM。标记文件由 Java 侧 CNCNDownloadUI 维护：
+// show 时创建、每 2 秒心跳 touch、hide 时删除。mtime 超过 6 秒视为进程
+// 被杀留下的残留，自动失效——宁可闸不住也绝不能把引擎闸死在加载页。
+static const std::string OVERLAY_FLAG_PATH =
+    "/data/data/io.kamihama.totentanz/files/madomagi/cn_overlay_active.flag";
+
+static bool overlayActive() {
+    struct stat st;
+    if (::stat(OVERLAY_FLAG_PATH.c_str(), &st) != 0) return false;
+    return (::time(nullptr) - st.st_mtime) < 6;
+}
+
+static std::atomic<bool> g_topDeferred{false};
+static std::string       g_deferredTopArg;
+static void*             g_deferredTopSelf = nullptr;
+static std::atomic<bool> g_bgmDeferred{false};
+static std::string       g_deferredBgm;
+
+static void pushSceneTopNew(void* self, const std::string& arg);  // 前向声明
+
+using PlayBgmFn = void (*)(const char*);
+static PlayBgmFn playBgmDirectOld = nullptr;
+static void playBgmDirectNew(const char* name) {
+    if (overlayActive()) {
+        LOGI("[Overlay] 浮层激活，挂起 BGM: %s", name ? name : "(null)");
+        if (name) {
+            g_deferredBgm = name;
+            g_bgmDeferred.store(true);
+        }
+        return;
+    }
+    playBgmDirectOld(name);
+}
+
+// 在引擎主线程的周期性回调里被调用（setString/setText 系列钩子）。
+static void maybeReleaseDeferredTop() {
+    if (!g_topDeferred.load() && !g_bgmDeferred.load()) return;
+    if (overlayActive()) return;
+    if (g_bgmDeferred.exchange(false) && playBgmDirectOld) {
+        LOGI("[Overlay] 浮层已撤，补放 BGM: %s", g_deferredBgm.c_str());
+        playBgmDirectOld(g_deferredBgm.c_str());
+    }
+    if (g_topDeferred.exchange(false)) {
+        void* self = g_deferredTopSelf;
+        std::string arg = g_deferredTopArg;
+        LOGI("[Overlay] 浮层已撤，补推被闸住的主页跳转(arg=%s)", arg.c_str());
+        pushSceneTopNew(self, arg);  // 走完整逻辑（含教程闸门）
+    }
+}
+
+
 // 序章全程压住前端界面的看门狗。置位于触发那一刻，收尾于序章图层析构
 // （g_tutorialActive 清零）。v3 真机发现：剧情段放完后 WebView 会自己复出，
 // 把战斗盖成背景板——只在图层构造时藏一次不够，得全程按回去。
@@ -565,6 +618,16 @@ static void* uiWatchdogMain(void*) {
 }
 
 static void pushSceneTopNew(void* self, const std::string& arg) {
+    // ── 下载浮层闸门：浮层（首装/热更）激活期间吞掉主页跳转 ──
+    // 不然引擎在浮层后面直接推进到主页并开始放 BGM。
+    // 被吞的跳转在浮层撤掉后由 maybeReleaseDeferredTop 补推（走完整逻辑）。
+    if (overlayActive()) {
+        LOGI("[Overlay] 下载浮层激活，闸住 pushSceneTop(arg=%s)", arg.c_str());
+        g_deferredTopSelf = self;
+        g_deferredTopArg  = arg;
+        g_topDeferred.store(true);
+        return;
+    }
     // 教程进行中：一律吞掉，别让主页盖在序章上面（理由见上）
     if (g_tutorialActive.load()) {
         LOGI("[Tutorial] 教程进行中，吞掉 pushSceneTop(arg=%s)", arg.c_str());
@@ -936,6 +999,7 @@ static SetStringFn loadingSetTextOld      = nullptr;
 static void setStringTrampoline(SetStringFn old, void* self, const void* text,
                                 const char* /*label*/) {
     maybeReloadEngineI18n();
+    maybeReleaseDeferredTop();  // 浮层若在刚才撤掉，这里补推主页跳转/补放 BGM
     const std::string* zh = engineLookup(text);
     if (zh) {
         FakeNdkStr fk;
@@ -1234,6 +1298,10 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       (void*)createWithTtfStrNew, (void**)&createWithTtfStrOld, "font: createWithTTF(str)");
     H("_ZN7cocos2d5Label20setTTFConfigInternalERKNS_10_ttfConfigE",
       (void*)setTtfCfgInternalNew, (void**)&setTtfCfgInternalOld, "font: setTTFConfigInternal");
+
+    // ── 下载浮层期间挂起引擎 BGM（QbUtility::playBgmDirect）──
+    H("_ZN9QbUtility13playBgmDirectEPKc",
+      (void*)playBgmDirectNew, (void**)&playBgmDirectOld, "Overlay: playBgmDirect 挂起");
 
     LOGI("[JNI] hooks 安装完成：成功 %d 个，失败 %d 个", hookOk, hookFail);
     return JNI_VERSION_1_6;
