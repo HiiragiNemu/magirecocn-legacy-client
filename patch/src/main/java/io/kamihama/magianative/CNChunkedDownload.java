@@ -203,6 +203,22 @@ public final class CNChunkedDownload {
                                   boolean direct, Probe probe, Sink sink,
                                   CNMirrors.Mirror mirror)
             throws IOException {
+        return download(url, target, requestedChunks, direct, probe, sink, mirror, null);
+    }
+
+    /**
+     * 同上，再额外传入文件名（主线资源根下的单段文件名，可为 null）。
+     *
+     * <p>当 {@code settings.chunks_across_mirrors=true} 且健康镜像 ≥2 时，
+     * 各分片按轮转派给多条镜像同时下载，吞吐随线路数叠加。
+     * 跨镜像时 {@code If-Range} 只在主线路那条分片上带——各家 ETag 格式
+     * 互不相同，跨线带校验必然 200 整份重发。文件级一致性由调用方的
+     * size/md5 完工校验兜住（ETag 从来都不是完整性的依据）。
+     */
+    public static Result download(String url, File target, int requestedChunks,
+                                  boolean direct, Probe probe, Sink sink,
+                                  CNMirrors.Mirror mirror, String remoteName)
+            throws IOException {
 
         final long total = probe.total;
         if (total <= 0) throw new IOException("未知的文件长度");
@@ -281,16 +297,40 @@ public final class CNChunkedDownload {
         final AtomicLong    windowStart = new AtomicLong(System.nanoTime());
         final AtomicLong    windowBytes = new AtomicLong(0L);
 
+        // 分片跨镜像并发：开关打开且有多条健康镜像时，分片轮转派到各线路
+        final String[] chunkUrls;
+        java.util.List<CNMirrors.Mirror> spread = null;
+        if (remoteName != null && CNMirrors.chunksAcrossMirrors()) {
+            java.util.List<CNMirrors.Mirror> h = CNMirrors.healthy();
+            if (h.size() >= 2) spread = h;
+        }
+        if (spread != null) {
+            chunkUrls = new String[chunks];
+            for (int i = 0; i < chunks; i++) {
+                chunkUrls[i] = spread.get(i % spread.size()).urlFor(remoteName);
+            }
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < Math.min(chunks, spread.size()); i++)
+                sb.append(' ').append(spread.get(i).name);
+            CNLog.i(TAG, "分片跨镜像并发 file=" + target.getName()
+                    + " chunks=" + chunks + " 线路:" + sb);
+        } else {
+            chunkUrls = null;
+        }
+
         ExecutorService pool = Executors.newFixedThreadPool(chunks, new ChunkThreadFactory());
         final CountDownLatch latch = new CountDownLatch(chunks);
 
         for (int i = 0; i < chunks; i++) {
             ChunkTask task = new ChunkTask();
-            task.url = url;         task.part = part;
+            task.url = chunkUrls != null ? chunkUrls[i] : url;
+            task.part = part;
             task.start = starts[i]; task.end = ends[i];
             task.done = done;       task.idx = i;
             task.direct = direct;   task.meta = meta;
-            task.total = total;     task.etag = probe.etag;
+            task.total = total;
+            // If-Range 只在主线路的分片上带：跨镜像 ETag 格式互不相同
+            task.etag = (chunkUrls == null || chunkUrls[i].equals(url)) ? probe.etag : null;
             task.totalDone = totalDone;
             task.windowStart = windowStart; task.windowBytes = windowBytes;
             task.lastMoveNs = lastMoveNs;   task.abort = abort;

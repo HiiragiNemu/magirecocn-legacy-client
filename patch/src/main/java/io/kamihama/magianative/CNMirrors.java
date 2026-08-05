@@ -53,6 +53,9 @@ public final class CNMirrors {
     private static volatile int  cfgStallSeconds      = 25;
     private static volatile int  cfgMinSpeedKbps      = 32;
     private static volatile long cfgCooldownMs        = 60_000L;
+    // 分片跨镜像并发：开（true）时同一文件的分片按轮转分给多条健康镜像，
+    // 吞吐随线路数叠加；关（false）保持旧的「一次尝试只用一条线路」行为
+    private static volatile boolean cfgChunksAcrossMirrors = false;
     // ---- 反限速 ----
     /** 跌到基准速度的这个比例以下即视为疑似被限速。 */
     private static volatile int  cfgThrottleRatioPct   = 60;
@@ -76,6 +79,8 @@ public final class CNMirrors {
     public static int  switchAfterFail() { return cfgSwitchAfterFail; }
     public static int  stallSeconds()    { return cfgStallSeconds; }
     public static int  minSpeedKbps()    { return cfgMinSpeedKbps; }
+    /** 分片是否跨镜像并发（settings.chunks_across_mirrors，默认关）。 */
+    public static boolean chunksAcrossMirrors() { return cfgChunksAcrossMirrors; }
 
     /** 一条线路。 */
     public static final class Mirror {
@@ -252,6 +257,7 @@ public final class CNMirrors {
             cfgThrottleGraceS   = clampInt(st.optInt("throttle_grace_s",     cfgThrottleGraceS),    1, 600);
             cfgSwitchGainPct    = clampInt(st.optInt("switch_gain_pct",      cfgSwitchGainPct),   100, 1000);
             cfgThrottleDemoteMs = Math.max(1000L, st.optLong("throttle_demote_ms", cfgThrottleDemoteMs));
+            cfgChunksAcrossMirrors = st.optBoolean("chunks_across_mirrors", cfgChunksAcrossMirrors);
         }
 
         JSONArray arr = root.optJSONArray("mirrors");
