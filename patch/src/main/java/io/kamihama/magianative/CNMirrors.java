@@ -151,20 +151,29 @@ public final class CNMirrors {
             }
             mirrors = parsed;
             loaded  = true;
+            configState = 1;
             StringBuilder sb = new StringBuilder();
             for (Mirror m : parsed) sb.append(' ').append(m.name).append('=').append(m.base);
             CNLog.i(TAG, "线路列表已加载 count=" + parsed.size() + sb);
-            // 浮层可能在配置加载完成前就已用内置署名建成——配置到位后刷新一次署名
+            // 浮层可能在配置加载完成前就已用占位署名建成——配置到位后刷新一次署名
             try {
                 CNCNDownloadUI.refreshCredits(RestClient.getCurrentActivity());
             } catch (Throwable ignore) {}
         } catch (Throwable t) {
             CNLog.w(TAG, "拉取线路列表失败，沿用默认线路: " + t);
+            // 拉取失败：通知浮层从「加载中」占位回落到内置默认署名
+            configState = 2;
+            try {
+                CNCNDownloadUI.refreshCredits(RestClient.getCurrentActivity());
+            } catch (Throwable ignore) {}
         }
     }
 
     /** 是否成功加载过远端线路列表。 */
     public static boolean isLoaded() { return loaded; }
+
+    /** 配置加载状态：0=拉取中（未见结果） 1=成功 2=失败（本轮拉取没拿到）。 */
+    public static volatile int configState = 0;
 
     // ---- 浮层署名配置 ----
     //

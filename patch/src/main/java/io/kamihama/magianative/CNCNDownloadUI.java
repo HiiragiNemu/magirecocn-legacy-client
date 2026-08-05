@@ -306,6 +306,17 @@ public class CNCNDownloadUI {
     }
 
     private static CreditsModel creditsModel() {
+        // 配置还在路上：先给占位，避免「先默认名单、几秒后突变云端名单」的跳变。
+        // 加载失败（configState=2）才回落内置默认。配置到位/失败时
+        // CNMirrors.refresh 会调 refreshCredits 补刷，占位不会卡住。
+        if (CNMirrors.configState == 0) {
+            CreditsModel m = new CreditsModel();
+            m.kinds = new int[]{KIND_SUB};
+            m.texts = new String[]{"署名加载中…"};
+            m.urls  = new String[]{""};
+            m.spans = new String[]{""};
+            return m;
+        }
         JSONObject cfg = CNMirrors.uiCredits();
         if (cfg != null) {
             try {
@@ -341,6 +352,7 @@ public class CNCNDownloadUI {
     }
 
     private static String footerText() {
+        if (CNMirrors.configState == 0) return "署名加载中…";
         JSONObject cfg = CNMirrors.uiCredits();
         if (cfg != null) {
             String s = cfg.optString("footer", "").trim();
@@ -2297,6 +2309,7 @@ public class CNCNDownloadUI {
     public static void hide() {
         // 浮层要收了，音乐也得停——否则安装完了背景音还在响。
         // 放在 isShowing 判断之前：即使浮层没建起来，也要保证不会有残留的播放线程。
+        stopOverlayFlag();  // 先撤引擎闸门标记，引擎才能继续推进
         try { CNBgm.stop(); } catch (Throwable ignore) {}
         Handler handler;
         if (!isShowing || (handler = uiHandler) == null) {
@@ -2380,11 +2393,54 @@ public class CNCNDownloadUI {
             isShowing = (overlayView != null);
             if (!isShowing) {
                 CNLog.e("界面", "浮层创建失败（overlayView 为空），将允许后续重试");
+            } else {
+                startOverlayFlag();
             }
         } catch (Throwable e) {
             isShowing = (overlayView != null);
             CNLog.e("界面", "show() 失败: " + e, e);
         }
+    }
+
+    // ---- 浮层激活标记（native 引擎闸门用）----
+    //
+    // 浮层显示期间，native 侧会闸住引擎的主页跳转和 BGM
+    // （见 MagiaLegacy.cpp 的 overlayActive/maybeReleaseDeferredTop）。
+    // 这里 show 成功时创建标记文件，每 2 秒心跳 touch 续期；
+    // hide 时停止心跳并删除。进程被杀导致心跳中断时，标记 6 秒后自动失效，
+    // native 侧自动放行，引擎不会被闸死。
+    private static final String OVERLAY_FLAG =
+        "/data/data/io.kamihama.totentanz/files/madomagi/cn_overlay_active.flag";
+    private static Thread overlayHeartbeat;
+
+    private static void startOverlayFlag() {
+        try {
+            java.io.File f = new java.io.File(OVERLAY_FLAG);
+            java.io.File parent = f.getParentFile();
+            if (parent != null) parent.mkdirs();
+            f.createNewFile();
+        } catch (Throwable t) {
+            CNLog.w("界面", "引擎闸门标记创建失败（引擎将不被闸住）: " + t);
+        }
+        if (overlayHeartbeat != null && overlayHeartbeat.isAlive()) return;
+        overlayHeartbeat = new Thread(new Runnable() {
+            @Override public void run() {
+                java.io.File f = new java.io.File(OVERLAY_FLAG);
+                while (isShowing) {
+                    try { f.setLastModified(System.currentTimeMillis()); } catch (Throwable ignore) {}
+                    try { Thread.sleep(2000L); } catch (InterruptedException ie) { return; }
+                }
+            }
+        }, "cn-overlay-flag");
+        overlayHeartbeat.setDaemon(true);
+        overlayHeartbeat.start();
+    }
+
+    private static void stopOverlayFlag() {
+        Thread t = overlayHeartbeat;
+        overlayHeartbeat = null;
+        if (t != null) t.interrupt();
+        try { new java.io.File(OVERLAY_FLAG).delete(); } catch (Throwable ignore) {}
     }
 
     public static void throttledUpdate() {
