@@ -1013,6 +1013,7 @@ static SetStringFn labelSetStringOld      = nullptr;
 static SetStringFn labelAtlasSetStringOld = nullptr;
 static SetStringFn menuItemSetStringOld   = nullptr;
 static SetStringFn loadingSetTextOld      = nullptr;
+static SetStringFn loadingSetTitleOld     = nullptr;
 
 static void setStringTrampoline(SetStringFn old, void* self, const void* text,
                                 const char* /*label*/) {
@@ -1049,6 +1050,33 @@ static void menuItemSetStringNew(void* self, const void* text) {
 }
 static void loadingSetTextNew(void* self, const void* text) {
     setStringTrampoline(loadingSetTextOld, self, text, "LoadingSceneLayerInfo::setText");
+}
+
+// 加载场景标题。此前只钩了 setText（message），title 从未被 i18n 覆盖——于是
+// 加载场景里「正在加载中…」（message，已翻译）+「Connecting...」（title，英文）
+// 两个加载提示同时出现。这里：1) 把多余的英文连接提示「Connecting...」置空；
+// 2) 其余标题走 i18n 表翻译（顺带补上场景标题的日文缺口）。
+static void loadingSetTitleNew(void* self, const void* text) {
+    NdkStrView v = ndkStrRead(text);
+    if (v.size >= 10 && v.size <= 24) {
+        // 大小写不敏感匹配 "connecting" 前缀（覆盖 Connecting... / Connecting…）
+        static const char kConn[] = "connecting";   // 10 字节
+        bool isConn = true;
+        const char* p = v.data;
+        for (size_t i = 0; i < sizeof(kConn) - 1; i++) {
+            char c = (p[i] >= 'A' && p[i] <= 'Z') ? (char)(p[i] + 32) : p[i];
+            if (c != kConn[i]) { isConn = false; break; }
+        }
+        if (isConn) {
+            static const std::string empty;
+            FakeNdkStr fk;
+            fakeNdkStr(fk, empty);
+            LOGI("[i18n] LoadingSceneLayerInfo::setTitle: 置空英文连接提示");
+            loadingSetTitleOld(self, &fk);
+            return;
+        }
+    }
+    setStringTrampoline(loadingSetTitleOld, self, text, "LoadingSceneLayerInfo::setTitle");
 }
 
 // LbUtility::initLabel(Node*, Label*&, const char* text, float, Vec2, int, Size, Color4B, int)
@@ -1314,6 +1342,8 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       (void*)menuItemSetStringNew, (void**)&menuItemSetStringOld, "i18n: MenuItemLabel::setString");
     H("_ZN21LoadingSceneLayerInfo7setTextENSt6__ndk112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE",
       (void*)loadingSetTextNew, (void**)&loadingSetTextOld, "i18n: LoadingSceneLayerInfo::setText");
+    H("_ZN21LoadingSceneLayerInfo8setTitleENSt6__ndk112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE",
+      (void*)loadingSetTitleNew, (void**)&loadingSetTitleOld, "i18n: LoadingSceneLayerInfo::setTitle");
     H("_ZN9LbUtility9initLabelEPN7cocos2d4NodeERPNS0_5LabelEPKcfNS0_4Vec2EiNS0_4SizeENS0_7Color4BEi",
       (void*)initLabelNew, (void**)&initLabelOld, "i18n: LbUtility::initLabel");
 
