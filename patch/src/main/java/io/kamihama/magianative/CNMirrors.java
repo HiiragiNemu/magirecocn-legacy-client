@@ -162,6 +162,28 @@ public final class CNMirrors {
     /** 是否成功加载过远端线路列表。 */
     public static boolean isLoaded() { return loaded; }
 
+    // ---- 浮层署名配置 ----
+    //
+    // config.json 里的可选字段，控制下载浮层左侧署名列表、底部滚动署名与
+    // GitHub 胶囊地址；缺省（null）时浮层用代码里的内置默认值。格式：
+    //
+    //   "ui_credits": {
+    //     "list": [
+    //       {"type":"title","text":"…"},
+    //       {"type":"head","text":"…"},
+    //       {"type":"item","text":"…","url":"https://…","span":"高亮片段"},
+    //       {"type":"sub","text":"…"}
+    //     ],
+    //     "footer": "底部滚动署名",
+    //     "github_url": "https://github.com/…"
+    //   }
+    //
+    // type 缺省为 item；url/span 可省。人名条与网站条在同一 list 里任意混排。
+    private static volatile JSONObject uiCredits;
+
+    /** 远端 ui_credits 原文；未配置时为 null。 */
+    public static JSONObject uiCredits() { return uiCredits; }
+
     private static String fetch(String url, boolean direct) throws IOException {
         URL u = new URL(url);
         HttpURLConnection c = (HttpURLConnection)
@@ -197,6 +219,9 @@ public final class CNMirrors {
 
     private static List<Mirror> parse(String body) throws Exception {
         JSONObject root = new JSONObject(body);
+
+        // 浮层署名配置（可选）：见 uiCredits()
+        uiCredits = root.optJSONObject("ui_credits");
 
         JSONObject st = root.optJSONObject("settings");
         if (st != null) {

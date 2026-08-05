@@ -39,6 +39,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 /**
  * 资源下载浮层 UI。
  *
@@ -288,6 +291,72 @@ public class CNCNDownloadUI {
     private static final String FOOTER_CREDIT =
         "核心开发: B站 @MadeInMagius【B站xhs tx同名】 | 国内加速+修复：@PhotonFlow "
         + "| 如果需要联系请先b站私信，会提供群聊 | 该游戏支持后续剧情更新";
+
+    // ---- 云端可配的署名内容 ----
+    //
+    // 远端 config.json 的 ui_credits 字段（见 CNMirrors.uiCredits()）可覆盖：
+    // 左侧署名列表（名单与个人网站混排）、底部滚动署名、GitHub 胶囊地址。
+    // 没配或解析失败时回落到上面的内置默认值，浮层行为与旧版完全一致。
+
+    private static final class CreditsModel {
+        int[]    kinds;
+        String[] texts;
+        String[] urls;
+        String[] spans;
+    }
+
+    private static CreditsModel creditsModel() {
+        JSONObject cfg = CNMirrors.uiCredits();
+        if (cfg != null) {
+            try {
+                JSONArray arr = cfg.getJSONArray("list");
+                int n = arr.length();
+                CreditsModel m = new CreditsModel();
+                m.kinds = new int[n];
+                m.texts = new String[n];
+                m.urls  = new String[n];
+                m.spans = new String[n];
+                for (int i = 0; i < n; i++) {
+                    JSONObject o = arr.getJSONObject(i);
+                    String type = o.optString("type", "item");
+                    m.kinds[i] = "title".equals(type) ? KIND_TITLE
+                               : "head".equals(type)  ? KIND_HEAD
+                               : "sub".equals(type)   ? KIND_SUB
+                               : KIND_ITEM;
+                    m.texts[i] = o.optString("text", "");
+                    m.urls[i]  = o.optString("url", "");
+                    m.spans[i] = o.optString("span", "");
+                }
+                return m;
+            } catch (Throwable t) {
+                CNLog.w("界面", "ui_credits 解析失败，使用内置署名: " + t);
+            }
+        }
+        CreditsModel m = new CreditsModel();
+        m.kinds = CREDIT_KINDS;
+        m.texts = CREDIT_TEXTS;
+        m.urls  = CREDIT_URLS;
+        m.spans = CREDIT_LINK_SPANS;
+        return m;
+    }
+
+    private static String footerText() {
+        JSONObject cfg = CNMirrors.uiCredits();
+        if (cfg != null) {
+            String s = cfg.optString("footer", "").trim();
+            if (s.length() > 0) return s;
+        }
+        return FOOTER_CREDIT;
+    }
+
+    private static String githubUrl() {
+        JSONObject cfg = CNMirrors.uiCredits();
+        if (cfg != null) {
+            String s = cfg.optString("github_url", "").trim();
+            if (s.length() > 0) return s;
+        }
+        return URL_GITHUB;
+    }
 
     // ---- 视图引用 ----
     private static TextView     vPhase;
@@ -697,7 +766,7 @@ public class CNCNDownloadUI {
         vGitHubChip.setGravity(Gravity.CENTER);
         vGitHubChip.setPadding(dp(act, 12), dp(act, 6), dp(act, 12), dp(act, 6));
         vGitHubChip.setBackground(githubChipBg);
-        vGitHubChip.setOnClickListener(new CreditLinkClick(act, URL_GITHUB));
+        vGitHubChip.setOnClickListener(new CreditLinkClick(act, githubUrl()));
 
         LinearLayout headRight = new LinearLayout(act);
         headRight.setOrientation(LinearLayout.HORIZONTAL);
@@ -721,7 +790,7 @@ public class CNCNDownloadUI {
 
         // ── 第 4 层：底部常驻署名条 ──
         TextView footer = new TextView(act);
-        footer.setText(FOOTER_CREDIT);
+        footer.setText(footerText());
         footer.setTextColor(COLOR_SUB);
         footer.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
         footer.setSingleLine(true);
@@ -942,13 +1011,14 @@ public class CNCNDownloadUI {
         } catch (Throwable ignore) {}
     }
 
-    /** 用固定署名数据填充左列署名区。 */
+    /** 用署名数据填充左列署名区（云端 ui_credits 优先，内置默认兜底）。 */
     private static void populateContributors(Activity act) {
         if (vContribList == null) return;
         vContribList.removeAllViews();
+        CreditsModel credits = creditsModel();
         int itemIndex = 0;
-        for (int i = 0; i < CREDIT_TEXTS.length; i++) {
-            int kind = CREDIT_KINDS[i];
+        for (int i = 0; i < credits.texts.length; i++) {
+            int kind = credits.kinds[i];
             if (kind == KIND_ITEM) {
                 LinearLayout row = new LinearLayout(act);
                 row.setOrientation(LinearLayout.HORIZONTAL);
@@ -967,12 +1037,12 @@ public class CNCNDownloadUI {
                 row.addView(dot, dotLp);
                 itemIndex++;
 
-                String url  = i < CREDIT_URLS.length ? CREDIT_URLS[i] : "";
-                String span = i < CREDIT_LINK_SPANS.length ? CREDIT_LINK_SPANS[i] : "";
+                String url  = i < credits.urls.length ? credits.urls[i] : "";
+                String span = i < credits.spans.length ? credits.spans[i] : "";
                 TextView t = new TextView(act);
                 t.setTextColor(COLOR_TEXT);
                 t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
-                t.setText(highlight(CREDIT_TEXTS[i], span));
+                t.setText(highlight(credits.texts[i], span));
                 if (url.length() > 0) {
                     row.setPadding(0, dp(act, 3), 0, dp(act, 3));
                     row.setClickable(true);
@@ -982,7 +1052,7 @@ public class CNCNDownloadUI {
                         0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             } else {
                 TextView t = new TextView(act);
-                t.setText(CREDIT_TEXTS[i]);
+                t.setText(credits.texts[i]);
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT);
