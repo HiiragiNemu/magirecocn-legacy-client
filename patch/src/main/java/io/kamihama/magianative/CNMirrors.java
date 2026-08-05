@@ -56,6 +56,9 @@ public final class CNMirrors {
     // 分片跨镜像并发：开（true）时同一文件的分片按轮转分给多条健康镜像，
     // 吞吐随线路数叠加；关（false）保持旧的「一次尝试只用一条线路」行为
     private static volatile boolean cfgChunksAcrossMirrors = false;
+    // 首选镜像竞速：加载线路表后让前两条已启用镜像抢一个几十字节的探测文件，
+    // 先到者提为首选。配置顺序写死的首选不一定是用户网络下最快的那条
+    private static volatile boolean cfgMirrorRace = true;
     // ---- 反限速 ----
     /** 跌到基准速度的这个比例以下即视为疑似被限速。 */
     private static volatile int  cfgThrottleRatioPct   = 60;
@@ -160,6 +163,8 @@ public final class CNMirrors {
             StringBuilder sb = new StringBuilder();
             for (Mirror m : parsed) sb.append(' ').append(m.name).append('=').append(m.base);
             CNLog.i(TAG, "线路列表已加载 count=" + parsed.size() + sb);
+            // 前两条镜像竞速，快者当首选（可在 settings.mirror_race=false 关闭）
+            if (cfgMirrorRace) raceTopMirrors();
             // 浮层可能在配置加载完成前就已用占位署名建成——配置到位后刷新一次署名
             try {
                 CNCNDownloadUI.refreshCredits(RestClient.getCurrentActivity());
@@ -176,6 +181,64 @@ public final class CNMirrors {
 
     /** 是否成功加载过远端线路列表。 */
     public static boolean isLoaded() { return loaded; }
+
+    /**
+     * 首选镜像竞速：前两条已启用镜像同时拉一个几十字节的探测文件
+     * （scenario 版本 json），先读出首字节的提到首位当首选。
+     * 全程 3 秒封顶，任何异常都静默——竞速只是优化，输了不影响可用性。
+     */
+    private static void raceTopMirrors() {
+        final List<Mirror> cur = mirrors;
+        final java.util.List<Mirror> enabled = new ArrayList<Mirror>();
+        for (Mirror m : cur) if (m.enabled) enabled.add(m);
+        if (enabled.size() < 2) return;
+
+        final Mirror a = enabled.get(0), b = enabled.get(1);
+        final java.util.concurrent.atomic.AtomicInteger winner =
+                new java.util.concurrent.atomic.AtomicInteger(-1);
+        Thread[] ts = new Thread[2];
+        for (int k = 0; k < 2; k++) {
+            final Mirror m = (k == 0) ? a : b;
+            final int idx = k;
+            ts[k] = new Thread(new Runnable() {
+                @Override public void run() {
+                    HttpURLConnection c = null;
+                    try {
+                        c = (HttpURLConnection) new URL(m.urlFor("version_scenario.json"))
+                                .openConnection(Proxy.NO_PROXY);
+                        c.setConnectTimeout(2500);
+                        c.setReadTimeout(2500);
+                        c.getResponseCode();
+                        // 读到首字节才算赢
+                        c.getInputStream().read();
+                        winner.compareAndSet(-1, idx);
+                    } catch (Throwable ignore) {
+                    } finally {
+                        if (c != null) try { c.disconnect(); } catch (Throwable ignore) {}
+                    }
+                }
+            }, "cnv-mirror-race-" + idx);
+            ts[k].setDaemon(true);
+            ts[k].start();
+        }
+        try {
+            ts[0].join(3000L);
+            ts[1].join(3000L);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            return;
+        }
+        if (winner.get() == 1) {
+            List<Mirror> reordered = new ArrayList<Mirror>(cur.size());
+            reordered.add(b);
+            for (Mirror m : cur) if (m != b) reordered.add(m);
+            mirrors = reordered;
+            CNLog.i(TAG, "镜像竞速: " + b.name + " 先到首字节，提为首选（原首选 " + a.name + "）");
+        } else {
+            CNLog.i(TAG, "镜像竞速: 首选 " + a.name + " 保持"
+                    + (winner.get() == 0 ? "（竞速获胜）" : "（竞速无结果）"));
+        }
+    }
 
     /** 配置加载状态：0=拉取中（未见结果） 1=成功 2=失败（本轮拉取没拿到）。 */
     public static volatile int configState = 0;
@@ -258,6 +321,7 @@ public final class CNMirrors {
             cfgSwitchGainPct    = clampInt(st.optInt("switch_gain_pct",      cfgSwitchGainPct),   100, 1000);
             cfgThrottleDemoteMs = Math.max(1000L, st.optLong("throttle_demote_ms", cfgThrottleDemoteMs));
             cfgChunksAcrossMirrors = st.optBoolean("chunks_across_mirrors", cfgChunksAcrossMirrors);
+            cfgMirrorRace = st.optBoolean("mirror_race", cfgMirrorRace);
         }
 
         JSONArray arr = root.optJSONArray("mirrors");
