@@ -108,6 +108,14 @@ public final class CNDownloaderFix {
     private static final AtomicBoolean installerStarted = new AtomicBoolean(false);
 
     /**
+     * 浮层看门狗（每秒确保浮层挂在视图树上 + 归零停滞速度）。存成静态引用，
+     * 使「意外错误」路径也能把它停掉——否则异常从 runInstallerInner 冒出来时
+     * 这个局部 executor（默认非守护线程）会泄漏到进程结束，持续在窗口上调用
+     * ensureVisible，并阻止进程正常退出。
+     */
+    private static volatile ScheduledExecutorService speedWatchdog;
+
+    /**
      * 安装器是否正在跑。教程胶囊用它决定「改完设置要不要立刻重启」——
      * 安装到一半重启会把下载打断（虽然 .cnvprog 能续传，但没必要），
      * 而且安装收尾本来就会重启一次，等它就好。
@@ -327,6 +335,9 @@ public final class CNDownloaderFix {
             try {
                 CNLog.e(TAG, "安装器发生未预期错误，已拦截以避免回退到原生下载界面", t);
                 failInstaller("安装器异常：" + t, t);
+                // 意外错误路径是终态（没有重试循环），把看门狗停掉，
+                // 免得非守护 executor 线程泄漏到进程结束。
+                stopSpeedWatchdog();
             } catch (Throwable ignore) {}
         }
     }
@@ -388,7 +399,7 @@ public final class CNDownloaderFix {
         // 首次打开后强退再进来的场景里，引擎可能在切场景时换掉 decorView 内容，
         // 浮层脱离视图树后就露出引擎原生下载界面。把看门狗提前到网络操作之前，
         // 确保整个安装周期都有浮层守护。
-        ScheduledExecutorService watchdog = startSpeedWatchdog();
+        startSpeedWatchdog();   // 看门狗句柄存静态字段，意外错误路径也能停掉
 
         resetUiForRun();
 
@@ -451,7 +462,7 @@ public final class CNDownloaderFix {
             }
             CNCNDownloadUI.updateSimple("重试中", "正在重新下载失败的文件…", 0);
         }
-        watchdog.shutdownNow();
+        stopSpeedWatchdog();   // 正常收尾：所有文件已通过校验
 
         try {
             writeAtomic(finalFlag, "schema=2\narchives=15\n");
@@ -1053,7 +1064,17 @@ public final class CNDownloaderFix {
     private static ScheduledExecutorService startSpeedWatchdog() {
         ScheduledExecutorService svc = Executors.newSingleThreadScheduledExecutor();
         svc.scheduleAtFixedRate(new SpeedWatchdog(), 1L, 1L, TimeUnit.SECONDS);
+        speedWatchdog = svc;
         return svc;
+    }
+
+    /** 停掉看门狗（正常收尾与意外错误路径都要调用）。重复调用安全。 */
+    private static void stopSpeedWatchdog() {
+        ScheduledExecutorService s = speedWatchdog;
+        speedWatchdog = null;
+        if (s != null) {
+            try { s.shutdownNow(); } catch (Throwable ignore) {}
+        }
     }
 
     /** 一段时间没有新进度就把该文件的速度显示归零。 */
