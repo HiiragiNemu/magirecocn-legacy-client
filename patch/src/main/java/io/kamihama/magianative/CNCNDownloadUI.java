@@ -358,6 +358,15 @@ public class CNCNDownloadUI {
         return URL_GITHUB;
     }
 
+    /** 底部署名是否无限滚动。ui_credits.footer_marquee=false 可远程关闭。 */
+    private static boolean footerMarquee() {
+        JSONObject cfg = CNMirrors.uiCredits();
+        if (cfg != null && cfg.has("footer_marquee")) {
+            return cfg.optBoolean("footer_marquee", true);
+        }
+        return true;
+    }
+
     // ---- 视图引用 ----
     private static TextView     vPhase;
     private static TextView     vStatus;
@@ -790,15 +799,22 @@ public class CNCNDownloadUI {
         root.addView(headRight, themeLp);
 
         // ── 第 4 层：底部常驻署名条 ──
+        // marquee 可经 ui_credits.footer_marquee=false 远程关闭：
+        // 无限滚动会持续触发重绘，让底下的 WebView 不停重建 Vulkan 帧缓冲，
+        // 在部分 Adreno 驱动上会放大 vkDestroyFramebuffer 崩溃的触发面。
         vFooter = new TextView(act);
         vFooter.setText(footerText());
         vFooter.setTextColor(COLOR_SUB);
         vFooter.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
         vFooter.setSingleLine(true);
-        vFooter.setEllipsize(android.text.TextUtils.TruncateAt.MARQUEE);
-        vFooter.setMarqueeRepeatLimit(-1);
-        vFooter.setSelected(true);
-        vFooter.setHorizontallyScrolling(true);
+        if (footerMarquee()) {
+            vFooter.setEllipsize(android.text.TextUtils.TruncateAt.MARQUEE);
+            vFooter.setMarqueeRepeatLimit(-1);
+            vFooter.setSelected(true);
+            vFooter.setHorizontallyScrolling(true);
+        } else {
+            vFooter.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        }
         vFooter.setPadding(dp(act, 16), 0, dp(act, 16), dp(act, 8));
         FrameLayout.LayoutParams footerLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
