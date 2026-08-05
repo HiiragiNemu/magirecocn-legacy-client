@@ -997,6 +997,65 @@ static void initLabelNew(void* node, void* label, const char* text, float f,
     initLabelOld(node, label, use, f, v2, i1, sz, c4b, i2);
 }
 
+
+
+// NDK libc++ std::string 原地改写（font 段复用 i18n 段的 NdkStrView）
+static void fontPathOverwrite(void* strObj, const char* nv, size_t n) {
+    unsigned char* s = (unsigned char*)strObj;
+    if (s[0] & 1) {  // long：直接在原缓冲上改写（新路径不长于原路径才走这里）
+        size_t cap = (*(size_t*)s) & ~(size_t)1;
+        if (n < cap) {
+            memcpy(*(char**)(s + 16), nv, n + 1);
+            *(size_t*)(s + 8) = n;
+            return;
+        }
+    } else if (n <= 22) {  // short
+        s[0] = (unsigned char)(n << 1);
+        memcpy(s + 1, nv, n + 1);
+        return;
+    }
+    // 放不下：切 long，指向静态长驻字符串
+    static std::string hold;
+    hold.assign(nv, n);
+    *(const char**)(s + 16) = hold.c_str();
+    *(size_t*)(s + 8)  = hold.size();
+    *(size_t*)s        = (hold.size() + 1) | 1;
+}
+
+static void fontPathFix(void* strObj, const char* tag) {
+    static const char kFrom[] = "fonts/MTF4a5kp.ttf";
+    static const char kTo[]   = "fonts/TTZhiHeiGB3-W4.ttf";
+    NdkStrView v = ndkStrRead(strObj);
+    if (v.size == sizeof(kFrom) - 1 && memcmp(v.data, kFrom, sizeof(kFrom) - 1) == 0) {
+        fontPathOverwrite(strObj, kTo, sizeof(kTo) - 1);
+        LOGI("[font] %s: MTF4a5kp → TTZhiHeiGB3-W4", tag);
+    }
+}
+
+using CreateWithTtfCfgFn = void* (*)(void*, const void*, int, int);
+using CreateWithTtfStrFn = void* (*)(void*, const void*, float, void*, int, int);
+using SetTtfCfgFn = void (*)(void*, const void*);
+static CreateWithTtfCfgFn createWithTtfCfgOld = nullptr;
+static CreateWithTtfStrFn createWithTtfStrOld = nullptr;
+static SetTtfCfgFn        setTtfCfgInternalOld = nullptr;
+
+// createWithTTF(const _ttfConfig& cfg, ...)：fontFilePath 在 cfg 偏移 0
+static void* createWithTtfCfgNew(void* cfg, const void* text, int h, int i) {
+    fontPathFix(cfg, "createWithTTF(cfg)");
+    return createWithTtfCfgOld(cfg, text, h, i);
+}
+// createWithTTF(const std::string& text, const std::string& fontFile, float, ...)
+static void* createWithTtfStrNew(void* text, const void* font, float size,
+                                 void* dims, int h, int v) {
+    fontPathFix((void*)font, "createWithTTF(str)");
+    return createWithTtfStrOld(text, font, size, dims, h, v);
+}
+// Label::setTTFConfigInternal(const _ttfConfig&)
+static void setTtfCfgInternalNew(void* self, const void* cfg) {
+    fontPathFix((void*)cfg, "setTTFConfigInternal");
+    setTtfCfgInternalOld(self, cfg);
+}
+
 // ─── JNI_OnLoad ──────────────────────────────────────────
 extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     (void)reserved;
@@ -1167,6 +1226,14 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       (void*)loadingSetTextNew, (void**)&loadingSetTextOld, "i18n: LoadingSceneLayerInfo::setText");
     H("_ZN9LbUtility9initLabelEPN7cocos2d4NodeERPNS0_5LabelEPKcfNS0_4Vec2EiNS0_4SizeENS0_7Color4BEi",
       (void*)initLabelNew, (void**)&initLabelOld, "i18n: LbUtility::initLabel");
+
+    // ── 引擎 UI 字体路径重定向（MTF4a5kp → TTZhiHeiGB3-W4）──
+    H("_ZN7cocos2d5Label13createWithTTFERKNS_10_ttfConfigERKNSt6__ndk112basic_stringIcNS4_11char_traitsIcEENS4_9allocatorIcEEEENS_14TextHAlignmentEi",
+      (void*)createWithTtfCfgNew, (void**)&createWithTtfCfgOld, "font: createWithTTF(cfg)");
+    H("_ZN7cocos2d5Label13createWithTTFERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEES9_fRKNS_4SizeENS_14TextHAlignmentENS_14TextVAlignmentE",
+      (void*)createWithTtfStrNew, (void**)&createWithTtfStrOld, "font: createWithTTF(str)");
+    H("_ZN7cocos2d5Label20setTTFConfigInternalERKNS_10_ttfConfigE",
+      (void*)setTtfCfgInternalNew, (void**)&setTtfCfgInternalOld, "font: setTTFConfigInternal");
 
     LOGI("[JNI] hooks 安装完成：成功 %d 个，失败 %d 个", hookOk, hookFail);
     return JNI_VERSION_1_6;
