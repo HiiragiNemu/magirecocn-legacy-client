@@ -833,7 +833,8 @@ public final class CNDownloaderFix {
         c.setReadTimeout(READ_TIMEOUT_MS);
         c.setUseCaches(false);
         c.setRequestProperty("Accept-Encoding", "identity");
-        c.setRequestProperty("Connection", "close");
+        // 不写 Connection: close——保留 keep-alive 复用连接池，
+        // 分片/重试接连不断时省掉每段一次的 TCP+TLS 握手
 
         String localEtag = readSidecarEtag(archive);
         if (offset > 0) {
@@ -1096,7 +1097,8 @@ public final class CNDownloaderFix {
         c.setUseCaches(false);
         c.setRequestProperty("Content-Type", "application/json; charset=utf-8");
         c.setRequestProperty("Accept", "application/json");
-        c.setRequestProperty("Connection", "close");
+        // 不写 Connection: close——保留 keep-alive 复用连接池，
+        // 分片/重试接连不断时省掉每段一次的 TCP+TLS 握手
 
         OutputStream out = null;
         InputStream  in  = null;

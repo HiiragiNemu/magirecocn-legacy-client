@@ -275,7 +275,8 @@ public final class CNMirrors {
         c.setInstanceFollowRedirects(true);
         c.setRequestProperty("Accept", "application/json");
         c.setRequestProperty("Accept-Encoding", "identity");
-        c.setRequestProperty("Connection", "close");
+        // 不写 Connection: close——保留 keep-alive 复用连接池，
+        // 分片/重试接连不断时省掉每段一次的 TCP+TLS 握手
         InputStream is = null;
         try {
             int code = c.getResponseCode();
