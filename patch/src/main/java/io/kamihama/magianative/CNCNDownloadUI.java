@@ -371,6 +371,7 @@ public class CNCNDownloadUI {
     private static TextView     vLogPill;
     private static FrameLayout  logModal;
     private static ScrollView   vLogScroll;
+    private static TextView     vFooter;
     private static GradientDrawable themeChipBg;
     private static GradientDrawable logPillBg;
     private static TextView vBgmPill;
@@ -789,21 +790,21 @@ public class CNCNDownloadUI {
         root.addView(headRight, themeLp);
 
         // ── 第 4 层：底部常驻署名条 ──
-        TextView footer = new TextView(act);
-        footer.setText(footerText());
-        footer.setTextColor(COLOR_SUB);
-        footer.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
-        footer.setSingleLine(true);
-        footer.setEllipsize(android.text.TextUtils.TruncateAt.MARQUEE);
-        footer.setMarqueeRepeatLimit(-1);
-        footer.setSelected(true);
-        footer.setHorizontallyScrolling(true);
-        footer.setPadding(dp(act, 16), 0, dp(act, 16), dp(act, 8));
+        vFooter = new TextView(act);
+        vFooter.setText(footerText());
+        vFooter.setTextColor(COLOR_SUB);
+        vFooter.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
+        vFooter.setSingleLine(true);
+        vFooter.setEllipsize(android.text.TextUtils.TruncateAt.MARQUEE);
+        vFooter.setMarqueeRepeatLimit(-1);
+        vFooter.setSelected(true);
+        vFooter.setHorizontallyScrolling(true);
+        vFooter.setPadding(dp(act, 16), 0, dp(act, 16), dp(act, 8));
         FrameLayout.LayoutParams footerLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         footerLp.gravity = Gravity.BOTTOM | Gravity.START;
-        root.addView(footer, footerLp);
+        root.addView(vFooter, footerLp);
 
         // ── 第 5 层：日志模态面板（默认隐藏） ──
         logModal = new FrameLayout(act);
@@ -1075,6 +1076,26 @@ public class CNCNDownloadUI {
                 vContribList.addView(t, lp);
             }
         }
+    }
+
+    /**
+     * 云端配置（ui_credits）到位后重刷署名区与底部滚动署名。
+     *
+     * <p>浮层经常在 config.json 拉取完成之前就已经用内置默认值建成——
+     * CNMirrors.refresh 成功后会调本方法补刷一次。任意线程可调，内部转 UI 线程。
+     */
+    public static void refreshCredits(final Activity act) {
+        if (act == null || !isShowing) return;
+        act.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                try {
+                    populateContributors(act);
+                    if (vFooter != null) vFooter.setText(footerText());
+                } catch (Throwable t) {
+                    CNLog.w("界面", "刷新署名失败: " + t);
+                }
+            }
+        });
     }
 
     /** 为 15 个文件各建一个进度槽位。 */

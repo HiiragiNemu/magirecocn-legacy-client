@@ -154,6 +154,10 @@ public final class CNMirrors {
             StringBuilder sb = new StringBuilder();
             for (Mirror m : parsed) sb.append(' ').append(m.name).append('=').append(m.base);
             CNLog.i(TAG, "线路列表已加载 count=" + parsed.size() + sb);
+            // 浮层可能在配置加载完成前就已用内置署名建成——配置到位后刷新一次署名
+            try {
+                CNCNDownloadUI.refreshCredits(RestClient.getCurrentActivity());
+            } catch (Throwable ignore) {}
         } catch (Throwable t) {
             CNLog.w(TAG, "拉取线路列表失败，沿用默认线路: " + t);
         }
