@@ -79,6 +79,10 @@ public final class CNHotUpdateCheck {
 
     private static final int CONNECT_TIMEOUT_MS = 15000;
     private static final int READ_TIMEOUT_MS    = 20000;
+    // 版本 json 只有几十字节，给长超时只会让坏线路拖慢整个检查；
+    // 连不上/5 秒读不完就该换下一条线路
+    private static final int VER_CONNECT_TIMEOUT_MS = 5000;
+    private static final int VER_READ_TIMEOUT_MS    = 8000;
 
     /** 只跑一次。 */
     private static final java.util.concurrent.atomic.AtomicBoolean STARTED =
@@ -180,6 +184,14 @@ public final class CNHotUpdateCheck {
         }
         CNLog.i(TAG, "热更检查开始");
 
+        // 预热线路表：别等第一次取版本时才现场拉 config.json
+        new Thread(new Runnable() {
+            @Override public void run() {
+                CNMirrors.refresh(false);
+                if (!CNMirrors.isLoaded()) CNMirrors.refresh(true);
+            }
+        }, "cnv-mirrors-prewarm").start();
+
         Activity act = awaitUsableActivity();
         if (act == null) {
             // 没有界面也要把检查跑完：更新照样能应用，只是玩家看不到进度。
@@ -193,8 +205,25 @@ public final class CNHotUpdateCheck {
         running = true;
         try {
             CNCNDownloadUI.updateSimple("检查热更新", "正在查询台词与前端脚本的版本…", 0);
+            // 两个版本号并行查：串行时首条线路的慢/挂会在两个包上各吃一轮超时
+            final java.util.concurrent.ExecutorService pool =
+                    java.util.concurrent.Executors.newFixedThreadPool(2);
+            java.util.concurrent.Future<Integer> fScenario =
+                    pool.submit(new java.util.concurrent.Callable<Integer>() {
+                        @Override public Integer call() { return fetchVersionSafe(PACKAGES[0]); }});
+            java.util.concurrent.Future<Integer> fJs =
+                    pool.submit(new java.util.concurrent.Callable<Integer>() {
+                        @Override public Integer call() { return fetchVersionSafe(PACKAGES[1]); }});
+            int[] remotes = new int[]{-1, -1};
+            try {
+                remotes[0] = fScenario.get();
+                remotes[1] = fJs.get();
+            } catch (Throwable t) {
+                CNLog.w(TAG, "并行版本查询异常: " + t);
+            }
+            pool.shutdown();
             for (int i = 0; i < PACKAGES.length; i++) {
-                if (applyIfNewer(PACKAGES[i])) applied = true;
+                if (applyIfNewer(PACKAGES[i], remotes[i])) applied = true;
             }
         } finally {
             stopWatchdog(watchdog);
@@ -235,18 +264,33 @@ public final class CNHotUpdateCheck {
         try {
             remote = fetchVersion(pkg.versionUrl);
         } catch (Throwable t) {
+            remote = -1;
+        }
+        return applyIfNewer(pkg, remote);
+    }
+
+    /** 供并行预取版本号用：失败返回 -1 并提示，由 applyIfNewer(pkg, -1) 走跳过路径。 */
+    private static int fetchVersionSafe(Pkg pkg) {
+        try {
+            return fetchVersion(pkg.versionUrl);
+        } catch (Throwable t) {
             CNLog.w(TAG, "[" + pkg.label + "] 版本查询失败，跳过：" + t);
             CNCNDownloadUI.updateSimple("检查热更新",
                     pkg.label + "：版本查询失败，跳过本项", 0);
+            return -1;
+        }
+    }
+
+    /** 带预取版本号的 applyIfNewer：remote<=0 表示查询失败/无效，跳过本包。 */
+    private static boolean applyIfNewer(Pkg pkg, int remote) {
+        if (remote <= 0) {
+            if (remote == 0) {
+                CNLog.w(TAG, "[" + pkg.label + "] 服务端版本号无效（0），跳过");
+            }
             return false;
         }
         int local = readLocalVersion(pkg.versionKey);
         CNLog.i(TAG, "[" + pkg.label + "] server=" + remote + " local=" + local);
-
-        if (remote <= 0) {
-            CNLog.w(TAG, "[" + pkg.label + "] 服务端版本号无效（" + remote + "），跳过");
-            return false;
-        }
         if (remote <= local) {
             CNCNDownloadUI.updateSimple("检查热更新",
                     pkg.label + "：已是最新（v" + local + "）", 0);
@@ -402,8 +446,8 @@ public final class CNHotUpdateCheck {
     private static int fetchVersionDirect(String url) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection(Proxy.NO_PROXY);
         try {
-            c.setConnectTimeout(CONNECT_TIMEOUT_MS);
-            c.setReadTimeout(READ_TIMEOUT_MS);
+            c.setConnectTimeout(VER_CONNECT_TIMEOUT_MS);
+            c.setReadTimeout(VER_READ_TIMEOUT_MS);
             c.setInstanceFollowRedirects(true);
             int code = c.getResponseCode();
             if (code / 100 != 2) throw new java.io.IOException("HTTP " + code);
