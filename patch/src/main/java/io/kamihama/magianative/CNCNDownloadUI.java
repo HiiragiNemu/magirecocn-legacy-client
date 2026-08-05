@@ -62,7 +62,8 @@ public class CNCNDownloadUI {
     // ==================================================================
 
     public static ViewGroup decorView;
-    public static boolean isShowing;
+    /** volatile：show()/hide() 与心跳线程跨线程读写，必须立即可见。 */
+    public static volatile boolean isShowing;
     public static long lastUpdateTime;
     public static FrameLayout overlayView;
     public static ProgressBar progressBarOverall;
@@ -115,6 +116,13 @@ public class CNCNDownloadUI {
 
     /** 文件数量。与原实现一致地固定为 15。 */
     private static final int FILE_COUNT = 15;
+
+    /**
+     * 浮层根视图的标记 tag。hide() 用它把 decorView 上**所有**本类浮层摘除，
+     * CreateUIRunnable 用它做幂等守卫——修复 show() 重试/并发在弱机上叠出
+     * 多个整屏浮层、hide() 只摘最上层导致残留浮层盖死游戏的问题。
+     */
+    private static final int TAG_OVERLAY = 0x4C454700;   // "LEG\0"
 
     /** 资源目录内的背景图路径。 */
     private static final String BG_ASSET   = "magia/background_light.png";
@@ -560,6 +568,8 @@ public class CNCNDownloadUI {
     private static FrameLayout buildOverlay(final Activity act) {
         FrameLayout root = new FrameLayout(act);
         root.setClickable(true);
+        // 打标记：hide() 据此摘除全部本类浮层（而非只摘 overlayView 那一个）
+        root.setTag(TAG_OVERLAY);
 
         // ── 第 0 层：背景图 ──
         ImageView bgView = new ImageView(act);
@@ -1949,6 +1959,31 @@ public class CNCNDownloadUI {
                 if (ov != null && ov.getParent() != null) return;   // 还在，无需处理
 
                 ViewGroup dv = (ViewGroup) act.getWindow().getDecorView();
+                if (dv == null) return;
+
+                // 先按 tag 认领**已在视图树上**的本类浮层：场景切换可能换过
+                // decorView 内容，静态 overlayView 与树脱节。若树里已有我们的
+                // 浮层，直接认领它即可，绝不再 build 一份——否则会在旧残留层
+                // 之上再叠一层（双浮层 bug 的第二条入口，CreateUIRunnable 的
+                // 守卫拦不到这里）。
+                FrameLayout existing = null;
+                for (int i = 0; i < dv.getChildCount(); i++) {
+                    View c = dv.getChildAt(i);
+                    Object tag = (c == null) ? null : c.getTag();
+                    if (tag instanceof Integer && (Integer) tag == TAG_OVERLAY
+                            && c instanceof FrameLayout) {
+                        existing = (FrameLayout) c;
+                        break;
+                    }
+                }
+                if (existing != null) {
+                    overlayView = existing;
+                    decorView   = dv;
+                    isShowing   = true;
+                    CNLog.w("界面", "认领已在视图树上的浮层，跳过重建");
+                    return;
+                }
+
                 if (ov != null) {
                     // 仅仅是脱离了父节点：直接挂回去，保留现有状态
                     try { dv.addView(ov, new ViewGroup.LayoutParams(
@@ -2176,6 +2211,22 @@ public class CNCNDownloadUI {
                 Activity activity = this.context;
                 if (activity == null) return;
 
+                // ⚠ 幂等守卫：decorView 上已挂着本类浮层就直接返回，不再叠一层。
+                // 旧实现里每次 show() 都无条件 buildOverlay + addView——弱机主线程
+                // 繁忙导致 show() 的 3 秒等待超时、isShowing 误判为 false 后，版本检查/
+                // 热更的重试循环会再投一份 CreateUIRunnable，同一 decorView 上叠出
+                // 多个整屏浮层；而 hide() 只 removeView(overlayView) 摘最上层，
+                // 下层不透明浮层残留盖死游戏、marquee 持续制造 WebView 渲染竞争。
+                ViewGroup dv = CNCNDownloadUI.decorView;
+                if (dv != null) {
+                    for (int i = 0; i < dv.getChildCount(); i++) {
+                        Object tag = dv.getChildAt(i).getTag();
+                        if (tag instanceof Integer && (Integer) tag == TAG_OVERLAY) {
+                            return;
+                        }
+                    }
+                }
+
                 hostActivity = activity;
                 // 日志落盘目录用应用私有目录；此前安装器已经写入的内容仍在内存
                 // 缓冲里，会随第一次刷新一起显示出来
@@ -2228,9 +2279,19 @@ public class CNCNDownloadUI {
                 // 表现）全都发生在这之后。拿到的日志永远停在游戏还没开始的地方，
                 // 等于没有。捕获改为一直跑到进程结束，由 CNLog 自己的体积上限收口。
                 ViewGroup dv = CNCNDownloadUI.decorView;
-                FrameLayout ov = CNCNDownloadUI.overlayView;
-                if (dv == null || ov == null) return;
-                dv.removeView(ov);
+                if (dv != null) {
+                    // 摘除**所有**本类浮层，而不是只摘 overlayView 那一个。
+                    // 旧实现只 removeView(overlayView)：一旦 show() 重试/并发叠出
+                    // 两层，下层不透明浮层永远残留盖在游戏上。按 tag 逆序摘除，
+                    // 顺手把「overlayView 已置空但还有残留层」的脏状态一并清理。
+                    for (int i = dv.getChildCount() - 1; i >= 0; i--) {
+                        View child = dv.getChildAt(i);
+                        Object tag = (child == null) ? null : child.getTag();
+                        if (tag instanceof Integer && (Integer) tag == TAG_OVERLAY) {
+                            dv.removeViewAt(i);
+                        }
+                    }
+                }
                 CNCNDownloadUI.overlayView         = null;
                 CNCNDownloadUI.tvLog               = null;
                 CNCNDownloadUI.progressBarOverall  = null;
