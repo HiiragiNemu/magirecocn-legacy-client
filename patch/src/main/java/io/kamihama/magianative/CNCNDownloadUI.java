@@ -379,6 +379,22 @@ public class CNCNDownloadUI {
         return true;
     }
 
+    /** 按当前配置应用底部滚动/静态模式（建成时与 refreshCredits 补刷都会调）。 */
+    private static void applyFooterMode() {
+        if (vFooter == null) return;
+        if (footerMarquee()) {
+            vFooter.setEllipsize(android.text.TextUtils.TruncateAt.MARQUEE);
+            vFooter.setMarqueeRepeatLimit(-1);
+            vFooter.setHorizontallyScrolling(true);
+            vFooter.setSelected(true);
+        } else {
+            // 关掉滚动：清 selected 停止 marquee，恢复普通截断
+            vFooter.setSelected(false);
+            vFooter.setHorizontallyScrolling(false);
+            vFooter.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        }
+    }
+
     // ---- 视图引用 ----
     private static TextView     vPhase;
     private static TextView     vStatus;
@@ -819,14 +835,7 @@ public class CNCNDownloadUI {
         vFooter.setTextColor(COLOR_SUB);
         vFooter.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
         vFooter.setSingleLine(true);
-        if (footerMarquee()) {
-            vFooter.setEllipsize(android.text.TextUtils.TruncateAt.MARQUEE);
-            vFooter.setMarqueeRepeatLimit(-1);
-            vFooter.setSelected(true);
-            vFooter.setHorizontallyScrolling(true);
-        } else {
-            vFooter.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        }
+        applyFooterMode();
         vFooter.setPadding(dp(act, 16), 0, dp(act, 16), dp(act, 8));
         FrameLayout.LayoutParams footerLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1118,7 +1127,10 @@ public class CNCNDownloadUI {
             @Override public void run() {
                 try {
                     populateContributors(act);
-                    if (vFooter != null) vFooter.setText(footerText());
+                    if (vFooter != null) {
+                        vFooter.setText(footerText());
+                        applyFooterMode();
+                    }
                 } catch (Throwable t) {
                     CNLog.w("界面", "刷新署名失败: " + t);
                 }
