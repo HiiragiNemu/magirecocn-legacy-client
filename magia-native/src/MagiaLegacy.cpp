@@ -88,6 +88,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <new>        // ::operator new（fontPathOverwrite 的独立缓冲分配）
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -553,15 +554,18 @@ static void setGameUiVisible(bool visible);   // 前向声明：定义在 pushSc
 // ─── 下载浮层期间的引擎闸门 ──────────────────────────────
 // 浮层（首装/热更下载）激活期间：吞掉 pushSceneTop、挂起 BGM；浮层撤掉后
 // 补推主页跳转并补放最后的 BGM。标记文件由 Java 侧 CNCNDownloadUI 维护：
-// show 时创建、每 2 秒心跳 touch、hide 时删除。mtime 超过 6 秒视为进程
+// show 时创建、每 2 秒心跳 touch、hide 时删除。mtime 超过窗口视为进程
 // 被杀留下的残留，自动失效——宁可闸不住也绝不能把引擎闸死在加载页。
+// 窗口从 6s 放宽到 10s：Oppo Watch X 这类弱机在并行分片下载 + WebView
+// 渲染同时打满 CPU 时，守护心跳线程可能被饿过 6s（约 3 次心跳），过早
+// 失效会让引擎在下载中途抢跑主页跳转/BGM。10s 对应约 5 次心跳的容错。
 static const std::string OVERLAY_FLAG_PATH =
     "/data/data/io.kamihama.totentanz/files/madomagi/cn_overlay_active.flag";
 
 static bool overlayActive() {
     struct stat st;
     if (::stat(OVERLAY_FLAG_PATH.c_str(), &st) != 0) return false;
-    return (::time(nullptr) - st.st_mtime) < 6;
+    return (::time(nullptr) - st.st_mtime) < 10;
 }
 
 static std::atomic<bool> g_topDeferred{false};
@@ -569,6 +573,9 @@ static std::string       g_deferredTopArg;
 static void*             g_deferredTopSelf = nullptr;
 static std::atomic<bool> g_bgmDeferred{false};
 static std::string       g_deferredBgm;
+// 上面的 string/指针字段跨线程读写（playBgmDirectNew 可能来自音频线程、
+// pushSceneTopNew 来自引擎线程），必须用锁保护。原子布尔只做快速路径判断。
+static std::mutex        g_deferredMutex;
 
 static void pushSceneTopNew(void* self, const std::string& arg);  // 前向声明
 
@@ -578,6 +585,7 @@ static void playBgmDirectNew(const char* name) {
     if (overlayActive()) {
         LOGI("[Overlay] 浮层激活，挂起 BGM: %s", name ? name : "(null)");
         if (name) {
+            std::lock_guard<std::mutex> lk(g_deferredMutex);
             g_deferredBgm = name;
             g_bgmDeferred.store(true);
         }
@@ -590,13 +598,22 @@ static void playBgmDirectNew(const char* name) {
 static void maybeReleaseDeferredTop() {
     if (!g_topDeferred.load() && !g_bgmDeferred.load()) return;
     if (overlayActive()) return;
-    if (g_bgmDeferred.exchange(false) && playBgmDirectOld) {
-        LOGI("[Overlay] 浮层已撤，补放 BGM: %s", g_deferredBgm.c_str());
-        playBgmDirectOld(g_deferredBgm.c_str());
+    // 锁内取出并消费标记，锁外执行：不把引擎调用（playBgmDirectOld /
+    // pushSceneTopNew）关在锁里，避免在引擎主线程上持锁等待。
+    std::string bgm;
+    void* self = nullptr;
+    std::string arg;
+    bool relBgm = false, relTop = false;
+    {
+        std::lock_guard<std::mutex> lk(g_deferredMutex);
+        if (g_bgmDeferred.exchange(false)) { bgm = g_deferredBgm; relBgm = true; }
+        if (g_topDeferred.exchange(false)) { self = g_deferredTopSelf; arg = g_deferredTopArg; relTop = true; }
     }
-    if (g_topDeferred.exchange(false)) {
-        void* self = g_deferredTopSelf;
-        std::string arg = g_deferredTopArg;
+    if (relBgm && playBgmDirectOld) {
+        LOGI("[Overlay] 浮层已撤，补放 BGM: %s", bgm.c_str());
+        playBgmDirectOld(bgm.c_str());
+    }
+    if (relTop) {
         LOGI("[Overlay] 浮层已撤，补推被闸住的主页跳转(arg=%s)", arg.c_str());
         pushSceneTopNew(self, arg);  // 走完整逻辑（含教程闸门）
     }
@@ -623,6 +640,7 @@ static void pushSceneTopNew(void* self, const std::string& arg) {
     // 被吞的跳转在浮层撤掉后由 maybeReleaseDeferredTop 补推（走完整逻辑）。
     if (overlayActive()) {
         LOGI("[Overlay] 下载浮层激活，闸住 pushSceneTop(arg=%s)", arg.c_str());
+        std::lock_guard<std::mutex> lk(g_deferredMutex);
         g_deferredTopSelf = self;
         g_deferredTopArg  = arg;
         g_topDeferred.store(true);
@@ -1068,7 +1086,7 @@ static void fontPathOverwrite(void* strObj, const char* nv, size_t n) {
     unsigned char* s = (unsigned char*)strObj;
     if (s[0] & 1) {  // long：直接在原缓冲上改写（新路径不长于原路径才走这里）
         size_t cap = (*(size_t*)s) & ~(size_t)1;
-        if (n < cap) {
+        if (n + 1 <= cap) {   // 要写 n 个字符 + 结尾 NUL，共 n+1 字节
             memcpy(*(char**)(s + 16), nv, n + 1);
             *(size_t*)(s + 8) = n;
             return;
@@ -1078,12 +1096,20 @@ static void fontPathOverwrite(void* strObj, const char* nv, size_t n) {
         memcpy(s + 1, nv, n + 1);
         return;
     }
-    // 放不下：切 long，指向静态长驻字符串
-    static std::string hold;
-    hold.assign(nv, n);
-    *(const char**)(s + 16) = hold.c_str();
-    *(size_t*)(s + 8)  = hold.size();
-    *(size_t*)s        = (hold.size() + 1) | 1;
+    // 放不下：切 long，为这次重定向分配**独立**缓冲，交给引擎 string 持有。
+    // 引擎 string 析构时会释放它（libc++ 的 ::operator delete 与这里 ::operator
+    // new 匹配）。⚠ 绝不能用共享的 static std::string：多个引擎 string 被重定向
+    // 到同一块静态缓冲后，各自的析构都会 free 它 → 双 free / 写已释放内存
+    // （堆破坏，表现为「切换界面时不定时崩溃」）。一对象一缓冲，谁持有谁释放。
+    // nothrow + 判空：分配失败就干脆不重定向（引擎回落原字体），绝不把异常
+    // 抛过 hook 边界。
+    char* buf = static_cast<char*>(::operator new(n + 1, std::nothrow));
+    if (!buf) return;
+    memcpy(buf, nv, n);
+    buf[n] = '\0';
+    *(const char**)(s + 16) = buf;
+    *(size_t*)(s + 8)  = n;
+    *(size_t*)s        = (n + 1) | 1;
 }
 
 static void fontPathFix(void* strObj, const char* tag) {
