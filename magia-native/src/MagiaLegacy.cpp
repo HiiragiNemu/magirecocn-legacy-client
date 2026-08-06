@@ -1546,15 +1546,16 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 
     // Totentanz 代理: Http2Session::setURI URL 改写(代理入口/白名单由
     // config.json 的 proxy 字段经 nativeSetProxyConfig 下发, 见上方实现)
-    H("_ZN5http212Http2Session6setURIERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
-      (void*)setURI_hook, (void**)&g_origSetURI, "proxy: Http2Session::setURI");
-    // WebView 页面加载(尽量全代理; WebView 网络本身走 Http2Session, setURI 已覆盖 XHR)
-    H("_ZN3web7WebView7loadURLERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
-      (void*)webViewLoadURL_hook, (void**)&g_origWebViewLoadURL, "proxy: WebView::loadURL");
-    H("_ZN3web11WebViewImpl7loadURLERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
-      (void*)webViewImplLoadURL_hook, (void**)&g_origWebViewImplLoadURL, "proxy: WebViewImpl::loadURL");
-    H("_ZN3web14WebViewManager7loadURLERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEEb",
-      (void*)webViewManagerLoadURL_hook, (void**)&g_origWebViewManagerLoadURL, "proxy: WebViewManager::loadURL");
+    // ⚠ 代理 hook 临时禁用(2026-08-06): 真机黑屏卡死。
+    // setURI 0 调用(代理不生效) 且 hook 疑似干扰引擎。待重新分析引擎真实网络入口。
+    // H("_ZN5http212Http2Session6setURIERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
+    //   (void*)setURI_hook, (void**)&g_origSetURI, "proxy: Http2Session::setURI");
+    // H("_ZN3web7WebView7loadURLERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
+    //   (void*)webViewLoadURL_hook, (void**)&g_origWebViewLoadURL, "proxy: WebView::loadURL");
+    // H("_ZN3web11WebViewImpl7loadURLERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
+    //   (void*)webViewImplLoadURL_hook, (void**)&g_origWebViewImplLoadURL, "proxy: WebViewImpl::loadURL");
+    // H("_ZN3web14WebViewManager7loadURLERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEEb",
+    //   (void*)webViewManagerLoadURL_hook, (void**)&g_origWebViewManagerLoadURL, "proxy: WebViewManager::loadURL");
     H("_ZN9LbUtility9initLabelEPN7cocos2d4NodeERPNS0_5LabelEPKcfNS0_4Vec2EiNS0_4SizeENS0_7Color4BEi",
       (void*)initLabelNew, (void**)&initLabelOld, "i18n: LbUtility::initLabel");
 
