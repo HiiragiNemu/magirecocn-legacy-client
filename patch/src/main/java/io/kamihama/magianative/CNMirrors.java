@@ -56,8 +56,9 @@ public final class CNMirrors {
     // 分片跨镜像并发：开（true）时同一文件的分片按轮转分给多条健康镜像，
     // 吞吐随线路数叠加；关（false）保持旧的「一次尝试只用一条线路」行为
     private static volatile boolean cfgChunksAcrossMirrors = false;
-    // 首选镜像竞速：加载线路表后让前两条已启用镜像抢一个几十字节的探测文件，
-    // 先到者提为首选。配置顺序写死的首选不一定是用户网络下最快的那条
+    // 首选镜像竞速：加载线路表后让前两条已启用镜像并发拉取同一探测文件的前
+    // 若干字节，按**实际吞吐**定胜负（首字节延迟低≠下载快）。
+    // 配置顺序写死的首选不一定是用户网络下最快的那条
     private static volatile boolean cfgMirrorRace = true;
     // ---- 反限速 ----
     /** 跌到基准速度的这个比例以下即视为疑似被限速。 */
@@ -191,10 +192,16 @@ public final class CNMirrors {
     public static boolean isLoaded() { return loaded; }
 
     /**
-     * 首选镜像竞速：前两条已启用镜像同时拉一个几十字节的探测文件
-     * （scenario 版本 json），先读出首字节的提到首位当首选。
-     * 全程 3 秒封顶，任何异常都静默——竞速只是优化，输了不影响可用性。
+     * 首选镜像竞速：前两条已启用镜像并发拉取同一真实文件的前 {@link #RACE_BYTES}
+     * 字节，按实测吞吐（bytes/sec）定胜负——首字节延迟只反映 RTT，
+     * 反映不了 CDN 的限速/拥塞。
+     * 全程 ~7 秒封顶，任何异常都静默——竞速只是优化，输了不影响可用性。
      */
+    private static final String RACE_PROBE     = "cn_js_update.zip";  // 各镜像都有的小包
+    private static final int    RACE_BYTES     = 256 * 1024;          // 评估吞吐的取样量
+    private static final int    RACE_MIN_BYTES = 64 * 1024;           // 不足此量视为无效样本
+    private static final int    RACE_CAP_MS    = 6000;                // 单条线路的取样上限
+
     private static void raceTopMirrors() {
         final List<Mirror> cur = mirrors;
         final java.util.List<Mirror> enabled = new ArrayList<Mirror>();
@@ -202,49 +209,71 @@ public final class CNMirrors {
         if (enabled.size() < 2) return;
 
         final Mirror a = enabled.get(0), b = enabled.get(1);
-        final java.util.concurrent.atomic.AtomicInteger winner =
-                new java.util.concurrent.atomic.AtomicInteger(-1);
+        final long[] speed = new long[]{-1L, -1L};
         Thread[] ts = new Thread[2];
         for (int k = 0; k < 2; k++) {
             final Mirror m = (k == 0) ? a : b;
             final int idx = k;
             ts[k] = new Thread(new Runnable() {
                 @Override public void run() {
-                    HttpURLConnection c = null;
-                    try {
-                        c = (HttpURLConnection) new URL(m.urlFor("version_scenario.json"))
-                                .openConnection(Proxy.NO_PROXY);
-                        c.setConnectTimeout(2500);
-                        c.setReadTimeout(2500);
-                        c.getResponseCode();
-                        // 读到首字节才算赢
-                        c.getInputStream().read();
-                        winner.compareAndSet(-1, idx);
-                    } catch (Throwable ignore) {
-                    } finally {
-                        if (c != null) try { c.disconnect(); } catch (Throwable ignore) {}
-                    }
+                    speed[idx] = measureMirrorSpeed(m);
                 }
             }, "cnv-mirror-race-" + idx);
             ts[k].setDaemon(true);
             ts[k].start();
         }
         try {
-            ts[0].join(3000L);
-            ts[1].join(3000L);
+            ts[0].join(RACE_CAP_MS + 1500L);
+            ts[1].join(RACE_CAP_MS + 1500L);
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
             return;
         }
-        if (winner.get() == 1) {
+        CNLog.i(TAG, "镜像竞速(吞吐): " + a.name + "=" + (speed[0] / 1024) + "KB/s, "
+                + b.name + "=" + (speed[1] / 1024) + "KB/s");
+        // 平手或 a 更快都维持原顺序；只有 b 明确更快才换
+        if (speed[1] > 0 && speed[1] > speed[0]) {
             List<Mirror> reordered = new ArrayList<Mirror>(cur.size());
             reordered.add(b);
             for (Mirror m : cur) if (m != b) reordered.add(m);
             mirrors = reordered;
-            CNLog.i(TAG, "镜像竞速: " + b.name + " 先到首字节，提为首选（原首选 " + a.name + "）");
+            CNLog.i(TAG, "镜像竞速: " + b.name + " 吞吐更高，提为首选（原首选 " + a.name + "）");
         } else {
-            CNLog.i(TAG, "镜像竞速: 首选 " + a.name + " 保持"
-                    + (winner.get() == 0 ? "（竞速获胜）" : "（竞速无结果）"));
+            CNLog.i(TAG, "镜像竞速: 首选 " + a.name + " 保持");
+        }
+    }
+
+    /** 拉取探测文件的前 RACE_BYTES 字节并返回实测吞吐（bps）；失败/样本不足返回 -1。 */
+    private static long measureMirrorSpeed(Mirror m) {
+        HttpURLConnection c = null;
+        try {
+            c = (HttpURLConnection) new URL(m.urlFor(RACE_PROBE)).openConnection(Proxy.NO_PROXY);
+            c.setConnectTimeout(4000);
+            c.setReadTimeout(4000);
+            c.setUseCaches(false);
+            c.setRequestProperty("Accept-Encoding", "identity");
+            int code = c.getResponseCode();
+            if (code / 100 != 2) return -1L;
+            InputStream in = new java.io.BufferedInputStream(c.getInputStream(), 65536);
+            byte[] buf = new byte[65536];
+            long got = 0L;
+            long t0 = System.nanoTime();
+            while (got < RACE_BYTES) {
+                int want = (int) Math.min(buf.length, RACE_BYTES - got);
+                int n = in.read(buf, 0, want);
+                if (n < 0) break;
+                if (n == 0) continue;
+                got += n;
+                if (System.nanoTime() - t0 > RACE_CAP_MS * 1000000L) break;
+            }
+            try { in.close(); } catch (Throwable ignore) {}
+            if (got < RACE_MIN_BYTES) return -1L;
+            long dt = System.nanoTime() - t0;
+            return (long) (got * 1.0E9d / dt);
+        } catch (Throwable t) {
+            return -1L;
+        } finally {
+            if (c != null) try { c.disconnect(); } catch (Throwable ignore) {}
         }
     }
 
