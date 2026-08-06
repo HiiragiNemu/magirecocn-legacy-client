@@ -81,6 +81,11 @@ public final class CNMirrors {
      * 拿某个 CDN 的域名当身份，那个 CDN 一停用，字符串就变成一句谎话。
      * 早先这里是 {@code r2.assets.example.test}，而 object-storage 自定义域只在 CDN
      * 接管 DNS 时才生效——换 NS 之后那个子域就彻底废了。
+     *
+     * <p><b>它解析不了也没关系，而且不许改。</b>身份标识不需要能被访问；
+     * 更要紧的是，同一个串已经写进每一台已安装设备的 15 个完成标记里
+     * （见 {@code CNDownloaderFix.RESOURCE_BASE_URL} 的说明），改动会让所有
+     * 老玩家重下几个 GB。看到它 DNS 不通是正常的，不要「顺手修好」。
      */
     public static final String CANONICAL_BASE = "https://assets.example.test/";
 

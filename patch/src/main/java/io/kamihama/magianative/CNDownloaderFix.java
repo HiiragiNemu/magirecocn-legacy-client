@@ -81,7 +81,24 @@ public final class CNDownloaderFix {
     // 窗口速度持续低于 MIN_OK_BPS 超过 SLOW_FAIL_NS 就抛异常走换线。
     private static final long   MIN_OK_BPS  = 100L * 1024L;                      // 100 KB/s
     private static final long   SLOW_FAIL_NS = TimeUnit.SECONDS.toNanos(15L);
-    /** 规范资源地址：仅用于生成完成标记里的 url 字段，不代表实际下载线路。 */
+    /**
+     * 规范资源地址：仅用于生成完成标记里的 {@code url} 字段，<b>不代表实际下载线路</b>。
+     *
+     * <h3>⚠ 这个串不许改，即使它不解析</h3>
+     *
+     * 它<b>从来不会被请求</b>——全部用途只有两处：{@link #writeMarker} 把它写进
+     * 标记文件，{@link #isMarkerValid} 拿它做<b>逐字符串比对</b>
+     * （{@code text.contains("url=" + url + "\n")}）。所以它是个**身份标识**，
+     * 不是下载源，域名能不能解析与它的职责无关。
+     *
+     * <p>而它已经写进**每一台已安装设备**的 15 个标记文件里了。一旦改动，
+     * {@code allMarkersValid()} 会对全部 15 个包返回 false，安装器判定「没装过」
+     * ——**每个老玩家重新下载几个 GB**。
+     *
+     * <p>所以：看到这个域名解析不了，那是正常的，<b>不要「顺手修好」它</b>。
+     * 真要迁移，得先给标记文件加 schema=2 与迁移逻辑（认旧 url 也算有效），
+     * 而不是直接改这个常量。{@code tools/check-base-urls.py} 会把它钉住。
+     */
     private static final String RESOURCE_BASE_URL = "https://assets.example.test/";
     private static final String STATE_ROOT = "/data/data/io.kamihama.totentanz/files/madomagi/magica/.cn_installer/r128-downloader-v1";
     private static final String TAG = "MagiaCNDownloader";

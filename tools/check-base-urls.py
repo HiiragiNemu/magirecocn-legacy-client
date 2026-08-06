@@ -47,6 +47,18 @@ INSTALLER = "patch/src/main/java/io/kamihama/magianative/CNDownloaderFix.java"
 # CDN 接管 DNS 时才生效，换 NS 之后那个子域彻底废掉。
 CDN_PREFIXES = ("r2.", "edge.", "esa.", "（已下线线路）.", "cdn1.", "cdn2.", "cdn3.")
 
+# 规范前缀被**钉死**在这个值上，理由与「它能不能解析」无关：
+#
+# 它已经写进每一台已安装设备的 15 个完成标记里（marker 文件的 url= 字段），
+# 而 isMarkerValid 做的是逐字符串比对。改动这个常量 → allMarkersValid() 对全部
+# 15 个包返回 false → 安装器判定「没装过」→ **每个老玩家重下几个 GB**。
+#
+# 这个域名在 2026-08 的 NS 迁移后可能解析不了。那是**正常的**：规范前缀从来不会
+# 被请求，它只是身份标识。看到死域名就「顺手修好」正是本条要拦的动作。
+#
+# 真要迁移：先给标记加 schema=2 与「认旧 url 也算有效」的迁移逻辑，再改这里。
+PINNED_CANONICAL = "https://assets.example.test/"
+
 
 def const(text, name, path):
     m = re.search(r'%s\s*=\s*"([^"]*)"' % re.escape(name), text)
@@ -68,6 +80,17 @@ def main():
         return 2
 
     problems = []
+
+    if canonical != PINNED_CANONICAL:
+        problems.append(
+            "规范前缀被改动了：%s → %s\n"
+            "      **这会让每个老玩家重下几个 GB。**该串已经写进每一台已安装设备的\n"
+            "      15 个完成标记（marker 的 url= 字段），isMarkerValid 做逐字符串比对；\n"
+            "      一改，allMarkersValid() 全部返回 false，安装器判定「没装过」。\n"
+            "      注意：这个域名解析不了是**正常的**——规范前缀从不被请求，只是身份标识。\n"
+            "      真要迁移，先给标记加 schema=2 与「认旧 url 也算有效」的逻辑，再改这里\n"
+            "      （同时更新本脚本的 PINNED_CANONICAL）。"
+            % (PINNED_CANONICAL, canonical))
 
     # 全仓库只该有一个规范前缀。曾经不是：安装器用 assets.example.test，
     # 热更用 r2.assets.example.test，同一对 zip 有两个「规范」地址。
