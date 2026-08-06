@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit;
  * 失败自动换线。
  *
  * <h3>只对主线资源换线</h3>
- * 传入的 URL 只有在确实指向 {@link CNMirrors#DEFAULT_BASE}（主线资源根）、且其后
+ * 传入的 URL 只有在确实指向 {@link CNMirrors#CANONICAL_BASE}（主线资源的规范前缀）、且其后
  * 只剩一段文件名时，才会被替换成支线地址；其余任何地址一律原样使用。
  * 这样做是因为第三个参数 {@code displayName} 只是显示名，不保证等于远端文件名，
  * 拿它拼支线 URL 会拼错；而从 URL 自身推导则不会。也保证了将来若有别处调用这个
@@ -297,7 +297,9 @@ public final class CNHotUpdate {
      * （表示不适用换线）。
      */
     private static String mainLineFileName(String url) {
-        String base = CNMirrors.DEFAULT_BASE;
+        // 用规范前缀而不是兜底线路：兜底线路是「从哪里取字节」，可以随时换；
+        // 这里要判断的是「这条地址是不是主线资源」，属于身份问题。
+        String base = CNMirrors.CANONICAL_BASE;
         if (!url.startsWith(base)) return null;
         String rest = url.substring(base.length());
         if (rest.length() == 0) return null;

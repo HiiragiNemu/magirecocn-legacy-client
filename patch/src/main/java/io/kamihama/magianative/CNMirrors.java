@@ -42,8 +42,37 @@ public final class CNMirrors {
     private static final String PROXY_CACHE =
         "/data/data/io.kamihama.totentanz/files/madomagi/cn_proxy_config.tsv";
 
-    /** 内置兜底线路：拉不到线路表时的默认可用下载路径。 */
-    public static final String DEFAULT_BASE = "https://r2.assets.example.test/";
+    /**
+     * 内置兜底线路：拉不到线路表时的默认可用下载路径。
+     *
+     * <p>这是「**从哪里取字节**」，可以随时换成任何一条可用线路，与文件的身份无关。
+     *
+     * <p>选 edge 是因为它在 2026-08-06 的真机竞速里是最快的一条
+     * （861–984 KB/s，对香港 CDN 的 261–608 KB/s）。改这个常量**不需要**动
+     * {@link #CANONICAL_BASE}，两者已经解耦——这正是它们分开的意义。
+     */
+    public static final String DEFAULT_BASE = "https://assets.example/";
+
+    /**
+     * 主线资源的**规范前缀**：判断「这是不是一条主线资源地址」、以及从地址里
+     * 剥出文件名，都以它为准。
+     *
+     * <p><b>刻意与 {@link #DEFAULT_BASE} 分开，尽管两者当前取值相同。</b>
+     * 它们是两个概念，混用会在换兜底线路时炸掉热更新：
+     *
+     * <ul>
+     *   <li>{@link CNHotUpdate#download} 用它判断该不该换线。前缀对不上就返回
+     *       null＝「非主线地址，直连下载」——热更包会**悄悄退化成不换线**。</li>
+     *   <li>{@link CNHotUpdateCheck} 取版本 json 时用它剥文件名。前缀对不上，
+     *       剥出来的就是整条 URL，再拼上镜像前缀会得到
+     *       {@code https://<镜像>/https://r2.assets.example.test/version_js.json}
+     *       这种东西——**每条线路都失败，热更静默停摆**。</li>
+     * </ul>
+     *
+     * <p>热更包与版本 json 的地址硬编码在 {@link CNHotUpdateCheck} 的
+     * {@code PACKAGES} 表里，改这个常量必须与那张表同步，否则前缀立刻对不上。
+     */
+    public static final String CANONICAL_BASE = "https://r2.assets.example.test/";
 
     private static final int CONNECT_TIMEOUT_MS = 15000;
     private static final int READ_TIMEOUT_MS    = 30000;

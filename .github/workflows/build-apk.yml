@@ -133,6 +133,12 @@ jobs:
       - name: 🔀 核对代理钩子的启用状态与注释一致
         run: python3 tools/check-proxy-hooks.py
 
+      # 兜底线路(DEFAULT_BASE)与规范前缀(CANONICAL_BASE)是两个概念，早先耦合在
+      # 同一个常量上。换兜底线路时若把规范前缀一起动了，热更会**静默停摆**——
+      # 版本查询每条线路都失败，被当成「已是最新」，没有任何报错。
+      - name: 🔗 核对规范前缀与热更地址一致
+        run: python3 tools/check-base-urls.py
+
       - name: 🔢 注入客户端版本号（构建号）
         run: |
           set -euo pipefail

@@ -521,7 +521,9 @@ public final class CNHotUpdateCheck {
      * （调用方按「跳过本次热更」处理，不会卡住启动）。
      */
     private static VerMeta fetchMeta(String url) throws Exception {
-        String base = CNMirrors.DEFAULT_BASE;
+        // 规范前缀，不是兜底线路——换兜底线路时这里必须岿然不动，
+        // 否则剥不出文件名，拼出来的地址每条线路都会 404。
+        String base = CNMirrors.CANONICAL_BASE;
         String name = url.startsWith(base) ? url.substring(base.length()) : url;
         // 线路表可能还没拉过（热更检查不一定跟在安装器后面跑）
         if (!CNMirrors.isLoaded()) {
