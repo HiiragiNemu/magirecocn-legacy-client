@@ -952,7 +952,7 @@ static bool tryRewriteUrl(const std::string& uri, const std::string& base,
 }
 
 static void setURI_hook(void* self, const std::string& uri) {
-    if (!g_origSetURI) return;
+    if (!g_origSetURI) { LOGI("[proxy] setURI called but g_origSetURI NULL"); return; }
     std::string base;
     std::vector<std::string> domains;
     std::string rewritten;
@@ -960,6 +960,9 @@ static void setURI_hook(void* self, const std::string& uri) {
         LOGI("[proxy] setURI: %s -> %s", uri.c_str(), rewritten.c_str());
         g_origSetURI(self, rewritten);
         return;
+    }
+    if (!base.empty()) {
+        LOGI("[proxy] setURI(no-rewrite): %s (base=%s)", uri.c_str(), base.c_str());
     }
     g_origSetURI(self, uri);
 }
