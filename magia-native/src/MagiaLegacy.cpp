@@ -1289,36 +1289,27 @@ static void nativeSetProxyConfig(JNIEnv* env, jclass, jstring base, jobjectArray
          g_proxyBase.c_str(), g_proxyDomains.size());
 }
 
-// config.json 的拉取晚于引擎首个请求——Java 侧每次下发后把配置落盘到
-// files/madomagi/cn_proxy_config.tsv（首字段 base, 其后为域名白名单, Tab 分隔），
-// native 在 JNI_OnLoad 预读, 保证首轮请求就走在代理上。
-static const std::string PROXY_CACHE_PATH =
+// 代理配置**不做任何缓存**，只认本次启动 Java 侧下发的那一份。
+//
+// 曾经有过一份磁盘缓存（cn_proxy_config.tsv，8f6dba66），让这里在 JNI_OnLoad 就
+// 预读到代理配置，赶在引擎首个请求之前生效。但它带来一个更糟的失败模式：
+// config.json 拉不到时缓存既不更新也不删除，于是每次启动都把请求重写到一个可能
+// 早已不存在的代理——而端点级重写**没有失败回退**（改完就交给引擎去连，这里根本
+// 不知道连没连上）。服务器一旦下线，玩家永远连不上，而不是退回直连。
+//
+// 现在的语义是二值的：Java 侧成功读到 config.json 且其中有 proxy 段，才会调
+// nativeSetProxyConfig 把 g_proxyBase 填上；在那之前 proxySnapshot 返回 false，
+// 全部透传直连。代价是首轮引擎请求不走代理——这个代价是**故意付的**，
+// 因为「慢一个请求」远好过「服务器没了就再也进不去」。
+//
+// 顺带把历史遗留的缓存文件删掉：老玩家设备上已经有一份，留着只会让人以为它还在用。
+static const std::string PROXY_CACHE_LEGACY_PATH =
     "/data/data/io.kamihama.totentanz/files/madomagi/cn_proxy_config.tsv";
 
-static void loadProxyConfigCache() {
-    FILE* f = fopen(PROXY_CACHE_PATH.c_str(), "rb");
-    if (!f) return;
-    char buf[2048] = {0};
-    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
-    fclose(f);
-    if (n == 0) return;
-    std::string content(buf, n);
-    while (!content.empty() && (content.back() == '\n' || content.back() == '\r'))
-        content.pop_back();
-    std::lock_guard<std::mutex> lk(g_proxyMutex);
-    size_t tab = content.find('\t');
-    g_proxyBase = (tab == std::string::npos) ? content : content.substr(0, tab);
-    g_proxyDomains.clear();
-    size_t pos = (tab == std::string::npos) ? content.size() : tab + 1;
-    while (pos <= content.size()) {
-        size_t next = content.find('\t', pos);
-        std::string d = content.substr(pos, next == std::string::npos ? std::string::npos : next - pos);
-        if (!d.empty()) g_proxyDomains.push_back(d);
-        if (next == std::string::npos) break;
-        pos = next + 1;
+static void removeLegacyProxyCache() {
+    if (remove(PROXY_CACHE_LEGACY_PATH.c_str()) == 0) {
+        LOGI("[proxy] 已删除历史遗留的代理配置缓存（现已改为不缓存）");
     }
-    LOGI("[proxy] 预读缓存 base=%s domains=%zu",
-         g_proxyBase.c_str(), g_proxyDomains.size());
 }
 
 // ─── 引擎硬编码串翻译（cocos2d::Label 系列钩子）────────────────────
@@ -1837,7 +1828,7 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     // 先装表再装钩；表缺失时钩子空转放行，不影响其他功能。
     loadEngineI18n();
     // 预读上次下发的代理配置（config.json 拉取晚于引擎首个请求）
-    loadProxyConfigCache();
+    removeLegacyProxyCache();
     H("_ZN7cocos2d5Label9setStringERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
       (void*)labelSetStringNew, (void**)&labelSetStringOld, "i18n: Label::setString");
     H("_ZN7cocos2d10LabelAtlas9setStringERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",

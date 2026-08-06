@@ -18,9 +18,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * 资源下载线路（镜像）目录。
  *
- * <p>线路列表从 {@link #MIRRORS_URL} 拉取；拉取失败或内容不可用时回退到内置的
- * 默认线路 {@link #DEFAULT_BASE}，因此**任何情况下都至少有一条可用线路**，
- * 行为不会比改版前更差。
+ * <p>线路列表从 {@link #MIRRORS_URL} 拉取；拉取失败或内容不可用时回退到
+ * {@link #defaultList()} 那份**内置兜底线路表**，因此任何情况下都至少有一条
+ * 可用线路。
+ *
+ * <p>内置那份的最后两条指向 GitHub Release 的公共代理，<b>与我们的域名、
+ * 服务器、CDN 账号全都无关</b>——这是「服务器没了玩家也还能装、还能更新」这条
+ * 路的落脚点。选它们不是因为快，而是因为它们不跟着我们一起死。
  *
  * <p>线路按 {@code weight} 由大到小排序（权重越大越优先）。下载失败会给该线路
  * 记一次失败并进入冷却，冷却期内不再被选中；{@code CNDownloaderFix} 的每一次
@@ -38,9 +42,18 @@ public final class CNMirrors {
     /** 线路列表地址。 */
     public static final String MIRRORS_URL = "https://api.example.test/legacy/config.json";
 
-    /** 代理配置的本地缓存：native 在 JNI_OnLoad（远早于 config 拉取）时预读。 */
-    private static final String PROXY_CACHE =
-        "/data/data/io.kamihama.totentanz/files/madomagi/cn_proxy_config.tsv";
+    // 代理配置**刻意不做任何缓存**，始终以本次启动读到的 config.json 为准。
+    //
+    // 曾经有过一份磁盘缓存（cn_proxy_config.tsv，8f6dba66），目的是让 native 在
+    // JNI_OnLoad 就预读到代理配置，赶在引擎首个请求之前生效。但它带来一个更糟的
+    // 失败模式：config.json 拉不到时，缓存既不更新也不删除，于是 native 每次启动
+    // 都把请求重写到一个可能早已不存在的代理——而端点级重写**没有失败回退**
+    // （改完就交给引擎连，native 根本不知道连没连上）。服务器一旦下线，玩家就
+    // 永远连不上，而不是退回直连。
+    //
+    // 现在的语义是二值的、无中间状态：读到 config.json 且有 proxy 段就走代理，
+    // 拉不到就直连；服务器回来时立刻恢复，也不存在「新旧两份配置互搏」。
+    // 代价是首轮引擎请求不走代理（见下方 nativeSetProxyConfig 的调用点）。
 
     /**
      * 内置兜底线路：拉不到线路表时的默认可用下载路径。
@@ -52,6 +65,19 @@ public final class CNMirrors {
      * {@link #CANONICAL_BASE}，两者已经解耦——这正是它们分开的意义。
      */
     public static final String DEFAULT_BASE = "https://assets.example/";
+
+    /**
+     * 与我们的基础设施<b>完全无关</b>的兜底线路：公共 gh-proxy 转 GitHub Release。
+     *
+     * <p>域名过期、服务器关停、CDN 账号被封——只要 GitHub 与 gh-proxy 还在，
+     * 玩家就还能装、还能更新。这是「服务器没了也能玩」这条路的最后一环。
+     */
+    static final String GITHUB_FALLBACK_V4 =
+        "https://v4.gh-proxy.org/https://github.com/MagirecoCN-Revival-Project/"
+        + "（外部发布渠道）/releases/download/latest/";
+    static final String GITHUB_FALLBACK =
+        "https://gh-proxy.org/https://github.com/MagirecoCN-Revival-Project/"
+        + "（外部发布渠道）/releases/download/latest/";
 
     /**
      * 主线资源的**规范前缀**：判断「这是不是一条主线资源地址」、以及从地址里
@@ -187,9 +213,41 @@ public final class CNMirrors {
 
     private CNMirrors() {}
 
+    /**
+     * 内置兜底线路表：拉不到 {@code config.json} 时用的那份。
+     *
+     * <h3>为什么是一串而不是一条</h3>
+     *
+     * 这张表<b>唯一的用武之地就是降级场景</b>——config.json 一旦拉到，整张线路表
+     * 就把它替换掉了。所以选线的标准不是「快」，而是<b>「我们的基础设施全没了，
+     * 还能不能下到东西」</b>。
+     *
+     * <p>原先只有一条 {@code assets.example}，问题是它和 config.json
+     * 所在的 {@code api.example.test} <b>是同一个域名下的子域</b>。「服务器没了」
+     * 通常意味着整个域名一起没——2026-08-06 换 NS 那次，全域 24 小时无解析，就是
+     * 一次实战演练。那种情况下这条兜底跟着一起死，等于没有兜底。
+     *
+     * <p>所以排成四条，按「越往后越不依赖我们」排列：
+     *
+     * <ol>
+     *   <li>{@code edge.} / {@code esa.} —— 自有域名下的 CDN。config.json 只是
+     *       一时抽风（网络抖动、api 短暂 502）时最快，覆盖绝大多数情况；</li>
+     *   <li>{@code v4.gh-proxy.org} / {@code gh-proxy.org} —— 指向 GitHub Release
+     *       的公共代理，<b>与我们的域名、服务器、CDN 账号全都无关</b>。哪怕域名
+     *       过期、服务器关停，只要 GitHub 和 gh-proxy 还在，玩家就还能装、还能更新。</li>
+     * </ol>
+     *
+     * <p>地址与线上 {@code config.json} 的 mirrors 保持一致；那边改了这里也要跟。
+     * 顺序即优先级，{@code CNMirrors} 会按权重从高到低试。
+     */
     private static List<Mirror> defaultList() {
-        List<Mirror> l = new ArrayList<Mirror>(1);
-        l.add(new Mirror("默认线路", DEFAULT_BASE, 100, 0, true));
+        List<Mirror> l = new ArrayList<Mirror>(4);
+        // 权重只决定内置表内部的先后，config.json 到位后整张表会被替换
+        l.add(new Mirror("内置兜底 • edge", DEFAULT_BASE, 100, 0, true));
+        l.add(new Mirror("内置兜底 • 阿里ESA",
+                "https://esa.assets.example.test/", 80, 0, true));
+        l.add(new Mirror("内置兜底 • gh-proxy v4", GITHUB_FALLBACK_V4, 60, 0, true));
+        l.add(new Mirror("内置兜底 • gh-proxy", GITHUB_FALLBACK, 40, 0, true));
         return l;
     }
 
@@ -444,26 +502,13 @@ public final class CNMirrors {
                 try {
                     nativeSetProxyConfig(pbase, pdom);
                     CNLog.i(TAG, "代理配置已下发 base=" + pbase + " domains=" + pdom.length);
-                    // 落盘给下次启动的 native 预载：config 下发晚于引擎首个请求时
-                    // 也能立刻生效（见 MagiaLegacy JNI_OnLoad 的 loadProxyConfigCache）
-                    try {
-                        java.io.File f = new java.io.File(PROXY_CACHE);
-                        java.io.File parent = f.getParentFile();
-                        if (parent != null) parent.mkdirs();
-                        StringBuilder sb = new StringBuilder(pbase);
-                        for (String d : pdom) sb.append('\t').append(d);
-                        java.io.FileOutputStream fos = new java.io.FileOutputStream(f);
-                        fos.write(sb.toString().getBytes("UTF-8"));
-                        fos.close();
-                    } catch (Throwable t) {
-                        CNLog.w(TAG, "代理配置缓存写入失败: " + t);
-                    }
                 } catch (Throwable t) {
                     CNLog.w(TAG, "nativeSetProxyConfig 调用失败（代理不生效）: " + t);
                 }
             } else {
-                // 云端拿掉了 proxy 配置：清缓存，下次启动直连
-                try { new java.io.File(PROXY_CACHE).delete(); } catch (Throwable ignore) {}
+                // 云端拿掉了 proxy 配置 —— 什么都不用做：代理只在本次启动成功读到
+                // config.json 且其中有 proxy 段时才生效，没有任何持久状态要清。
+                CNLog.i(TAG, "config.json 未配置 proxy，本次启动直连");
             }
         }
 
