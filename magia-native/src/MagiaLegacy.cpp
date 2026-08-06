@@ -1046,14 +1046,18 @@ static HostServiceFn g_origHostService = nullptr;
 static void hostServiceHook(void* ec, std::string& host, std::string& service,
                             std::string& path, const std::string& uri) {
     if (g_origHostService) g_origHostService(ec, host, service, path, uri);
-    std::string base;
-    std::vector<std::string> domains;
-    if (!proxySnapshot(base, domains)) return;
-    if (host.empty() || proxyIsSelfHost(host) || !proxyHostMatches(host, domains)) return;
-    std::string proxyHost = proxyHostOf(base);
-    if (proxyHost.empty()) return;
-    LOGI("[proxy] host_service: %s -> %s", host.c_str(), proxyHost.c_str());
-    host.assign(proxyHost);   // 连接目标/TLS SNI/证书校验 host 全变代理 host
+    try {
+        std::string base;
+        std::vector<std::string> domains;
+        if (!proxySnapshot(base, domains)) return;
+        if (host.empty() || proxyIsSelfHost(host) || !proxyHostMatches(host, domains)) return;
+        std::string proxyHost = proxyHostOf(base);
+        if (proxyHost.empty()) return;
+        LOGI("[proxy] host_service: %s -> %s", host.c_str(), proxyHost.c_str());
+        host.assign(proxyHost);   // 连接目标/TLS SNI/证书校验 host 全变代理 host
+    } catch (...) {
+        // 钩子边界绝不外抛：异常即透传，不挡引擎请求
+    }
 }
 
 // session::submit(ec, method, path, headers, priority_spec): path 是完整 URL。
@@ -1064,17 +1068,18 @@ static SubmitFn g_origSubmit = nullptr;
 
 static void submitHook(void* self, void* ec, std::string& a, std::string& b,
                        void* headers, void* prio) {
-    if (g_origSubmit) {
+    try {
         std::string base;
         std::vector<std::string> domains;
         std::string rw;
-        if (proxySnapshot(base, domains)) {
+        if (g_origSubmit && proxySnapshot(base, domains)) {
             if (tryRewriteUrl(a, base, domains, rw)) a = rw;
             else if (tryRewriteUrl(b, base, domains, rw)) b = rw;
         }
-        g_origSubmit(self, ec, a, b, headers, prio);
-        return;
+    } catch (...) {
+        // 钩子边界绝不外抛：异常即透传
     }
+    if (g_origSubmit) g_origSubmit(self, ec, a, b, headers, prio);
 }
 
 // session::submit(ec, method, path, body, headers, prio) —— 带 body string 的重载(0x1119ef0)。
@@ -1085,18 +1090,19 @@ static SubmitBodyFn g_origSubmitBody = nullptr;
 
 static void submitBodyHook(void* self, void* ec, std::string& a, std::string& b,
                            std::string& c, void* headers, void* prio) {
-    if (g_origSubmitBody) {
+    try {
         std::string base;
         std::vector<std::string> domains;
         std::string rw;
-        if (proxySnapshot(base, domains)) {
+        if (g_origSubmitBody && proxySnapshot(base, domains)) {
             if (tryRewriteUrl(a, base, domains, rw)) a = rw;
             else if (tryRewriteUrl(b, base, domains, rw)) b = rw;
             else if (tryRewriteUrl(c, base, domains, rw)) c = rw;
         }
-        g_origSubmitBody(self, ec, a, b, c, headers, prio);
-        return;
+    } catch (...) {
+        // 钩子边界绝不外抛：异常即透传
     }
+    if (g_origSubmitBody) g_origSubmitBody(self, ec, a, b, c, headers, prio);
 }
 
 // 经 RegisterNatives 绑给 CNMirrors.nativeSetProxyConfig(String, String[])。
@@ -1625,18 +1631,18 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     H("_ZN21LoadingSceneLayerInfo8setTitleENSt6__ndk112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE",
       (void*)loadingSetTitleNew, (void**)&loadingSetTitleOld, "i18n: LoadingSceneLayerInfo::setTitle");
 
-    // Totentanz 代理: Http2Session::setURI URL 改写(代理入口/白名单由
-    // config.json 的 proxy 字段经 nativeSetProxyConfig 下发, 见上方实现)
-    // ⚠ Totentanz 代理 hook 二次禁用(2026-08-06): 真机直接闪退崩溃(非黑屏)。
-    // host_service_from_uri + session::submit hook 疑似参数/改写问题导致崩溃。
-    // 待分析 submit 签名与改写安全性后重新实现。config 无 proxy 时本就透传, 但 hook
-    // 本身仍可能破坏引擎, 故完全禁用。
-    // H("_ZN7nghttp210asio_http221host_service_from_uriERN5boost6system10error_codeERNSt6__ndk112basic_stringIcNS5_11char_traitsIcEENS5_9allocatorIcEEEESC_SC_RKSB_",
-    //   (void*)hostServiceHook, (void**)&g_origHostService, "proxy: host_service_from_uri");
-    // H("_ZNK7nghttp210asio_http26client7session6submitERN5boost6system10error_codeERKNSt6__ndk112basic_stringIcNS7_11char_traitsIcEENS7_9allocatorIcEEEESF_NS7_8multimapISD_NS0_12header_valueENS7_4lessISD_EENSB_INS7_4pairISE_SH_EEEEEENS1_13priority_specE",
-    //   (void*)submitHook, (void**)&g_origSubmit, "proxy: session::submit");
-    // H("_ZNK7nghttp210asio_http26client7session6submitERN5boost6system10error_codeERKNSt6__ndk112basic_stringIcNS7_11char_traitsIcEENS7_9allocatorIcEEEESF_SD_NS7_8multimapISD_NS0_12header_valueENS7_4lessISD_EENSB_INS7_4pairISE_SH_EEEEEENS1_13priority_specE",
-    //   (void*)submitBodyHook, (void**)&g_origSubmitBody, "proxy: session::submit(body)");
+    // Totentanz 代理: nghttp2 请求入口改写（proxy 配置经 nativeSetProxyConfig
+    // 下发; 未下发时三个钩子全部透传直连）。
+    // v3(2026-08-06) 重新启用, 相比 v2 的加固:
+    //   · 钩子体整体 try/catch——任何异常都透传, 绝不抛过 hook 边界
+    //   · submit 系不再对 g_orig* 为空时静默吞请求（v2 的隐患）
+    // setURI(运行时 0 调用) 与 WebView.loadURL(黑屏嫌疑) 两处保持禁用。
+    H("_ZN7nghttp210asio_http221host_service_from_uriERN5boost6system10error_codeERNSt6__ndk112basic_stringIcNS5_11char_traitsIcEENS5_9allocatorIcEEEESC_SC_RKSB_",
+      (void*)hostServiceHook, (void**)&g_origHostService, "proxy: host_service_from_uri");
+    H("_ZNK7nghttp210asio_http26client7session6submitERN5boost6system10error_codeERKNSt6__ndk112basic_stringIcNS7_11char_traitsIcEENS7_9allocatorIcEEEESF_NS7_8multimapISD_NS0_12header_valueENS7_4lessISD_EENSB_INS7_4pairISE_SH_EEEEEENS1_13priority_specE",
+      (void*)submitHook, (void**)&g_origSubmit, "proxy: session::submit");
+    H("_ZNK7nghttp210asio_http26client7session6submitERN5boost6system10error_codeERKNSt6__ndk112basic_stringIcNS7_11char_traitsIcEENS7_9allocatorIcEEEESF_SD_NS7_8multimapISD_NS0_12header_valueENS7_4lessISD_EENSB_INS7_4pairISE_SH_EEEEEENS1_13priority_specE",
+      (void*)submitBodyHook, (void**)&g_origSubmitBody, "proxy: session::submit(body)");
     H("_ZN9LbUtility9initLabelEPN7cocos2d4NodeERPNS0_5LabelEPKcfNS0_4Vec2EiNS0_4SizeENS0_7Color4BEi",
       (void*)initLabelNew, (void**)&initLabelOld, "i18n: LbUtility::initLabel");
 
