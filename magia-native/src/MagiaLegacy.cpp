@@ -1627,14 +1627,16 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 
     // Totentanz 代理: Http2Session::setURI URL 改写(代理入口/白名单由
     // config.json 的 proxy 字段经 nativeSetProxyConfig 下发, 见上方实现)
-    // Totentanz 代理: 引擎真实请求入口(分析确认 setURI 0 调用废弃)。
-    // host_service_from_uri 改连接 host, session::submit 改 :path, 两者配合。
-    H("_ZN7nghttp210asio_http221host_service_from_uriERN5boost6system10error_codeERNSt6__ndk112basic_stringIcNS5_11char_traitsIcEENS5_9allocatorIcEEEESC_SC_RKSB_",
-      (void*)hostServiceHook, (void**)&g_origHostService, "proxy: host_service_from_uri");
-    H("_ZNK7nghttp210asio_http26client7session6submitERN5boost6system10error_codeERKNSt6__ndk112basic_stringIcNS7_11char_traitsIcEENS7_9allocatorIcEEEESF_NS7_8multimapISD_NS0_12header_valueENS7_4lessISD_EENSB_INS7_4pairISE_SH_EEEEEENS1_13priority_specE",
-      (void*)submitHook, (void**)&g_origSubmit, "proxy: session::submit");
-    H("_ZNK7nghttp210asio_http26client7session6submitERN5boost6system10error_codeERKNSt6__ndk112basic_stringIcNS7_11char_traitsIcEENS7_9allocatorIcEEEESF_SD_NS7_8multimapISD_NS0_12header_valueENS7_4lessISD_EENSB_INS7_4pairISE_SH_EEEEEENS1_13priority_specE",
-      (void*)submitBodyHook, (void**)&g_origSubmitBody, "proxy: session::submit(body)");
+    // ⚠ Totentanz 代理 hook 二次禁用(2026-08-06): 真机直接闪退崩溃(非黑屏)。
+    // host_service_from_uri + session::submit hook 疑似参数/改写问题导致崩溃。
+    // 待分析 submit 签名与改写安全性后重新实现。config 无 proxy 时本就透传, 但 hook
+    // 本身仍可能破坏引擎, 故完全禁用。
+    // H("_ZN7nghttp210asio_http221host_service_from_uriERN5boost6system10error_codeERNSt6__ndk112basic_stringIcNS5_11char_traitsIcEENS5_9allocatorIcEEEESC_SC_RKSB_",
+    //   (void*)hostServiceHook, (void**)&g_origHostService, "proxy: host_service_from_uri");
+    // H("_ZNK7nghttp210asio_http26client7session6submitERN5boost6system10error_codeERKNSt6__ndk112basic_stringIcNS7_11char_traitsIcEENS7_9allocatorIcEEEESF_NS7_8multimapISD_NS0_12header_valueENS7_4lessISD_EENSB_INS7_4pairISE_SH_EEEEEENS1_13priority_specE",
+    //   (void*)submitHook, (void**)&g_origSubmit, "proxy: session::submit");
+    // H("_ZNK7nghttp210asio_http26client7session6submitERN5boost6system10error_codeERKNSt6__ndk112basic_stringIcNS7_11char_traitsIcEENS7_9allocatorIcEEEESF_SD_NS7_8multimapISD_NS0_12header_valueENS7_4lessISD_EENSB_INS7_4pairISE_SH_EEEEEENS1_13priority_specE",
+    //   (void*)submitBodyHook, (void**)&g_origSubmitBody, "proxy: session::submit(body)");
     H("_ZN9LbUtility9initLabelEPN7cocos2d4NodeERPNS0_5LabelEPKcfNS0_4Vec2EiNS0_4SizeENS0_7Color4BEi",
       (void*)initLabelNew, (void**)&initLabelOld, "i18n: LbUtility::initLabel");
 
