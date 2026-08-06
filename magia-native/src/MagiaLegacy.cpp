@@ -1486,13 +1486,33 @@ static void fontPathOverwrite(void* strObj, const char* nv, size_t n) {
     *(size_t*)s        = (n + 1) | 1;
 }
 
+// 引擎里硬编码的字体路径只有三条（两个 ABI 一致，strings 核对过）：
+//     fonts/MTF4a5kp.ttf          ← 这里重定向
+//     fonts/mbm_20160902.ttf      ← 重定向的目标，本来就是它
+//     fonts/witchText-export.fnt  ← 魔女文字位图字体，另一套机制，不动
+// 所以「把所有字体引用汇到 mbm」落到实处就是下面这一对常量。
+//
+// 为什么目标是 mbm 而不是先前的 TTZhiHeiGB3-W4：
+//   · 覆盖最好——mbm 是格式 12 cmap、30823 个码位（ZhiHei 是格式 4、28611），
+//     CJK 基本区 20945/20992 对 20902，扩展 A 也多。换过去只多字不掉字。
+//   · 风格统一——mbm 是游戏自己的 MagiReco CN Medium，剧情文本本来就用它，
+//     UI 跟着用之后两处字形一致，且引擎少加载一个 8MB 字体。
+//   · 更安全——见下面那段关于长度的说明。
 static void fontPathFix(void* strObj, const char* tag) {
-    static const char kFrom[] = "fonts/MTF4a5kp.ttf";
-    static const char kTo[]   = "fonts/TTZhiHeiGB3-W4.ttf";
+    static const char kFrom[] = "fonts/MTF4a5kp.ttf";        // 18 字符
+    static const char kTo[]   = "fonts/mbm_20160902.ttf";    // 22 字符
+    // ⚠ 这 22 不是巧合，改这个常量前先读懂：libc++ 的 std::string 短串上限
+    // 正好是 22 字符。kFrom 是 18 字符 → 引擎那个 string 必然是短串（内联），
+    // 目标也 ≤22 就能全程写在内联缓冲里，一次堆分配都不做。
+    // 先前的 "fonts/TTZhiHeiGB3-W4.ttf" 是 24 字符，超了，于是每次重定向都要走
+    // fontPathOverwrite 末尾那条「另分配缓冲交给引擎 string 持有」的路径——
+    // 也就是 5df4b46d 修过堆破坏的那一条。现在它基本不会再被走到。
+    // 若将来把目标换成超过 22 字符的路径，那条路径会重新变成热路径，
+    // 届时请重新审视它的所有权约定。
     NdkStrView v = ndkStrRead(strObj);
     if (v.size == sizeof(kFrom) - 1 && memcmp(v.data, kFrom, sizeof(kFrom) - 1) == 0) {
         fontPathOverwrite(strObj, kTo, sizeof(kTo) - 1);
-        LOGI("[font] %s: MTF4a5kp → TTZhiHeiGB3-W4", tag);
+        LOGI("[font] %s: MTF4a5kp → mbm_20160902", tag);
     }
 }
 
@@ -1723,7 +1743,7 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     H("_ZN9LbUtility9initLabelEPN7cocos2d4NodeERPNS0_5LabelEPKcfNS0_4Vec2EiNS0_4SizeENS0_7Color4BEi",
       (void*)initLabelNew, (void**)&initLabelOld, "i18n: LbUtility::initLabel");
 
-    // ── 引擎 UI 字体路径重定向（MTF4a5kp → TTZhiHeiGB3-W4）──
+    // ── 引擎 UI 字体路径重定向（MTF4a5kp → mbm_20160902）──
     H("_ZN7cocos2d5Label13createWithTTFERKNS_10_ttfConfigERKNSt6__ndk112basic_stringIcNS4_11char_traitsIcEENS4_9allocatorIcEEEENS_14TextHAlignmentEi",
       (void*)createWithTtfCfgNew, (void**)&createWithTtfCfgOld, "font: createWithTTF(cfg)");
     H("_ZN7cocos2d5Label13createWithTTFERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEES9_fRKNS_4SizeENS_14TextHAlignmentENS_14TextVAlignmentE",

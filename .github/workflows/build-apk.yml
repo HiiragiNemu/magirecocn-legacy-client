@@ -121,6 +121,12 @@ jobs:
       - name: 🚧 校验 native 入口保护（异常绝不外泄）
         run: python3 tools/check-entry-guard.py
 
+      # 字体只改加载路径、不改文件内容（1c29ba38 定的路线）。这一步钉住
+      # assets/fonts/ 每个文件的哈希与内部家族名，并校验 native 的重定向目标
+      # 确实随包发出去。放在编译之前：字体不对时越早失败越省事。
+      - name: 🔤 校验字体基线与重定向目标
+        run: python3 tools/check-fonts.py
+
       - name: 🔢 注入客户端版本号（构建号）
         run: |
           set -euo pipefail
