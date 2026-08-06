@@ -845,6 +845,8 @@ public class CNCNDownloadUI {
         vSupportPill.setBackground(supportPillBg);
         vSupportPill.setVisibility(View.GONE);
         vSupportPill.setOnClickListener(new SupportClick(act));
+        // 浮层创建时立即按 config 显示（config 可能已加载完；refreshCredits 会再刷新）
+        applySupportPill(act);
         LinearLayout.LayoutParams supLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
