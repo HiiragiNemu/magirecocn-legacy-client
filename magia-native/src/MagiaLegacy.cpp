@@ -1018,6 +1018,87 @@ static void webViewManagerLoadURL_hook(void* self, const std::string& url, bool 
     g_origWebViewManagerLoadURL(self, url, flag);
 }
 
+// ─── 引擎真实请求入口: host_service_from_uri + session::submit ─────
+// 分析证实: Http2Session::setURI 运行时 0 调用(废弃)。引擎实际路径:
+//   · Http2SessionManager::run() → nghttp2::asio_http2::host_service_from_uri
+//     (uri → host/service/path)。改 host 输出 → 连接/TLS/SNI/证书校验全走代理
+//     host(api.example.test 真实证书, 免证书 hook)。
+//   · client::session::submit(ec, method, path, headers, prio): path 参数是完整
+//     URL(Http2Request+0x10), 直接改写为 base+host+path → :authority/:path 走
+//     /stream。两个 hook 缺一不可(:path 只来自 submit, host 只来自 host_service)。
+// 仍由 nativeSetProxyConfig 下发配置; 未下发即全部透传直连。
+
+// 从 base("https://api.example.test/stream/") 提取代理 host("api.example.test")
+static std::string proxyHostOf(const std::string& base) {
+    if (base.compare(0, 8, "https://") != 0 && base.compare(0, 7, "http://") != 0) return "";
+    size_t hs = base.find("://") + 3;
+    size_t he = base.find('/', hs);
+    if (he == std::string::npos) return "";
+    return base.substr(hs, he - hs);
+}
+
+// void(boost::system::error_code& ec, std::string& host, std::string& service,
+//      std::string& path, const std::string& uri)  → x0=ec x1=host x2=service x3=path x4=uri
+using HostServiceFn = void (*)(void* ec, std::string& host, std::string& service,
+                               std::string& path, const std::string& uri);
+static HostServiceFn g_origHostService = nullptr;
+
+static void hostServiceHook(void* ec, std::string& host, std::string& service,
+                            std::string& path, const std::string& uri) {
+    if (g_origHostService) g_origHostService(ec, host, service, path, uri);
+    std::string base;
+    std::vector<std::string> domains;
+    if (!proxySnapshot(base, domains)) return;
+    if (host.empty() || proxyIsSelfHost(host) || !proxyHostMatches(host, domains)) return;
+    std::string proxyHost = proxyHostOf(base);
+    if (proxyHost.empty()) return;
+    LOGI("[proxy] host_service: %s -> %s", host.c_str(), proxyHost.c_str());
+    host.assign(proxyHost);   // 连接目标/TLS SNI/证书校验 host 全变代理 host
+}
+
+// session::submit(ec, method, path, headers, priority_spec): path 是完整 URL。
+// 改「像完整 URL 的」string 参数(不依赖哪个是 path——method 不会是 https://)。
+using SubmitFn = void (*)(void* self, void* ec, std::string& a, std::string& b,
+                          void* headers, void* prio);
+static SubmitFn g_origSubmit = nullptr;
+
+static void submitHook(void* self, void* ec, std::string& a, std::string& b,
+                       void* headers, void* prio) {
+    if (g_origSubmit) {
+        std::string base;
+        std::vector<std::string> domains;
+        std::string rw;
+        if (proxySnapshot(base, domains)) {
+            if (tryRewriteUrl(a, base, domains, rw)) a = rw;
+            else if (tryRewriteUrl(b, base, domains, rw)) b = rw;
+        }
+        g_origSubmit(self, ec, a, b, headers, prio);
+        return;
+    }
+}
+
+// session::submit(ec, method, path, body, headers, prio) —— 带 body string 的重载(0x1119ef0)。
+// 改写「像完整 URL 的」string(path)。POST 等带 body 的请求走这个重载。
+using SubmitBodyFn = void (*)(void* self, void* ec, std::string& a, std::string& b,
+                              std::string& c, void* headers, void* prio);
+static SubmitBodyFn g_origSubmitBody = nullptr;
+
+static void submitBodyHook(void* self, void* ec, std::string& a, std::string& b,
+                           std::string& c, void* headers, void* prio) {
+    if (g_origSubmitBody) {
+        std::string base;
+        std::vector<std::string> domains;
+        std::string rw;
+        if (proxySnapshot(base, domains)) {
+            if (tryRewriteUrl(a, base, domains, rw)) a = rw;
+            else if (tryRewriteUrl(b, base, domains, rw)) b = rw;
+            else if (tryRewriteUrl(c, base, domains, rw)) c = rw;
+        }
+        g_origSubmitBody(self, ec, a, b, c, headers, prio);
+        return;
+    }
+}
+
 // 经 RegisterNatives 绑给 CNMirrors.nativeSetProxyConfig(String, String[])。
 // config.json 的 "proxy" 字段解析后调用, 下发代理入口与域名白名单。
 static void nativeSetProxyConfig(JNIEnv* env, jclass, jstring base, jobjectArray domains) {
@@ -1546,16 +1627,14 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 
     // Totentanz 代理: Http2Session::setURI URL 改写(代理入口/白名单由
     // config.json 的 proxy 字段经 nativeSetProxyConfig 下发, 见上方实现)
-    // ⚠ 代理 hook 临时禁用(2026-08-06): 真机黑屏卡死。
-    // setURI 0 调用(代理不生效) 且 hook 疑似干扰引擎。待重新分析引擎真实网络入口。
-    // H("_ZN5http212Http2Session6setURIERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
-    //   (void*)setURI_hook, (void**)&g_origSetURI, "proxy: Http2Session::setURI");
-    // H("_ZN3web7WebView7loadURLERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
-    //   (void*)webViewLoadURL_hook, (void**)&g_origWebViewLoadURL, "proxy: WebView::loadURL");
-    // H("_ZN3web11WebViewImpl7loadURLERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
-    //   (void*)webViewImplLoadURL_hook, (void**)&g_origWebViewImplLoadURL, "proxy: WebViewImpl::loadURL");
-    // H("_ZN3web14WebViewManager7loadURLERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEEb",
-    //   (void*)webViewManagerLoadURL_hook, (void**)&g_origWebViewManagerLoadURL, "proxy: WebViewManager::loadURL");
+    // Totentanz 代理: 引擎真实请求入口(分析确认 setURI 0 调用废弃)。
+    // host_service_from_uri 改连接 host, session::submit 改 :path, 两者配合。
+    H("_ZN7nghttp210asio_http221host_service_from_uriERN5boost6system10error_codeERNSt6__ndk112basic_stringIcNS5_11char_traitsIcEENS5_9allocatorIcEEEESC_SC_RKSB_",
+      (void*)hostServiceHook, (void**)&g_origHostService, "proxy: host_service_from_uri");
+    H("_ZNK7nghttp210asio_http26client7session6submitERN5boost6system10error_codeERKNSt6__ndk112basic_stringIcNS7_11char_traitsIcEENS7_9allocatorIcEEEESF_NS7_8multimapISD_NS0_12header_valueENS7_4lessISD_EENSB_INS7_4pairISE_SH_EEEEEENS1_13priority_specE",
+      (void*)submitHook, (void**)&g_origSubmit, "proxy: session::submit");
+    H("_ZNK7nghttp210asio_http26client7session6submitERN5boost6system10error_codeERKNSt6__ndk112basic_stringIcNS7_11char_traitsIcEENS7_9allocatorIcEEEESF_SD_NS7_8multimapISD_NS0_12header_valueENS7_4lessISD_EENSB_INS7_4pairISE_SH_EEEEEENS1_13priority_specE",
+      (void*)submitBodyHook, (void**)&g_origSubmitBody, "proxy: session::submit(body)");
     H("_ZN9LbUtility9initLabelEPN7cocos2d4NodeERPNS0_5LabelEPKcfNS0_4Vec2EiNS0_4SizeENS0_7Color4BEi",
       (void*)initLabelNew, (void**)&initLabelOld, "i18n: LbUtility::initLabel");
 
