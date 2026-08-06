@@ -847,11 +847,15 @@ public class CNCNDownloadUI {
         vSupportPill.setOnClickListener(new SupportClick(act));
         // 浮层创建时立即按 config 显示（config 可能已加载完；refreshCredits 会再刷新）
         applySupportPill(act);
-        LinearLayout.LayoutParams supLp = new LinearLayout.LayoutParams(
+        // 支持胶囊独立定位在右上角「里侧」(headRight 按钮行下方)——
+        // 不参与 headRight 横向排列, 显示/隐藏不影响 GitHub/主题等其他按钮
+        FrameLayout.LayoutParams supLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
-        supLp.leftMargin = dp(act, 8);
-        headRight.addView(vSupportPill, supLp);
+        supLp.gravity     = Gravity.TOP | Gravity.END;
+        supLp.topMargin   = dp(act, 52);   // headRight(右上角按钮行)下方
+        supLp.rightMargin = dp(act, 14);
+        root.addView(vSupportPill, supLp);
 
         FrameLayout.LayoutParams themeLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
