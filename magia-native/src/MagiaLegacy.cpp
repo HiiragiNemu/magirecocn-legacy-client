@@ -1714,10 +1714,10 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     // 不碰 nghttp2 内部（v3 证明逐请求改写会让 on_response 回调撞 UAF）。
     H("_ZNK9UrlConfig3apiENS_3Api4TypeE",
       (void*)urlConfigApiNew, (void**)&urlConfigApiOld, "proxy: UrlConfig::api");
-    H("_ZNK9UrlConfig3webENS_3Web4TypeE",
-      (void*)urlConfigWebNew, (void**)&urlConfigWebOld, "proxy: UrlConfig::web");
     H("_ZNK9UrlConfig4chatENS_4Chat4TypeE",
       (void*)urlConfigChatNew, (void**)&urlConfigChatOld, "proxy: UrlConfig::chat");
+    // web 端点不重写：游戏 UI 网页直连本来就能通（WebView 的本地文件拦截
+    // 只认原始域名），改走代理会让页面加载卡死黑屏——2026-08-06 真机复现。
     // nghttp2 的 host_service_from_uri / session::submit 钩子维持禁用：
     // 真机复现为请求回调 UAF（栈在 request_impl::on_response），不再启用。
     H("_ZN9LbUtility9initLabelEPN7cocos2d4NodeERPNS0_5LabelEPKcfNS0_4Vec2EiNS0_4SizeENS0_7Color4BEi",
