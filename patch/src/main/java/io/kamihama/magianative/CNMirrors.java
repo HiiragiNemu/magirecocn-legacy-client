@@ -336,11 +336,25 @@ public final class CNMirrors {
         JSONObject proxy = root.optJSONObject("proxy");
         if (proxy != null) {
             String pbase = proxy.optString("base", "").trim();
+            // 与 mirrors 同样校验 scheme 并强制以 '/' 结尾，
+            // 避免 C++ tryRewriteUrl 拼出 "…/stream<host>/path" 这类坏 URL。
+            if (!pbase.isEmpty()) {
+                String lower = pbase.toLowerCase(java.util.Locale.US);
+                if (!lower.startsWith("https://") && !lower.startsWith("http://")) {
+                    pbase = "";
+                } else if (!pbase.endsWith("/")) {
+                    pbase = pbase + "/";
+                }
+            }
             JSONArray pdomains = proxy.optJSONArray("domains");
             String[] pdom = null;
             if (pdomains != null && pdomains.length() > 0) {
-                pdom = new String[pdomains.length()];
-                for (int i = 0; i < pdomains.length(); i++) pdom[i] = pdomains.optString(i, "");
+                java.util.ArrayList<String> list = new java.util.ArrayList<String>();
+                for (int i = 0; i < pdomains.length(); i++) {
+                    String d = pdomains.optString(i, "").trim();
+                    if (!d.isEmpty()) list.add(d);
+                }
+                if (!list.isEmpty()) pdom = list.toArray(new String[0]);
             }
             if (!pbase.isEmpty() && pdom != null && pdom.length > 0) {
                 try {

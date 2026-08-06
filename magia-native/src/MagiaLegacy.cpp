@@ -924,6 +924,8 @@ static bool proxyIsSelfHost(const std::string& host) {
 static bool tryRewriteUrl(const std::string& uri, const std::string& base,
                           const std::vector<std::string>& domains,
                           std::string& out) {
+    // base 必须非空且以 '/' 结尾，否则视为未配置/畸形，透传直连（防御 config 下发异常）
+    if (base.empty() || base[base.size() - 1] != '/') return false;
     if (uri.compare(0, 8, "https://") != 0) return false;   // 只改 https
     const size_t hostStart = 8;
     const size_t sep = uri.find_first_of("/?#", hostStart);
