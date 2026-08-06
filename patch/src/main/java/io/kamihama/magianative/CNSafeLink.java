@@ -73,6 +73,12 @@ public final class CNSafeLink {
         "bilibili.com",     // 视频教程与作者主页
         "b23.tv",           // bilibili 短链，署名区几条都是这个
         "github.com",       // ui_credits 的 github_url
+        // 爱发电 —— right_pill（右上角可变按钮）的「支持我们」跳这里。
+        // 两个域名是同一个站：afdian.com 是现主域，ifdian.net 是备用域，
+        // 首页标题都是「爱发电 · 连接创作者与粉丝的会员制平台」。
+        // 更早的 afdian.net 已经解析不到，不列。
+        "afdian.com",
+        "ifdian.net",
     };
 
     /**

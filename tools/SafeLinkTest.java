@@ -46,6 +46,9 @@ public class SafeLinkTest {
         ok("https://r2.assets.example.test/version_js.json");
         ok("https://docs.example.test/client/bootstrap");
         ok("https://github.com/magirecocn-revival-project/legacy-client");
+        // right_pill 的「支持我们」跳爱发电；两个域名是同一个站
+        ok("https://afdian.com/a/magireco");
+        ok("https://ifdian.net/a/magireco");
 
         System.out.println("\n[2] 协议：只放行 https");
         no("http://www.example.test", "明文 http");
@@ -67,6 +70,8 @@ public class SafeLinkTest {
         no("https://pages/", "pages 本身是公共后缀");
         no("https://someone-else.pages/", "别人的 CDN Pages 站");
         no("https://example.com/", "无关域名");
+        no("https://afdian.net/a/x", "爱发电的旧域名已停止解析，不在列表里");
+        no("https://afdian.com.evil.example/", "把爱发电放在左边当子域");
 
         System.out.println("\n[5] 空白与控制字符");
         no("  https://www.example.test", "首尾空白");
