@@ -203,6 +203,8 @@ public final class CNHotUpdateCheck {
 
         java.util.concurrent.ScheduledExecutorService watchdog = startWatchdog(act);
         boolean applied = false;
+        // 任何包处理失败都记下——末尾的「已是最新」不能谎报
+        boolean anyFailure = false;
         running = true;
         try {
             CNCNDownloadUI.updateSimple("检查热更新", "正在查询台词与前端脚本的版本…", 0);
@@ -280,7 +282,6 @@ public final class CNHotUpdateCheck {
 
             // 收下载结果 → md5/size 校验 → 顺序解压（磁盘友好）
             int processedCount = 0;
-            boolean anyFailure = false;
             for (java.util.Map.Entry<Integer, java.util.concurrent.Future<Boolean>> e
                     : dls.entrySet()) {
                 int i = e.getKey();

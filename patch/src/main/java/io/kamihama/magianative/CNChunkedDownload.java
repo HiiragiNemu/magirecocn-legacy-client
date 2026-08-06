@@ -412,7 +412,7 @@ public final class CNChunkedDownload {
                         }
                         if (sinceStart > baseToNs) {
                             if (baseTimeNs > 0) {
-                                baseBps = baseBytes / (baseTimeNs / 1_000_000_000.0);
+                                baseBps = (long)(baseBytes / (baseTimeNs / 1_000_000_000.0));
                             }
                             if (baseBps > 0) CNMirrors.reportBaseline(mirror, baseBps);
                             baseReady = true;
