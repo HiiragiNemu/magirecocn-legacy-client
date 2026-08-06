@@ -1052,9 +1052,18 @@ public class CNCNDownloadUI {
      * 显示开关、文案、链接全部由云端配置（CNMirrors.supportUs()）。
      */
     private static void applySupportPill(Activity act) {
-        // 支持我们已移入左侧署名栏(populateContributors 渲染, 位置可在署名列表里调整),
-        // 右上角胶囊保持隐藏, 避免重复。
-        if (vSupportPill != null) vSupportPill.setVisibility(View.GONE);
+        // 「支持我们」胶囊: config 下发 support_us 才显示。
+        // 用 INVISIBLE(占位)而非 GONE 隐藏——占位保持 headRight 布局稳定,
+        // 其他按钮(GitHub/主题)不会因它显示/隐藏而移动/等待。
+        if (vSupportPill == null) return;
+        JSONObject su = CNMirrors.supportUs();
+        String label = su == null ? "" : su.optString("label", "").trim();
+        if (label.isEmpty()) {
+            vSupportPill.setVisibility(View.INVISIBLE);
+            return;
+        }
+        vSupportPill.setText(label);
+        vSupportPill.setVisibility(View.VISIBLE);
     }
 
     /** 调起系统浏览器打开外链（带回退与日志）。 */
@@ -1279,39 +1288,6 @@ public class CNCNDownloadUI {
             renderCount++;
         }
 
-        // 「支持我们」条目：config 下发 support_us 时追加到署名栏末尾，
-        // 可点击弹窗（浮层内建样式）+ 跳转链接，显示/文案/链接全由云端配置。
-        JSONObject su = CNMirrors.supportUs();
-        if (su != null) {
-            String suLabel = su.optString("label", "支持我们").trim();
-            if (!suLabel.isEmpty()) {
-                LinearLayout row = new LinearLayout(act);
-                row.setOrientation(LinearLayout.HORIZONTAL);
-                row.setGravity(Gravity.CENTER_VERTICAL);
-                LinearLayout.LayoutParams suRowLp = new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT);
-                suRowLp.topMargin = dp(act, 8);
-                row.setPadding(0, dp(act, 3), 0, dp(act, 3));
-                row.setClickable(true);
-                row.setOnClickListener(new SupportClick(act));
-                // 位置可由云端配置: support_us.position(-1/缺省=署名栏末尾, 0=开头, N=第 N 项后)
-                int suPos = su.optInt("position", -1);
-                if (suPos >= 0 && suPos <= renderCount) {
-                    vContribList.addView(row, suPos, suRowLp);
-                } else {
-                    vContribList.addView(row, suRowLp);
-                }
-
-                TextView suText = new TextView(act);
-                suText.setText(suLabel);
-                suText.setTextColor(COLOR_ACCENT);
-                suText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
-                suText.setTypeface(suText.getTypeface(), Typeface.BOLD);
-                row.addView(suText, new LinearLayout.LayoutParams(
-                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            }
-        }
     }
 
     /**
