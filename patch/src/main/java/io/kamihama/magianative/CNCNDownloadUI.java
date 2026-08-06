@@ -413,6 +413,8 @@ public class CNCNDownloadUI {
     private static TextView     vThemeChip;
     private static TextView     vGitHubChip;
     private static GradientDrawable githubChipBg;
+    private static TextView     vSupportPill;
+    private static GradientDrawable supportPillBg;
     private static TextView     vLogPill;
     private static FrameLayout  logModal;
     private static ScrollView   vLogScroll;
@@ -828,6 +830,26 @@ public class CNCNDownloadUI {
         ghLp.leftMargin = dp(act, 8);
         headRight.addView(vGitHubChip, ghLp);
 
+        // 「支持我们」胶囊：默认隐藏，config.json 的 support_us 下发后才显示
+        // （显示开关、文案、链接全部由云端配置，见 applySupportPill）。
+        supportPillBg = new GradientDrawable();
+        supportPillBg.setCornerRadius(dp(act, 20));
+        supportPillBg.setColor(COLOR_ACCENT);
+        vSupportPill = new TextView(act);
+        vSupportPill.setTextColor(0xFFFFFFFF);
+        vSupportPill.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
+        vSupportPill.setTypeface(vSupportPill.getTypeface(), Typeface.BOLD);
+        vSupportPill.setGravity(Gravity.CENTER);
+        vSupportPill.setPadding(dp(act, 12), dp(act, 6), dp(act, 12), dp(act, 6));
+        vSupportPill.setBackground(supportPillBg);
+        vSupportPill.setVisibility(View.GONE);
+        vSupportPill.setOnClickListener(new SupportClick(act));
+        LinearLayout.LayoutParams supLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        supLp.leftMargin = dp(act, 8);
+        headRight.addView(vSupportPill, supLp);
+
         FrameLayout.LayoutParams themeLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -1021,6 +1043,74 @@ public class CNCNDownloadUI {
     }
 
     /**
+     * 根据 config.json 的 support_us 刷新「支持我们」胶囊。
+     * 未配置（supportUs()==null）或 label 为空 → 隐藏；配置了 → 显示并设置文字。
+     * 显示开关、文案、链接全部由云端配置（CNMirrors.supportUs()）。
+     */
+    private static void applySupportPill(Activity act) {
+        if (vSupportPill == null) return;
+        JSONObject su = CNMirrors.supportUs();
+        if (su == null) {
+            vSupportPill.setVisibility(View.GONE);
+            return;
+        }
+        String label = su.optString("label", "").trim();
+        if (label.isEmpty()) {
+            vSupportPill.setVisibility(View.GONE);
+            return;
+        }
+        vSupportPill.setText(label);
+        vSupportPill.setVisibility(View.VISIBLE);
+    }
+
+    /** 调起系统浏览器打开外链（带回退与日志）。 */
+    private static void openExternalUrl(Activity act, String url) {
+        try {
+            Intent it = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            act.startActivity(it);
+        } catch (Throwable t) {
+            CNLog.w("界面", "打开外链失败: " + url, t);
+        }
+    }
+
+    /**
+     * 「支持我们」胶囊点击：弹窗显示 config 下发的 title/content，
+     * 点「去支持」打开 config 下发的 url。每次点击读最新配置。
+     */
+    private static final class SupportClick implements View.OnClickListener {
+        private final Activity act;
+        SupportClick(Activity act) { this.act = act; }
+
+        @Override public void onClick(View v) {
+            final JSONObject su = CNMirrors.supportUs();
+            if (su == null) return;   // 配置已下架，忽略点击
+            final String title   = su.optString("title", "支持我们");
+            final String content = su.optString("content", "");
+            final String url     = su.optString("url", "").trim();
+            try {
+                android.app.AlertDialog.Builder b =
+                        new android.app.AlertDialog.Builder(act);
+                b.setTitle(title);
+                if (!content.isEmpty()) b.setMessage(content);
+                if (!url.isEmpty()) {
+                    b.setPositiveButton("去支持",
+                            new android.content.DialogInterface.OnClickListener() {
+                                @Override public void onClick(
+                                        android.content.DialogInterface d, int w) {
+                                    openExternalUrl(act, url);
+                                }
+                            });
+                }
+                b.setNegativeButton("取消", null);
+                b.show();
+            } catch (Throwable t) {
+                CNLog.w("界面", "支持我们弹窗失败: " + t);
+            }
+        }
+    }
+
+    /**
      * 把 {@code text} 里的 {@code span} 这一段染成链接色，其余不变。
      * {@code span} 为空或找不到时原样返回。
      */
@@ -1137,6 +1227,7 @@ public class CNCNDownloadUI {
             @Override public void run() {
                 try {
                     populateContributors(act);
+                    applySupportPill(act);   // 支持我们胶囊: 默认隐藏, config 下发才显示
                     if (vFooter != null) {
                         vFooter.setText(footerText());
                         applyFooterMode();

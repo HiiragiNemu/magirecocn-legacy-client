@@ -273,6 +273,12 @@ public final class CNMirrors {
     /** 远端 ui_credits 原文；未配置时为 null。 */
     public static JSONObject uiCredits() { return uiCredits; }
 
+    /** 远端 support_us 原文（支持我们胶囊）；未配置时为 null（默认不显示）。 */
+    private static volatile JSONObject supportUs;
+
+    /** 远端 support_us；未配置时为 null。 */
+    public static JSONObject supportUs() { return supportUs; }
+
     /**
      * 下发 Totentanz 代理配置到 native setURI hook（MagiaLegacy.cpp 实现）。
      *
@@ -320,6 +326,9 @@ public final class CNMirrors {
 
         // 浮层署名配置（可选）：见 uiCredits()
         uiCredits = root.optJSONObject("ui_credits");
+
+        // 「支持我们」胶囊（可选）：见 supportUs()。未配置时为 null → 浮层默认不显示。
+        supportUs = root.optJSONObject("support_us");
 
         // Totentanz 代理配置（可选）：proxy.base 为代理入口前缀，
         // proxy.domains 为要代理的域名后缀白名单。下发到 native setURI hook；
