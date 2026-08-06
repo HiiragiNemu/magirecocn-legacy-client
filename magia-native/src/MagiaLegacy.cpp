@@ -964,6 +964,57 @@ static void setURI_hook(void* self, const std::string& uri) {
     g_origSetURI(self, uri);
 }
 
+// ─── WebView 页面加载 URL 改写 ─────────────────────────────
+// 引擎 WebView 的网络走 Http2Session(setURI 已覆盖其 XHR), loadURL 是页面
+// 加载入口, 一并改写保证「尽量全代理」: 页面 HTML/JS/资源也经 /stream 走 hk。
+// 签名同 setURI(const std::string&), WebViewManager::loadURL 多一个 bool。
+
+using LoadURLFn = void (*)(void* self, const std::string& url);
+static LoadURLFn g_origWebViewLoadURL       = nullptr;
+static LoadURLFn g_origWebViewImplLoadURL   = nullptr;
+
+static void webViewLoadURL_hook(void* self, const std::string& url) {
+    if (!g_origWebViewLoadURL) return;
+    std::string base;
+    std::vector<std::string> domains;
+    std::string rewritten;
+    if (proxySnapshot(base, domains) && tryRewriteUrl(url, base, domains, rewritten)) {
+        LOGI("[proxy] WebView.loadURL: %s -> %s", url.c_str(), rewritten.c_str());
+        g_origWebViewLoadURL(self, rewritten);
+        return;
+    }
+    g_origWebViewLoadURL(self, url);
+}
+
+static void webViewImplLoadURL_hook(void* self, const std::string& url) {
+    if (!g_origWebViewImplLoadURL) return;
+    std::string base;
+    std::vector<std::string> domains;
+    std::string rewritten;
+    if (proxySnapshot(base, domains) && tryRewriteUrl(url, base, domains, rewritten)) {
+        LOGI("[proxy] WebViewImpl.loadURL: %s -> %s", url.c_str(), rewritten.c_str());
+        g_origWebViewImplLoadURL(self, rewritten);
+        return;
+    }
+    g_origWebViewImplLoadURL(self, url);
+}
+
+using LoadURLMgrFn = void (*)(void* self, const std::string& url, bool);
+static LoadURLMgrFn g_origWebViewManagerLoadURL = nullptr;
+
+static void webViewManagerLoadURL_hook(void* self, const std::string& url, bool flag) {
+    if (!g_origWebViewManagerLoadURL) return;
+    std::string base;
+    std::vector<std::string> domains;
+    std::string rewritten;
+    if (proxySnapshot(base, domains) && tryRewriteUrl(url, base, domains, rewritten)) {
+        LOGI("[proxy] WebViewManager.loadURL: %s -> %s", url.c_str(), rewritten.c_str());
+        g_origWebViewManagerLoadURL(self, rewritten, flag);
+        return;
+    }
+    g_origWebViewManagerLoadURL(self, url, flag);
+}
+
 // 经 RegisterNatives 绑给 CNMirrors.nativeSetProxyConfig(String, String[])。
 // config.json 的 "proxy" 字段解析后调用, 下发代理入口与域名白名单。
 static void nativeSetProxyConfig(JNIEnv* env, jclass, jstring base, jobjectArray domains) {
@@ -1494,6 +1545,13 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     // config.json 的 proxy 字段经 nativeSetProxyConfig 下发, 见上方实现)
     H("_ZN5http212Http2Session6setURIERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
       (void*)setURI_hook, (void**)&g_origSetURI, "proxy: Http2Session::setURI");
+    // WebView 页面加载(尽量全代理; WebView 网络本身走 Http2Session, setURI 已覆盖 XHR)
+    H("_ZN3web7WebView7loadURLERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
+      (void*)webViewLoadURL_hook, (void**)&g_origWebViewLoadURL, "proxy: WebView::loadURL");
+    H("_ZN3web11WebViewImpl7loadURLERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
+      (void*)webViewImplLoadURL_hook, (void**)&g_origWebViewImplLoadURL, "proxy: WebViewImpl::loadURL");
+    H("_ZN3web14WebViewManager7loadURLERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEEb",
+      (void*)webViewManagerLoadURL_hook, (void**)&g_origWebViewManagerLoadURL, "proxy: WebViewManager::loadURL");
     H("_ZN9LbUtility9initLabelEPN7cocos2d4NodeERPNS0_5LabelEPKcfNS0_4Vec2EiNS0_4SizeENS0_7Color4BEi",
       (void*)initLabelNew, (void**)&initLabelOld, "i18n: LbUtility::initLabel");
 

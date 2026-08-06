@@ -287,6 +287,12 @@ public final class CNMirrors {
      */
     private static native void nativeSetProxyConfig(String base, String[] domains);
 
+    /** Java 侧代理入口前缀（供 SNAA 等 Java 网络请求改写）；未配置为 null。 */
+    private static volatile String proxyBase;
+
+    /** Java 侧代理入口前缀；未配置为 null。 */
+    public static String proxyBase() { return proxyBase; }
+
     private static String fetch(String url, boolean direct) throws IOException {
         URL u = new URL(url);
         HttpURLConnection c = (HttpURLConnection)
@@ -357,6 +363,7 @@ public final class CNMirrors {
                 if (!list.isEmpty()) pdom = list.toArray(new String[0]);
             }
             if (!pbase.isEmpty() && pdom != null && pdom.length > 0) {
+                proxyBase = pbase;   // Java 侧保留，供 SNAA 等 Java 网络请求改写
                 try {
                     nativeSetProxyConfig(pbase, pdom);
                     CNLog.i(TAG, "代理配置已下发 base=" + pbase + " domains=" + pdom.length);

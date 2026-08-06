@@ -59,6 +59,15 @@ import java.util.zip.ZipFile;
 public final class CNDownloaderFix {
 
     private static final String BOOTSTRAP_URL = "https://totentanz-9b.magi-reco.com/magica/api/snaa";
+
+    /** SNAA 引导地址：代理配置下发后改经 /stream 走香港代理（尽量全代理）。 */
+    private static String snaaUrl() {
+        String base = CNMirrors.proxyBase();
+        if (base != null && !base.isEmpty()) {
+            return base + "totentanz-9b.magi-reco.com/magica/api/snaa";
+        }
+        return BOOTSTRAP_URL;
+    }
     private static final int    CONNECT_TIMEOUT_MS = 15000;
     private static final String FILE_ROOT = "/data/data/io.kamihama.totentanz/files";
     private static final String FINAL_FLAG = "/data/data/io.kamihama.totentanz/files/madomagi/magica/cn_base_done.flag";
@@ -222,19 +231,19 @@ public final class CNDownloaderFix {
         CNLog.i(TAG, "snaa-request native_version=" + i + " sent_version=" + max);
         String viaProxy = null;
         try {
-            viaProxy = postJson(BOOTSTRAP_URL, payload, false);
+            viaProxy = postJson(snaaUrl(), payload, false);
             CNLog.i(TAG, "snaa-response direct=false body=" + viaProxy);
             if (isSnaaResponseCurrent(viaProxy, max)) {
                 return viaProxy;
             }
             CNLog.w(TAG, "SNAA response is stale/incompatible; retrying direct");
-            String direct = postJson(BOOTSTRAP_URL, payload, true);
+            String direct = postJson(snaaUrl(), payload, true);
             CNLog.i(TAG, "snaa-response direct=true body=" + direct);
             return direct;
         } catch (IOException first) {
             CNLog.w(TAG, "SNAA via configured network failed; retrying direct", first);
             try {
-                String direct = postJson(BOOTSTRAP_URL, payload, true);
+                String direct = postJson(snaaUrl(), payload, true);
                 CNLog.i(TAG, "snaa-response direct=true body=" + direct);
                 return direct;
             } catch (IOException second) {
