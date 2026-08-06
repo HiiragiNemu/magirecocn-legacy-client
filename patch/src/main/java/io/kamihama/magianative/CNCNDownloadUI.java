@@ -415,6 +415,7 @@ public class CNCNDownloadUI {
     private static GradientDrawable githubChipBg;
     private static TextView     vSupportPill;
     private static GradientDrawable supportPillBg;
+    private static FrameLayout  supportModal;
     private static TextView     vLogPill;
     private static FrameLayout  logModal;
     private static ScrollView   vLogScroll;
@@ -1083,31 +1084,100 @@ public class CNCNDownloadUI {
         SupportClick(Activity act) { this.act = act; }
 
         @Override public void onClick(View v) {
-            final JSONObject su = CNMirrors.supportUs();
-            if (su == null) return;   // 配置已下架，忽略点击
-            final String title   = su.optString("title", "支持我们");
-            final String content = su.optString("content", "");
-            final String url     = su.optString("url", "").trim();
-            try {
-                android.app.AlertDialog.Builder b =
-                        new android.app.AlertDialog.Builder(act);
-                b.setTitle(title);
-                if (!content.isEmpty()) b.setMessage(content);
-                if (!url.isEmpty()) {
-                    b.setPositiveButton("去支持",
-                            new android.content.DialogInterface.OnClickListener() {
-                                @Override public void onClick(
-                                        android.content.DialogInterface d, int w) {
-                                    openExternalUrl(act, url);
-                                }
-                            });
-                }
-                b.setNegativeButton("取消", null);
-                b.show();
-            } catch (Throwable t) {
-                CNLog.w("界面", "支持我们弹窗失败: " + t);
-            }
+            openSupportModal(act);   // 浮层内建样式弹窗（非系统对话框）
         }
+    }
+
+    /**
+     * 「支持我们」弹窗（浮层内建样式）：遮罩 + 圆角卡片，与 LOG/序章弹窗同一套
+     * 配色与按钮。title/content/url 全部来自 config.json 的 support_us。
+     * 点遮罩或「取消」关闭；点「去支持」关闭并打开 url。
+     */
+    private static void openSupportModal(final Activity act) {
+        if (overlayView == null) return;
+        final JSONObject su = CNMirrors.supportUs();
+        if (su == null) return;              // 配置已下架，忽略点击
+        if (supportModal != null) return;    // 已开着，别叠第二层
+        final String title   = su.optString("title", "支持我们");
+        final String content = su.optString("content", "");
+        final String url     = su.optString("url", "").trim();
+
+        final FrameLayout modal = new FrameLayout(act);
+        modal.setBackgroundColor(COLOR_DIM);
+        modal.setClickable(true);
+        modal.setFocusable(true);
+        modal.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { closeSupportModal(); }
+        });
+
+        LinearLayout panel = new LinearLayout(act);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(act, 22), dp(act, 20), dp(act, 22), dp(act, 18));
+        GradientDrawable panelBg = new GradientDrawable();
+        panelBg.setColor(COLOR_LOG_PANEL_BG);
+        panelBg.setCornerRadius(dp(act, 16));
+        panelBg.setStroke(dp(act, 1), COLOR_CARD_STK);
+        panel.setBackground(panelBg);
+        FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
+                dp(act, 330), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        panelLp.leftMargin = panelLp.rightMargin = dp(act, 20);
+        modal.addView(panel, panelLp);
+
+        TextView titleV = new TextView(act);
+        titleV.setText(title);
+        titleV.setTextColor(COLOR_ACCENT);
+        titleV.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f);
+        titleV.setTypeface(titleV.getTypeface(), Typeface.BOLD);
+        panel.addView(titleV, lpRow(0, dp(act, 10)));
+
+        TextView msgV = new TextView(act);
+        msgV.setText(content.isEmpty() ? title : content);
+        msgV.setTextColor(COLOR_LOG_PANEL_TEXT);
+        msgV.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
+        msgV.setLineSpacing(dp(act, 2), 1f);
+        panel.addView(msgV, lpRow(0, dp(act, 18)));
+
+        LinearLayout row = new LinearLayout(act);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.END);
+        panel.addView(row, lpRow(0, 0));
+
+        TextView cancel = dialogButton(act, "取消", COLOR_LOG_PANEL_TEXT, 0x00000000, true);
+        TextView go     = dialogButton(act, "去支持", 0xFFFFFFFF, COLOR_ACCENT, false);
+        LinearLayout.LayoutParams goLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        goLp.leftMargin = dp(act, 10);
+        row.addView(cancel, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        row.addView(go, goLp);
+
+        cancel.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { closeSupportModal(); }
+        });
+        go.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                closeSupportModal();
+                if (!url.isEmpty()) openExternalUrl(act, url);
+            }
+        });
+
+        try {
+            overlayView.addView(modal, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT));
+            supportModal = modal;
+        } catch (Throwable t) {
+            CNLog.w("界面", "支持我们弹窗打开失败: " + t);
+        }
+    }
+
+    /** 关闭「支持我们」弹窗（幂等）。 */
+    private static void closeSupportModal() {
+        if (supportModal == null) return;
+        try {
+            if (overlayView != null) overlayView.removeView(supportModal);
+        } catch (Throwable ignore) {}
+        supportModal = null;
     }
 
     /**
