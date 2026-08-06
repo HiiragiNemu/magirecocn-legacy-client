@@ -4,8 +4,6 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.ClipData;
 import android.content.ClipboardManager;
-import android.content.Intent;
-import android.net.Uri;
 import android.widget.Toast;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
@@ -1001,6 +999,14 @@ public class CNCNDownloadUI {
         CreditLinkClick(Activity act, String url) { this.act = act; this.url = url; }
 
         @Override public void onClick(View v) {
+            // 先验地址再谈确认：不安全的链接连「再点一次」都不该给，
+            // 否则等于把判断推给玩家，而玩家看不出 https://自家域名@evil/ 的门道
+            String why = CNSafeLink.reject(url);
+            if (why != null) {
+                CNLog.e("界面", "拒绝打开署名外链: " + url + " —— " + why);
+                toast(act, "这个链接不安全，已拦下：" + why);
+                return;
+            }
             long now = System.currentTimeMillis();
             boolean armed = url.equals(pendingUrl)
                     && (now - pendingAtMs) <= CONFIRM_WINDOW_MS;
@@ -1013,15 +1019,7 @@ public class CNCNDownloadUI {
             }
             pendingUrl  = null;
             pendingAtMs = 0L;
-            CNLog.i("界面", "外链已确认，调起系统浏览器: " + url);
-            try {
-                Intent it = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-                it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                act.startActivity(it);
-            } catch (Throwable t) {
-                CNLog.w("界面", "打开外链失败: " + url, t);
-                toast(act, "无法打开链接：" + url);
-            }
+            CNSafeLink.open(act, url, "署名条目");
         }
     }
 
@@ -1048,15 +1046,15 @@ public class CNCNDownloadUI {
         vGitHubChip.setOnClickListener(new CreditLinkClick(act, githubUrl()));
     }
 
-    /** 调起系统浏览器打开外链（带回退与日志）。 */
+    /**
+     * 调起系统浏览器打开外链。
+     *
+     * <p>地址来自 {@code config.json} 的 {@code right_pill.url}（右上角可变按钮），
+     * 是云端可控的，所以一律先过 {@link CNSafeLink} 的校验
+     * （只放行 HTTPS + 允许列表内的域名）。
+     */
     private static void openExternalUrl(Activity act, String url) {
-        try {
-            Intent it = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-            it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            act.startActivity(it);
-        } catch (Throwable t) {
-            CNLog.w("界面", "打开外链失败: " + url, t);
-        }
+        CNSafeLink.open(act, url, "右上角可变按钮");
     }
 
     /**
@@ -1197,7 +1195,7 @@ public class CNCNDownloadUI {
         }
     }
 
-    private static void toast(Activity act, String msg) {
+    static void toast(Activity act, String msg) {
         try {
             Toast.makeText(act, msg, Toast.LENGTH_LONG).show();
         } catch (Throwable ignore) {}
@@ -1821,14 +1819,9 @@ public class CNCNDownloadUI {
         go.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
                 CNLog.i("界面", "玩家在强制更新框选择前往更新: " + url);
-                try {
-                    Intent it = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-                    it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    act.startActivity(it);
-                } catch (Throwable t) {
-                    CNLog.w("界面", "打开更新地址失败: " + url, t);
-                    toast(act, "无法打开链接：" + url);
-                }
+                // apk_url 同样是云端下发的。这一处尤其要卡死：玩家在这个框里
+                // 是被明确引导去「装一个包」的，跳到哪里就装哪里的东西。
+                CNSafeLink.open(act, url, "强制更新");
             }
         });
 
