@@ -1218,6 +1218,7 @@ public class CNCNDownloadUI {
         vContribList.removeAllViews();
         CreditsModel credits = creditsModel();
         int itemIndex = 0;
+        int renderCount = 0;
         for (int i = 0; i < credits.texts.length; i++) {
             int kind = credits.kinds[i];
             if (kind == KIND_ITEM) {
@@ -1275,6 +1276,7 @@ public class CNCNDownloadUI {
                 }
                 vContribList.addView(t, lp);
             }
+            renderCount++;
         }
 
         // 「支持我们」条目：config 下发 support_us 时追加到署名栏末尾，
@@ -1295,7 +1297,6 @@ public class CNCNDownloadUI {
                 row.setOnClickListener(new SupportClick(act));
                 // 位置可由云端配置: support_us.position(-1/缺省=署名栏末尾, 0=开头, N=第 N 项后)
                 int suPos = su.optInt("position", -1);
-                int renderCount = i;   // for 循环结束后 i = 已渲染条目数
                 if (suPos >= 0 && suPos <= renderCount) {
                     vContribList.addView(row, suPos, suRowLp);
                 } else {
