@@ -121,6 +121,7 @@ static jclass gClsDownloaderFix   = nullptr; // io.kamihama.magianative.CNDownlo
 static jclass gClsRestClient      = nullptr; // io.kamihama.magianative.RestClient
 static jclass gClsTutorialPrompt  = nullptr; // io.kamihama.magianative.CNTutorialPrompt
 static jclass gClsVersionCheck    = nullptr; // io.kamihama.magianative.CNVersionCheck
+static jclass gClsCNMirrors       = nullptr; // io.kamihama.magianative.CNMirrors
 
 namespace cocos2d {
     struct Data { unsigned char* _bytes; ssize_t _size; };
@@ -853,6 +854,134 @@ static jstring nativeClientVersion(JNIEnv* env, jclass) {
     return env->NewStringUTF(CLIENT_VERSION);
 }
 
+// ─── Totentanz 代理: Http2Session::setURI URL 改写 ─────────────────
+//
+// 把走代理白名单的引擎请求从
+//     https://<host>/<path>
+// 改写为
+//     <proxyBase><host><path>   (proxyBase 如 https://api.example.test/stream/)
+// 代理入口与域名白名单由 CNMirrors 从 config.json 的 "proxy" 字段解析后
+// 经 nativeSetProxyConfig 注入——不在本文件硬编码, 换节点只改 config.json。
+// 配置缺失(未下发)时原样直连, 兼容旧版。
+//
+// 安全要点(同 fontPathOverwrite 5df4b46d 的教训):
+//   - 不原地改 const std::string&; 用局部 std::string 传给原函数
+//     (引擎 setURI 会把传入串拷进 m_uri, 不持有引用, 局部串安全)
+//   - 不用共享静态缓冲: 网络线程并发调 setURI, 引擎 dtor 会 free
+//   - 解析/分配失败一律透传原 URL
+//
+// setURI 是引擎唯一 URL 入口(12 个调用点全走同一 PLT stub), 引擎后续从
+// 同一个字符串解析 DNS/TLS-SNI/TCP + :authority/:path, 一次改写即同时改
+// 连接目标与 HTTP/2 伪头——无需 DNS hook / 证书 hook。
+
+static std::string jniToStdString(JNIEnv* env, jstring js) {
+    if (!js) return "";
+    const char* utf = env->GetStringUTFChars(js, nullptr);
+    if (!utf) return "";
+    std::string s(utf);
+    env->ReleaseStringUTFChars(js, utf);
+    return s;
+}
+
+static std::mutex g_proxyMutex;
+static std::string g_proxyBase;
+static std::vector<std::string> g_proxyDomains;
+
+using SetURIFn = void (*)(void* self, const std::string& uri);
+static SetURIFn g_origSetURI = nullptr;
+
+static bool proxyEndsWith(const std::string& s, const char* suffix) {
+    size_t n = strlen(suffix);
+    return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0;
+}
+
+static bool proxySnapshot(std::string& base, std::vector<std::string>& domains) {
+    std::lock_guard<std::mutex> lk(g_proxyMutex);
+    base = g_proxyBase;
+    domains = g_proxyDomains;
+    return !base.empty() && !domains.empty();
+}
+
+// 后缀白名单: "magi-reco.com" 匹配 "totentanz-9b.magi-reco.com"
+static bool proxyHostMatches(const std::string& host,
+                             const std::vector<std::string>& domains) {
+    for (size_t i = 0; i < domains.size(); i++) {
+        const std::string& suf = domains[i];
+        if (suf.empty()) continue;
+        if (host.size() == suf.size() && host == suf) return true;
+        if (host.size() > suf.size() && host[host.size() - suf.size() - 1] == '.' &&
+            host.compare(host.size() - suf.size(), suf.size(), suf) == 0)
+            return true;
+    }
+    return false;
+}
+
+// 排除自身: example.test 是 config/线路表/资源所在, 重写它会死循环
+static bool proxyIsSelfHost(const std::string& host) {
+    return host == "example.test" || proxyEndsWith(host, ".example.test");
+}
+
+static bool tryRewriteUrl(const std::string& uri, const std::string& base,
+                          const std::vector<std::string>& domains,
+                          std::string& out) {
+    if (uri.compare(0, 8, "https://") != 0) return false;   // 只改 https
+    const size_t hostStart = 8;
+    const size_t sep = uri.find_first_of("/?#", hostStart);
+    std::string host, rest;
+    if (sep == std::string::npos) { host = uri.substr(hostStart); }
+    else { host = uri.substr(hostStart, sep - hostStart); rest = uri.substr(sep); }
+    if (host.empty()) return false;
+
+    std::string hostMatch = host;
+    const size_t pc = hostMatch.rfind(':');
+    if (pc != std::string::npos) {
+        bool digits = true;
+        for (size_t i = pc + 1; i < hostMatch.size(); i++)
+            if (hostMatch[i] < '0' || hostMatch[i] > '9') { digits = false; break; }
+        if (digits) hostMatch = hostMatch.substr(0, pc);
+    }
+    if (hostMatch.empty() || proxyIsSelfHost(hostMatch)) return false;
+    if (!proxyHostMatches(hostMatch, domains)) return false;
+
+    out = base;
+    out += host;
+    out += rest.empty() ? "/" : rest;
+    return true;
+}
+
+static void setURI_hook(void* self, const std::string& uri) {
+    if (!g_origSetURI) return;
+    std::string base;
+    std::vector<std::string> domains;
+    std::string rewritten;
+    if (proxySnapshot(base, domains) && tryRewriteUrl(uri, base, domains, rewritten)) {
+        LOGI("[proxy] setURI: %s -> %s", uri.c_str(), rewritten.c_str());
+        g_origSetURI(self, rewritten);
+        return;
+    }
+    g_origSetURI(self, uri);
+}
+
+// 经 RegisterNatives 绑给 CNMirrors.nativeSetProxyConfig(String, String[])。
+// config.json 的 "proxy" 字段解析后调用, 下发代理入口与域名白名单。
+static void nativeSetProxyConfig(JNIEnv* env, jclass, jstring base, jobjectArray domains) {
+    std::lock_guard<std::mutex> lk(g_proxyMutex);
+    g_proxyBase = jniToStdString(env, base);
+    g_proxyDomains.clear();
+    if (domains) {
+        jsize n = env->GetArrayLength(domains);
+        for (jsize i = 0; i < n; i++) {
+            jstring s = (jstring)env->GetObjectArrayElement(domains, i);
+            if (s) {
+                g_proxyDomains.push_back(jniToStdString(env, s));
+                env->DeleteLocalRef(s);
+            }
+        }
+    }
+    LOGI("[proxy] nativeSetProxyConfig base=%s domains=%zu",
+         g_proxyBase.c_str(), g_proxyDomains.size());
+}
+
 // ─── 引擎硬编码串翻译（cocos2d::Label 系列钩子）────────────────────
 //
 // 背景：菜单/弹窗文本走 Web 层（热更 zip 已覆盖），但原生引擎（cocos2d-x，
@@ -1192,6 +1321,7 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
             { "io/kamihama/magianative/RestClient",        &gClsRestClient     },
             { "io/kamihama/magianative/CNTutorialPrompt",  &gClsTutorialPrompt },
             { "io/kamihama/magianative/CNVersionCheck",    &gClsVersionCheck   },
+            { "io/kamihama/magianative/CNMirrors",         &gClsCNMirrors      },
         };
         for (size_t i = 0; i < sizeof(want) / sizeof(want[0]); i++) {
             jclass local = env->FindClass(want[i].name);
@@ -1216,6 +1346,19 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
             if (env->RegisterNatives(gClsVersionCheck, m, 1) != 0) {
                 if (env->ExceptionCheck()) env->ExceptionClear();
                 LOGE("[JNI] RegisterNatives(CNVersionCheck) 失败——版本检查将放行");
+            }
+        }
+        // Totentanz 代理配置注入: CNMirrors 解析 config.json 的 proxy 字段后调
+        // nativeSetProxyConfig 下发代理入口与域名白名单(见 nativeSetProxyConfig)。
+        if (gClsCNMirrors) {
+            JNINativeMethod m[] = {
+                { (char*)"nativeSetProxyConfig",
+                  (char*)"(Ljava/lang/String;[Ljava/lang/String;)V",
+                  (void*)nativeSetProxyConfig },
+            };
+            if (env->RegisterNatives(gClsCNMirrors, m, 1) != 0) {
+                if (env->ExceptionCheck()) env->ExceptionClear();
+                LOGE("[JNI] RegisterNatives(CNMirrors.nativeSetProxyConfig) 失败——代理将不生效");
             }
         }
     }
@@ -1344,6 +1487,11 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       (void*)loadingSetTextNew, (void**)&loadingSetTextOld, "i18n: LoadingSceneLayerInfo::setText");
     H("_ZN21LoadingSceneLayerInfo8setTitleENSt6__ndk112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE",
       (void*)loadingSetTitleNew, (void**)&loadingSetTitleOld, "i18n: LoadingSceneLayerInfo::setTitle");
+
+    // Totentanz 代理: Http2Session::setURI URL 改写(代理入口/白名单由
+    // config.json 的 proxy 字段经 nativeSetProxyConfig 下发, 见上方实现)
+    H("_ZN5http212Http2Session6setURIERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
+      (void*)setURI_hook, (void**)&g_origSetURI, "proxy: Http2Session::setURI");
     H("_ZN9LbUtility9initLabelEPN7cocos2d4NodeERPNS0_5LabelEPKcfNS0_4Vec2EiNS0_4SizeENS0_7Color4BEi",
       (void*)initLabelNew, (void**)&initLabelOld, "i18n: LbUtility::initLabel");
 

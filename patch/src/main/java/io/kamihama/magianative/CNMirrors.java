@@ -273,6 +273,14 @@ public final class CNMirrors {
     /** 远端 ui_credits 原文；未配置时为 null。 */
     public static JSONObject uiCredits() { return uiCredits; }
 
+    /**
+     * 下发 Totentanz 代理配置到 native setURI hook（MagiaLegacy.cpp 实现）。
+     *
+     * @param base    代理入口前缀，如 "https://api.example.test/stream/"
+     * @param domains 要代理的域名后缀白名单，如 {"magi-reco.com", "sisyphus.systems"}
+     */
+    private static native void nativeSetProxyConfig(String base, String[] domains);
+
     private static String fetch(String url, boolean direct) throws IOException {
         URL u = new URL(url);
         HttpURLConnection c = (HttpURLConnection)
@@ -312,6 +320,28 @@ public final class CNMirrors {
 
         // 浮层署名配置（可选）：见 uiCredits()
         uiCredits = root.optJSONObject("ui_credits");
+
+        // Totentanz 代理配置（可选）：proxy.base 为代理入口前缀，
+        // proxy.domains 为要代理的域名后缀白名单。下发到 native setURI hook；
+        // 缺失或为空时客户端不代理、直连（兼容旧版）。
+        JSONObject proxy = root.optJSONObject("proxy");
+        if (proxy != null) {
+            String pbase = proxy.optString("base", "").trim();
+            JSONArray pdomains = proxy.optJSONArray("domains");
+            String[] pdom = null;
+            if (pdomains != null && pdomains.length() > 0) {
+                pdom = new String[pdomains.length()];
+                for (int i = 0; i < pdomains.length(); i++) pdom[i] = pdomains.optString(i, "");
+            }
+            if (!pbase.isEmpty() && pdom != null && pdom.length > 0) {
+                try {
+                    nativeSetProxyConfig(pbase, pdom);
+                    CNLog.i(TAG, "代理配置已下发 base=" + pbase + " domains=" + pdom.length);
+                } catch (Throwable t) {
+                    CNLog.w(TAG, "nativeSetProxyConfig 调用失败（代理不生效）: " + t);
+                }
+            }
+        }
 
         JSONObject st = root.optJSONObject("settings");
         if (st != null) {
