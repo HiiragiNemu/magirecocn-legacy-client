@@ -350,6 +350,15 @@ public final class CNChunkedDownload {
         final long minBps  = (long) CNMirrors.minSpeedKbps() * 1000L / 8L;
         long checkStartNs  = System.nanoTime();
         long bytesAtCheck  = totalDone.get();
+        // 反限速（相对自身基线）：仅在传入 mirror 时启用。逐 3 秒窗口测实际吞吐；
+        // 持续低于该线历史峰值 × throttle_ratio_pct% 达到 throttle_grace_s 秒，
+        // 判为被限速 → 降级该线 → 若有更快的线则中断本次尝试交给上层换线。
+        final long rateIntervalNs = TimeUnit.SECONDS.toNanos(3L);
+        long rateCheckNs  = System.nanoTime();
+        long rateBytesAtCheck = totalDone.get();
+        int  slowTicks    = 0;
+        final long graceTicks = Math.max(1L,
+                (long) CNMirrors.throttleGraceS() * 1000L / 3000L);
         try {
             while (!latch.await(1, TimeUnit.SECONDS)) {
                 long now = System.nanoTime();
@@ -377,6 +386,33 @@ public final class CNChunkedDownload {
                     }
                     checkStartNs = now;
                     bytesAtCheck = totalDone.get();
+                }
+                // 相对基线反限速：记录历史峰值，持续走低则降级该线，有更快线就换
+                long rateElapsed = now - rateCheckNs;
+                if (mirror != null && rateElapsed >= rateIntervalNs) {
+                    long moved = totalDone.get() - rateBytesAtCheck;
+                    long bps   = (long) (moved / (rateElapsed / 1_000_000_000.0));
+                    rateCheckNs = now;
+                    rateBytesAtCheck = totalDone.get();
+                    if (bps > 0) {
+                        CNMirrors.reportBaseline(mirror, bps);
+                        long bl = mirror.baselineBps;
+                        if (bl > 0 && bps < bl * CNMirrors.throttleRatioPct() / 100L) {
+                            if (++slowTicks >= graceTicks) {
+                                CNMirrors.reportThrottled(mirror);
+                                slowTicks = 0;
+                                if (CNMirrors.worthSwitching(mirror, bps)) {
+                                    abort.set(true);
+                                    firstErr.compareAndSet(null, new IOException(
+                                            "线路疑似被限速，换线: " + (bps * 8 / 1000)
+                                            + "kbps < 基线 " + (bl * 8 / 1000) + "kbps"));
+                                    break;
+                                }
+                            }
+                        } else {
+                            slowTicks = 0;
+                        }
+                    }
                 }
             }
         } catch (InterruptedException ie) {

@@ -255,17 +255,19 @@ public final class CNHotUpdateCheck {
             // 需要更新的包并行下载（js 小包不再被 scenario 大包拖住）
             final java.util.Map<Integer, java.util.concurrent.Future<Boolean>> dls =
                     new java.util.LinkedHashMap<Integer, java.util.concurrent.Future<Boolean>>();
+            int needCount = 0;
+            for (int i = 0; i < PACKAGES.length; i++) if (needs[i]) needCount++;
             if (anyNeed) {
                 final java.util.concurrent.ExecutorService dlPool =
                         java.util.concurrent.Executors.newFixedThreadPool(2);
+                // 并行下载时文案统一，不再按包互相覆盖——各包进度走槽位
+                CNCNDownloadUI.updateSimple("下载热更新",
+                        "正在下载更新包（共 " + needCount + " 个）…", 0);
                 for (int i = 0; i < PACKAGES.length; i++) {
                     if (!needs[i]) continue;
                     final Pkg pkg = PACKAGES[i];
                     final File tmp = tmpFiles[i];
                     final VerMeta meta = metas[i];
-                    final int local = locals[i];
-                    CNCNDownloadUI.updateSimple("下载热更新",
-                            pkg.label + "：v" + local + " → v" + meta.version + "，正在下载…", 0);
                     final int idx = i;
                     dls.put(idx, dlPool.submit(new java.util.concurrent.Callable<Boolean>() {
                         @Override public Boolean call() {
@@ -277,6 +279,7 @@ public final class CNHotUpdateCheck {
             }
 
             // 收下载结果 → md5/size 校验 → 顺序解压（磁盘友好）
+            int doneCount = 0;
             for (java.util.Map.Entry<Integer, java.util.concurrent.Future<Boolean>> e
                     : dls.entrySet()) {
                 int i = e.getKey();
@@ -290,32 +293,36 @@ public final class CNHotUpdateCheck {
                 } catch (Throwable t) {
                     ok = false;
                 }
+                doneCount++;
                 if (!ok) {
                     CNLog.e(TAG, "[" + pkg.label + "] 下载失败，本项不更新（版本号保持 " + local + "）");
-                    CNCNDownloadUI.updateSimple("下载热更新", pkg.label + "：下载失败，已跳过", 0);
+                    CNCNDownloadUI.updateSimple("下载热更新",
+                            pkg.label + "：下载失败，已跳过（" + doneCount + "/" + needCount + "）", 0);
                     continue;
                 }
                 String bad = verifyZip(tmp, meta);
                 if (bad != null) {
                     CNLog.e(TAG, "[" + pkg.label + "] 校验失败（" + bad + "），丢弃本项");
-                    CNCNDownloadUI.updateSimple("下载热更新", pkg.label + "：校验失败，已跳过", 0);
+                    CNCNDownloadUI.updateSimple("下载热更新",
+                            pkg.label + "：校验失败，已跳过（" + doneCount + "/" + needCount + "）", 0);
                     deleteQuietly(tmp);
                     continue;
                 }
-                CNCNDownloadUI.updateSimple("应用热更新", pkg.label + "：正在解压…", 0);
+                CNCNDownloadUI.updateSimple("应用热更新",
+                        "正在应用更新包（" + doneCount + "/" + needCount + "）…", 0);
                 try {
                     CNDownloaderFix.extractChecked(tmp, new File(FILES_DIR));
                 } catch (Throwable t) {
                     // 解压失败时**不能**写新版本号，否则下次启动会以为已经更新过。
                     CNLog.e(TAG, "[" + pkg.label + "] 解压失败，版本号保持 " + local, t);
-                    CNCNDownloadUI.updateSimple("应用热更新", pkg.label + "：解压失败，已跳过", 0);
+                    CNCNDownloadUI.updateSimple("应用热更新",
+                            pkg.label + "：解压失败，已跳过（" + doneCount + "/" + needCount + "）", 0);
                     deleteQuietly(tmp);
                     continue;
                 }
                 deleteQuietly(tmp);
                 saveLocalVersion(pkg.versionKey, meta.version);
                 CNLog.i(TAG, "[" + pkg.label + "] 更新完成，版本号记为 " + meta.version);
-                CNCNDownloadUI.updateSimple("应用热更新", pkg.label + "：已更新到 v" + meta.version, 0);
                 applied = true;
             }
         } finally {
