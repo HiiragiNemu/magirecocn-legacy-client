@@ -558,6 +558,17 @@ public final class CNLog {
                 try { write("日志", "WARN", "logcat 回收不可用: " + t, null); } catch (Throwable ignore) {}
             } finally {
                 if (br != null) { try { br.close(); } catch (Throwable ignore) {} }
+                // 把自己从「正在跑」的记录里摘掉，否则 startLogcatCapture 的
+                // `logcatThread != null` 会永远认为采集还活着，一次意外退出
+                // （logcat 进程被系统回收、读到 EOF、抛异常）就再也起不来了，
+                // 而且没有任何迹象——文件只是从某一行起再没有 native 日志。
+                // 只在记录里存的确实是自己时才清，避免把后来者的线程摘掉。
+                synchronized (CNLog.class) {
+                    if (logcatThread == Thread.currentThread()) {
+                        logcatThread = null;
+                        logcatProc   = null;
+                    }
+                }
             }
         }
 

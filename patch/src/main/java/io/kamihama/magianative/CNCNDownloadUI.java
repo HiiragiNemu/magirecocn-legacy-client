@@ -1920,22 +1920,33 @@ public class CNCNDownloadUI {
     }
 
     /**
-     * 应用一个开关。
+     * 应用一个开关。<b>只改显示，绝不碰采集。</b>
      *
-     * <p>logcat 与原生日志共用同一个采集线程：任一开启就得跑，两个都关才停。
-     * 过滤发生在渲染期而非采集期——若采集时就丢弃，事后再打开开关也补不回来。
+     * <p>这三个开关是**渲染期的过滤器**，不是采集开关。原先的实现「两个都关就
+     * 停掉采集线程」，与这个定位自相矛盾，而且真机上造成过一次完整的诊断失败：
+     *
+     * <pre>
+     *   22:36:09  logcat 回收已启动                  ← CNLog.init() 起线程
+     *   22:36:09  下载浮层已创建                      ← 本方法按上次保存的开关恢复
+     *   22:36:09  logcat 回收不可用: read interrupted by close()
+     * </pre>
+     *
+     * 玩家上一次把两个开关关掉，状态存进了 SharedPreferences；这一次浮层一建起来
+     * 就把采集线程杀了。于是**整个会话的 native 日志全部丢失**——`[proxy]`、
+     * `[font]`、引擎报错、崩溃栈，一条都没落盘。而日志文件看上去是「正常结束」的，
+     * 没人会想到是被自己的开关掐掉的。
+     *
+     * <p>现在：采集由 {@link CNLog#init} 起、跑到进程结束（体积上限那条另说），
+     * 开关只决定面板里显不显示。副作用是关掉再打开能立刻看到这期间的日志——
+     * 原先那样是补不回来的。
      */
     private static void applyLogToggle(int which, boolean on) {
         if (which == 0) {
             showStatusBlock = on;
         } else if (which == 1) {
             CNLog.setShowLogcat(on);
-            if (on || CNLog.isShowNative()) CNLog.startLogcatCapture();
-            else CNLog.stopLogcatCapture();
         } else {
             CNLog.setShowNative(on);
-            if (on || CNLog.isShowLogcat()) CNLog.startLogcatCapture();
-            else CNLog.stopLogcatCapture();
         }
     }
 
