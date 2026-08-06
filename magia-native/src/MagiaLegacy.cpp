@@ -854,7 +854,20 @@ static jstring nativeClientVersion(JNIEnv* env, jclass) {
     return env->NewStringUTF(CLIENT_VERSION);
 }
 
-// ─── Totentanz 代理: Http2Session::setURI URL 改写 ─────────────────
+// ═══ 【已停用 · v1】setURI 改写 —— 当前没有任何 H() 安装 setURI_hook ═══
+//
+// 停用于 9183ab8c（真机黑屏卡死）。下面的实现完整保留，作为反向工程记录。
+//
+// ⚠ 关于「setURI 运行时 0 调用，是废弃 API」这个说法，证据没有看上去那么硬：
+//   那次观测（ccbbcdbe 加了无条件日志、9183ab8c 记录结果）的现场是**游戏黑屏
+//   卡死**。「一次都没调」与「根本没跑到会调它的阶段」在那份日志里区分不开。
+//   后续 v2/v3/v4 都建立在「setURI 已废弃」之上，但这个前提**从未在游戏能正常
+//   进入的会话里复验过**。
+//
+// 重新启用前必须先做的事：拿一次**游戏能正常跑起来**的日志，确认 setURI 的
+// 调用次数究竟是不是 0。在那之前，不要把「已废弃」当成事实引用。
+//
+// ─── 原始设计说明（保留）────────────────────────────────────
 //
 // 把走代理白名单的引擎请求从
 //     https://<host>/<path>
@@ -951,6 +964,8 @@ static bool tryRewriteUrl(const std::string& uri, const std::string& base,
     return true;
 }
 
+// 【已停用 · v1】没有 H() 安装它。停用于 9183ab8c（真机黑屏卡死）。
+// 「setURI 运行时 0 调用」这个前提未在能正常进游戏的会话里复验过，详见上文。
 static void setURI_hook(void* self, const std::string& uri) {
     if (!g_origSetURI) { LOGI("[proxy] setURI called but g_origSetURI NULL"); return; }
     std::string base;
@@ -967,7 +982,17 @@ static void setURI_hook(void* self, const std::string& uri) {
     g_origSetURI(self, uri);
 }
 
-// ─── WebView 页面加载 URL 改写 ─────────────────────────────
+// ═══ 【已停用】WebView loadURL 改写 —— 没有任何 H() 安装这两个钩子 ═══
+//
+// 与 setURI 一起停用于 9183ab8c。它是「黑屏嫌疑人」之一，但**从未被单独验证过**
+// ——那次两个钩子是一起装、一起撤的，谁的责任分不开。
+//
+// 后来 45289988 从另一条路（端点级 web 重写）复现了黑屏，并查明原因：
+// **WebView 的本地文件拦截规则只认原始域名**，页面一旦走代理，拦截失效、
+// 本地资源取不到，页面加载卡死。这条结论同样适用于 loadURL——所以即便要重启
+// 这个钩子，也得先解决拦截规则按代理后域名匹配的问题，否则必然重蹈覆辙。
+//
+// ─── 原始设计说明（保留）────────────────────────────────────
 // 引擎 WebView 的网络走 Http2Session(setURI 已覆盖其 XHR), loadURL 是页面
 // 加载入口, 一并改写保证「尽量全代理」: 页面 HTML/JS/资源也经 /stream 走 hk。
 // 签名同 setURI(const std::string&), WebViewManager::loadURL 多一个 bool。
@@ -976,6 +1001,8 @@ using LoadURLFn = void (*)(void* self, const std::string& url);
 static LoadURLFn g_origWebViewLoadURL       = nullptr;
 static LoadURLFn g_origWebViewImplLoadURL   = nullptr;
 
+// 【已停用】没有 H() 安装它。停用于 9183ab8c；黑屏责任未单独验证过，
+// 但 45289988 已从另一条路查明根因：WebView 本地文件拦截只认原始域名。
 static void webViewLoadURL_hook(void* self, const std::string& url) {
     if (!g_origWebViewLoadURL) return;
     std::string base;
@@ -989,6 +1016,7 @@ static void webViewLoadURL_hook(void* self, const std::string& url) {
     g_origWebViewLoadURL(self, url);
 }
 
+// 【已停用】没有 H() 安装它。与 webViewLoadURL_hook 同批停用于 9183ab8c。
 static void webViewImplLoadURL_hook(void* self, const std::string& url) {
     if (!g_origWebViewImplLoadURL) return;
     std::string base;
@@ -1053,6 +1081,10 @@ static const std::string* endpointRewrite(UrlGetterFn old, void* self, int type,
 static const std::string* urlConfigApiNew(void* self, int type) {
     return endpointRewrite(urlConfigApiOld, self, type, 0, "api");
 }
+// 【已停用】web 端点不再重写 —— 没有 H() 安装它（45289988）。
+// 原因是查明的、可复现的：WebView 的本地文件拦截规则只认原始域名，web 端点走
+// 代理后拦截失效，页面加载卡死黑屏（真机表现：只剩厂商 logo 的点击特效）。
+// 实现本身是好的，留着是因为「让拦截规则也认代理后域名」之后就能直接复用。
 static const std::string* urlConfigWebNew(void* self, int type) {
     return endpointRewrite(urlConfigWebOld, self, type, 1, "web");
 }
@@ -1060,7 +1092,26 @@ static const std::string* urlConfigChatNew(void* self, int type) {
     return endpointRewrite(urlConfigChatOld, self, type, 2, "chat");
 }
 
-// ─── 引擎真实请求入口: host_service_from_uri + session::submit ─────
+// ═══ 【已停用 · v2/v3】nghttp2 逐请求改写 —— 没有 H() 安装这三个钩子 ═══
+//
+// 这是**唯一一条有硬证据判死刑**的路线，两次真机、两种形态：
+//   v2 (1bde225c) → 直接闪退，697b3688 禁用
+//   v3 (c15a0d1f) 加了整体 try/catch 与透传兜底后重新启用 → **仍崩**，
+//      栈落在 request_impl::on_response —— 回调 UAF。
+//
+// 结论：异常安全救不了它。逐请求改写会破坏 nghttp2 内部的请求状态机——改写发生
+// 在请求已注册进 session 之后，回调触发时引用的对象已经不是原来那个了。这不是
+// 加保护能绕开的，是路线本身与 nghttp2 的生命周期模型冲突。
+//
+// e752fd67 因此改走端点级（UrlConfig getter），让引擎**自己**以代理为 host 建连，
+// 完全不碰 nghttp2 内部。那条路活到了现在。
+//
+// ⚠ 不要再启用这三个钩子。真要重来，先解决「改写时机早于 session 注册」这个前提。
+//
+// 另注：下面第一句「setURI 运行时 0 调用(废弃)」是 v2 立论的前提，而那个观测
+// 来自一次黑屏会话，可能只是没跑到调用点——见本文件 v1 段落的说明。
+//
+// ─── 原始分析记录（保留）────────────────────────────────────
 // 分析证实: Http2Session::setURI 运行时 0 调用(废弃)。引擎实际路径:
 //   · Http2SessionManager::run() → nghttp2::asio_http2::host_service_from_uri
 //     (uri → host/service/path)。改 host 输出 → 连接/TLS/SNI/证书校验全走代理
@@ -1085,6 +1136,8 @@ using HostServiceFn = void (*)(void* ec, std::string& host, std::string& service
                                std::string& path, const std::string& uri);
 static HostServiceFn g_origHostService = nullptr;
 
+// 【已停用 · v2/v3】没有 H() 安装它。v3 真机复现 request_impl::on_response 的
+// 回调 UAF，异常安全救不了，路线本身与 nghttp2 生命周期冲突。不要再启用。
 static void hostServiceHook(void* ec, std::string& host, std::string& service,
                             std::string& path, const std::string& uri) {
     if (g_origHostService) g_origHostService(ec, host, service, path, uri);
@@ -1108,6 +1161,7 @@ using SubmitFn = void (*)(void* self, void* ec, std::string& a, std::string& b,
                           void* headers, void* prio);
 static SubmitFn g_origSubmit = nullptr;
 
+// 【已停用 · v2/v3】没有 H() 安装它。与 hostServiceHook 同一路线，同因停用。
 static void submitHook(void* self, void* ec, std::string& a, std::string& b,
                        void* headers, void* prio) {
     try {
@@ -1130,6 +1184,7 @@ using SubmitBodyFn = void (*)(void* self, void* ec, std::string& a, std::string&
                               std::string& c, void* headers, void* prio);
 static SubmitBodyFn g_origSubmitBody = nullptr;
 
+// 【已停用 · v2/v3】没有 H() 安装它。submitHook 的带 body 重载，同因停用。
 static void submitBodyHook(void* self, void* ec, std::string& a, std::string& b,
                            std::string& c, void* headers, void* prio) {
     try {

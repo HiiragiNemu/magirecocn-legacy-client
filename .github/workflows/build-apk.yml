@@ -127,6 +127,12 @@ jobs:
       - name: 🔤 校验字体基线与重定向目标
         run: python3 tools/check-fonts.py
 
+      # 代理这条线换过四次路线、停用过三次，而停用的做法是删掉 H() 安装、
+      # 留下实现。这一步核对「实现存在」与「真的被安装」是否一致，并要求每个
+      # 未安装的实现都写明停用原因——否则谁都分不清哪些还在跑。
+      - name: 🔀 核对代理钩子的启用状态与注释一致
+        run: python3 tools/check-proxy-hooks.py
+
       - name: 🔢 注入客户端版本号（构建号）
         run: |
           set -euo pipefail
