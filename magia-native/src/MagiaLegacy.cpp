@@ -1018,6 +1018,48 @@ static void webViewManagerLoadURL_hook(void* self, const std::string& url, bool 
     g_origWebViewManagerLoadURL(self, url, flag);
 }
 
+// ─── 端点级代理改写（UrlConfig::api/web/chat getter 钩子）────────────
+// 游戏所有 API/Web/Chat 地址都经这三个 getter 取出（Impl 内字符串槽位），
+// 命中白名单就返回 <proxyBase><原host><原路径> 的重写地址，游戏随后以代理
+// 为真实 host 建连——TLS/SNI/:authority 与请求路径天然一致，无需碰 nghttp2。
+// 重写结果按 (getter,type) 缓存，同一槽位只写一次。
+
+using UrlGetterFn = const std::string* (*)(void*, int);
+static UrlGetterFn urlConfigApiOld  = nullptr;
+static UrlGetterFn urlConfigWebOld  = nullptr;
+static UrlGetterFn urlConfigChatOld = nullptr;
+static std::string g_endpointCache[3][8];   // [api/web/chat][type]
+
+static const std::string* endpointRewrite(UrlGetterFn old, void* self, int type,
+                                        int slot, const char* tag) {
+    const std::string* orig = old(self, type);
+    if (type < 0 || type > 7) return orig;
+    try {
+        std::string base;
+        std::vector<std::string> domains;
+        if (!proxySnapshot(base, domains)) return orig;
+        std::string rw;
+        if (!tryRewriteUrl(*orig, base, domains, rw)) return orig;
+        if (g_endpointCache[slot][type] != rw) {
+            LOGI("[proxy] %s[%d]: %s -> %s", tag, type, orig->c_str(), rw.c_str());
+            g_endpointCache[slot][type] = rw;
+        }
+        return &g_endpointCache[slot][type];
+    } catch (...) {
+        return orig;   // 钩子边界绝不外抛
+    }
+}
+
+static const std::string* urlConfigApiNew(void* self, int type) {
+    return endpointRewrite(urlConfigApiOld, self, type, 0, "api");
+}
+static const std::string* urlConfigWebNew(void* self, int type) {
+    return endpointRewrite(urlConfigWebOld, self, type, 1, "web");
+}
+static const std::string* urlConfigChatNew(void* self, int type) {
+    return endpointRewrite(urlConfigChatOld, self, type, 2, "chat");
+}
+
 // ─── 引擎真实请求入口: host_service_from_uri + session::submit ─────
 // 分析证实: Http2Session::setURI 运行时 0 调用(废弃)。引擎实际路径:
 //   · Http2SessionManager::run() → nghttp2::asio_http2::host_service_from_uri
@@ -1631,18 +1673,19 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     H("_ZN21LoadingSceneLayerInfo8setTitleENSt6__ndk112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE",
       (void*)loadingSetTitleNew, (void**)&loadingSetTitleOld, "i18n: LoadingSceneLayerInfo::setTitle");
 
-    // Totentanz 代理: nghttp2 请求入口改写（proxy 配置经 nativeSetProxyConfig
-    // 下发; 未下发时三个钩子全部透传直连）。
-    // v3(2026-08-06) 重新启用, 相比 v2 的加固:
-    //   · 钩子体整体 try/catch——任何异常都透传, 绝不抛过 hook 边界
-    //   · submit 系不再对 g_orig* 为空时静默吞请求（v2 的隐患）
-    // setURI(运行时 0 调用) 与 WebView.loadURL(黑屏嫌疑) 两处保持禁用。
-    H("_ZN7nghttp210asio_http221host_service_from_uriERN5boost6system10error_codeERNSt6__ndk112basic_stringIcNS5_11char_traitsIcEENS5_9allocatorIcEEEESC_SC_RKSB_",
-      (void*)hostServiceHook, (void**)&g_origHostService, "proxy: host_service_from_uri");
-    H("_ZNK7nghttp210asio_http26client7session6submitERN5boost6system10error_codeERKNSt6__ndk112basic_stringIcNS7_11char_traitsIcEENS7_9allocatorIcEEEESF_NS7_8multimapISD_NS0_12header_valueENS7_4lessISD_EENSB_INS7_4pairISE_SH_EEEEEENS1_13priority_specE",
-      (void*)submitHook, (void**)&g_origSubmit, "proxy: session::submit");
-    H("_ZNK7nghttp210asio_http26client7session6submitERN5boost6system10error_codeERKNSt6__ndk112basic_stringIcNS7_11char_traitsIcEENS7_9allocatorIcEEEESF_SD_NS7_8multimapISD_NS0_12header_valueENS7_4lessISD_EENSB_INS7_4pairISE_SH_EEEEEENS1_13priority_specE",
-      (void*)submitBodyHook, (void**)&g_origSubmitBody, "proxy: session::submit(body)");
+    // Totentanz 代理（v4，端点级改写，替代崩溃的 nghttp2 逐请求钩子）:
+    // 钩 UrlConfig 的三个端点 getter——游戏所有 API/Web/Chat 地址都从这里取。
+    // 命中白名单就返回 <proxyBase><原host><原路径> 的重写地址，
+    // 游戏随后**自己**以代理为 host 建连（TLS/SNI/authority 天然一致），
+    // 不碰 nghttp2 内部（v3 证明逐请求改写会让 on_response 回调撞 UAF）。
+    H("_ZNK9UrlConfig3apiENS_3Api4TypeE",
+      (void*)urlConfigApiNew, (void**)&urlConfigApiOld, "proxy: UrlConfig::api");
+    H("_ZNK9UrlConfig3webENS_3Web4TypeE",
+      (void*)urlConfigWebNew, (void**)&urlConfigWebOld, "proxy: UrlConfig::web");
+    H("_ZNK9UrlConfig4chatENS_4Chat4TypeE",
+      (void*)urlConfigChatNew, (void**)&urlConfigChatOld, "proxy: UrlConfig::chat");
+    // nghttp2 的 host_service_from_uri / session::submit 钩子维持禁用：
+    // 真机复现为请求回调 UAF（栈在 request_impl::on_response），不再启用。
     H("_ZN9LbUtility9initLabelEPN7cocos2d4NodeERPNS0_5LabelEPKcfNS0_4Vec2EiNS0_4SizeENS0_7Color4BEi",
       (void*)initLabelNew, (void**)&initLabelOld, "i18n: LbUtility::initLabel");
 
