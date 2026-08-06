@@ -279,7 +279,8 @@ public final class CNHotUpdateCheck {
             }
 
             // 收下载结果 → md5/size 校验 → 顺序解压（磁盘友好）
-            int doneCount = 0;
+            int processedCount = 0;
+            boolean anyFailure = false;
             for (java.util.Map.Entry<Integer, java.util.concurrent.Future<Boolean>> e
                     : dls.entrySet()) {
                 int i = e.getKey();
@@ -293,30 +294,33 @@ public final class CNHotUpdateCheck {
                 } catch (Throwable t) {
                     ok = false;
                 }
-                doneCount++;
+                processedCount++;
                 if (!ok) {
+                    anyFailure = true;
                     CNLog.e(TAG, "[" + pkg.label + "] 下载失败，本项不更新（版本号保持 " + local + "）");
                     CNCNDownloadUI.updateSimple("下载热更新",
-                            pkg.label + "：下载失败，已跳过（" + doneCount + "/" + needCount + "）", 0);
+                            pkg.label + "：下载失败，已跳过（" + processedCount + "/" + needCount + "）", 0);
                     continue;
                 }
                 String bad = verifyZip(tmp, meta);
                 if (bad != null) {
+                    anyFailure = true;
                     CNLog.e(TAG, "[" + pkg.label + "] 校验失败（" + bad + "），丢弃本项");
                     CNCNDownloadUI.updateSimple("下载热更新",
-                            pkg.label + "：校验失败，已跳过（" + doneCount + "/" + needCount + "）", 0);
+                            pkg.label + "：校验失败，已跳过（" + processedCount + "/" + needCount + "）", 0);
                     deleteQuietly(tmp);
                     continue;
                 }
                 CNCNDownloadUI.updateSimple("应用热更新",
-                        "正在应用更新包（" + doneCount + "/" + needCount + "）…", 0);
+                        "正在处理更新包（" + processedCount + "/" + needCount + "）…", 0);
                 try {
                     CNDownloaderFix.extractChecked(tmp, new File(FILES_DIR));
                 } catch (Throwable t) {
                     // 解压失败时**不能**写新版本号，否则下次启动会以为已经更新过。
+                    anyFailure = true;
                     CNLog.e(TAG, "[" + pkg.label + "] 解压失败，版本号保持 " + local, t);
                     CNCNDownloadUI.updateSimple("应用热更新",
-                            pkg.label + "：解压失败，已跳过（" + doneCount + "/" + needCount + "）", 0);
+                            pkg.label + "：解压失败，已跳过（" + processedCount + "/" + needCount + "）", 0);
                     deleteQuietly(tmp);
                     continue;
                 }
@@ -333,6 +337,11 @@ public final class CNHotUpdateCheck {
         if (applied) {
             CNLog.i(TAG, "热更检查完毕：已应用更新");
             CNCNDownloadUI.updateSimple("更新完成", "热更新已应用，即将进入游戏", 0);
+        } else if (anyFailure) {
+            // 有包处理失败时不能谎报「已是最新」——版本号没更新，下次还会重试
+            CNLog.w(TAG, "热更检查完毕：部分更新包处理失败，已跳过");
+            CNCNDownloadUI.updateSimple("更新未完成",
+                    "部分更新包处理失败已跳过，将保持旧版本进入游戏", 0);
         } else {
             CNLog.i(TAG, "热更检查完毕：无需更新");
             CNCNDownloadUI.updateSimple("已是最新", "台词与前端脚本均为最新版本，即将进入游戏", 0);
