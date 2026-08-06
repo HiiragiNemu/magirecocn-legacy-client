@@ -413,8 +413,6 @@ public class CNCNDownloadUI {
     private static TextView     vThemeChip;
     private static TextView     vGitHubChip;
     private static GradientDrawable githubChipBg;
-    private static TextView     vSupportPill;
-    private static GradientDrawable supportPillBg;
     private static FrameLayout  supportModal;
     private static TextView     vLogPill;
     private static FrameLayout  logModal;
@@ -831,28 +829,9 @@ public class CNCNDownloadUI {
         ghLp.leftMargin = dp(act, 8);
         headRight.addView(vGitHubChip, ghLp);
 
-        // 「支持我们」胶囊：默认隐藏，config.json 的 support_us 下发后才显示
-        // （显示开关、文案、链接全部由云端配置，见 applySupportPill）。
-        supportPillBg = new GradientDrawable();
-        supportPillBg.setCornerRadius(dp(act, 20));
-        supportPillBg.setColor(COLOR_ACCENT);
-        vSupportPill = new TextView(act);
-        vSupportPill.setTextColor(0xFFFFFFFF);
-        vSupportPill.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
-        vSupportPill.setTypeface(vSupportPill.getTypeface(), Typeface.BOLD);
-        vSupportPill.setGravity(Gravity.CENTER);
-        vSupportPill.setPadding(dp(act, 12), dp(act, 6), dp(act, 12), dp(act, 6));
-        vSupportPill.setBackground(supportPillBg);
-        vSupportPill.setVisibility(View.GONE);
-        vSupportPill.setOnClickListener(new SupportClick(act));
-        // 浮层创建时立即按 config 显示（config 可能已加载完；refreshCredits 会再刷新）
-        applySupportPill(act);
-        // 支持胶囊放回右上角按钮行(headRight, 与 GitHub/主题并排)——原来位置
-        LinearLayout.LayoutParams supLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        supLp.leftMargin = dp(act, 8);
-        headRight.addView(vSupportPill, supLp);
+        // GitHub 胶囊为「可变按钮」：config 下发 right_pill 时, 文案/点击动作
+        // 替换为配置值(弹窗+跳转); 未配置时保持默认 GitHub 跳转(见 applyRightPill)。
+        applyRightPill(act);
 
         FrameLayout.LayoutParams themeLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -1049,21 +1028,24 @@ public class CNCNDownloadUI {
     /**
      * 根据 config.json 的 support_us 刷新「支持我们」胶囊。
      * 未配置（supportUs()==null）或 label 为空 → 隐藏；配置了 → 显示并设置文字。
-     * 显示开关、文案、链接全部由云端配置（CNMirrors.supportUs()）。
+     * 显示开关、文案、链接全部由云端配置（CNMirrors.rightPill()）。
      */
-    private static void applySupportPill(Activity act) {
-        // 「支持我们」胶囊: config 下发 support_us 才显示。
-        // 用 INVISIBLE(占位)而非 GONE 隐藏——占位保持 headRight 布局稳定,
-        // 其他按钮(GitHub/主题)不会因它显示/隐藏而移动/等待。
-        if (vSupportPill == null) return;
-        JSONObject su = CNMirrors.supportUs();
-        String label = su == null ? "" : su.optString("label", "").trim();
-        if (label.isEmpty()) {
-            vSupportPill.setVisibility(View.INVISIBLE);
-            return;
+    private static void applyRightPill(Activity act) {
+        // GitHub 胶囊为「可变按钮」：config 下发 right_pill 时, 文案与点击动作
+        // 替换为配置值(弹窗+跳转); 未配置时保持默认 GitHub 跳转。
+        if (vGitHubChip == null) return;
+        JSONObject rp = CNMirrors.rightPill();
+        if (rp != null) {
+            String label = rp.optString("label", "").trim();
+            if (!label.isEmpty()) {
+                vGitHubChip.setText(label);
+                vGitHubChip.setOnClickListener(new SupportClick(act));
+                return;
+            }
         }
-        vSupportPill.setText(label);
-        vSupportPill.setVisibility(View.VISIBLE);
+        // 默认：GitHub 胶囊
+        vGitHubChip.setText("</>  GitHub");
+        vGitHubChip.setOnClickListener(new CreditLinkClick(act, githubUrl()));
     }
 
     /** 调起系统浏览器打开外链（带回退与日志）。 */
@@ -1097,7 +1079,7 @@ public class CNCNDownloadUI {
      */
     private static void openSupportModal(final Activity act) {
         if (overlayView == null) return;
-        final JSONObject su = CNMirrors.supportUs();
+        final JSONObject su = CNMirrors.rightPill();
         if (su == null) return;              // 配置已下架，忽略点击
         if (supportModal != null) return;    // 已开着，别叠第二层
         final String title   = su.optString("title", "支持我们");
@@ -1302,7 +1284,7 @@ public class CNCNDownloadUI {
             @Override public void run() {
                 try {
                     populateContributors(act);
-                    applySupportPill(act);   // 支持我们胶囊: 默认隐藏, config 下发才显示
+                    applyRightPill(act);   // GitHub 胶囊可变: config 下发 right_pill 则替换文案/动作
                     if (vFooter != null) {
                         vFooter.setText(footerText());
                         applyFooterMode();
