@@ -163,12 +163,20 @@ public final class CNMirrors {
             StringBuilder sb = new StringBuilder();
             for (Mirror m : parsed) sb.append(' ').append(m.name).append('=').append(m.base);
             CNLog.i(TAG, "线路列表已加载 count=" + parsed.size() + sb);
-            // 前两条镜像竞速，快者当首选（可在 settings.mirror_race=false 关闭）
-            if (cfgMirrorRace) raceTopMirrors();
-            // 浮层可能在配置加载完成前就已用占位署名建成——配置到位后刷新一次署名
+            // 署名优先刷新：署名只依赖 config.json 的 ui_credits，与镜像竞速无关，
+            // 先让用户看到（竞速只是优化首选顺序，不参与署名渲染）
             try {
                 CNCNDownloadUI.refreshCredits(RestClient.getCurrentActivity());
             } catch (Throwable ignore) {}
+            // 前两条镜像竞速放后台：同步执行时 join(3s) 会拖住署名刷新/线路加载
+            // （可在 settings.mirror_race=false 关闭）
+            if (cfgMirrorRace) {
+                final Thread raceThread = new Thread(new Runnable() {
+                    @Override public void run() { raceTopMirrors(); }
+                }, "cnv-mirror-race");
+                raceThread.setDaemon(true);
+                raceThread.start();
+            }
         } catch (Throwable t) {
             CNLog.w(TAG, "拉取线路列表失败，沿用默认线路: " + t);
             // 拉取失败：通知浮层从「加载中」占位回落到内置默认署名
