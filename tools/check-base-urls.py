@@ -37,6 +37,15 @@ import sys
 
 MIRRORS = "patch/src/main/java/io/kamihama/magianative/CNMirrors.java"
 HOTCHECK = "patch/src/main/java/io/kamihama/magianative/CNHotUpdateCheck.java"
+INSTALLER = "patch/src/main/java/io/kamihama/magianative/CNDownloaderFix.java"
+
+# 规范前缀不能用具体 CDN 的域名。这个串**永远不会被真的请求**——两处用它的
+# 地方都是「剥出文件名后逐条线路试」。拿某个 CDN 当身份，那个 CDN 一停用，
+# 字符串就成了一句谎话，而且会误导下一个人以为它是个真实下载源。
+#
+# 已经发生过一次：早先规范前缀是 r2.assets.example.test，而 object-storage 自定义域只在
+# CDN 接管 DNS 时才生效，换 NS 之后那个子域彻底废掉。
+CDN_PREFIXES = ("r2.", "edge.", "esa.", "（已下线线路）.", "cdn1.", "cdn2.", "cdn3.")
 
 
 def const(text, name, path):
@@ -50,13 +59,35 @@ def main():
     try:
         mirrors = open(MIRRORS, encoding="utf-8").read()
         hotcheck = open(HOTCHECK, encoding="utf-8").read()
+        installer = open(INSTALLER, encoding="utf-8").read()
         canonical = const(mirrors, "CANONICAL_BASE", MIRRORS)
         default = const(mirrors, "DEFAULT_BASE", MIRRORS)
+        resource = const(installer, "RESOURCE_BASE_URL", INSTALLER)
     except (OSError, LookupError) as e:
         print("✘ %s" % e, file=sys.stderr)
         return 2
 
     problems = []
+
+    # 全仓库只该有一个规范前缀。曾经不是：安装器用 assets.example.test，
+    # 热更用 r2.assets.example.test，同一对 zip 有两个「规范」地址。
+    if canonical != resource:
+        problems.append(
+            "规范前缀有两个，必须统一：\n"
+            "        CNMirrors.CANONICAL_BASE        = %s\n"
+            "        CNDownloaderFix.RESOURCE_BASE_URL = %s\n"
+            "      安装器的完成标记与热更的文件名剥取都以「规范前缀」为准，"
+            "两者不一致时同一个文件会有两个身份。" % (canonical, resource))
+
+    host = canonical.split("//", 1)[-1]
+    for pre in CDN_PREFIXES:
+        if host.startswith(pre):
+            problems.append(
+                "规范前缀用了具体 CDN 的域名（%s）。它永远不会被真的请求，"
+                "只作身份标识；某个 CDN 停用后这个串就成了谎话。\n"
+                "      改用不绑定 CDN 的域名（当前约定：https://assets.example.test/）。"
+                % host.rstrip("/"))
+            break
     if not canonical.endswith("/"):
         problems.append("CANONICAL_BASE 必须以 / 结尾，否则剥文件名会多带一个字符：%s"
                         % canonical)
@@ -85,9 +116,11 @@ def main():
         return 1
 
     print("✔ 基址核对通过")
-    print("    CANONICAL_BASE = %s（规范前缀，%d 条热更地址全部匹配）"
-          % (canonical, len(urls)))
-    print("    DEFAULT_BASE   = %s（兜底线路，可独立更换）" % default)
+    print("    规范前缀 = %s" % canonical)
+    print("      · 与 CNDownloaderFix.RESOURCE_BASE_URL 一致")
+    print("      · %d 条热更地址全部以它开头" % len(urls))
+    print("      · 未绑定任何具体 CDN")
+    print("    兜底线路 = %s（可独立更换，不牵动上面任何一条）" % default)
     return 0
 
 

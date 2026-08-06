@@ -136,12 +136,12 @@ public final class CNHotUpdateCheck {
     // 所以是 0 和 1——原实现里写的 14 / 11 是排序前的下标，照抄会画错行。
     private static final Pkg[] PACKAGES = {
         new Pkg("台词包",
-                "https://r2.assets.example.test/version_scenario.json", "scenario_version",
-                "https://r2.assets.example.test/cn_scenario_update.zip",
+                "https://assets.example.test/version_scenario.json", "scenario_version",
+                "https://assets.example.test/cn_scenario_update.zip",
                 "cn_scenario_update.zip", "scenario", 0),
         new Pkg("前端脚本",
-                "https://r2.assets.example.test/version_js.json", "js_version",
-                "https://r2.assets.example.test/cn_js_update.zip",
+                "https://assets.example.test/version_js.json", "js_version",
+                "https://assets.example.test/cn_js_update.zip",
                 "cn_js_update_hot.zip", "js", 1),
     };
 

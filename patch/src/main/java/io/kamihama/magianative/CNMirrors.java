@@ -71,8 +71,18 @@ public final class CNMirrors {
      *
      * <p>热更包与版本 json 的地址硬编码在 {@link CNHotUpdateCheck} 的
      * {@code PACKAGES} 表里，改这个常量必须与那张表同步，否则前缀立刻对不上。
+     *
+     * <p><b>取值必须与 {@code CNDownloaderFix.RESOURCE_BASE_URL} 一致</b>——
+     * 全仓库只该有一个规范前缀。安装器的完成标记、安装器文件表里的
+     * {@code cn_scenario_update.zip} / {@code cn_js_update.zip}，用的都是它。
+     *
+     * <p>刻意<b>不</b>用任何具体 CDN 的域名（如 r2. / edge. 开头的那些）：
+     * 这个串永远不会被真的请求——两处用它的地方都是「剥出文件名后逐条线路试」。
+     * 拿某个 CDN 的域名当身份，那个 CDN 一停用，字符串就变成一句谎话。
+     * 早先这里是 {@code r2.assets.example.test}，而 object-storage 自定义域只在 CDN
+     * 接管 DNS 时才生效——换 NS 之后那个子域就彻底废了。
      */
-    public static final String CANONICAL_BASE = "https://r2.assets.example.test/";
+    public static final String CANONICAL_BASE = "https://assets.example.test/";
 
     private static final int CONNECT_TIMEOUT_MS = 15000;
     private static final int READ_TIMEOUT_MS    = 30000;
