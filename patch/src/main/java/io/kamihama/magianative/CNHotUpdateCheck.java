@@ -48,7 +48,9 @@ import org.json.JSONObject;
  *       配置类请求不换线）；</li>
  *   <li>分发文件本身走支线：交给 {@link CNHotUpdate#download} —— 与首次安装
  *       同一套选线 + 分片 + 失败换线；</li>
- *   <li>解压到 {@code <files>/}，解压完删临时包。</li>
+ *   <li>解压到 {@code <files>/}，解压完删临时包——但<b>解压方式改了</b>：
+ *       不再直接往活动树上覆盖，而是走 {@link CNHotUpdateTx} 的
+ *       「暂存 → 备份 → 换入 → 出错回滚」，避免中途失败留下新旧混杂的前端。</li>
  * </ul>
  *
  * <h3>不重启</h3>
@@ -116,14 +118,16 @@ public final class CNHotUpdateCheck {
         final String versionKey;   // SharedPreferences 键
         final String zipUrl;       // 分发地址（会被换成支线）
         final String tmpName;      // 落地的临时文件名
+        final String txTag;        // 事务工作区名（见 CNHotUpdateTx）
         final int    slot;         // 浮层进度槽位
         Pkg(String label, String versionUrl, String versionKey,
-            String zipUrl, String tmpName, int slot) {
+            String zipUrl, String tmpName, String txTag, int slot) {
             this.label = label;
             this.versionUrl = versionUrl;
             this.versionKey = versionKey;
             this.zipUrl = zipUrl;
             this.tmpName = tmpName;
+            this.txTag = txTag;
             this.slot = slot;
         }
     }
@@ -134,11 +138,11 @@ public final class CNHotUpdateCheck {
         new Pkg("台词包",
                 "https://r2.assets.example.test/version_scenario.json", "scenario_version",
                 "https://r2.assets.example.test/cn_scenario_update.zip",
-                "cn_scenario_update.zip", 0),
+                "cn_scenario_update.zip", "scenario", 0),
         new Pkg("前端脚本",
                 "https://r2.assets.example.test/version_js.json", "js_version",
                 "https://r2.assets.example.test/cn_js_update.zip",
-                "cn_js_update_hot.zip", 1),
+                "cn_js_update_hot.zip", "js", 1),
     };
 
     // ==================================================================
@@ -184,6 +188,11 @@ public final class CNHotUpdateCheck {
             return;
         }
         CNLog.i(TAG, "热更检查开始");
+
+        // 先收拾上一轮可能留下的半截事务，再谈这一轮。放在最前面是因为：
+        // 半更新的树会让引擎读到新旧混杂的前端，而恢复本身只是几次目录 stat，
+        // 没有残留时代价可以忽略。
+        CNHotUpdateTx.recover(new File(FILES_DIR));
 
         // 预热线路表：别等第一次取版本时才现场拉 config.json
         new Thread(new Runnable() {
@@ -315,13 +324,15 @@ public final class CNHotUpdateCheck {
                 CNCNDownloadUI.updateSimple("应用热更新",
                         "正在处理更新包（" + processedCount + "/" + needCount + "）…", 0);
                 try {
-                    CNDownloaderFix.extractChecked(tmp, new File(FILES_DIR));
+                    // 事务化应用：先解压到暂存区，再整体换入；中途失败整体回滚，
+                    // 绝不把「一半新一半旧」的树留给引擎（见 CNHotUpdateTx）
+                    CNHotUpdateTx.apply(tmp, new File(FILES_DIR), pkg.txTag);
                 } catch (Throwable t) {
-                    // 解压失败时**不能**写新版本号，否则下次启动会以为已经更新过。
+                    // 应用失败时**不能**写新版本号，否则下次启动会以为已经更新过。
                     anyFailure = true;
-                    CNLog.e(TAG, "[" + pkg.label + "] 解压失败，版本号保持 " + local, t);
+                    CNLog.e(TAG, "[" + pkg.label + "] 应用失败（已回滚），版本号保持 " + local, t);
                     CNCNDownloadUI.updateSimple("应用热更新",
-                            pkg.label + "：解压失败，已跳过（" + processedCount + "/" + needCount + "）", 0);
+                            pkg.label + "：应用失败已回滚，已跳过（" + processedCount + "/" + needCount + "）", 0);
                     deleteQuietly(tmp);
                     continue;
                 }

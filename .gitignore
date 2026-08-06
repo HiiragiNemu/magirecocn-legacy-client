@@ -1,11 +1,18 @@
 # 构建中间产物
 .build/
+.build-*/
 .cache/
 build/
 dist/
 *.apk
 *.dex
 *.class
+
+# tools/ 下测试套件跑出来的临时工作目录（跑完即删，不入库）
+work/
+hot/
+tx-test/
+payload.bin
 
 # 编辑器 / 系统
 .idea/
