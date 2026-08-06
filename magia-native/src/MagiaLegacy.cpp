@@ -1056,13 +1056,57 @@ using UrlGetterFn = const std::string* (*)(void*, int);
 static UrlGetterFn urlConfigApiOld  = nullptr;
 static UrlGetterFn urlConfigWebOld  = nullptr;
 static UrlGetterFn urlConfigChatOld = nullptr;
-static std::string g_endpointCache[3][8];   // [api/web/chat][type]
+static std::string g_endpointCache[3][8];   // [api/web/chat][type] 改写结果
+
+/**
+ * 观测去重用的指纹表：存**哈希**而不是字符串。
+ *
+ * <p>这些 getter 由引擎的网络线程并发调用。若用 std::string 去重，
+ * 「比较 + 赋值」在无锁并发下会撕裂——最坏情况是 LOGI 读到一个正在重分配的
+ * 缓冲区，直接崩在日志里。而这只是个日志去重，不值得为它上锁（在钩子里持锁
+ * 更危险）。
+ *
+ * <p>换成 64 位原子整数后，竞争的最坏后果只是多打一行重复日志。
+ */
+static std::atomic<uint64_t> g_endpointSeen[3][8];
+
+/** FNV-1a：够用的去重指纹，不需要抗碰撞。 */
+static uint64_t fnv1a(const std::string& s) {
+    uint64_t h = 1469598103934665603ULL;
+    for (size_t i = 0; i < s.size(); i++) {
+        h ^= (unsigned char)s[i];
+        h *= 1099511628211ULL;
+    }
+    return h ? h : 1ULL;   // 0 留作「还没观测过」
+}
+
+/**
+ * 无条件观测：每个 (getter, type) 的原始取值变化时记一行。
+ *
+ * <p>2026-08-07 那次真机加的。当时 [proxy] 全场只有「预读缓存」一行，于是
+ * <b>分不清两件完全不同的事</b>：
+ *
+ *   · getter 压根没被引擎调用；
+ *   · 调用了，但原地址没命中白名单，于是静默透传。
+ *
+ * 只在改写成功时记日志（原先的做法）永远区分不了这两者，而它们指向完全相反的
+ * 下一步。所以这里改成先无条件记一次原值——去重后每个槽位最多几行，不吵。
+ */
+static void endpointObserve(int slot, int type, const std::string& orig,
+                            const char* tag) {
+    if (slot < 0 || slot > 2 || type < 0 || type > 7) return;
+    uint64_t h = fnv1a(orig);
+    uint64_t prev = g_endpointSeen[slot][type].exchange(h, std::memory_order_relaxed);
+    if (prev == h) return;                       // 取值没变，不重复记
+    LOGI("[proxy] %s[%d] 取值 = %s", tag, type, orig.c_str());
+}
 
 static const std::string* endpointRewrite(UrlGetterFn old, void* self, int type,
                                         int slot, const char* tag) {
     const std::string* orig = old(self, type);
     if (type < 0 || type > 7) return orig;
     try {
+        endpointObserve(slot, type, *orig, tag);
         std::string base;
         std::vector<std::string> domains;
         if (!proxySnapshot(base, domains)) return orig;
@@ -1081,15 +1125,38 @@ static const std::string* endpointRewrite(UrlGetterFn old, void* self, int type,
 static const std::string* urlConfigApiNew(void* self, int type) {
     return endpointRewrite(urlConfigApiOld, self, type, 0, "api");
 }
-// 【已停用】web 端点不再重写 —— 没有 H() 安装它（45289988）。
-// 原因是查明的、可复现的：WebView 的本地文件拦截规则只认原始域名，web 端点走
-// 代理后拦截失效，页面加载卡死黑屏（真机表现：只剩厂商 logo 的点击特效）。
-// 实现本身是好的，留着是因为「让拦截规则也认代理后域名」之后就能直接复用。
+// 【已停用】web 端点的**改写**没有 H() 安装它（45289988）。
+// 原因是查明的、可复现的：web 端点走代理后页面加载卡死黑屏
+// （真机表现：只剩厂商 logo 的点击特效）。
+// 实现本身是好的，留着是因为解决了 origin/跨域问题之后就能直接复用。
+//
+// ⚠ 注意区分：下面 urlConfigWebObserve 是**另一个函数**，它只记日志不改写，
+// 是装着的。别把两者搞混——改写的这个仍然禁用。
 static const std::string* urlConfigWebNew(void* self, int type) {
     return endpointRewrite(urlConfigWebOld, self, type, 1, "web");
 }
 static const std::string* urlConfigChatNew(void* self, int type) {
     return endpointRewrite(urlConfigChatOld, self, type, 2, "chat");
+}
+
+/**
+ * web 端点的**观测专用**钩子：只记日志，一个字节都不改。
+ *
+ * <p>为什么单独写一个而不复用 endpointRewrite：那个函数会改写。web 端点一改写
+ * 就黑屏（45289988 真机复现），但我们又确实需要知道它的取值——2026-08-07 那次
+ * 真机查明，游戏的 API 流量根本不走 UrlConfig::api，而是走 WebView 的
+ * {@code shouldInterceptRequest}；WebView 加载哪个 origin，前端就往哪里发请求。
+ * 所以 web 端点的值是理解整条链路的关键，却又是最不能乱动的一个。
+ *
+ * <p>拆成两个函数，是为了让「装着的那个绝不可能改写」成为**结构上的保证**，
+ * 而不是靠调用方记得传对参数。tools/check-proxy-hooks.py 会核对两者的启用状态。
+ */
+static const std::string* urlConfigWebObserve(void* self, int type) {
+    const std::string* orig = urlConfigWebOld(self, type);
+    try {
+        if (orig) endpointObserve(1, type, *orig, "web(只读)");
+    } catch (...) {}      // 钩子边界绝不外抛
+    return orig;          // 原样返回，绝不改写
 }
 
 // ═══ 【已停用 · v2/v3】nghttp2 逐请求改写 —— 没有 H() 安装这三个钩子 ═══
@@ -1791,8 +1858,12 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       (void*)urlConfigApiNew, (void**)&urlConfigApiOld, "proxy: UrlConfig::api");
     H("_ZNK9UrlConfig4chatENS_4Chat4TypeE",
       (void*)urlConfigChatNew, (void**)&urlConfigChatOld, "proxy: UrlConfig::chat");
-    // web 端点不重写：游戏 UI 网页直连本来就能通（WebView 的本地文件拦截
-    // 只认原始域名），改走代理会让页面加载卡死黑屏——2026-08-06 真机复现。
+    // web 端点**只观测不改写**。改写会让页面加载卡死黑屏（2026-08-06 真机复现），
+    // 但它的取值又必须知道：2026-08-07 真机查明，游戏的 API 流量根本不经
+    // UrlConfig::api，而是走 WebView 的 shouldInterceptRequest——WebView 从哪个
+    // origin 加载，前端就往哪里发请求。所以装一个只读钩子把它记下来。
+    H("_ZNK9UrlConfig3webENS_3Web4TypeE",
+      (void*)urlConfigWebObserve, (void**)&urlConfigWebOld, "proxy: UrlConfig::web(只读观测)");
     // nghttp2 的 host_service_from_uri / session::submit 钩子维持禁用：
     // 真机复现为请求回调 UAF（栈在 request_impl::on_response），不再启用。
     H("_ZN9LbUtility9initLabelEPN7cocos2d4NodeERPNS0_5LabelEPKcfNS0_4Vec2EiNS0_4SizeENS0_7Color4BEi",

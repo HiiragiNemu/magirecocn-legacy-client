@@ -139,6 +139,12 @@ jobs:
       - name: 🔗 核对规范前缀与热更地址一致
         run: python3 tools/check-base-urls.py
 
+      # native 的纯语法检查（桩头文件，不需要 NDK）。放在真正编译之前：
+      # 打错符号名/少个分号这类错误 5 秒就能查出来，不必等两个 ABI 编译完。
+      # ⚠ 通过它不等于 NDK 构建通过——桩的 libc++ 布局与 NDK 不同。
+      - name: 📝 native 语法预检（桩头文件）
+        run: tools/check-native-syntax.sh
+
       - name: 🔢 注入客户端版本号（构建号）
         run: |
           set -euo pipefail

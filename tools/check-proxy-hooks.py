@@ -37,6 +37,7 @@ PROXY_HOOKS = [
     "urlConfigApiNew",
     "urlConfigWebNew",
     "urlConfigChatNew",
+    "urlConfigWebObserve",
     "setURI_hook",
     "webViewLoadURL_hook",
     "webViewImplLoadURL_hook",
