@@ -1167,6 +1167,38 @@ static void nativeSetProxyConfig(JNIEnv* env, jclass, jstring base, jobjectArray
          g_proxyBase.c_str(), g_proxyDomains.size());
 }
 
+// config.json 的拉取晚于引擎首个请求——Java 侧每次下发后把配置落盘到
+// files/madomagi/cn_proxy_config.tsv（首字段 base, 其后为域名白名单, Tab 分隔），
+// native 在 JNI_OnLoad 预读, 保证首轮请求就走在代理上。
+static const std::string PROXY_CACHE_PATH =
+    "/data/data/io.kamihama.totentanz/files/madomagi/cn_proxy_config.tsv";
+
+static void loadProxyConfigCache() {
+    FILE* f = fopen(PROXY_CACHE_PATH.c_str(), "rb");
+    if (!f) return;
+    char buf[2048] = {0};
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    if (n == 0) return;
+    std::string content(buf, n);
+    while (!content.empty() && (content.back() == '\n' || content.back() == '\r'))
+        content.pop_back();
+    std::lock_guard<std::mutex> lk(g_proxyMutex);
+    size_t tab = content.find('\t');
+    g_proxyBase = (tab == std::string::npos) ? content : content.substr(0, tab);
+    g_proxyDomains.clear();
+    size_t pos = (tab == std::string::npos) ? content.size() : tab + 1;
+    while (pos <= content.size()) {
+        size_t next = content.find('\t', pos);
+        std::string d = content.substr(pos, next == std::string::npos ? std::string::npos : next - pos);
+        if (!d.empty()) g_proxyDomains.push_back(d);
+        if (next == std::string::npos) break;
+        pos = next + 1;
+    }
+    LOGI("[proxy] 预读缓存 base=%s domains=%zu",
+         g_proxyBase.c_str(), g_proxyDomains.size());
+}
+
 // ─── 引擎硬编码串翻译（cocos2d::Label 系列钩子）────────────────────
 //
 // 背景：菜单/弹窗文本走 Web 层（热更 zip 已覆盖），但原生引擎（cocos2d-x，
@@ -1662,6 +1694,8 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     // ── 引擎硬编码串翻译（cocos2d::Label 系列）──
     // 先装表再装钩；表缺失时钩子空转放行，不影响其他功能。
     loadEngineI18n();
+    // 预读上次下发的代理配置（config.json 拉取晚于引擎首个请求）
+    loadProxyConfigCache();
     H("_ZN7cocos2d5Label9setStringERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
       (void*)labelSetStringNew, (void**)&labelSetStringOld, "i18n: Label::setString");
     H("_ZN7cocos2d10LabelAtlas9setStringERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",

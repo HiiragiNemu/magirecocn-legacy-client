@@ -38,6 +38,10 @@ public final class CNMirrors {
     /** 线路列表地址。 */
     public static final String MIRRORS_URL = "https://api.example.test/legacy/config.json";
 
+    /** 代理配置的本地缓存：native 在 JNI_OnLoad（远早于 config 拉取）时预读。 */
+    private static final String PROXY_CACHE =
+        "/data/data/io.kamihama.totentanz/files/madomagi/cn_proxy_config.tsv";
+
     /** 内置兜底线路：拉不到线路表时的默认可用下载路径。 */
     public static final String DEFAULT_BASE = "https://r2.assets.example.test/";
 
@@ -396,9 +400,26 @@ public final class CNMirrors {
                 try {
                     nativeSetProxyConfig(pbase, pdom);
                     CNLog.i(TAG, "代理配置已下发 base=" + pbase + " domains=" + pdom.length);
+                    // 落盘给下次启动的 native 预载：config 下发晚于引擎首个请求时
+                    // 也能立刻生效（见 MagiaLegacy JNI_OnLoad 的 loadProxyConfigCache）
+                    try {
+                        java.io.File f = new java.io.File(PROXY_CACHE);
+                        java.io.File parent = f.getParentFile();
+                        if (parent != null) parent.mkdirs();
+                        StringBuilder sb = new StringBuilder(pbase);
+                        for (String d : pdom) sb.append('\t').append(d);
+                        java.io.FileOutputStream fos = new java.io.FileOutputStream(f);
+                        fos.write(sb.toString().getBytes("UTF-8"));
+                        fos.close();
+                    } catch (Throwable t) {
+                        CNLog.w(TAG, "代理配置缓存写入失败: " + t);
+                    }
                 } catch (Throwable t) {
                     CNLog.w(TAG, "nativeSetProxyConfig 调用失败（代理不生效）: " + t);
                 }
+            } else {
+                // 云端拿掉了 proxy 配置：清缓存，下次启动直连
+                try { new java.io.File(PROXY_CACHE).delete(); } catch (Throwable ignore) {}
             }
         }
 
