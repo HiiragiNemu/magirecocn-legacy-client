@@ -1,11 +1,9 @@
 package io.kamihama.magianative;
 
-import android.app.Activity;
 import android.graphics.Bitmap;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
-import android.view.View;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
@@ -97,9 +95,14 @@ public final class CNWebProxy {
     /** 装包装类需要 {@link WebView#getWebViewClient()}，它是 API 26 才有的。 */
     private static final int MIN_SDK_FOR_WRAP = 26;
 
-    /** 等 WebView 出现的轮询间隔与总时限。WebView 是进游戏才建的，等得起。 */
-    private static final long POLL_INTERVAL_MS = 1000L;
-    private static final long POLL_DEADLINE_MS = 180_000L;
+    /**
+     * 等 WebView 的轮询节奏。前 {@code POLL_DEADLINE_MS} 毫秒密集轮询（要赶在首屏
+     * 之前接管），之后降到 {@code POLL_INTERVAL_IDLE_MS} 长期守着——WebView 会被
+     * {@code removeWebView()} 销毁再重建，包过一次不等于永远包着。
+     */
+    private static final long POLL_INTERVAL_MS      = 1000L;
+    private static final long POLL_INTERVAL_IDLE_MS = 5000L;
+    private static final long POLL_DEADLINE_MS      = 180_000L;
 
     /** 代理取数的超时。比直连给得宽一点——代理慢是要被记下来的，不是要被判死的。 */
     private static final int PROXY_CONNECT_TIMEOUT_MS = 10_000;
@@ -198,57 +201,68 @@ public final class CNWebProxy {
         }
     }
 
-    /** 轮询等 WebView 出现。单独成类而不用匿名类，避开 d8 对嵌套匿名类的老毛病。 */
+    /**
+     * 轮询等 WebView 出现，出现（或被重建）就包一层。单独成类而不用匿名类，
+     * 避开 d8 对嵌套匿名类的老毛病。
+     *
+     * <p><b>为什么一直轮下去而不是包一次就收工：</b>
+     * {@code WebViewHelper.removeWebView()} 会 {@code destroy()} 掉当前 WebView
+     * 并把 {@code sWebView} 置空，之后 {@code createWebView()} 建一个**新的**——
+     * 新对象身上是引擎自己的 WebViewClient，我们那层跟着旧对象一起没了。
+     * 所以这里比对实例身份，换了对象就重新包。
+     *
+     * <p>节流：前 {@value #POLL_DEADLINE_MS} 毫秒每 {@value #POLL_INTERVAL_MS} 毫秒
+     * 一次（要赶在首屏之前接管），之后降到
+     * {@value #POLL_INTERVAL_IDLE_MS} 毫秒一次。稳态下每次只是一个反射静态字段读
+     * 加一次引用比较，开销可以忽略。
+     */
     private static final class Waiter implements Runnable {
         @Override public void run() {
-            long deadline = System.currentTimeMillis() + POLL_DEADLINE_MS;
-            while (System.currentTimeMillis() < deadline) {
+            long start = System.currentTimeMillis();
+            int  quietRounds = 0;
+            while (true) {
                 try {
-                    Activity act = findAppActivity();
-                    if (act != null) {
-                        // WebView 只能在 UI 线程上碰
-                        Handler h = new Handler(Looper.getMainLooper());
-                        h.post(new Wrapper(act));
-                        if (WRAPPED.get()) return;
+                    long elapsed = System.currentTimeMillis() - start;
+                    boolean warmup = elapsed < POLL_DEADLINE_MS;
+
+                    Object wv = findWebView();
+                    if (wv != null) {
+                        new Handler(Looper.getMainLooper()).post(new Wrapper((WebView) wv));
+                    } else if (warmup) {
+                        // 找不到时按 10 / 30 / 60 / 120 秒各记一次，别刷屏。
+                        // 之前这里全程静默，真机上只看得到「等了 180s 没等到」，
+                        // 分不清是「引擎还没建」还是「建了但我找错地方」——那次
+                        // 恰恰是后者（tag 被 WebViewHelper 覆盖成 "WebView" 了）。
+                        long s = elapsed / 1000;
+                        if ((s >= 10 && quietRounds == 0) || (s >= 30 && quietRounds == 1)
+                                || (s >= 60 && quietRounds == 2) || (s >= 120 && quietRounds == 3)) {
+                            quietRounds++;
+                            CNLog.i(TAG, "已等 " + s + "s，尚未取到 WebView（引擎还没建，继续等）");
+                        }
                     }
-                    Thread.sleep(POLL_INTERVAL_MS);
+                    Thread.sleep(warmup ? POLL_INTERVAL_MS : POLL_INTERVAL_IDLE_MS);
                 } catch (InterruptedException ie) {
                     return;
                 } catch (Throwable t) {
-                    // 等待期间的任何异常都不该影响游戏，睡一觉接着试
-                    try { Thread.sleep(POLL_INTERVAL_MS); } catch (InterruptedException ie) { return; }
+                    try { Thread.sleep(POLL_INTERVAL_IDLE_MS); } catch (InterruptedException ie) { return; }
                 }
-            }
-            if (!WRAPPED.get()) {
-                CNLog.w(TAG, "等了 " + (POLL_DEADLINE_MS / 1000) + "s 没等到 WebView，放弃安装（直连）");
             }
         }
     }
 
-    /** 在 UI 线程上找到 WebView 并包一层。 */
+    /** 在 UI 线程上把这个 WebView 的 WebViewClient 包一层。 */
     private static final class Wrapper implements Runnable {
-        private final Activity act;
-        Wrapper(Activity a) { this.act = a; }
+        private final WebView wv;
+        Wrapper(WebView w) { this.wv = w; }
 
         @Override public void run() {
             try {
-                if (WRAPPED.get()) return;
-                View root = act.getWindow() == null ? null : act.getWindow().getDecorView();
-                if (root == null) return;
-                // WebViewImpl 的构造函数里 setTag("WebViewImpl")——这是它给我们留的门
-                View v = root.findViewWithTag("WebViewImpl");
-                if (!(v instanceof WebView)) return;
-                WebView wv = (WebView) v;
-
                 WebViewClient orig = wv.getWebViewClient();
                 if (orig == null) return;
-                if (orig instanceof Delegating) {
-                    WRAPPED.set(true);       // 已经包过了，别套娃
-                    return;
-                }
+                if (orig instanceof Delegating) return;   // 已经包过了，别套娃
                 wv.setWebViewClient(new Delegating(orig));
-                WRAPPED.set(true);
-                CNLog.i(TAG, "已接管 WebViewClient（原对象 "
+                boolean first = WRAPPED.compareAndSet(false, true);
+                CNLog.i(TAG, (first ? "已接管 WebViewClient（原对象 " : "WebView 被重建，重新接管（原对象 ")
                              + orig.getClass().getName() + "），当前 mode=" + modeName(mode));
             } catch (Throwable t) {
                 CNLog.w(TAG, "接管 WebViewClient 失败，保持原样（直连）: " + t);
@@ -257,19 +271,28 @@ public final class CNWebProxy {
     }
 
     /**
-     * 从 {@code jp.f4samurai.web.WebViewImpl} 的私有静态字段 {@code sAppActivity}
-     * 取 Activity。
+     * 取当前的 WebView 实例。
      *
-     * <p>它在 {@code WebViewImpl} 构造函数里被赋值，所以「取到非 null」本身就说明
-     * WebView 已经建过了。反射失败一律当作「还没到时候」，不报错。
+     * <p>直接读 {@code jp.f4samurai.web.WebViewHelper.sWebView} 这个私有静态字段——
+     * 引擎自己就是靠它握着唯一那个 WebView 的（{@code createWebView} 赋值、
+     * {@code removeWebView} 置空）。
+     *
+     * <p><b>不要再改回遍历 view 树找 tag。</b>第一版就是那么写的，照着
+     * {@code WebViewImpl} 构造函数里的 {@code setTag("WebViewImpl")}
+     * 去 {@code findViewWithTag("WebViewImpl")}，结果真机上等满 180 秒也找不到——
+     * 因为 {@code WebViewHelper.createWebView()} 在构造之后<b>紧接着</b>就
+     * {@code setTag("WebView")} 把它覆盖了。那个 tag 从来就不是构造函数里写的那个。
+     * 读字段没有这个问题：它是引擎自己的事实来源，不会被别处改名。
+     *
+     * <p>反射失败或字段为空一律当作「还没到时候」，不报错。
      */
-    private static Activity findAppActivity() {
+    private static Object findWebView() {
         try {
-            Class<?> c = Class.forName("jp.f4samurai.web.WebViewImpl");
-            Field f = c.getDeclaredField("sAppActivity");
+            Class<?> c = Class.forName("jp.f4samurai.web.WebViewHelper");
+            Field f = c.getDeclaredField("sWebView");
             f.setAccessible(true);
             Object o = f.get(null);
-            return (o instanceof Activity) ? (Activity) o : null;
+            return (o instanceof WebView) ? o : null;
         } catch (Throwable t) {
             return null;
         }
