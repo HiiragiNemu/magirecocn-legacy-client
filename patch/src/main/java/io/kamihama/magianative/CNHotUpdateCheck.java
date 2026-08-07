@@ -84,8 +84,12 @@ public final class CNHotUpdateCheck {
     private static final int READ_TIMEOUT_MS    = 20000;
     // 版本 json 只有几十字节，给长超时只会让坏线路拖慢整个检查；
     // 连不上/5 秒读不完就该换下一条线路
+    // 版本 json 只有几十字节，超时可以比资源文件（15s/30s）紧得多——但也不能太紧：
+    // 它在 CDN 边缘常常是**冷的**（热门的是 cn_js_update.zip，没人单独请求版本 json），
+    // 一次回源就可能超过 8 秒。原来 8s 的读超时会让健康线路在这一步被误判。
+    // 又不能放到 30s：这条在启动关键路径上，四条线路挨个撞 30s 就是两分钟白屏。
     private static final int VER_CONNECT_TIMEOUT_MS = 5000;
-    private static final int VER_READ_TIMEOUT_MS    = 8000;
+    private static final int VER_READ_TIMEOUT_MS    = 12000;
 
     /** 只跑一次。 */
     private static final java.util.concurrent.atomic.AtomicBoolean STARTED =
@@ -535,8 +539,20 @@ public final class CNHotUpdateCheck {
             try {
                 return fetchMetaDirect(m.urlFor(name));
             } catch (Exception t) {
-                CNLog.w(TAG, "版本 json 线路失败 mirror=" + m.name + ": " + t);
-                CNMirrors.reportFailure(m, "version json");
+                // 只换下一条线路，**不调 reportFailure**。
+                //
+                // 这里失败不代表这条线路不适合传大文件。版本 json 是个几十字节的
+                // 冷对象，一次回源慢就可能超时；而 reportFailure 在
+                // switch_after_failures=1 的线上配置下会让它立刻进 60 秒冷却，
+                // 冷却中的线路被 healthy() 整个排除——于是后续所有资源包都不再用它。
+                //
+                // 实际撞到过：竞速刚用 cn_js_update.zip 的前 256KB 实测吞吐把
+                // （已下线线路） 评为最快、排到最前，紧接着版本 json 这一步就把它拉黑了。
+                // 两个机制测的根本不是一回事：小文件冷启动的延迟与大文件的吞吐
+                // 没有因果关系。线路适不适合传大文件，交给竞速与下载过程中的
+                // stall / 限速判定去管，那才是对口的度量。
+                CNLog.w(TAG, "版本 json 线路失败（只换线，不计入冷却） mirror="
+                        + m.name + ": " + t);
                 last = t;
             }
         }
