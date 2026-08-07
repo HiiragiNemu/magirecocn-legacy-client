@@ -431,6 +431,11 @@ public final class CNDownloaderFix {
         if (!CNMirrors.isLoaded()) {
             CNMirrors.refresh(true);
         }
+        // 这两次是背靠背发的，开机头一两秒网络还没就绪时会一起失败（0117 真机
+        // 就是这样，六次全挤在同一秒）。失败了交给带退避的后台重试——这条路比
+        // 热更那条更要紧：首次安装要拉 15GB，线路表拿不到就整个装在内置默认线路上。
+        // 中途拿到新表也安全：mirrors 是 volatile，pick() 每次尝试都重新读。
+        CNMirrors.ensureLoadedAsync();
         int lineCount = CNMirrors.healthy().size();
         CNLog.i(TAG, "mirrors ready count=" + lineCount + " loaded=" + CNMirrors.isLoaded());
         CNCNDownloadUI.updateSimple("开始下载",

@@ -641,6 +641,13 @@ public final class CNWebProxy {
                 } else {
                     CNLog.w(TAG, "代理取数 HTTP " + status + "，回退直连：" + origUrl);
                 }
+                // 这一支要自己收尾：响应体没人接手，不断开的话连接会一直挂着。
+                // 先关掉错误流再 disconnect——错误流不排空的话有些实现不会归还连接。
+                try {
+                    InputStream es = c.getErrorStream();
+                    if (es != null) es.close();
+                } catch (Throwable ignore) {}
+                try { c.disconnect(); } catch (Throwable ignore) {}
                 return null;
             }
             InputStream in = c.getInputStream();

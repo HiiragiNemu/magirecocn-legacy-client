@@ -691,8 +691,18 @@ public final class CNMirrors {
             CNWebProxy.Line[] plines = parseProxyLines(proxy, pbase);
             // native 侧只吃单个 base（改它要动 .so，不值当）。没写 base 但配了 lines
             // 时，就把权重最高那条给它——两边至少指向同一台机器。
+            //
+            // ⚠ 必须显式挑最大权重，不能取 plines[0]：parseProxyLines 是按**配置
+            // 顺序**返回的，排序发生在 CNWebProxy.usableOf 里（那是另一个数组）。
+            // 取下标 0 的话，把低权重那条写在前面就会让 native 拿到错的那台。
             if (pbase.isEmpty() && plines != null && plines.length > 0) {
-                pbase = plines[0].base;
+                CNWebProxy.Line top = plines[0];
+                for (int i = 1; i < plines.length; i++) {
+                    if (plines[i].enabled && (!top.enabled || plines[i].weight > top.weight)) {
+                        top = plines[i];
+                    }
+                }
+                pbase = top.base;
             }
             if (!pbase.isEmpty() && pdom != null && pdom.length > 0) {
                 proxyBase = pbase;   // Java 侧保留，供 SNAA 等 Java 网络请求改写
