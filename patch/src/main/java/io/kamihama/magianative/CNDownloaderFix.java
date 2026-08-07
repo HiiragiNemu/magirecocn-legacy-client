@@ -160,6 +160,31 @@ public final class CNDownloaderFix {
     private CNDownloaderFix() {
     }
 
+    /** 由 CNCNDownloadUI 在 Cocos GL 线程调用，释放被下载浮层闸住的主页/BGM。 */
+    public static native void nativeReleaseDeferredTop();
+    public static native void nativeTutorialRestartFailed();
+
+    /** 独立重启跳板进程只负责把主进程重新拉起，绝不能再启动安装/热更线程。 */
+    private static boolean isRestartProcess() {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                String n = android.app.Application.getProcessName();
+                if (n != null && n.endsWith(":cnrestart")) return true;
+            }
+        } catch (Throwable ignore) {}
+        try {
+            FileInputStream in = new FileInputStream("/proc/self/cmdline");
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            int b;
+            while ((b = in.read()) > 0 && bos.size() < 256) bos.write(b);
+            in.close();
+            String n = new String(bos.toByteArray(), StandardCharsets.UTF_8);
+            return n.endsWith(":cnrestart");
+        } catch (Throwable ignore) {
+            return false;
+        }
+    }
+
     /**
      * Java 侧的安装器入口，由 {@code MyApplication.onCreate()} 调用，
      * 作为 native hook 触发之外的第二道保险。
@@ -185,6 +210,11 @@ public final class CNDownloaderFix {
      * 后者内置哨兵保证只执行一次——所以即使 native 侧随后也触发了，也不会重复跑。
      */
     public static void triggerInstaller() {
+        if (isRestartProcess()) {
+            try { android.util.Log.i(TAG, "restart trampoline process: skip installer/hot-update"); }
+            catch (Throwable ignore) {}
+            return;
+        }
         // 这个方法同样由外部（Application.onCreate）直接调用，出了事不能把
         // 宿主进程的启动流程带崩，所以整体不抛。
         try {
@@ -210,6 +240,9 @@ public final class CNDownloaderFix {
                         File finalFlag = new File(FINAL_FLAG);
                         if (finalFlag.isFile()) {
                             CNLog.i(TAG, "triggerInstaller: flag 已存在，无需安装，转入版本与热更检查");
+                            // 热更新页仍展示 15 个槽位，因此先按 marker 还原真实安装状态：
+                            // 已装好的 13 个基础包必须是 100% / 完成，而不是 0% / 等待中。
+                            syncInstalledUiState();
                             // 资源已就位的正常启动：先查客户端版本，再（需要时）
                             // 接力热更检查。旧版由 libcn_hook 在 JNI_OnLoad 末尾经
                             // JNI 叫起 RestClient.checkAndApplyHotUpdate；那条路真机上
@@ -425,16 +458,10 @@ public final class CNDownloaderFix {
             return;
         }
 
-        // 线路列表：先走系统网络，失败再直连；两次都失败就用内置默认线路
-        CNCNDownloadUI.updateSimple("准备中", "正在获取下载线路…", 0);
-        CNMirrors.refresh(false);
-        if (!CNMirrors.isLoaded()) {
-            CNMirrors.refresh(true);
-        }
-        // 这两次是背靠背发的，开机头一两秒网络还没就绪时会一起失败（0117 真机
-        // 就是这样，六次全挤在同一秒）。失败了交给带退避的后台重试——这条路比
-        // 热更那条更要紧：首次安装要拉 15GB，线路表拿不到就整个装在内置默认线路上。
-        // 中途拿到新表也安全：mirrors 是 volatile，pick() 每次尝试都重新读。
+        // 内置 fallback 从进程启动起就可用。远程 config 只是优化线路顺序/参数，
+        // 不能成为首次安装的同步前置条件；服务器故障时直接用内置线路开跑，
+        // 后台拿到新表后 pick() 会自然切到新配置。
+        CNCNDownloadUI.updateSimple("准备中", "正在准备下载线路…", 0);
         CNMirrors.ensureLoadedAsync();
         int lineCount = CNMirrors.healthy().size();
         CNLog.i(TAG, "mirrors ready count=" + lineCount + " loaded=" + CNMirrors.isLoaded());
@@ -577,7 +604,8 @@ public final class CNDownloaderFix {
         // 重启本身交给 CNRestart。原先这里调的是 RestClient.restartApp()，
         // 那个实现真机上是坏的（会先重跑旧热更流程把浮层又拉出来，然后把新起的
         // Activity 连同自己一起杀掉），详见 CNRestart 的类注释。
-        CNRestart.restartWithNotice(toastText, 3000L);
+        boolean ok = CNRestart.restartWithNotice(toastText, 3000L);
+        if (!ok) CNLog.e(TAG, "自动重启未完成；当前进程保持存活，玩家仍可继续/手动重启");
     }
 
     /**
@@ -1429,6 +1457,20 @@ public final class CNDownloaderFix {
     // ==================================================================
     // UI 状态同步
     // ==================================================================
+
+    /** 按 15 个完成 marker 把 UI 恢复成真实已安装状态，供正常启动/热更新复用。 */
+    static void syncInstalledUiState() {
+        resetUiForRun();
+        int done = 0;
+        for (int i = 0; i < ARCHIVE_COUNT; i++) {
+            int status = (CNCNDownloadUI.fileStatus != null) ? CNCNDownloadUI.fileStatus[i] : -1;
+            int progress = (CNCNDownloadUI.fileProgress != null) ? CNCNDownloadUI.fileProgress[i] : -1;
+            if (status == 2 && progress == 100) done++;
+            CNLog.i(TAG, "[Hotupdate UI] marker sync slot=" + i + " file=" + FILE_NAMES[i]
+                    + " status=" + status + " progress=" + progress);
+        }
+        CNLog.i(TAG, "[Hotupdate UI] marker sync complete done=" + done + "/" + ARCHIVE_COUNT);
+    }
 
     private static void resetUiForRun() {
         for (int i = 0; i < ARCHIVE_COUNT; i++) {

@@ -55,6 +55,8 @@ import org.json.JSONObject;
  */
 public class CNCNDownloadUI {
 
+    private static final String TAG = "CNCNDownloadUI";
+
     // ==================================================================
     // 对外契约：以下 public static 成员的名字与签名不可改动
     // ==================================================================
@@ -2428,6 +2430,9 @@ public class CNCNDownloadUI {
         public void run() {
             try {
                 CNLog.i("界面", "下载浮层关闭（日志继续记录）");
+                // stopOverlayFlag() 已在 hide() 里同步删掉标记；现在从 UI 线程
+                // 明确投递到 GL 线程释放 deferred top，不再碰运气等下一次文本 hook。
+                releaseEngineGate();
                 // 先摘掉监听再拆视图，避免拆到一半又被日志回调碰上
                 CNLog.setListener(null);
                 // ⚠ 这里**不再**停 logcat 捕获、不再关文件。
@@ -2545,6 +2550,46 @@ public class CNCNDownloadUI {
         return sb.toString();
     }
 
+    /**
+     * 浮层撤掉以后，显式在 Cocos GL 线程通知 native 释放被闸住的主页跳转/BGM。
+     *
+     * 旧实现只靠后续 Label::setString / LoadingSceneLayerInfo::setText 等 hook
+     * 顺带调用 maybeReleaseDeferredTop()。如果浮层恰好在最后一次文本更新之后关闭，
+     * 就再也没有回调来补推主页，表现为热更已经结束但游戏永久黑屏。
+     */
+    private static void releaseEngineGate() {
+        final Runnable release = new Runnable() {
+            @Override public void run() {
+                try {
+                    CNLog.i(TAG, "[Overlay] GL thread entered; requesting native deferred release");
+                    CNDownloaderFix.nativeReleaseDeferredTop();
+                } catch (Throwable t) {
+                    CNLog.e(TAG, "[Overlay] native deferred release failed", t);
+                }
+            }
+        };
+        try {
+            Class<?> helper = Class.forName("org.cocos2dx.lib.Cocos2dxHelper");
+            java.lang.reflect.Method m = helper.getMethod("runOnGLThread", Runnable.class);
+            m.invoke(null, release);
+            CNLog.i(TAG, "[Overlay] native release scheduled via Cocos2dxHelper.runOnGLThread");
+            return;
+        } catch (Throwable first) {
+            CNLog.e(TAG, "[Overlay] Cocos2dxHelper scheduling unavailable; trying Activity.runOnGLThread", first);
+        }
+        try {
+            Activity act = RestClient.getCurrentActivity();
+            if (act == null) throw new IllegalStateException("Activity is null");
+            java.lang.reflect.Method m = act.getClass().getMethod("runOnGLThread", Runnable.class);
+            m.invoke(act, release);
+            CNLog.i(TAG, "[Overlay] native release scheduled via Activity.runOnGLThread");
+        } catch (Throwable second) {
+            // Old setString hooks remain as the last safety net. Do NOT call native scene
+            // commands from an arbitrary Java worker/UI thread.
+            CNLog.e(TAG, "[Overlay] GL scheduling failed; opportunistic native hook remains fallback", second);
+        }
+    }
+
     public static void hide() {
         // 浮层要收了，音乐也得停——否则安装完了背景音还在响。
         // 放在 isShowing 判断之前：即使浮层没建起来，也要保证不会有残留的播放线程。
@@ -2552,6 +2597,8 @@ public class CNCNDownloadUI {
         try { CNBgm.stop(); } catch (Throwable ignore) {}
         Handler handler;
         if (!isShowing || (handler = uiHandler) == null) {
+            // 即使浮层没真正建成/handler 已丢，也必须释放 native 闸门。
+            releaseEngineGate();
             return;
         }
         handler.post(new HideRunnable());
@@ -2578,6 +2625,21 @@ public class CNCNDownloadUI {
         if (handler != null) {
             handler.post(new UpdateRunnable());
         }
+    }
+
+    /**
+     * 把一个已经安装、但本轮确认需要热更新的槽位切回“等待本轮更新”。
+     * 其它有有效 marker 的基础资源保持 100% / 已完成，不再在热更新页伪装成 0%。
+     */
+    public static void markFilePending(int i) {
+        if (i < 0 || i >= FILE_COUNT) return;
+        if (fileStatus != null) fileStatus[i] = 0;
+        if (fileProgress != null) fileProgress[i] = 0;
+        if (fileSpeed != null) fileSpeed[i] = 0.0f;
+        if (fileDownloaded != null) fileDownloaded[i] = 0.0f;
+        Handler handler = uiHandler;
+        if (handler != null) handler.post(new UpdateRunnable());
+        try { CNLog.i(TAG, "[Hotupdate UI] slot=" + i + " -> pending/downloading"); } catch (Throwable ignore) {}
     }
 
     public static void setDownloadSpeed(int i, float f) {
@@ -2679,7 +2741,15 @@ public class CNCNDownloadUI {
         Thread t = overlayHeartbeat;
         overlayHeartbeat = null;
         if (t != null) t.interrupt();
-        try { new java.io.File(OVERLAY_FLAG).delete(); } catch (Throwable ignore) {}
+        try {
+            java.io.File f = new java.io.File(OVERLAY_FLAG);
+            boolean existed = f.exists();
+            boolean deleted = !existed || f.delete();
+            CNLog.i(TAG, "[Overlay] flag delete requested existed=" + existed
+                    + " deleted=" + deleted + " path=" + OVERLAY_FLAG);
+        } catch (Throwable th) {
+            CNLog.e(TAG, "[Overlay] flag delete failed", th);
+        }
     }
 
     public static void throttledUpdate() {

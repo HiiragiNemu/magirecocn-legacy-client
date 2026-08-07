@@ -8,7 +8,6 @@ import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
-import java.net.Proxy;
 import java.net.URL;
 
 /**
@@ -42,8 +41,9 @@ public final class CNVersionCheck {
 
     private static final String TAG = "CNVersion";
 
-    private static final int CONNECT_TIMEOUT_MS = 15000;
-    private static final int READ_TIMEOUT_MS    = 15000;
+    // config 是可选控制面：失败必须快速放行，不能先白等 15+15 秒。
+    private static final int CONNECT_TIMEOUT_MS = 1800;
+    private static final int READ_TIMEOUT_MS = 2200;
 
     /** 等可用 Activity 的上限：60 × 500ms = 30 秒（热更检查同量级）。 */
     private static final int  ACTIVITY_WAIT_TRIES   = 60;
@@ -222,7 +222,9 @@ public final class CNVersionCheck {
      * 没有 client 段时返回 null；网络/解析异常向上抛（调用方按放行处理）。
      */
     private static JSONObject fetchClientSection(String url) throws Exception {
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection(Proxy.NO_PROXY);
+        // 尊重 Android 系统代理；无系统代理时自然直连。显式 NO_PROXY 会绕开
+        // 用户已经配置好的 MuMu → Clash/mitm 链，并在控制面宕机时白等完整超时。
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         try {
             c.setConnectTimeout(CONNECT_TIMEOUT_MS);
             c.setReadTimeout(READ_TIMEOUT_MS);

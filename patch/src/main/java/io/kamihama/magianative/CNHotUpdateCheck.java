@@ -10,7 +10,6 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
-import java.net.Proxy;
 import java.net.URL;
 
 import org.json.JSONObject;
@@ -75,7 +74,7 @@ public final class CNHotUpdateCheck {
     private static final long ACTIVITY_WAIT_STEP_MS = 100L;
 
     /** 没有更新时，把「已是最新」这个结论留在屏幕上的时间。 */
-    private static final long IDLE_LINGER_MS = 1800L;
+    private static final long IDLE_LINGER_MS = 900L;
 
     /** 看门狗周期：与安装器路径一致地把浮层按回视图树。 */
     private static final long WATCHDOG_PERIOD_MS = 1000L;
@@ -88,8 +87,10 @@ public final class CNHotUpdateCheck {
     // 它在 CDN 边缘常常是**冷的**（热门的是 cn_js_update.zip，没人单独请求版本 json），
     // 一次回源就可能超过 8 秒。原来 8s 的读超时会让健康线路在这一步被误判。
     // 又不能放到 30s：这条在启动关键路径上，四条线路挨个撞 30s 就是两分钟白屏。
-    private static final int VER_CONNECT_TIMEOUT_MS = 5000;
-    private static final int VER_READ_TIMEOUT_MS    = 12000;
+    private static final int VER_CONNECT_TIMEOUT_MS = 2000;
+    private static final int VER_READ_TIMEOUT_MS    = 3500;
+    /** 两份版本查询合计最多占用启动关键路径 25 秒，超过即 fail-open 进入游戏。 */
+    private static final long VERSION_QUERY_DEADLINE_MS = 6000L;
 
     /** 只跑一次。 */
     private static final java.util.concurrent.atomic.AtomicBoolean STARTED =
@@ -170,8 +171,15 @@ public final class CNHotUpdateCheck {
                     try {
                         runInner();
                     } catch (Throwable th) {
-                        CNLog.e(TAG, "热更检查异常终止: " + th, th);
+                        running = false;
+                        CNLog.e(TAG, "热更检查异常终止（fail-open 进入游戏）: " + th, th);
                         try { CNCNDownloadUI.hide(); } catch (Throwable ignore) {}
+                        String msg = pendingRestartMsg;
+                        pendingRestartMsg = null;
+                        if (msg != null) {
+                            try { CNDownloaderFix.noticeAndRestart(msg); }
+                            catch (Throwable ignore) {}
+                        }
                     }
                 }
             };
@@ -198,22 +206,18 @@ public final class CNHotUpdateCheck {
         // 没有残留时代价可以忽略。
         CNHotUpdateTx.recover(new File(FILES_DIR));
 
-        // 预热线路表：别等第一次取版本时才现场拉 config.json
-        new Thread(new Runnable() {
-            @Override public void run() {
-                CNMirrors.refresh(false);
-                if (!CNMirrors.isLoaded()) CNMirrors.refresh(true);
-                // 这两次是背靠背发的，相隔几毫秒——开机头一两秒网络还没就绪时
-                // 必然一起失败（0117 真机就是这样，6 次全挤在同一秒）。
-                // 失败了就交给带退避的后台重试，别让整场会话跑在默认线路上。
-                CNMirrors.ensureLoadedAsync();
-            }
-        }, "cnv-mirrors-prewarm").start();
+        // 线路表只做后台优化。内置默认线路从进程启动起就可用；
+        // api.example.test 故障绝不能进入启动关键路径。
+        CNMirrors.ensureLoadedAsync();
 
         // 注：WebView 拦截层代理的安装点在 CNDownloaderFix.triggerInstaller()，
         // 不在这里。原先挂在本方法里，结果「首次安装」那一支走不到——它跑完
         // runInstaller() 就 return 了，整个会话拦截层都没装上。移到分支之前
         // 才能两条路都覆盖。install() 内部有 CAS，重复调用无副作用。
+
+        // final flag 已存在时，15 个基础资源的 marker 才是 UI 的事实源。
+        // 先恢复真实完成状态；稍后只有确认“需要热更”的 0/1 号槽位才切回等待。
+        CNDownloaderFix.syncInstalledUiState();
 
         Activity act = awaitUsableActivity();
         if (act == null) {
@@ -240,13 +244,27 @@ public final class CNHotUpdateCheck {
                     pool.submit(new java.util.concurrent.Callable<VerMeta>() {
                         @Override public VerMeta call() { return fetchMetaSafe(PACKAGES[1]); }});
             final VerMeta[] metas = new VerMeta[2];
+            final long deadlineNs = System.nanoTime()
+                    + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(VERSION_QUERY_DEADLINE_MS);
             try {
-                metas[0] = fScenario.get();
-                metas[1] = fJs.get();
+                long left = deadlineNs - System.nanoTime();
+                if (left <= 0L) throw new java.util.concurrent.TimeoutException("版本查询总超时");
+                metas[0] = fScenario.get(left, java.util.concurrent.TimeUnit.NANOSECONDS);
+                left = deadlineNs - System.nanoTime();
+                if (left <= 0L) throw new java.util.concurrent.TimeoutException("版本查询总超时");
+                metas[1] = fJs.get(left, java.util.concurrent.TimeUnit.NANOSECONDS);
+            } catch (java.util.concurrent.TimeoutException t) {
+                anyFailure = true;
+                CNLog.w(TAG, "版本查询超过 " + VERSION_QUERY_DEADLINE_MS
+                        + "ms，本次跳过未完成项并放行进入游戏");
+                fScenario.cancel(true);
+                fJs.cancel(true);
             } catch (Throwable t) {
+                anyFailure = true;
                 CNLog.w(TAG, "并行版本查询异常: " + t);
+            } finally {
+                pool.shutdownNow();
             }
-            pool.shutdown();
 
             // 判定哪些包要更新
             final boolean[] needs  = new boolean[PACKAGES.length];
@@ -256,7 +274,10 @@ public final class CNHotUpdateCheck {
             for (int i = 0; i < PACKAGES.length; i++) {
                 Pkg pkg = PACKAGES[i];
                 VerMeta meta = metas[i];
-                if (meta == null) continue;  // 查询失败已在 fetchMetaSafe 里提示
+                if (meta == null) {
+                    anyFailure = true;
+                    continue;  // 查询失败已在 fetchMetaSafe / 总 deadline 里提示
+                }
                 int local = readLocalVersion(pkg.versionKey);
                 locals[i] = local;
                 CNLog.i(TAG, "[" + pkg.label + "] server=" + meta.version + " local=" + local);
@@ -265,6 +286,9 @@ public final class CNHotUpdateCheck {
                             pkg.label + "：已是最新（v" + local + "）", 0);
                     continue;
                 }
+                // 只有真正需要更新的槽位回到等待/0%；其余有效 marker 的
+                // 13 个基础资源继续显示 100% / 已完成。
+                CNCNDownloadUI.markFilePending(pkg.slot);
                 File tmp = new File(FILES_DIR, pkg.tmpName);
                 // 上一次跑到一半留下的残骸会让 download() 直接判定「目标已存在」而跳过
                 if (tmp.exists() && !tmp.delete()) {
@@ -538,11 +562,9 @@ public final class CNHotUpdateCheck {
         // 否则剥不出文件名，拼出来的地址每条线路都会 404。
         String base = CNMirrors.CANONICAL_BASE;
         String name = url.startsWith(base) ? url.substring(base.length()) : url;
-        // 线路表可能还没拉过（热更检查不一定跟在安装器后面跑）
-        if (!CNMirrors.isLoaded()) {
-            CNMirrors.refresh(false);
-            if (!CNMirrors.isLoaded()) CNMirrors.refresh(true);
-        }
+        // 内置 fallback 一直存在；远程 config 只在后台刷新，绝不在
+        // 版本查询关键路径同步等 api.example.test。
+        if (!CNMirrors.isLoaded()) CNMirrors.ensureLoadedAsync();
         Exception last = null;
         for (CNMirrors.Mirror m : CNMirrors.healthy()) {
             try {
@@ -570,7 +592,9 @@ public final class CNHotUpdateCheck {
 
     /** 从单条线路直取版本 json 并解析 version/size/md5。 */
     private static VerMeta fetchMetaDirect(String url) throws Exception {
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection(Proxy.NO_PROXY);
+        // 尊重 Android 系统代理。未配置系统代理时 openConnection() 本身就是直连；
+        // 显式 Proxy.NO_PROXY 会绕开 MuMu/Clash/mitm 链，正是本次真机长超时的来源。
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         try {
             c.setConnectTimeout(VER_CONNECT_TIMEOUT_MS);
             c.setReadTimeout(VER_READ_TIMEOUT_MS);

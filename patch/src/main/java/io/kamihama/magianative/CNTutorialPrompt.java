@@ -64,6 +64,12 @@ public final class CNTutorialPrompt {
 
     private CNTutorialPrompt() {}
 
+    /** Called only when the Java restart handshake fails and the old process is still alive. */
+    private static void notifyNativeRestartFallback() {
+        try { CNDownloaderFix.nativeTutorialRestartFailed(); }
+        catch (Throwable t) { CNLog.e(TAG, "native restart fallback callback failed", t); }
+    }
+
     // ==================================================================
     // 前端界面可见性（native 序章场景期间使用）
     // ==================================================================
@@ -147,7 +153,12 @@ public final class CNTutorialPrompt {
             Thread t = new Thread("cnv-prologue-restart") {
                 @Override public void run() {
                     try {
-                        CNDownloaderFix.noticeAndRestart("序章播放完毕，3 秒后自动重启游戏");
+                        boolean ok = CNRestart.restartWithNotice("序章播放完毕，3 秒后自动重启游戏", 3000L);
+                        if (!ok) {
+                            CNLog.e(TAG, "序章后的自动重启握手失败，执行可玩状态兜底");
+                            setGameUiVisible(true);
+                            notifyNativeRestartFallback();
+                        }
                     } catch (Throwable t2) {
                         CNLog.e(TAG, "序章后的重启失败", t2);
                     }

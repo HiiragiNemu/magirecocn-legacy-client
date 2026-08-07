@@ -529,6 +529,11 @@ static std::mutex   g_savedTopMutex;
 static void*        g_savedTopSelf = nullptr;
 static std::string  g_savedTopArg;
 static bool         g_savedTopValid = false;
+// The Top command that triggered forced prologue is our only positively identified homepage
+// takeover. During tutorial we suppress repeats of this exact command; different Top args are
+// treated as potential tutorial-internal transitions and are allowed through with explicit logs.
+static std::string  g_tutorialHomeTopArg;
+static void*        g_tutorialHomeTopSelf = nullptr;
 
 // 消费标记：存在则删除（一次性）并返回 true。
 // 删除是关键——只强制一次；序章结束后的 pushSceneTop 必须放行，
@@ -622,18 +627,43 @@ static void maybeReleaseDeferredTop() {
 }
 
 
-// 序章全程压住前端界面的看门狗。置位于触发那一刻，收尾于序章图层析构
-// （g_tutorialActive 清零）。v3 真机发现：剧情段放完后 WebView 会自己复出，
-// 把战斗盖成背景板——只在图层构造时藏一次不够，得全程按回去。
-// 日志不吵：Java 侧只在「真的又被放出来了」时才记（见 setGameUiVisible）。
+// v5: stage-transition-aware WebView guard. v4 forced INVISIBLE every 250ms and could
+// race ADV -> battle. A notifyJs/internal Top transition grants a grace window; after it
+// expires, the guard hides a WebView only if the tutorial is still active.
+static std::atomic<uint64_t> g_tutorialWebGraceUntilMs{0};
+static uint64_t tutorialNowMs() {
+    return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+static void grantTutorialWebGrace(const char* why, uint64_t ms) {
+    uint64_t until = tutorialNowMs() + ms;
+    g_tutorialWebGraceUntilMs.store(until, std::memory_order_relaxed);
+    LOGI("[Tutorial] WebView guard grace reason=%s duration=%llums",
+         why ? why : "unknown", (unsigned long long)ms);
+}
 static std::atomic<bool> g_uiWatchdogOn{false};
 static void* uiWatchdogMain(void*) {
+    LOGI("[Tutorial] WebView guard started mode=transition-aware interval=500ms");
     while (g_tutorialActive.load()) {
-        setGameUiVisible(false);
-        usleep(250 * 1000);
+        uint64_t now = tutorialNowMs();
+        uint64_t until = g_tutorialWebGraceUntilMs.load(std::memory_order_relaxed);
+        if (now >= until) {
+            setGameUiVisible(false);
+        }
+        usleep(500 * 1000);
     }
     g_uiWatchdogOn.store(false);
+    LOGI("[Tutorial] WebView guard stopped");
     return nullptr;
+}
+
+
+// Java 浮层在 hide() 完成时会通过 Cocos2dxHelper.runOnGLThread() 调这里。
+// 这样 deferred top/BGM 的释放有一个确定事件，不再依赖“之后也许还会发生”的
+// Label::setString / LoadingSceneLayerInfo::setText 回调。
+static void nativeReleaseDeferredTop(JNIEnv*, jclass) {
+    LOGI("[Overlay] Java 通知浮层已撤，立即释放 deferred top/BGM");
+    maybeReleaseDeferredTop();
 }
 
 static void pushSceneTopNew(void* self, const std::string& arg) {
@@ -648,10 +678,23 @@ static void pushSceneTopNew(void* self, const std::string& arg) {
         g_topDeferred.store(true);
         return;
     }
-    // 教程进行中：一律吞掉，别让主页盖在序章上面（理由见上）
+    // Tutorial v5: suppress only the homepage Top we positively identified at the trigger.
+    // Unknown/different Top commands may be tutorial-internal stage transitions; blanket
+    // swallowing them can strand ADV->battle on an empty scene.
     if (g_tutorialActive.load()) {
-        LOGI("[Tutorial] 教程进行中，吞掉 pushSceneTop(arg=%s)", arg.c_str());
-        saveTop(self, arg);
+        bool homepage = false;
+        {
+            std::lock_guard<std::mutex> lk(g_savedTopMutex);
+            homepage = !g_tutorialHomeTopArg.empty() && arg == g_tutorialHomeTopArg;
+        }
+        if (homepage) {
+            LOGI("[Tutorial] pushSceneTop classify=homepage suppress arg=%s", arg.c_str());
+            saveTop(self, arg);
+            return;
+        }
+        LOGI("[Tutorial] pushSceneTop classify=internal/unknown allow arg=%s", arg.c_str());
+        grantTutorialWebGrace("internal-top", 2500);
+        pushSceneTopOld(self, arg);
         return;
     }
     // ⚠ 绝不在「与引擎无关的时刻」自己往队列里塞场景跳转——那才会和引擎
@@ -668,17 +711,23 @@ static void pushSceneTopNew(void* self, const std::string& arg) {
         LOGI("[Tutorial] 命中强制教程标记 → 改走 pushScenePrologue(OP020)"
              "（原 pushSceneTop arg=%s）", arg.c_str());
         saveTop(self, arg);
+        {
+            std::lock_guard<std::mutex> lk(g_savedTopMutex);
+            g_tutorialHomeTopSelf = self;
+            g_tutorialHomeTopArg = arg;
+        }
+        LOGI("[Tutorial] homepage Top identity captured arg=%s", arg.c_str());
         g_tutorialForced.store(true);
         g_tutorialActive.store(true);
-        // 序章全程压住前端界面的看门狗：v3 真机发现剧情段放完后 WebView 会
-        // 自己复出把战斗盖成背景板，只藏一次不够。
+        // v5 guard: hide resurfaced WebView, but honor grace windows around actual
+        // front-end/native stage transitions so ADV -> battle is not interrupted.
         if (!g_uiWatchdogOn.exchange(true)) {
             pthread_t t;
             if (pthread_create(&t, nullptr, uiWatchdogMain, nullptr) == 0) {
                 pthread_detach(t);
             } else {
                 g_uiWatchdogOn.store(false);
-                LOGE("[Tutorial] 界面看门狗线程起不来（ctor 的一次性隐藏仍在）");
+                LOGE("[Tutorial] WebView guard thread failed; ctor one-shot hide remains");
             }
         }
         pushScenePrologueFn(self, kPrologueArg);
@@ -695,6 +744,7 @@ static void pushSceneTopNew(void* self, const std::string& arg) {
 // 直接压场景，前端不知情，于是主界面照旧盖在最上层，序章成了它的背景。
 // 由我们代劳：序章开始时藏，结束时放回来。
 static void setGameUiVisible(bool visible) {
+    LOGI("[Tutorial] WebView visibility request visible=%d", (int)visible);
     if (!gClsTutorialPrompt) {
         LOGE("[Tutorial] CNTutorialPrompt 全局引用缺失，无法隐藏前端界面");
         return;
@@ -762,6 +812,14 @@ static void replaySavedTop() {
     }
 }
 
+static void nativeTutorialRestartFailed(JNIEnv*, jclass) {
+    LOGE("[Tutorial] Java restart handshake failed -> restore WebView + replay saved Top");
+    g_tutorialActive.store(false);
+    g_tutorialForced.store(false);
+    setGameUiVisible(true);
+    replaySavedTop();
+}
+
 // 序章图层的构造/析构。析构是「序章真的结束了」最可靠的信号——比 notifyJs
 // 可靠，后者在序章过程中可能发多次。
 static void prologueCtorNew(void* _this, void* info) {
@@ -794,14 +852,22 @@ static void prologueDtorNew(void* _this) {
             replaySavedTop();
         }
     }
+    {
+        std::lock_guard<std::mutex> lk(g_savedTopMutex);
+        g_tutorialHomeTopArg.clear();
+        g_tutorialHomeTopSelf = nullptr;
+    }
     prologueDtorOld(_this);
 }
 
 // 序章向前端发通知。无条件记录：callback 修好之后这些信号应该真的到达前端，
 // 日志里要能看到 OP 段与最终的「prologue」完成信号逐个过去。
 static void notifyJsNew(void* _this, const std::string& arg) {
-    LOGI("[Tutorial::notifyJs] arg=%s", arg.c_str());
+    LOGI("[Tutorial::notifyJs] before callback arg=%s active=%d forced=%d",
+         arg.c_str(), (int)g_tutorialActive.load(), (int)g_tutorialForced.load());
+    if (g_tutorialActive.load()) grantTutorialWebGrace("notifyJs", 2500);
     notifyJsOld(_this, arg);
+    LOGI("[Tutorial::notifyJs] after callback arg=%s", arg.c_str());
 }
 
 // 解析 pushScenePrologue 的地址。它在两个 ABI 的 .dynsym 里都是
@@ -1782,6 +1848,20 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
             } else {
                 if (env->ExceptionCheck()) env->ExceptionClear();
                 LOGE("[JNI] 找不到 %s —— 相关功能将不可用", want[i].name);
+            }
+        }
+
+        // 浮层关闭后的 deferred top/BGM 必须显式在 GL 线程释放。
+        if (gClsDownloaderFix) {
+            JNINativeMethod m[] = {
+                { (char*)"nativeReleaseDeferredTop", (char*)"()V",
+                  (void*)nativeReleaseDeferredTop },
+                { (char*)"nativeTutorialRestartFailed", (char*)"()V",
+                  (void*)nativeTutorialRestartFailed },
+            };
+            if (env->RegisterNatives(gClsDownloaderFix, m, 2) != 0) {
+                if (env->ExceptionCheck()) env->ExceptionClear();
+                LOGE("[JNI] RegisterNatives(CNDownloaderFix) 失败——浮层释放将退回文本 hook 兜底");
             }
         }
 

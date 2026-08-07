@@ -115,8 +115,8 @@ public final class CNMirrors {
      */
     public static final String CANONICAL_BASE = "https://assets.example.test/";
 
-    private static final int CONNECT_TIMEOUT_MS = 15000;
-    private static final int READ_TIMEOUT_MS    = 30000;
+    private static final int CONNECT_TIMEOUT_MS = 2000;
+    private static final int READ_TIMEOUT_MS    = 3000;
     /** 线路列表响应体大小上限，防止异常内容撑爆内存。 */
     private static final int MAX_JSON_BYTES     = 256 * 1024;
 
@@ -420,7 +420,7 @@ public final class CNMirrors {
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
     /** 退避表（毫秒）。总跨度约 2 分钟——网络就绪一般是秒级的事，拖太久没意义。 */
-    private static final long[] RETRY_BACKOFF_MS = { 3000L, 6000L, 12000L, 24000L, 48000L, 48000L };
+    private static final long[] RETRY_BACKOFF_MS = { 5000L, 15000L, 45000L, 90000L };
 
     /**
      * 拉不到 config.json 时在后台带退避重试，直到成功或退避表用完。
@@ -465,8 +465,9 @@ public final class CNMirrors {
                 if (loaded) return;
                 CNLog.i(TAG, "线路表仍未加载，第 " + (i + 1) + " 次重试");
                 try {
-                    refresh(false);
-                    if (!loaded) refresh(true);
+                // Remote config is optional. Use the Android/system route once; if it
+                // fails, keep built-in mirrors and retry later in the background.
+                refresh(false);
                 } catch (Throwable ignore) {}
                 if (loaded) {
                     CNLog.i(TAG, "线路表在第 " + (i + 1) + " 次重试后加载成功");

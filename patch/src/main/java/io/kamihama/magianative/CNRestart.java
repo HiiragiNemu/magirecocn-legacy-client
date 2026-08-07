@@ -1,146 +1,113 @@
 package io.kamihama.magianative;
 
 import android.app.Activity;
-import android.app.AlarmManager;
-import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
-import android.os.Build;
 import android.os.Process;
 
-/**
- * 重启本进程。
- *
- * <h3>为什么不用 {@code RestClient.restartApp()}</h3>
- *
- * 原包那个实现真机上是坏的，表现为「浮层再次出现 → 退出到桌面 → 闪一下黑屏 →
- * 退回桌面 → 并没有重启」。解码对照，两处都能对上：
- *
- * <ol>
- *   <li>它<b>开头先调一次</b> {@code checkAndApplyHotUpdate()}——那是被
- *       {@link CNHotUpdateCheck} 取代掉的旧流程，它自己会
- *       {@code CNCNDownloadUI.show()}。这就是「浮层再次出现」。</li>
- *   <li>随后 {@code finish()} → {@code sleep(500)} →
- *       {@code startActivity(launchIntent)} → {@code sleep(1000)} →
- *       {@code killProcess(myPid())}。新 Activity 起在<b>同一个进程</b>里，
- *       一秒后那一刀把它自己也砍了。这就是「闪一下黑屏又退回桌面」。</li>
- * </ol>
- *
- * <h3>这里的做法</h3>
- *
- * 先用 {@link AlarmManager} 把启动 Intent 排到 ~300ms 之后，再杀掉自己。等闹钟
- * 响时旧进程已经没了，系统会为这个 PendingIntent 新建进程——这才是真正的重启。
- *
- * <p><b>已知限制</b>：Android 10 起对后台启动 Activity 有限制，进程刚死那几秒
- * 属于宽限窗口，通常能起来；但部分厂商 ROM（尤其激进的省电策略）可能仍然拦下。
- * 所以 Toast 文案里明说了「若没有自动回来请手动打开」，而不是假定一定成功。
- */
+import java.io.File;
+
+/** Android 14/15-safe in-app restart using an independent foreground trampoline. */
 public final class CNRestart {
-
     private static final String TAG = "MagiaCNRestart";
-
-    /** 排给闹钟的延迟。要大于杀进程所需的时间，又不能久到玩家以为卡死。 */
-    private static final long ALARM_DELAY_MS = 300L;
-
-    /** PendingIntent 的 requestCode，随便取一个不与别处冲突的常量。 */
-    private static final int REQ_CODE = 0x4D47_4300;
+    static final String READY_FILE = "cn_restart_trampoline_ready.flag";
+    private static final long READY_TIMEOUT_MS = 2500L;
+    private static final long READY_POLL_MS = 40L;
 
     private CNRestart() {}
 
-    /**
-     * Toast 提示 → 等 {@code countdownMs} → 重启进程。<b>会阻塞</b>，别在 UI
-     * 线程上调。
-     *
-     * @param toastText 提示文案，由调用方按自己的上下文给
-     */
-    public static void restartWithNotice(String toastText, long countdownMs) {
+    /** Toast -> countdown -> restart. Returns false if the old process was intentionally kept alive. */
+    public static boolean restartWithNotice(String toastText, long countdownMs) {
         try {
             final Activity act = RestClient.getCurrentActivity();
-            final String msg = toastText + "（若没有自动回来，请手动打开游戏）";
             if (act != null) {
-                act.runOnUiThread(new ToastRunnable(act, msg));
+                act.runOnUiThread(new ToastRunnable(act, toastText));
             } else {
-                CNLog.w(TAG, "取不到 Activity，重启前的提示无法显示");
+                CNLog.w(TAG, "取不到 Activity，无法保证前台 trampoline；取消自杀式重启");
+                return false;
             }
-            CNLog.i(TAG, "将在 " + countdownMs + "ms 后重启进程");
+            CNLog.i(TAG, "restart strategy=foreground separate-process trampoline countdown=" + countdownMs);
             Thread.sleep(countdownMs);
-            restartNow();
+            return restartNow();
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
+            return false;
         } catch (Throwable t) {
-            CNLog.e(TAG, "重启流程出错", t);
+            CNLog.e(TAG, "重启流程出错，保留当前进程", t);
+            return false;
         }
     }
 
     private static final class ToastRunnable implements Runnable {
         private final Context ctx;
-        private final String  msg;
+        private final String msg;
         ToastRunnable(Context ctx, String msg) { this.ctx = ctx; this.msg = msg; }
         @Override public void run() {
-            try {
-                android.widget.Toast.makeText(ctx, msg,
-                        android.widget.Toast.LENGTH_LONG).show();
-            } catch (Throwable ignore) {}
+            try { android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_LONG).show(); }
+            catch (Throwable ignore) {}
         }
     }
 
-    /** 立刻重启：排闹钟 → 杀自己。不返回（除非排闹钟就失败了）。 */
-    public static void restartNow() {
-        Context ctx = appContext();
-        if (ctx == null) {
-            CNLog.e(TAG, "拿不到 Context，无法重启");
-            return;
+    /**
+     * Start :cnrestart while the game Activity is still visible. The trampoline writes READY_FILE
+     * from onResume. Only after observing that handshake do we kill this process.
+     */
+    public static boolean restartNow() {
+        final Activity act = RestClient.getCurrentActivity();
+        if (act == null) {
+            CNLog.e(TAG, "restart aborted: current Activity is null; old process kept alive");
+            return false;
         }
-        try {
-            Intent intent = ctx.getPackageManager()
-                    .getLaunchIntentForPackage(ctx.getPackageName());
-            if (intent == null) {
-                CNLog.e(TAG, "取不到启动 Intent，无法重启");
-                return;
-            }
-            // CLEAR_TASK：别把旧任务栈带过来，重启要的是干净的一次冷启动
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                    | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        final File ready = new File(act.getFilesDir(), READY_FILE);
+        try { if (ready.exists() && !ready.delete()) CNLog.w(TAG, "旧 restart ready 标记删不掉"); }
+        catch (Throwable ignore) {}
 
-            int flags = PendingIntent.FLAG_CANCEL_CURRENT;
-            if (Build.VERSION.SDK_INT >= 23) {
-                // API 31 起 PendingIntent 必须显式指定可变性；23 起就支持这个标志，
-                // 提前给上没有副作用。
-                flags |= PendingIntent.FLAG_IMMUTABLE;
-            }
-            PendingIntent pi = PendingIntent.getActivity(ctx, REQ_CODE, intent, flags);
-            AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
-            if (am == null || pi == null) {
-                CNLog.e(TAG, "AlarmManager/PendingIntent 取不到，改为直接结束进程");
-            } else {
-                long at = System.currentTimeMillis() + ALARM_DELAY_MS;
-                if (Build.VERSION.SDK_INT >= 19) {
-                    am.setExact(AlarmManager.RTC, at, pi);
-                } else {
-                    am.set(AlarmManager.RTC, at, pi);
+        final java.util.concurrent.CountDownLatch launchPosted =
+                new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.atomic.AtomicBoolean launchOk =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        try {
+            act.runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    try {
+                        Intent i = new Intent(act, CNRestartActivity.class);
+                        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                                | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                                | Intent.FLAG_ACTIVITY_NO_ANIMATION);
+                        act.startActivity(i);
+                        launchOk.set(true);
+                        CNLog.i(TAG, "restart trampoline startActivity issued from visible game Activity");
+                    } catch (Throwable t) {
+                        CNLog.e(TAG, "restart trampoline launch failed", t);
+                    } finally {
+                        launchPosted.countDown();
+                    }
                 }
-                CNLog.i(TAG, "启动 Intent 已排入闹钟，" + ALARM_DELAY_MS + "ms 后触发");
+            });
+            if (!launchPosted.await(1200L, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    || !launchOk.get()) {
+                CNLog.e(TAG, "restart trampoline launch was not confirmed; old process kept alive");
+                return false;
             }
         } catch (Throwable t) {
-            CNLog.e(TAG, "排重启闹钟失败，仍然结束进程", t);
+            CNLog.e(TAG, "restart trampoline dispatch failed; old process kept alive", t);
+            return false;
         }
-        // 日志要在杀自己之前落盘，否则最后几行留在缓冲里就没了
-        try { CNLog.flushNow(); } catch (Throwable ignore) {}
-        Process.killProcess(Process.myPid());
-    }
 
-    /** 补丁类不由框架实例化，只能反射取 Application Context（与原包同一手法）。 */
-    private static Context appContext() {
-        try {
-            Activity act = RestClient.getCurrentActivity();
-            if (act != null) return act.getApplicationContext();
-        } catch (Throwable ignore) {}
-        try {
-            Class<?> cls = Class.forName("android.app.ActivityThread");
-            Object thread = cls.getMethod("currentActivityThread").invoke(null);
-            return (Context) cls.getMethod("getApplication").invoke(thread);
-        } catch (Throwable t) {
-            return null;
+        long deadline = android.os.SystemClock.uptimeMillis() + READY_TIMEOUT_MS;
+        while (android.os.SystemClock.uptimeMillis() < deadline) {
+            if (ready.isFile()) {
+                CNLog.i(TAG, "restart trampoline foreground handshake confirmed; killing old pid="
+                        + Process.myPid());
+                try { CNLog.flushNow(); } catch (Throwable ignore) {}
+                Process.killProcess(Process.myPid());
+                return true; // normally unreachable
+            }
+            try { Thread.sleep(READY_POLL_MS); }
+            catch (InterruptedException ie) { Thread.currentThread().interrupt(); return false; }
         }
+        CNLog.e(TAG, "restart trampoline did not reach onResume within " + READY_TIMEOUT_MS
+                + "ms; old process kept alive");
+        return false;
     }
 }

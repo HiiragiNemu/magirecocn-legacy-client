@@ -84,11 +84,9 @@ public final class CNHotUpdate {
             }
         }
 
-        // 线路表可能还没拉过（热更新不一定跟在安装器后面跑）
-        if (!CNMirrors.isLoaded()) {
-            CNMirrors.refresh(false);
-            if (!CNMirrors.isLoaded()) CNMirrors.refresh(true);
-        }
+        // 内置 fallback 可立即使用；远程线路表只做后台优化，服务器故障
+        // 不能在真正下载更新包之前再同步卡两轮 15 秒。
+        if (!CNMirrors.isLoaded()) CNMirrors.ensureLoadedAsync();
 
         CNLog.i(TAG, "开始下载 " + displayName + " file=" + remoteName
                 + " 可用线路=" + CNMirrors.healthy().size());
