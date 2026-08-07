@@ -13,7 +13,8 @@
   · 白名单（main / archive/* / research/*）—— 放行；
   · 远端已有非白名单分支 —— **拦**，让你接着用那一条（规则二：全会话一条）；
   · 其中有 2 小时内活动过的 —— **拦**，并指名是哪一条（规则三）；
-  · 名字像 CI 触发器（ci/*、build/*、*-driver-*、*-success）—— **拦**（§2）。
+  · 名字像 CI 触发器（ci/*、build/*、*-driver-*、*-success、带 9 位以上数字的
+    run-id）—— **拦**（§2）。日期后缀 -YYYYMMDD 是 8 位，不会误伤。
 
 ## 为什么拦在 pre-push 而不是 checkout
 
@@ -37,7 +38,11 @@ ALLOW = (re.compile(r"^main$"), re.compile(r"^archive/"), re.compile(r"^research
 CI_SHAPED = (
     re.compile(r"^ci/"), re.compile(r"^build/"),
     re.compile(r"-driver-"), re.compile(r"-success$"),
-    re.compile(r"\d{8,}"),          # 分支名里带 run-id 这种长数字
+    # 分支名里带 run-id 这种长数字。**9 位起**，不是 8 位：本仓库自己的命名习惯
+    # 就带 -YYYYMMDD 日期后缀（archive/legacy-client-runtime-i18n-20260806），
+    # 8 位会把每一条按规矩起名的分支都误判成 CI 触发器，还给出完全不着边的理由。
+    # GitHub 的 run-id 是 11 位（31212457531），两者不会撞。
+    re.compile(r"\d{9,}"),
 )
 RECENT_HOURS = 2.0
 
@@ -64,9 +69,11 @@ def main():
         _, local_sha, remote_ref, remote_sha = parts
         if not remote_ref.startswith("refs/heads/"):
             continue
-        if local_sha == "0" * 40:          # 删除分支，放行
+        # 全零 OID = 「不存在」。长度随仓库哈希算法变（SHA-1 40 / SHA-256 64），
+        # 所以按「全是 0」判，别写死 40。
+        if set(local_sha) == {"0"}:        # 删除分支，放行
             continue
-        if remote_sha != "0" * 40:         # 已存在的分支，放行
+        if set(remote_sha) != {"0"}:       # 已存在的分支，放行
             continue
         new_branches.append(remote_ref[len("refs/heads/"):])
 
@@ -102,10 +109,14 @@ def main():
 
     fresh = []
     for sha, n in existing:
-        if sh("git", "cat-file", "-e", sha + "^{commit}").returncode != 0:
-            sh("git", "fetch", "--quiet", "origin",
-               "refs/heads/%s:refs/remotes/hookcheck/%s" % (n, n))
         t = sh("git", "log", "-1", "--format=%ct", sha)
+        if t.returncode != 0:
+            # 本地没有这个对象，取回来再问一次。**只写 FETCH_HEAD，不建 ref**——
+            # 早先是 fetch 进 refs/remotes/hookcheck/<n>，那些 ref 没人清理，
+            # 越攒越多，还会让被删分支的对象一直可达。
+            if sh("git", "fetch", "--quiet", "origin", n).returncode != 0:
+                continue
+            t = sh("git", "log", "-1", "--format=%ct", "FETCH_HEAD")
         if t.returncode == 0 and t.stdout.strip():
             try:
                 h = (time.time() - int(t.stdout.strip())) / 3600.0
