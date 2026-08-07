@@ -1033,7 +1033,11 @@ public class CNCNDownloadUI {
         // 替换为配置值(弹窗+跳转); 未配置时保持默认 GitHub 跳转。
         if (vGitHubChip == null) return;
         JSONObject rp = CNMirrors.rightPill();
-        if (rp != null) {
+        // enabled=false 时**无视其余字段**，直接回落默认 GitHub 胶囊。
+        // 之所以要这个显式开关：原先只看「有没有 right_pill 且 label 非空」，
+        // 想临时关掉就得把整段删了或把 label 清空，改回来还得重新把字段敲一遍。
+        // 缺省 true，老配置行为不变。
+        if (rp != null && rp.optBoolean("enabled", true)) {
             String label = rp.optString("label", "").trim();
             if (!label.isEmpty()) {
                 vGitHubChip.setText(label);
@@ -1079,6 +1083,8 @@ public class CNCNDownloadUI {
         if (overlayView == null) return;
         final JSONObject su = CNMirrors.rightPill();
         if (su == null) return;              // 配置已下架，忽略点击
+        if (!su.optBoolean("enabled", true)) return;   // 已关掉，忽略点击
+
         if (supportModal != null) return;    // 已开着，别叠第二层
         final String title   = su.optString("title", "支持我们");
         final String content = su.optString("content", "");
