@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""pre-push 钩子：把 AGENTS.md §0 的分支纪律变成硬拦截。
+
+装法见 tools/install-hooks.sh。
+
+## 拦什么
+
+**新建远端分支**这一个动作。已存在的分支继续推、推 main、删分支，都放行。
+
+新建分支时按 AGENTS.md §0 判定：
+
+  · 白名单（main / archive/* / research/*）—— 放行；
+  · 远端已有非白名单分支 —— **拦**，让你接着用那一条（规则二：全会话一条）；
+  · 其中有 2 小时内活动过的 —— **拦**，并指名是哪一条（规则三）；
+  · 名字像 CI 触发器（ci/*、build/*、*-driver-*、*-success）—— **拦**（§2）。
+
+## 为什么拦在 pre-push 而不是 checkout
+
+本地开分支无所谓，随便开。**留在远端**才是问题——维护者这几天逐条手工删了
+六条一次性分支。所以闸门设在「往远端推一条新分支」这一刻。
+
+## 逃生口
+
+    SKIP_BRANCH_HOOK=1 git push ...
+
+用它意味着你**明确知道自己在跳过什么**，并且准备好向维护者解释。
+"""
+
+import os
+import re
+import subprocess
+import sys
+import time
+
+ALLOW = (re.compile(r"^main$"), re.compile(r"^archive/"), re.compile(r"^research/"))
+CI_SHAPED = (
+    re.compile(r"^ci/"), re.compile(r"^build/"),
+    re.compile(r"-driver-"), re.compile(r"-success$"),
+    re.compile(r"\d{8,}"),          # 分支名里带 run-id 这种长数字
+)
+RECENT_HOURS = 2.0
+
+
+def sh(*a):
+    return subprocess.run(a, capture_output=True, text=True, timeout=120)
+
+
+def allowed(name):
+    return any(p.search(name) for p in ALLOW)
+
+
+def main():
+    if os.environ.get("SKIP_BRANCH_HOOK"):
+        sys.stderr.write("pre-push: SKIP_BRANCH_HOOK=1，跳过分支纪律检查\n")
+        return 0
+
+    # stdin: <local ref> <local sha> <remote ref> <remote sha>
+    new_branches = []
+    for line in sys.stdin.read().split("\n"):
+        parts = line.split()
+        if len(parts) != 4:
+            continue
+        _, local_sha, remote_ref, remote_sha = parts
+        if not remote_ref.startswith("refs/heads/"):
+            continue
+        if local_sha == "0" * 40:          # 删除分支，放行
+            continue
+        if remote_sha != "0" * 40:         # 已存在的分支，放行
+            continue
+        new_branches.append(remote_ref[len("refs/heads/"):])
+
+    if not new_branches:
+        return 0
+
+    problems = []
+    for name in new_branches:
+        if allowed(name):
+            continue
+        if any(p.search(name) for p in CI_SHAPED):
+            problems.append(
+                "`%s` 的名字像 CI 触发器。\n"
+                "      AGENTS.md §2：**永远不要用分支触发 CI**。\n"
+                "      构建由人类在网页上手动 workflow_dispatch；\n"
+                "      想验能不能过 CI，按 AGENTS.md §3 在本地跑。" % name)
+            continue
+        problems.append("`%s` 是一条新的非白名单分支。" % name)
+
+    if not problems:
+        return 0
+
+    # 远端现状：有没有可接续的 / 2 小时内动过的
+    r = sh("git", "ls-remote", "--heads", "origin")
+    existing = []
+    if r.returncode == 0:
+        for line in r.stdout.splitlines():
+            p = line.split()
+            if len(p) == 2:
+                n = p[1].replace("refs/heads/", "")
+                if not allowed(n):
+                    existing.append((p[0], n))
+
+    fresh = []
+    for sha, n in existing:
+        if sh("git", "cat-file", "-e", sha + "^{commit}").returncode != 0:
+            sh("git", "fetch", "--quiet", "origin",
+               "refs/heads/%s:refs/remotes/hookcheck/%s" % (n, n))
+        t = sh("git", "log", "-1", "--format=%ct", sha)
+        if t.returncode == 0 and t.stdout.strip():
+            try:
+                h = (time.time() - int(t.stdout.strip())) / 3600.0
+                if h < RECENT_HOURS:
+                    fresh.append((n, h))
+            except ValueError:
+                pass
+
+    sys.stderr.write("\n✘ push 被 pre-push 钩子拦下：正在新建分支\n\n")
+    for i, p in enumerate(problems, 1):
+        sys.stderr.write("  %d. %s\n\n" % (i, p))
+
+    if fresh:
+        sys.stderr.write("  远端有 %.0f 小时内刚动过的分支——"
+                         "AGENTS.md §0 规则三：接着用它，不许再开：\n" % RECENT_HOURS)
+        for n, h in fresh:
+            sys.stderr.write("      %s（%.1f 小时前）\n" % (n, h))
+        sys.stderr.write("\n")
+    elif existing:
+        sys.stderr.write("  远端已有非白名单分支——AGENTS.md §0 规则二："
+                         "全会话只许一条：\n")
+        for _, n in existing:
+            sys.stderr.write("      %s\n" % n)
+        sys.stderr.write("\n")
+    else:
+        sys.stderr.write("  本仓库**直接提 main，没有 PR 流程**"
+                         "（AGENTS.md §0 规则一）。\n"
+                         "  多数情况根本不需要分支：\n"
+                         "      git push -u origin main\n\n")
+
+    sys.stderr.write("  详情: python3 tools/check-branch-hygiene.py --can-branch\n")
+    sys.stderr.write("  确需跳过: SKIP_BRANCH_HOOK=1 git push ...\n\n")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

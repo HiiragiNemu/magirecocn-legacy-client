@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""commit-msg 钩子：把 CLAUDE.md / AGENTS.md 的提交规范变成硬拦截。
+
+装法见 tools/install-hooks.sh。拦下的三条都是文档里写死的：
+
+  1. 标题必须含中文（AGENTS.md §1 一）；
+  2. 必须有 Co-authored-by trailer（CLAUDE.md 提交约定 / AGENTS.md §1 三）；
+  3. 必须交代文档（AGENTS.md §1 四）——写「文档: 不影响任何文档描述」也算。
+
+## 为什么要拦而不是提醒
+
+这几条在文档里躺了很久，然后 2026-08-08 一口气进来 12 个英文标题、
+作者是 github-actions[bot]、没有任何 Co-authored-by 的提交。
+文档挡不住不读文档的人，钩子可以。
+
+## 逃生口
+
+确实需要跳过（修 typo、纯格式调整）时，**单独起一行**写 [skip-hooks]。
+用它意味着你**明确知道自己在跳过什么**——不要养成习惯。
+
+要求「单独一行」不是讲究格式：早先是在全文里搜这个字符串，结果第一个
+**介绍这个钩子**的提交（信息里引用了标记本身）把自己给跳过了。凡是提到它的
+提交信息都会中招。独占一行既写得出来，也不会被顺手提一句给误触发。
+"""
+
+import re
+import sys
+
+CJK = re.compile(r"[一-鿿]")
+SKIP = "[skip-hooks]"
+# 独占一行才算（允许前后空白），避免「提了一嘴」就被当成要跳过
+SKIP_LINE = re.compile(r"^\s*\[skip-hooks\]\s*$", re.M)
+
+
+def main():
+    path = sys.argv[1]
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        raw = f.read()
+
+    # 去掉注释行（git 自己加的 # 开头说明）
+    lines = [l for l in raw.split("\n") if not l.startswith("#")]
+    body = "\n".join(lines)
+    subject = ""
+    for l in lines:
+        if l.strip():
+            subject = l.strip()
+            break
+
+    # merge / revert / fixup 这类由 git 生成的信息不强求
+    if subject.startswith(("Merge ", "Revert ", "fixup!", "squash!")):
+        return 0
+    if SKIP_LINE.search(body):
+        sys.stderr.write("commit-msg: 检测到独占一行的 %s，跳过规范检查\n" % SKIP)
+        return 0
+
+    problems = []
+
+    if not subject:
+        problems.append("提交信息是空的")
+    elif not CJK.search(subject):
+        problems.append(
+            "标题必须用**中文**（AGENTS.md §1 一）\n"
+            "      当前标题: " + subject[:72])
+
+    if not re.search(r"^Co-authored-by:\s*\S+", body, re.M):
+        problems.append(
+            "缺 Co-authored-by trailer（CLAUDE.md 提交约定）\n"
+            "      末尾加一行，例如:\n"
+            "        Co-authored-by: Codex <noreply@openai.com>\n"
+            "        Co-authored-by: Claude <noreply@anthropic.com>")
+
+    if not re.search(r"^文档[:：]", body, re.M):
+        problems.append(
+            "缺「文档:」交代（AGENTS.md §1 四）\n"
+            "      写明对应文档改动，或明确写不影响，例如:\n"
+            "        文档: 已更新 README.md 的「网络出口」表\n"
+            "        文档: 纯内部重构，不影响任何文档描述")
+
+    if not problems:
+        return 0
+
+    sys.stderr.write("\n✘ 提交被 commit-msg 钩子拦下（%d 项）：\n\n" % len(problems))
+    for i, p in enumerate(problems, 1):
+        sys.stderr.write("  %d. %s\n\n" % (i, p))
+    sys.stderr.write("  规则出处: CLAUDE.md「提交约定」/ AGENTS.md §1\n")
+    sys.stderr.write("  确需跳过: 在提交信息里**单独起一行**写 %s\n\n" % SKIP)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
