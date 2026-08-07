@@ -40,6 +40,9 @@
   署名（`Claude <noreply@anthropic.com>` / `Kimi <noreply@moonshot.cn>`）。
   历史提交已按此约定重写（2026-08，除首个提交外）。
 - 改了下载/续传/换线逻辑，跑一遍 `tools/` 下的测试套件再提交。
+- 作者身份**按实际执笔的人**记：上面那条「作者一律 CyberNova2333」说的是本仓库
+  默认 `git config`，**不是要求把别人的提交改成他**。其他人类贡献者
+  （如 `HiiragiNemu`）的提交要保留其原作者，Agent 仍走 `Co-authored-by`。
 
 ## 指令优先级
 
