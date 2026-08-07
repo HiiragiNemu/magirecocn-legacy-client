@@ -101,6 +101,18 @@ CHAR_BOX = (203, 5, 102, 44)    # 同上；右边缘 305 与原版一致
 
 FRAME_MS = 100                  # APNG 每帧毫秒；8 帧 = 0.8s 一轮跑动
 
+# —— 描边 ——
+# 原版丘比是**白色填充 + 洋红描边**，我第一版只做了填充，结果在白底场景
+# （OP 播放、进游戏之前）白色部分和背景糊在一起，只剩半只丘比。
+# 实测原图：描边实心色 (169,62,115)，宽约 7px，alpha 由外向内 9 → 255 渐变。
+STROKE_RGB   = (169, 62, 115)
+STROKE_WIDTH = 4                # 缩放后我们的丘比比原版小，原版 7px 会显得糊
+STROKE_FADE  = 2                # 最外这几圈渐隐；再往内一律实心
+STROKE_MIN_A = 55               # 最外圈的 alpha
+# 为什么不是「由外向内线性渐变」：那样出来是一圈**发光**而不是描边，
+# 和原版的观感差很远。原版是实心为主、只在最外 2px 收一下边，所以这里
+# 也按「内圈全实心 + 外 STROKE_FADE 圈渐隐」来做。
+
 SHEET_CSS = u"""
 —— 雪碧图模式还要改 CSS ——
 
@@ -239,6 +251,48 @@ def hairline_trim(img, core=190):
     return out
 
 
+def outline(img, rgb=STROKE_RGB, width=STROKE_WIDTH,
+            fade=STROKE_FADE, min_a=STROKE_MIN_A):
+    """给不透明区域加一圈描边，描边垫在原图**下面**。
+
+    为什么必须有：这条 334×54 的底条只覆盖 y32 以下，丘比的上半身是悬在
+    **页面背景**上的。进游戏之前那个背景是白的，纯白剪影就此消失——玩家看到的
+    是「半只丘比」。原版靠一圈洋红描边解决，我们照做。
+
+    做法是对 alpha 做 width 次膨胀，每膨胀一圈记一次距离，再按距离给描边定
+    alpha：**内圈一律实心，只有最外 fade 圈渐隐**。全程线性渐变的话出来是一圈
+    发光而不是描边，和原版观感差很远。
+    """
+    from PIL import ImageFilter
+    a = img.split()[3]
+    prev = a
+    # dist[i] = 第 i 圈新增的像素（i 从 1 开始）
+    rings = []
+    for _ in range(width):
+        cur = prev.filter(ImageFilter.MaxFilter(3))
+        rings.append((cur, prev))
+        prev = cur
+    stroke = Image.new("RGBA", img.size, rgb + (0,))
+    sp = stroke.load()
+    w, h = img.size
+    ring_px = [(c.load(), p.load()) for c, p in rings]
+    for i, (cur, pre) in enumerate(ring_px):
+        # 第 i 圈（0 起）离形状 i+1 像素。内圈实心，最外 fade 圈才渐隐。
+        solid = width - fade
+        if i < solid:
+            av = 255
+        else:
+            t = 1.0 - (i - solid + 1) / float(fade + 1)
+            av = int(min_a + (255 - min_a) * t)
+        for y in range(h):
+            for x in range(w):
+                if cur[x, y] > 8 and pre[x, y] <= 8 and sp[x, y][3] == 0:
+                    sp[x, y] = rgb + (av,)
+    out = stroke
+    out.alpha_composite(img)
+    return out
+
+
 def union_bbox(frames):
     """所有帧的 bbox 并集。用它统一裁剪，跑动才不会因逐帧裁剪而抖。"""
     boxes = [f.getbbox() for f in frames if f.getbbox()]
@@ -346,7 +400,7 @@ def main():
     for i, cf in enumerate(char_frames):
         frame = bar.copy()
         frame.alpha_composite(text_img, text_at)
-        ci, cat = fit(cf, CHAR_BOX)
+        ci, cat = fit(outline(cf), CHAR_BOX)
         frame.alpha_composite(ci, cat)
         if i == 0:
             sys.stderr.write("  丘比放置 %dx%d @%s（右边缘 %d）\n"
