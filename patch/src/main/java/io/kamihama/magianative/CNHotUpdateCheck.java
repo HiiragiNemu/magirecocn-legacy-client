@@ -210,10 +210,10 @@ public final class CNHotUpdateCheck {
             }
         }, "cnv-mirrors-prewarm").start();
 
-        // WebView 拦截层代理：起个守护线程等 WebView 出现再接管它的 WebViewClient。
-        // 放在这里是因为它要等的东西（WebView）比热更晚得多，早点挂上等着不占代价；
-        // 真正走不走代理由 config.json 的 proxy.web_mode 决定，默认纯透传。
-        CNWebProxy.install();
+        // 注：WebView 拦截层代理的安装点在 CNDownloaderFix.triggerInstaller()，
+        // 不在这里。原先挂在本方法里，结果「首次安装」那一支走不到——它跑完
+        // runInstaller() 就 return 了，整个会话拦截层都没装上。移到分支之前
+        // 才能两条路都覆盖。install() 内部有 CAS，重复调用无副作用。
 
         Activity act = awaitUsableActivity();
         if (act == null) {

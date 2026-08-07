@@ -192,6 +192,21 @@ public final class CNDownloaderFix {
                 @Override public void run() {
                     try {
                         CNLog.initEarly();
+
+                        // WebView 拦截层代理：放在分支**之前**，两条路都覆盖得到。
+                        //
+                        // 原先它挂在 CNHotUpdateCheck.runInner 里，而那条路只有
+                        // 「flag 已存在」这一支走得到——首次安装那一支跑完
+                        // runInstaller() 就 return 了，整个会话拦截层都没装上。
+                        // 装完是否重启还取决于 NO_RESTART_FLAG，不重启就一路裸奔
+                        // 进游戏。
+                        //
+                        // 放这里是安全的：install() 内部有 CAS 保证只生效一次，
+                        // 本身只是起一个守护线程等 WebView，不依赖任何前置状态；
+                        // 真正走不走代理由 config.json 的 proxy.web_mode 决定，
+                        // 而配置由 CNMirrors.refresh 下发——两条路都会调它。
+                        CNWebProxy.install();
+
                         File finalFlag = new File(FINAL_FLAG);
                         if (finalFlag.isFile()) {
                             CNLog.i(TAG, "triggerInstaller: flag 已存在，无需安装，转入版本与热更检查");
