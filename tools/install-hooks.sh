@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# 安装本仓库的 git 钩子。**克隆之后跑一次即可。**
+# 安装本仓库的 git 钩子。
+#
+# **多数情况用不上这个脚本**：.claude/settings.json 与 .codex/config.toml 各注册了
+# 一个 PreToolUse(Bash) 钩子指向 tools/agent-guard.py，它会在第一条 Bash 命令执行前
+# 自动做完下面这件事。只有「Claude 与 Codex 都没碰过这份克隆」（比如人类直接
+# git clone 下来手敲）时才需要手动跑一次。
 #
 # 钩子放在 tools/githooks/（受版本控制），靠 core.hooksPath 指过去——
 # 这样它们跟着仓库走，而不是躺在每个人各自的 .git/hooks 里自生自灭。

@@ -4,13 +4,9 @@
 >
 > 本文件与 `CLAUDE.md` 同级生效，规定**分支纪律**与**提交规范**。
 >
-> **开工第一件事**（克隆之后跑一次）：
->
-> ```bash
-> bash tools/install-hooks.sh
-> ```
->
-> 下面这些规则不只是文字——装上钩子之后它们会**真的拦住你**。见 §5。
+> 下面这些规则不只是文字——它们**会真的拦住你**，而且**不需要你做任何安装**：
+> `.codex/config.toml` 里注册的 `PreToolUse` 钩子会在你的第一条 Bash 命令执行前
+> 把这份克隆的 git 钩子接上电。见 §5。
 
 ---
 
@@ -278,11 +274,20 @@ done
 
 ## §5 这些规则是**强制**的
 
-上面的每一条都不再依赖你读没读。装上钩子之后：
+上面的每一条都不再依赖你读没读，**也不依赖你装什么**。
 
-```bash
-bash tools/install-hooks.sh    # 把 core.hooksPath 指向受版本控制的 tools/githooks/
-```
+`.codex/config.toml`（以及给 Claude 用的 `.claude/settings.json`）各注册了一个
+`PreToolUse(Bash)` 钩子指向 `tools/agent-guard.py`。它在命令执行**之前**把这份
+克隆的 `core.hooksPath` 指到 `tools/githooks/`——所以你跑的第一条 Bash 命令就已经
+让 git 钩子生效了，包括那条命令自己。
+
+> git 自己的钩子做不到这一点：`core.hooksPath` 是每份克隆的本地配置，没法从入库
+> 文件里设（clone 即执行任意代码，git 有意堵死了）。所以才需要绕这一圈。
+> 万一项目级 `.codex/` 层没被信任，手动补一次即可：`bash tools/install-hooks.sh`。
+
+`agent-guard.py` 自己只直接拦一件事：**`git commit --no-verify` / `-n` /
+`git push --no-verify`**。git 钩子唯一挡不住的就是绕过 git 钩子本身，所以这一条
+必须在更外层拦。要跳过请用下面写明的逃生口——它们至少会在输出里留下痕迹。
 
 | 钩子 | 拦什么 | 对应条款 |
 |---|---|---|
@@ -292,6 +297,7 @@ bash tools/install-hooks.sh    # 把 core.hooksPath 指向受版本控制的 too
 | `pre-push` | 新建名字像 CI 触发器的分支（`ci/*`、`build/*`、`*-driver-*`、`*-success`、带 run-id） | §2 |
 | | 远端已有非白名单分支时再开一条 | §0 规则二 |
 | | 2 小时内有分支活动时再开一条 | §0 规则三 |
+| `agent-guard.py` | `git commit/push --no-verify`（绕过上面两个且不留痕迹） | 本节 |
 
 **放行的**：推 `main`、删分支、往已存在的分支继续推、白名单
 （`main` / `archive/*` / `research/*`）。本地随便开分支也不拦——闸门只设在

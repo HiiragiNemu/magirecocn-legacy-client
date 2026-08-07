@@ -46,16 +46,28 @@
 
 ### 这几条现在是**强制**的，不再靠自觉
 
+**不需要手动装**。`.claude/settings.json` 与 `.codex/config.toml` 各注册了一个
+`PreToolUse(Bash)` 钩子指向 `tools/agent-guard.py`，它在命令执行**之前**把本克隆的
+`core.hooksPath` 指到 `tools/githooks/`——Claude 或 Codex 跑过任意一条 Bash 命令，
+这份克隆的 git 钩子就此长期生效，之后连人类手敲的 `git commit` 也一并受管。
+
+只有在「两个 Agent 都没碰过这份克隆」时才需要手动补一次：
+
 ```bash
-bash tools/install-hooks.sh    # 克隆之后跑一次
+bash tools/install-hooks.sh
 ```
 
-它把 `core.hooksPath` 指向受版本控制的 `tools/githooks/`：
+（git 自己的钩子没法从入库文件里自动生效：`core.hooksPath` 是每份克隆的本地配置，
+这是 git 有意为之的安全设计——否则 clone 一个仓库就等于执行任意代码。所以只能靠
+Agent 侧的 PreToolUse 钩子来「接上电」。）
+
+生效后 `core.hooksPath` 指向受版本控制的 `tools/githooks/`：
 
 | 钩子 | 拦什么 | 逃生口 |
 |---|---|---|
 | `commit-msg` | 标题非中文 / 缺 `Co-authored-by` / 缺「文档:」交代 | 信息里单独一行写 `[skip-hooks]` |
 | `pre-push` | 新建远端分支违反 `AGENTS.md` §0 | `SKIP_BRANCH_HOOK=1 git push` |
+| `agent-guard.py` | `git commit/push --no-verify`（绕过上面两个且不留痕迹） | 无——请改用上面两个逃生口 |
 
 之所以要拦：这几条在文档里躺了很久，然后 2026-08-08 一口气进来 12 个英文标题、
 作者是 `github-actions[bot]`、没有任何 `Co-authored-by` 的提交。
