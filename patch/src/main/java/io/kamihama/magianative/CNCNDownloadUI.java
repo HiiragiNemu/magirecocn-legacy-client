@@ -2472,6 +2472,14 @@ public class CNCNDownloadUI {
                 themeChipBg   = null;
                 logPillBg     = null;
                 hostActivity  = null;
+                // 这四个此前漏在清理之外。它们和上面那些一样是 static，各自持有
+                // Context → Activity，而 static 字段的生命周期是整个进程：浮层收了
+                // 之后 Activity 本该能回收，却被它们钉住。vGitHubChip 尤其要清——
+                // 它身上挂着 SupportClick，那个监听器里还捏着一个 Activity。
+                vGitHubChip   = null;
+                githubChipBg  = null;
+                supportModal  = null;
+                vFooter       = null;
                 slotList.clear();
             } catch (Throwable e) {
             }

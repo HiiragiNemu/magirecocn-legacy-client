@@ -675,14 +675,51 @@ public final class CNWebProxy {
             CNLog.i(TAG, "代理命中 " + ttfb + "ms [" + line.name + "] " + origUrl);
             String reason = c.getResponseMessage();
             if (reason == null || reason.isEmpty()) reason = "OK";
-            return new WebResourceResponse(mime, enc, status, reason, respHeaders, in);
+            // 成功时不能在这里 disconnect —— 流还要交给 WebView 继续读。
+            // 但也不能就这么撒手：WebView 完全可能中途放弃（页面被换掉、请求被
+            // 取消），那时它只 close() 流而不读到 EOF，连接就一直挂在那儿。
+            // 所以把 disconnect 挂到流的 close() 上，谁先结束都能回收。
+            WebResourceResponse resp =
+                    new WebResourceResponse(mime, enc, status, reason, respHeaders,
+                                            new DisconnectOnClose(in, c));
+            c = null;   // 所有权已交给上面那个流，下面的 catch 不该再动它
+            return resp;
         } catch (Throwable t) {
             // 连不上/超时是「这条线现在不行」，打进冷却换下一条
             reportLineFailure(line, String.valueOf(t));
             if (c != null) { try { c.disconnect(); } catch (Throwable ignore) {} }
             return null;
         }
-        // 成功时**不能** disconnect：InputStream 还要交给 WebView 继续读
+    }
+
+    /**
+     * 关流时顺带把连接断掉。
+     *
+     * <p>{@link WebResourceResponse} 拿走的是一个裸 {@link InputStream}，它什么时候
+     * 关、关不关，全在 WebView 手里。读到 EOF 再 close 的话 HttpURLConnection 会把
+     * 连接放回池子；但中途放弃（页面被换掉、请求被取消）时只有 close 没有 EOF，
+     * 那条连接就悬着了。挂在这里是唯一能同时覆盖两种收尾的地方。
+     *
+     * <p>具名静态类而非匿名类：d8 对嵌套匿名类崩过（CLAUDE.md 铁律 4）。
+     */
+    private static final class DisconnectOnClose extends java.io.FilterInputStream {
+        private final HttpURLConnection conn;
+        private volatile boolean closed;
+
+        DisconnectOnClose(InputStream in, HttpURLConnection conn) {
+            super(in);
+            this.conn = conn;
+        }
+
+        @Override public void close() throws java.io.IOException {
+            if (closed) return;
+            closed = true;
+            try {
+                super.close();
+            } finally {
+                try { conn.disconnect(); } catch (Throwable ignore) {}
+            }
+        }
     }
 
     /**
