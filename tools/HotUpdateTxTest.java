@@ -351,6 +351,60 @@ public class HotUpdateTxTest {
             check("拒收只有目录条目的空包", empty, "");
         }
 
+        // ---------------------------------------------------------------
+        System.out.println("\n[12] 孤儿要排在写入之前：文件 → 目录 的换向");
+        {
+            File root = new File(base, "case12");
+            File v1 = zip(new File(base, "p12a.zip"),
+                    "magica/js/x",    "V1-FILE",      // 这一版 x 是文件
+                    "magica/js/k.js", "K");
+            CNHotUpdateTx.apply(v1, root, "js");
+            File v2 = zip(new File(base, "p12b.zip"),
+                    "magica/js/x/y.js", "V2-IN-DIR",  // 下一版 x 变成目录
+                    "magica/js/k.js",   "K");
+            CNHotUpdateTx.apply(v2, root, "js");
+            check("旧文件 x 已让位", !new File(root, "magica/js/x").isFile(), "");
+            check("新目录下的文件就位",
+                    "V2-IN-DIR".equals(read(new File(root, "magica/js/x/y.js"))),
+                    String.valueOf(read(new File(root, "magica/js/x/y.js"))));
+            check("事务工作区已清干净", !new File(root, ".cnv_tx").exists(), "");
+        }
+
+        // ---------------------------------------------------------------
+        System.out.println("\n[13] 目录 → 文件 的换向：孤儿的父目录被整体搬走也不能失败");
+        {
+            File root = new File(base, "case13");
+            File v1 = zip(new File(base, "p13a.zip"),
+                    "magica/js/d/a.js", "V1-A",
+                    "magica/js/d/b.js", "V1-B");
+            CNHotUpdateTx.apply(v1, root, "js");
+            File v2 = zip(new File(base, "p13b.zip"),
+                    "magica/js/d", "V2-NOW-A-FILE");   // d 从目录变成文件
+            CNHotUpdateTx.apply(v2, root, "js");
+            check("d 现在是文件且内容正确",
+                    "V2-NOW-A-FILE".equals(read(new File(root, "magica/js/d"))),
+                    String.valueOf(read(new File(root, "magica/js/d"))));
+            check("事务工作区已清干净", !new File(root, ".cnv_tx").exists(), "");
+        }
+
+        // ---------------------------------------------------------------
+        System.out.println("\n[14] 孤儿在提交前被外部删掉：跳过而不是整笔失败");
+        {
+            File root = new File(base, "case14");
+            File v1 = zip(new File(base, "p14a.zip"),
+                    "magica/js/a.js",    "V1-A",
+                    "magica/js/gone.js", "V1-GONE");
+            CNHotUpdateTx.apply(v1, root, "js");
+            // 清单还记着 gone.js，但活动树上先被别人删了
+            new File(root, "magica/js/gone.js").delete();
+            File v2 = zip(new File(base, "p14b.zip"), "magica/js/a.js", "V2-A");
+            CNHotUpdateTx.apply(v2, root, "js");
+            check("不因孤儿已消失而失败",
+                    "V2-A".equals(read(new File(root, "magica/js/a.js"))), "");
+            check("清单已更新",
+                    "magica/js/a.js\n".equals(read(new File(root, ".cnv_manifest/js.list"))), "");
+        }
+
         System.out.println("\n通过 " + pass + " 项，失败 " + fail + " 项");
         if (fail > 0) System.exit(1);
     }

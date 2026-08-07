@@ -202,17 +202,25 @@ public final class CNHotUpdateTx {
 
             List<Entry> plan = new ArrayList<Entry>(rels.size() + orphans.size());
             StringBuilder sb = new StringBuilder((rels.size() + orphans.size()) * 48);
-            for (int i = 0; i < rels.size(); i++) {
-                String rel = rels.get(i);
-                boolean existed = new File(root, rel).exists();
-                plan.add(new Entry(rel, existed, false));
-                sb.append(existed ? '1' : '0').append('+').append('\t').append(rel).append('\n');
-            }
+            // 孤儿排在写入**之前**。顺序不是随意的：某个路径这一版从「文件」变成
+            // 「目录」（或反过来）时，两种排法差别很大。
+            //   例：上一版有文件 magica/js/x，这一版是目录 magica/js/x/y.js。
+            //   先写：ensureParent 要把 x 当目录建，而它是个文件 → 整笔事务失败。
+            //   先删：x 作为孤儿被移进 backup，路腾出来了，再写就顺理成章。
+            // 反向（目录变文件）同理：先把目录里的孤儿逐个搬走，剩下空目录再被
+            // 当作「原本有」备份掉；若先写，父目录已被整个搬走，孤儿那一步就找
+            // 不到源文件而失败。
             for (int i = 0; i < orphans.size(); i++) {
                 // 孤儿一定是活动树上现存的文件（findOrphans 已经 stat 过），
                 // 所以 existed 恒为 1：它会被备份走，回滚时原样挪回来。
                 plan.add(new Entry(orphans.get(i), true, true));
                 sb.append('1').append('-').append('\t').append(orphans.get(i)).append('\n');
+            }
+            for (int i = 0; i < rels.size(); i++) {
+                String rel = rels.get(i);
+                boolean existed = new File(root, rel).exists();
+                plan.add(new Entry(rel, existed, false));
+                sb.append(existed ? '1' : '0').append('+').append('\t').append(rel).append('\n');
             }
             writeSynced(journal, sb.toString());
             CNLog.i(TAG, "[" + tag + "] 提交计划已落盘：写入 " + rels.size() + " 个（覆盖 "
@@ -289,6 +297,13 @@ public final class CNHotUpdateTx {
             Entry en = plan.get(i);
             File live = new File(root, en.rel);
             File from = new File(stage, en.rel);
+            if (en.remove && !live.exists()) {
+                // 从 findOrphans 那次 stat 到现在，这个文件可能已经不在了
+                // （前面某条孤儿把它的父目录搬走了，或者外部动过）。没什么可删的，
+                // 跳过即可：journal 记的是 existed=1、backup 里没有，回滚时正好
+                // 落在「这条还没轮到，不动」那一支，语义仍然自洽。
+                continue;
+            }
             if (en.existed) {
                 File to = new File(backup, en.rel);
                 ensureParent(to);
