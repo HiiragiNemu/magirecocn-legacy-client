@@ -12,7 +12,13 @@ import java.io.OutputStream;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.Enumeration;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipException;
+import java.util.zip.ZipFile;
 
 /**
  * 热更包的事务化应用：解压到暂存区 → 备份旧文件 → 换入 → 出错整体回滚。
@@ -33,13 +39,21 @@ import java.util.List;
  * <pre>
  *   &lt;files&gt;/.cnv_tx/&lt;tag&gt;/
  *       stage/      解压产物（先全部落到这里，不碰活动树）
- *       backup/     被覆盖的旧文件，按相对路径原样镜像
- *       journal     提交计划：每行 "&lt;0|1&gt;\t&lt;相对路径&gt;"，1 表示活动树上原本有这个文件
+ *       backup/     被覆盖/被删除的旧文件，按相对路径原样镜像
+ *       journal     提交计划：每行 "&lt;0|1&gt;&lt;+|-&gt;\t&lt;相对路径&gt;"
+ *                   第 1 位：动手之前活动树上是否已有它（决定要不要备份）
+ *                   第 2 位：'+' 从 stage 换入，'-' 只删不写（孤儿清理）
  *       COMMITTED   提交完成标记
+ *   &lt;files&gt;/.cnv_manifest/&lt;tag&gt;.list
+ *                   上一轮实际下发的完整文件清单，一行一个相对路径。
+ *                   放在事务目录之外——那个目录提交完就整个删掉了。
  * </pre>
  *
- * 三个阶段：
+ * 四个阶段：
  * <ol>
+ *   <li><b>列清单</b>——{@link #listEntries} 只读 zip 的<b>中央目录</b>，在写第一个
+ *       字节之前就拿到包内全部路径：非法路径当场整包拒收，也才有可能和上一轮的
+ *       清单做差集算出<b>孤儿</b>（上一版下发过、这一版没有了的文件）。</li>
  *   <li><b>暂存</b>——解压进 {@code stage/}。这一步失败不会碰到活动树一个字节。</li>
  *   <li><b>计划</b>——遍历 {@code stage/} 列出全部相对路径，连同「活动树上是否
  *       已有同名文件」写成 journal，<b>fsync 一次</b>后才进入下一阶段。</li>
@@ -63,6 +77,22 @@ import java.util.List;
  *       不动；</li>
  *   <li>backup 里没有、且计划记的是「原本没有」→ 是本次新增的文件，删掉。</li>
  * </ul>
+ *
+ * 孤儿那类（{@code '-'}）落在第一条：它一定是「原本有」，备份走了就靠 backup 挪回来，
+ * 还没轮到就什么都没动过。所以回滚逻辑一个字都不用为它单开分支。
+ *
+ * <h3>为什么要清理孤儿</h3>
+ *
+ * 解压是**只写不删**的。把一个文件从包里拿掉，只是「以后不再更新它」——设备上那份
+ * 会永远留着，而且因为 {@code WebViewImpl$WebViewClientImpl.shouldInterceptRequest}
+ * 是本地优先且忽略 {@code ?<md5>} 查询串，它会**永远盖住服务端的版本**。
+ * 历史篇入口就是这么丢的：某一版把一个页面 CSS 放进过包里，那份快照缺了按钮的规则，
+ * 后来即使从包里移除也无济于事。把孤儿在同一个事务里删掉，请求就回落到服务端，
+ * 等于恢复成「我们从没碰过这个文件」。
+ *
+ * <p>删除范围由 {@code cleanupPrefixes} 的白名单限死——热更包和安装器的十几个大包
+ * 写的是同一棵树，共用的子树里「这一版没有它」不等于「不该有它」。
+ * 首次启用时没有上一轮清单，什么都不删：<b>这套机制防的是以后再犯，补不了以前的账。</b>
  *
  * 总共两次 fsync（journal 一次、COMMITTED 一次）。
  *
@@ -89,6 +119,10 @@ public final class CNHotUpdateTx {
     /** 事务工作区的目录名。放在解压根之下，保证与活动树同一个文件系统——
      *  跨文件系统时 {@link File#renameTo} 会失败，整套换入就退化成复制。 */
     static final String TX_DIR = ".cnv_tx";
+
+    /** 每个 tag 上一次实际落盘的文件清单，用来算「这次没了的文件」。
+     *  不放在 {@link #TX_DIR} 下面——那个目录提交完就整个删掉了。 */
+    static final String MANIFEST_DIR = ".cnv_manifest";
 
     private static final String STAGE     = "stage";
     private static final String BACKUP    = "backup";
@@ -133,6 +167,12 @@ public final class CNHotUpdateTx {
         }
 
         try {
+            // ---- 阶段零：先读 zip 的中央目录，拿到完整文件清单 ----
+            // 一个字节都还没写就能知道这个包要动哪些文件：非法路径当场拒收，
+            // 也才有可能在解压之前把「上一版有、这一版没有」的孤儿算出来。
+            List<String> declared = listEntries(archive);
+            CNLog.i(TAG, "[" + tag + "] 包内清单 " + declared.size() + " 个文件");
+
             // ---- 阶段一：解压到暂存区。全程不碰活动树 ----
             if (!stage.mkdirs() && !stage.isDirectory()) {
                 throw new IOException("建不出暂存目录: " + stage);
@@ -144,26 +184,47 @@ public final class CNHotUpdateTx {
             collect(stage, "", rels);
             if (rels.isEmpty()) throw new IOException("热更包解压后没有任何文件");
 
-            List<Entry> plan = new ArrayList<Entry>(rels.size());
-            StringBuilder sb = new StringBuilder(rels.size() * 48);
+            // 落盘结果必须与中央目录声明的完全一致。对不上说明要么解压器写了
+            // 清单外的东西，要么清单里的东西没落盘——两种都不该带着往下走。
+            Set<String> declaredSet = new HashSet<String>(declared);
+            for (int i = 0; i < rels.size(); i++) {
+                if (!declaredSet.contains(rels.get(i))) {
+                    throw new IOException("解压出了清单之外的文件: " + rels.get(i));
+                }
+            }
+            if (rels.size() != declaredSet.size()) {
+                throw new IOException("清单 " + declaredSet.size() + " 个文件，实际解压出 "
+                        + rels.size() + " 个");
+            }
+
+            // ---- 孤儿：上一版下发过、这一版没有了 ----
+            List<String> orphans = findOrphans(root, tag, declaredSet);
+
+            List<Entry> plan = new ArrayList<Entry>(rels.size() + orphans.size());
+            StringBuilder sb = new StringBuilder((rels.size() + orphans.size()) * 48);
             for (int i = 0; i < rels.size(); i++) {
                 String rel = rels.get(i);
-                // 包里若含 .cnv_tx/… 会覆盖事务自己的工作区，直接拒收整个包
-                if (rel.equals(TX_DIR) || rel.startsWith(TX_DIR + "/")) {
-                    throw new IOException("热更包试图写入事务工作区: " + rel);
-                }
                 boolean existed = new File(root, rel).exists();
-                plan.add(new Entry(rel, existed));
-                sb.append(existed ? '1' : '0').append('\t').append(rel).append('\n');
+                plan.add(new Entry(rel, existed, false));
+                sb.append(existed ? '1' : '0').append('+').append('\t').append(rel).append('\n');
+            }
+            for (int i = 0; i < orphans.size(); i++) {
+                // 孤儿一定是活动树上现存的文件（findOrphans 已经 stat 过），
+                // 所以 existed 恒为 1：它会被备份走，回滚时原样挪回来。
+                plan.add(new Entry(orphans.get(i), true, true));
+                sb.append('1').append('-').append('\t').append(orphans.get(i)).append('\n');
             }
             writeSynced(journal, sb.toString());
-            CNLog.i(TAG, "[" + tag + "] 提交计划已落盘：" + plan.size() + " 个文件（覆盖 "
-                    + countExisting(plan) + " 个）");
+            CNLog.i(TAG, "[" + tag + "] 提交计划已落盘：写入 " + rels.size() + " 个（覆盖 "
+                    + countExisting(plan) + " 个），清理孤儿 " + orphans.size() + " 个");
 
             // ---- 阶段三：提交 ----
             commit(root, stage, backup, plan, tag);
             writeSynced(new File(tx, COMMITTED), "ok\n");
             CNLog.i(TAG, "[" + tag + "] 提交完成");
+            // 清单在提交之后写。中间崩掉的话下一轮拿到的是**上一版**的清单，
+            // 算出来的孤儿只会更少（漏删），不会多删——失败方向永远偏安全。
+            writeManifest(root, tag, declared);
         } catch (Throwable t) {
             CNLog.e(TAG, "[" + tag + "] 应用失败，开始回滚", t);
             boolean rolled = rollback(root, tx, journal);
@@ -208,8 +269,11 @@ public final class CNHotUpdateTx {
     /** 计划里的一条：相对路径 + 活动树上原本是否已有同名文件。 */
     private static final class Entry {
         final String  rel;
-        final boolean existed;
-        Entry(String rel, boolean existed) { this.rel = rel; this.existed = existed; }
+        final boolean existed;   // 动手之前活动树上是否已有它（决定要不要备份）
+        final boolean remove;    // true = 只删不写（孤儿清理），没有对应的 stage 文件
+        Entry(String rel, boolean existed, boolean remove) {
+            this.rel = rel; this.existed = existed; this.remove = remove;
+        }
     }
 
     private static int countExisting(List<Entry> plan) {
@@ -230,9 +294,193 @@ public final class CNHotUpdateTx {
                 ensureParent(to);
                 move(live, to);
             }
+            if (en.remove) continue;   // 孤儿：备份完就没了，没有 stage 文件要换入
             ensureParent(live);
             move(from, live);
         }
+    }
+
+    // ==================================================================
+    // 清单：读 zip 中央目录 / 记录本轮下发了什么 / 算孤儿
+    // ==================================================================
+
+    /**
+     * 只读 zip 的<b>中央目录</b>，返回包内全部文件的相对路径（目录条目不算）。
+     *
+     * <p>不解压、不解码任何一个字节：{@link ZipFile} 打开时读的就是中央目录，
+     * 遍历它是 O(条目数)。所以这一步可以放在动手之前，用来：
+     *
+     * <ul>
+     *   <li>把非法路径挡在<b>写第一个字节之前</b>——绝对路径、{@code ..} 穿越、
+     *       写进事务工作区，任何一条命中就整包拒收；</li>
+     *   <li>拿到「这一版有哪些文件」，才能和上一版的清单做差集算出孤儿；</li>
+     *   <li>解压完拿它和实际落盘的结果对账（见 {@link #apply}）。</li>
+     * </ul>
+     *
+     * <p>路径统一成 {@code /} 分隔、去掉末尾斜杠。重复条目直接拒收——同名条目
+     * 出现两次时「哪一份赢」取决于解压顺序，那是不该带进事务里的不确定性。
+     */
+    public static List<String> listEntries(File archive) throws IOException {
+        if (archive == null || !archive.isFile()) {
+            throw new IOException("热更包不存在: " + archive);
+        }
+        List<String> out = new ArrayList<String>();
+        Set<String>  seen = new HashSet<String>();
+        ZipFile zip = new ZipFile(archive);
+        try {
+            Enumeration<? extends ZipEntry> es = zip.entries();
+            while (es.hasMoreElements()) {
+                ZipEntry e = es.nextElement();
+                String name = e.getName().replace('\\', '/');
+                if (e.isDirectory() || name.endsWith("/")) continue;
+                if (name.length() == 0) {
+                    throw new ZipException("包内有空文件名");
+                }
+                if (name.startsWith("/")) {
+                    throw new ZipException("包内有绝对路径: " + name);
+                }
+                if (name.indexOf(':') >= 0) {
+                    throw new ZipException("包内路径含盘符/协议分隔符: " + name);
+                }
+                String[] segs = name.split("/", -1);
+                for (int i = 0; i < segs.length; i++) {
+                    if (segs[i].equals("..")) {
+                        throw new ZipException("包内路径试图向上穿越: " + name);
+                    }
+                    if (segs[i].length() == 0 && i != segs.length - 1) {
+                        throw new ZipException("包内路径有空目录段: " + name);
+                    }
+                }
+                if (name.equals(TX_DIR) || name.startsWith(TX_DIR + "/")) {
+                    throw new ZipException("热更包试图写入事务工作区: " + name);
+                }
+                if (name.equals(MANIFEST_DIR) || name.startsWith(MANIFEST_DIR + "/")) {
+                    throw new ZipException("热更包试图写入清单目录: " + name);
+                }
+                if (!seen.add(name)) {
+                    throw new ZipException("包内有重复条目: " + name);
+                }
+                out.add(name);
+            }
+        } finally {
+            closeQuietly(zip);
+        }
+        if (out.isEmpty()) throw new ZipException("包里没有任何文件条目: " + archive);
+        return out;
+    }
+
+    /**
+     * 允许清理孤儿的路径前缀，按 tag 区分。<b>这是个白名单，宁可漏删不可错删。</b>
+     *
+     * <h3>为什么必须限定前缀</h3>
+     *
+     * 热更包和安装器的十几个大包写的是**同一棵树**。某个路径同时出现在两边时，
+     * 「热更包这一版没有它」不代表「设备上不该有它」——很可能是安装包给的。
+     * 把它当孤儿删掉，游戏就回落到向服务端取原版，等于把汉化悄悄退了。
+     *
+     * <h3>各前缀的依据（实测线上各包的路径集合）</h3>
+     *
+     * <ul>
+     *   <li>{@code js} 包：{@code magica/js/}、{@code magica/template/}、
+     *       {@code magica/css/}、{@code magica/fonts/} 只有热更包会写；
+     *       而 {@code magica/resource/} 与 {@code cn_magica_resource.zip}
+     *       （9547 项，全部在这个前缀下）**重叠**，所以<b>不放进白名单</b>。</li>
+     *   <li>{@code scenario} 包：{@code madomagi/resource/scenario/json/} 是
+     *       {@code cn_scenario_update.zip} 独占；{@code cn_scenario_img.zip}
+     *       全部落在 {@code .../scenario/img/} 下，两者路径交集为 0。</li>
+     * </ul>
+     *
+     * 加新前缀之前，先把线上所有包的路径集合拉下来做一次交集验证。
+     */
+    private static String[] cleanupPrefixes(String tag) {
+        if ("js".equals(tag)) {
+            return new String[] { "magica/js/", "magica/template/",
+                                  "magica/css/", "magica/fonts/" };
+        }
+        if ("scenario".equals(tag)) {
+            return new String[] { "madomagi/resource/scenario/json/" };
+        }
+        return new String[0];   // 不认识的 tag 一律不清理
+    }
+
+    private static File manifestFile(File root, String tag) {
+        return new File(new File(root, MANIFEST_DIR), tag + ".list");
+    }
+
+    /** 把本轮下发的完整清单写下来，供下一轮算孤儿。一行一个相对路径。 */
+    private static void writeManifest(File root, String tag, List<String> rels) {
+        try {
+            StringBuilder sb = new StringBuilder(rels.size() * 40);
+            for (int i = 0; i < rels.size(); i++) sb.append(rels.get(i)).append('\n');
+            File f = manifestFile(root, tag);
+            ensureParent(f);
+            writeSynced(f, sb.toString());
+        } catch (Throwable t) {
+            // 写不下来只影响下一轮的孤儿计算（会漏删），不影响这次更新的正确性
+            CNLog.w(TAG, "[" + tag + "] 清单写入失败，下一轮不会清理孤儿", t);
+        }
+    }
+
+    /** 读上一轮的清单。没有（首次启用、或上次没写成）就返回空。 */
+    private static List<String> readManifest(File root, String tag) {
+        List<String> out = new ArrayList<String>();
+        File f = manifestFile(root, tag);
+        if (!f.isFile()) return out;
+        BufferedReader r = null;
+        try {
+            r = new BufferedReader(new InputStreamReader(
+                    new FileInputStream(f), "UTF-8"), 65536);
+            String line;
+            while ((line = r.readLine()) != null) {
+                line = line.trim();
+                if (line.length() > 0) out.add(line);
+            }
+        } catch (Throwable t) {
+            CNLog.w(TAG, "[" + tag + "] 清单读取失败，本轮不清理孤儿", t);
+            out.clear();
+        } finally {
+            closeQuietly(r);
+        }
+        return out;
+    }
+
+    /**
+     * 孤儿 = 上一轮下发过、这一轮没有了、且现在还躺在活动树上的文件。
+     *
+     * <p>热更的解压是**只写不删**的：从包里拿掉一个文件，只是「以后不再更新它」，
+     * 设备上那份会永远留着，而且因为
+     * {@code WebViewImpl$WebViewClientImpl.shouldInterceptRequest} 是本地优先，
+     * 它会**永远盖住服务端的版本**。历史篇入口就是这么丢的：某一版把一个页面
+     * CSS 放进过包里，那份快照缺了按钮的规则，后来即使从包里移除也无济于事。
+     *
+     * <p>所以这里把它们找出来，在同一个事务里删掉——删掉之后请求就回落到服务端，
+     * 也就恢复成了「我们从没碰过这个文件」的状态。
+     *
+     * <p>首次启用这套机制时没有上一轮清单，返回空：<b>已经中招的设备不会被这一步
+     * 自动救回来</b>，那种只能靠把服务端现役内容原样发一遍去覆盖。这套机制是防
+     * 以后再犯，不是补以前的账。
+     */
+    private static List<String> findOrphans(File root, String tag, Set<String> current) {
+        List<String> out = new ArrayList<String>();
+        String[] prefixes = cleanupPrefixes(tag);
+        if (prefixes.length == 0) return out;
+        List<String> prev = readManifest(root, tag);
+        for (int i = 0; i < prev.size(); i++) {
+            String rel = prev.get(i);
+            if (current.contains(rel)) continue;
+            boolean allowed = false;
+            for (int j = 0; j < prefixes.length; j++) {
+                if (rel.startsWith(prefixes[j])) { allowed = true; break; }
+            }
+            if (!allowed) continue;
+            File live = new File(root, rel);
+            if (live.isFile()) out.add(rel);
+        }
+        if (!out.isEmpty()) {
+            CNLog.w(TAG, "[" + tag + "] 上一版下发过、这一版没有的文件 " + out.size()
+                    + " 个，将在本次事务中一并删除（首个: " + out.get(0) + "）");
+        }
+        return out;
     }
 
     // ==================================================================

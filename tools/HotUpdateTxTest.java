@@ -237,6 +237,120 @@ public class HotUpdateTxTest {
             check("事务工作区已清干净", !new File(root, ".cnv_tx").exists(), "");
         }
 
+        // ---------------------------------------------------------------
+        System.out.println("\n[8] 清单 + 孤儿清理：上一版下发过、这一版没有的文件要删掉");
+        {
+            File root = new File(base, "case8");
+            File v1 = zip(new File(base, "p8a.zip"),
+                    "magica/js/a.js",           "V1-A",
+                    "magica/js/gone.js",        "V1-GONE",
+                    "magica/css/x.css",         "V1-CSS",
+                    "magica/template/t.html",   "V1-T",
+                    "magica/resource/img.png",  "V1-IMG");
+            CNHotUpdateTx.apply(v1, root, "js");
+            check("第一轮：清单已写下",
+                    new File(root, ".cnv_manifest/js.list").isFile(), "");
+            check("第一轮：全部文件就位",
+                    "V1-GONE".equals(read(new File(root, "magica/js/gone.js"))), "");
+
+            File v2 = zip(new File(base, "p8b.zip"),
+                    "magica/js/a.js", "V2-A");
+            CNHotUpdateTx.apply(v2, root, "js");
+
+            check("孤儿 js 被删掉", !new File(root, "magica/js/gone.js").exists(), "");
+            check("孤儿 css 被删掉", !new File(root, "magica/css/x.css").exists(), "");
+            check("孤儿 template 被删掉", !new File(root, "magica/template/t.html").exists(), "");
+            check("magica/resource/ 下的孤儿**不删**（与安装包共用这棵子树）",
+                    "V1-IMG".equals(read(new File(root, "magica/resource/img.png"))),
+                    String.valueOf(read(new File(root, "magica/resource/img.png"))));
+            check("留在包里的文件是新内容",
+                    "V2-A".equals(read(new File(root, "magica/js/a.js"))), "");
+            check("清单已更新为第二版",
+                    "magica/js/a.js\n".equals(read(new File(root, ".cnv_manifest/js.list"))),
+                    String.valueOf(read(new File(root, ".cnv_manifest/js.list"))));
+            check("事务工作区已清干净", !new File(root, ".cnv_tx").exists(), "");
+        }
+
+        // ---------------------------------------------------------------
+        System.out.println("\n[9] 首次启用（没有上一轮清单）不删任何东西");
+        {
+            File root = new File(base, "case9");
+            // 模拟老版本客户端留下的树：文件在，但没有清单
+            write(new File(root, "magica/js/legacy.js"), "LEGACY");
+            File pkg = zip(new File(base, "p9.zip"), "magica/js/a.js", "A");
+            CNHotUpdateTx.apply(pkg, root, "js");
+            check("没有清单时不会误删已有文件",
+                    "LEGACY".equals(read(new File(root, "magica/js/legacy.js"))), "");
+        }
+
+        // ---------------------------------------------------------------
+        System.out.println("\n[10] 孤儿删除也在事务内：提交失败要把它们还回来");
+        {
+            File root = new File(base, "case10");
+            File v1 = zip(new File(base, "p10a.zip"),
+                    "magica/js/a.js",    "V1-A",
+                    "magica/js/gone.js", "V1-GONE");
+            CNHotUpdateTx.apply(v1, root, "js");
+            // 让第二轮提交中途失败：blocked 在活动树上是文件，包里要求它是目录
+            write(new File(root, "blocked"), "I-AM-A-FILE");
+            File v2 = zip(new File(base, "p10b.zip"),
+                    "magica/js/a.js", "V2-A",
+                    "blocked/x.txt",  "X");
+            boolean threw = false;
+            try { CNHotUpdateTx.apply(v2, root, "js"); }
+            catch (IOException e) { threw = true; }
+            check("apply 抛出异常", threw, "");
+            check("被删掉的孤儿已还原",
+                    "V1-GONE".equals(read(new File(root, "magica/js/gone.js"))),
+                    String.valueOf(read(new File(root, "magica/js/gone.js"))));
+            check("被覆盖的文件已还原",
+                    "V1-A".equals(read(new File(root, "magica/js/a.js"))), "");
+            check("回滚后事务工作区已清掉", !new File(root, ".cnv_tx").exists(), "");
+        }
+
+        // ---------------------------------------------------------------
+        System.out.println("\n[11] listEntries：动手之前就把非法包挡下来");
+        {
+            check("正常包能列出全部条目",
+                    CNHotUpdateTx.listEntries(
+                            zip(new File(base, "p11ok.zip"), "a/b.js", "X", "c.js", "Y")
+                    ).size() == 2, "");
+
+            String[][] bad = {
+                    { "p11abs.zip",  "/etc/passwd" },
+                    { "p11up.zip",   "../escape.js" },
+                    { "p11up2.zip",  "magica/../../escape.js" },
+                    { "p11tx.zip",   ".cnv_tx/js/journal" },
+                    { "p11mf.zip",   ".cnv_manifest/js.list" },
+                    { "p11drv.zip",  "C:/windows/x.js" },
+                    { "p11bs.zip",   "..\\escape.js" },
+            };
+            for (int i = 0; i < bad.length; i++) {
+                boolean threw = false;
+                try {
+                    CNHotUpdateTx.listEntries(zip(new File(base, bad[i][0]), bad[i][1], "X"));
+                } catch (IOException e) { threw = true; }
+                check("拒收 " + bad[i][1], threw, "");
+            }
+
+            boolean dup = false;
+            try {
+                CNHotUpdateTx.listEntries(
+                        zip(new File(base, "p11dup.zip"), "a.js", "1", "a.js", "2"));
+            } catch (IOException e) { dup = true; }
+            check("拒收重复条目", dup, "");
+
+            boolean empty = false;
+            try {
+                File f = new File(base, "p11empty.zip");
+                new java.util.zip.ZipOutputStream(new FileOutputStream(f)) {{
+                    putNextEntry(new ZipEntry("onlydir/")); closeEntry(); close();
+                }};
+                CNHotUpdateTx.listEntries(f);
+            } catch (IOException e) { empty = true; }
+            check("拒收只有目录条目的空包", empty, "");
+        }
+
         System.out.println("\n通过 " + pass + " 项，失败 " + fail + " 项");
         if (fail > 0) System.exit(1);
     }
