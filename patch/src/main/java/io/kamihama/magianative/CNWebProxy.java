@@ -632,10 +632,20 @@ public final class CNWebProxy {
             }
 
             int status = c.getResponseCode();
-            if (status < 200 || status >= 400) {
+            // 只接管 2xx。
+            //
+            // ⚠ 上界必须卡在 300 而不是 400。我们把 WebView 的请求头原样转发，
+            // 其中包含 If-None-Match / If-Modified-Since；上游回 304 时**响应体是
+            // 空的**，若把它当成功转交，WebView 拿到的就是一个空的 JS/CSS，
+            // 页面直接坏掉——而且这种坏法极难查（文件"存在"，只是没内容）。
+            // 交回去让 WebView 自己发条件请求、自己用缓存，才是对的。
+            //
+            // 3xx 同理：setInstanceFollowRedirects 不跟跨协议跳转，真出现 30x 时
+            // 我们手上只有一个跳转页，转过去没有意义。
+            if (status < 200 || status >= 300) {
                 // 代理这边不正常就别硬撑，交回去让 WebView 直连。
                 // 5xx / 407 这类是「这条线现在不行」，打进冷却让下一次落到下一条；
-                // 4xx（除 407）多半是上游自己的回答，照实转不了但也不该赖线路。
+                // 其余（3xx / 4xx）是上游自己的回答，不该赖到线路头上。
                 if (status >= 500 || status == 407) {
                     reportLineFailure(line, "HTTP " + status);
                 } else {

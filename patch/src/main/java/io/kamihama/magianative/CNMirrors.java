@@ -596,14 +596,8 @@ public final class CNMirrors {
     /** Java 侧代理入口前缀（供 SNAA 等 Java 网络请求改写）；未配置为 null。 */
     private static volatile String proxyBase;
 
-    /** Java 侧域名后缀白名单（供 {@link CNWebProxy} 判断该不该改写）；未配置为 null。 */
-    private static volatile String[] proxyDomains;
-
     /** Java 侧代理入口前缀；未配置为 null。 */
     public static String proxyBase() { return proxyBase; }
-
-    /** Java 侧域名后缀白名单；未配置为 null。调用方不要改返回的数组。 */
-    public static String[] proxyDomains() { return proxyDomains; }
 
     private static String fetch(String url, boolean direct) throws IOException {
         URL u = new URL(url);
@@ -695,18 +689,19 @@ public final class CNMirrors {
             // ⚠ 必须显式挑最大权重，不能取 plines[0]：parseProxyLines 是按**配置
             // 顺序**返回的，排序发生在 CNWebProxy.usableOf 里（那是另一个数组）。
             // 取下标 0 的话，把低权重那条写在前面就会让 native 拿到错的那台。
-            if (pbase.isEmpty() && plines != null && plines.length > 0) {
-                CNWebProxy.Line top = plines[0];
-                for (int i = 1; i < plines.length; i++) {
-                    if (plines[i].enabled && (!top.enabled || plines[i].weight > top.weight)) {
-                        top = plines[i];
-                    }
+            // 只在**启用**的线路里挑：全禁用时 pbase 保持为空，native 那边也不代理。
+            // 否则会出现「Java 侧因为全禁用而 OFF，native 却还在往一条被明确关掉的
+            // 线上改写」这种两边打架的状态。
+            if (pbase.isEmpty() && plines != null) {
+                CNWebProxy.Line top = null;
+                for (int i = 0; i < plines.length; i++) {
+                    if (!plines[i].enabled) continue;
+                    if (top == null || plines[i].weight > top.weight) top = plines[i];
                 }
-                pbase = top.base;
+                if (top != null) pbase = top.base;
             }
             if (!pbase.isEmpty() && pdom != null && pdom.length > 0) {
                 proxyBase = pbase;   // Java 侧保留，供 SNAA 等 Java 网络请求改写
-                proxyDomains = pdom;
                 try {
                     nativeSetProxyConfig(pbase, pdom);
                     CNLog.i(TAG, "代理配置已下发 base=" + pbase + " domains=" + pdom.length);
@@ -718,8 +713,14 @@ public final class CNMirrors {
                 // config.json 且其中有 proxy 段时才生效，没有任何持久状态要清。
                 CNLog.i(TAG, "config.json 未配置 proxy，本次启动直连");
             }
+            // 传本次解析出的 pdom，而不是 proxyDomains 字段。
+            //
+            // refresh() 一个会话里会跑多次（预热、取版本、退避重试、安装器）。
+            // 字段只在上面那个 if 分支里赋值，一旦某次的 domains 全被校验拒掉，
+            // 字段仍留着上一次的值——拦截层就会拿着旧白名单继续跑。那与本类
+            // 写明的「代理配置不做任何缓存，只认本次下发的那一份」直接矛盾。
             try {
-                CNWebProxy.configure(plines, proxyDomains, pwebMode);
+                CNWebProxy.configure(plines, pdom, pwebMode);
             } catch (Throwable t) {
                 CNLog.w(TAG, "拦截层代理配置下发失败（保持透传直连）: " + t);
             }

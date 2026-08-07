@@ -158,6 +158,33 @@ public class WebProxyTest {
         setLines(null);
         no("https://dorothy.magi-reco.com/x", "线路表为 null");
 
+        System.out.println("\n[14] usableOf：禁用的线路不得进入可用集");
+        // configure 会写日志（JVM 上没落点但不抛），这里走它才能验到 usableOf
+        CNWebProxy.configure(mkLines(
+                CNWebProxy.newLine("关掉的", "https://off.example/s/", 100, false),
+                CNWebProxy.newLine("开着的", "https://on.example/s/",   10, true)), DOM, "on");
+        eq("禁用的权重再高也不选", CNWebProxy.currentBase(), "https://on.example/s/");
+
+        CNWebProxy.configure(mkLines(
+                CNWebProxy.newLine("关掉的 A", "https://a.example/s/", 100, false),
+                CNWebProxy.newLine("关掉的 B", "https://b.example/s/",  50, false)), DOM, "on");
+        eq("全禁用 → 无可用线路", CNWebProxy.currentBase(), null);
+        no("https://dorothy.magi-reco.com/x", "全禁用时不得改写");
+
+        System.out.println("\n[15] configure：base 不以 '/' 结尾的线路要被滤掉");
+        CNWebProxy.configure(mkLines(
+                CNWebProxy.newLine("坏的", "https://bad.example/s", 100, true),
+                CNWebProxy.newLine("好的", "https://good.example/s/", 10, true)), DOM, "on");
+        eq("坏 base 被滤，落到好的那条", CNWebProxy.currentBase(), "https://good.example/s/");
+
+        System.out.println("\n[16] configure：白名单为空即整体透传");
+        CNWebProxy.configure(mkLines(
+                CNWebProxy.newLine("线", "https://x.example/s/", 100, true)), new String[0], "on");
+        eq("domains 为空 → 无可用线路", CNWebProxy.currentBase(), null);
+        CNWebProxy.configure(mkLines(
+                CNWebProxy.newLine("线", "https://x.example/s/", 100, true)), null, "on");
+        eq("domains 为 null → 无可用线路", CNWebProxy.currentBase(), null);
+
         System.out.println("\n[13] rewriteWith 与线路解耦（同一 URL 各线各改各的）");
         setConfig(BASE, DOM, CNWebProxy.MODE_ON);
         eq("线 A", CNWebProxy.rewriteWith("https://dorothy.magi-reco.com/a", "https://x.example/s/"),
