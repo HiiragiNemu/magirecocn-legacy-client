@@ -85,6 +85,7 @@
 #include <shadowhook.h>
 
 #include <atomic>
+#include <chrono>   // probeEndpointSlots 的节流用稳定时钟
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -1056,7 +1057,38 @@ using UrlGetterFn = const std::string* (*)(void*, int);
 static UrlGetterFn urlConfigApiOld  = nullptr;
 static UrlGetterFn urlConfigWebOld  = nullptr;
 static UrlGetterFn urlConfigChatOld = nullptr;
-static std::string g_endpointCache[3][8];   // [api/web/chat][type] 改写结果
+/**
+ * UrlConfig::Impl 里四个端点数组的布局（2026-08-07 反汇编 arm64 版引擎所得）。
+ *
+ * <p>四个 getter 的机器码形状完全一样，只差最后那个字段偏移：
+ *
+ * <pre>
+ *   ldr    x8, [x8, #0xdb0]     ; Impl 单例（注意：**根本没用 this**）
+ *   orr    w9, wzr, #0x18       ; 步长 24 = sizeof(std::string)（libc++ 64 位）
+ *   umaddl x8, w1, w9, x8       ; Impl + type * 24
+ *   add    x0, x8, #&lt;偏移&gt;      ; + 字段偏移
+ *   ret                          ; ← 没有任何边界检查
+ * </pre>
+ *
+ * 字段偏移 resource=0x08、api=0x68、chat=0x1b8、web=0x248，相邻差值全是 24 的
+ * 整数倍，说明它们是**连续的 std::string 数组**，长度可由间隔直接算出：
+ *
+ * <pre>
+ *   resource  0x08          间隔 0x60  →  4 个（type 0..3）
+ *   api       0x68          间隔 0x150 → 14 个（type 0..13）
+ *   chat      0x1b8         间隔 0x90  →  6 个（type 0..5）
+ *   web       0x248         上界未知（后面没有可定位的字段，accessToken 是个空桩）
+ * </pre>
+ *
+ * <p><b>因为没有边界检查，传超范围的 type 会读到数组之外的内存，再当成
+ * std::string 解引用——直接崩在玩家设备上。</b>所以主动探测只能在上面算出的
+ * 范围内做；web 的上界既然定不了，就<b>只被动观测、绝不主动探</b>。
+ */
+static const int URLCFG_API_SLOTS  = 14;   // type 0..13
+static const int URLCFG_CHAT_SLOTS = 6;    // type 0..5
+static const int URLCFG_MAX_SLOTS  = 16;   // 数组容量，取整到 16
+
+static std::string g_endpointCache[3][URLCFG_MAX_SLOTS];   // [api/web/chat][type] 改写结果
 
 /**
  * 观测去重用的指纹表：存**哈希**而不是字符串。
@@ -1068,7 +1100,7 @@ static std::string g_endpointCache[3][8];   // [api/web/chat][type] 改写结果
  *
  * <p>换成 64 位原子整数后，竞争的最坏后果只是多打一行重复日志。
  */
-static std::atomic<uint64_t> g_endpointSeen[3][8];
+static std::atomic<uint64_t> g_endpointSeen[3][URLCFG_MAX_SLOTS];
 
 /** FNV-1a：够用的去重指纹，不需要抗碰撞。 */
 static uint64_t fnv1a(const std::string& s) {
@@ -1094,7 +1126,7 @@ static uint64_t fnv1a(const std::string& s) {
  */
 static void endpointObserve(int slot, int type, const std::string& orig,
                             const char* tag) {
-    if (slot < 0 || slot > 2 || type < 0 || type > 7) return;
+    if (slot < 0 || slot > 2 || type < 0 || type >= URLCFG_MAX_SLOTS) return;
     uint64_t h = fnv1a(orig);
     uint64_t prev = g_endpointSeen[slot][type].exchange(h, std::memory_order_relaxed);
     if (prev == h) return;                       // 取值没变，不重复记
@@ -1104,7 +1136,7 @@ static void endpointObserve(int slot, int type, const std::string& orig,
 static const std::string* endpointRewrite(UrlGetterFn old, void* self, int type,
                                         int slot, const char* tag) {
     const std::string* orig = old(self, type);
-    if (type < 0 || type > 7) return orig;
+    if (type < 0 || type >= URLCFG_MAX_SLOTS) return orig;
     try {
         endpointObserve(slot, type, *orig, tag);
         std::string base;
@@ -1122,7 +1154,69 @@ static const std::string* endpointRewrite(UrlGetterFn old, void* self, int type,
     }
 }
 
+/**
+ * 主动把 api / chat 的**全部槽位**读一遍记下来。
+ *
+ * <h3>为什么要主动探</h3>
+ *
+ * 被动观测只看得见引擎自己读过的槽位。2026-08-07 那次真机（0105）玩了一整轮
+ * ——标题页、主页、巡逻、Scene0、任务、领每日奖励——<b>引擎自始至终只读过
+ * api[0]</b>，而它的取值是个<b>裸主机名</b>（{@code dorothy.magi-reco.com}，
+ * 没有 scheme），于是 tryRewriteUrl 第一道 "https://" 判断就返回 false，
+ * 静默透传，代理从来没生效过。
+ *
+ * <p>要决定「代理该改写哪个槽位」，就得知道其余槽位里装的是什么——有没有哪个
+ * 是完整 URL。那种槽位才是安全的改写点，比赌「往裸主机名里塞路径」稳得多。
+ *
+ * <h3>为什么这么探是安全的</h3>
+ *
+ * getter <b>没有边界检查</b>（见上方反汇编），传超范围的 type 会读到数组之外再
+ * 当 std::string 解引用——直接崩在玩家设备上。所以范围严格取自「字段偏移间隔 ÷
+ * 24」算出的数组长度：api 14 个、chat 6 个。都在数组内，读到的一定是构造好的
+ * std::string（没赋过值的就是空串），安全。
+ *
+ * <p>web <b>不探</b>：它后面没有可定位的字段（accessToken 是个被优化空的桩），
+ * 上界定不了。定不了就不赌，只保留被动观测。
+ *
+ * <h3>为什么要探多轮</h3>
+ *
+ * 这些槽位是引擎启动过程中陆续填的。0105 日志里 api[0] 在 49.692 就被读到，而
+ * 代理配置 49.749 才下发——只探一次会看到一堆空串。所以按节流重复探几轮，靠
+ * endpointObserve 的取值去重保证日志不吵：值没变就不会重复记。
+ */
+static void probeEndpointSlots(void* self) {
+    static std::atomic<int>      probeCount{0};
+    static std::atomic<uint64_t> lastProbe{0};
+
+    int done = probeCount.load(std::memory_order_relaxed);
+    if (done >= 8) return;                       // 总轮数封顶，不留长期开销
+
+    // 用稳定时钟而不是 clock()：后者量的是 CPU 时间，多线程下跑得比墙钟快，
+    // 节流会名存实亡；而且它靠传递包含才拿得到，NDK 下不保证。
+    uint64_t now = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (done > 0 && now - lastProbe.load(std::memory_order_relaxed) < 2000ULL) {
+        return;
+    }
+    // 抢到名额才探，避免多线程同时刷同一轮
+    if (!probeCount.compare_exchange_strong(done, done + 1,
+                                            std::memory_order_relaxed)) {
+        return;
+    }
+    lastProbe.store(now, std::memory_order_relaxed);
+
+    for (int t = 0; t < URLCFG_API_SLOTS; t++) {
+        const std::string* v = urlConfigApiOld ? urlConfigApiOld(self, t) : nullptr;
+        if (v) endpointObserve(0, t, *v, "api");
+    }
+    for (int t = 0; t < URLCFG_CHAT_SLOTS; t++) {
+        const std::string* v = urlConfigChatOld ? urlConfigChatOld(self, t) : nullptr;
+        if (v) endpointObserve(2, t, *v, "chat");
+    }
+}
+
 static const std::string* urlConfigApiNew(void* self, int type) {
+    try { probeEndpointSlots(self); } catch (...) {}   // 钩子边界绝不外抛
     return endpointRewrite(urlConfigApiOld, self, type, 0, "api");
 }
 // 【已停用】web 端点的**改写**没有 H() 安装它（45289988）。
@@ -1136,6 +1230,7 @@ static const std::string* urlConfigWebNew(void* self, int type) {
     return endpointRewrite(urlConfigWebOld, self, type, 1, "web");
 }
 static const std::string* urlConfigChatNew(void* self, int type) {
+    try { probeEndpointSlots(self); } catch (...) {}
     return endpointRewrite(urlConfigChatOld, self, type, 2, "chat");
 }
 
@@ -1155,6 +1250,11 @@ static const std::string* urlConfigWebObserve(void* self, int type) {
     const std::string* orig = urlConfigWebOld(self, type);
     try {
         if (orig) endpointObserve(1, type, *orig, "web(只读)");
+        // 也从这里触发一轮 api/chat 全槽位探测。原因见 probeEndpointSlots：
+        // 0105 日志里 api[0] 整场只被读了一次(49.692)，而且早于代理配置下发
+        // (49.749)；只挂在 api 上就只能探到一轮空值。web 是 54.7s 才被读的，
+        // 从这里再探一轮，能拿到「引擎跑起来之后」的快照。
+        probeEndpointSlots(self);
     } catch (...) {}      // 钩子边界绝不外抛
     return orig;          // 原样返回，绝不改写
 }
