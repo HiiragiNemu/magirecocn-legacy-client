@@ -285,9 +285,13 @@ done
 > 文件里设（clone 即执行任意代码，git 有意堵死了）。所以才需要绕这一圈。
 > 万一项目级 `.codex/` 层没被信任，手动补一次即可：`bash tools/install-hooks.sh`。
 
-`agent-guard.py` 自己只直接拦一件事：**`git commit --no-verify` / `-n` /
-`git push --no-verify`**。git 钩子唯一挡不住的就是绕过 git 钩子本身，所以这一条
-必须在更外层拦。要跳过请用下面写明的逃生口——它们至少会在输出里留下痕迹。
+`agent-guard.py` 自己只直接拦一件事：**绕过 git 钩子**——`git commit --no-verify`
+/ `-n`、`git push --no-verify`，以及 `git -c core.hooksPath=… commit/push`。
+git 钩子唯一挡不住的就是绕过 git 钩子本身，所以这一条必须在更外层拦。要跳过请用
+下面写明的逃生口——它们至少会在输出里留下痕迹。
+
+这不是安全边界，是防手滑与防偷懒的护栏：真想绕总归绕得过去。目标是「常见写法
+一个不漏、正常提交一个不误伤」。
 
 | 钩子 | 拦什么 | 对应条款 |
 |---|---|---|
@@ -297,7 +301,7 @@ done
 | `pre-push` | 新建名字像 CI 触发器的分支（`ci/*`、`build/*`、`*-driver-*`、`*-success`、带 run-id） | §2 |
 | | 远端已有非白名单分支时再开一条 | §0 规则二 |
 | | 2 小时内有分支活动时再开一条 | §0 规则三 |
-| `agent-guard.py` | `git commit/push --no-verify`（绕过上面两个且不留痕迹） | 本节 |
+| `agent-guard.py` | `--no-verify` 与 `-c core.hooksPath=…`（绕过上面两个且不留痕迹） | 本节 |
 
 **放行的**：推 `main`、删分支、往已存在的分支继续推、白名单
 （`main` / `archive/*` / `research/*`）。本地随便开分支也不拦——闸门只设在
