@@ -142,12 +142,27 @@
     "github_url": "https://github.com/MagirecoCN-Revival-Project",
     "footer_marquee": false
   },
+  "right_pill": {
+    "enabled": false,
+    "label": "♥  支持我们",
+    "title": "支持我们",
+    "content": "",
+    "url": ""
+  },
   "proxy": {
     "base": "https://api.example.test/stream/",
     "domains": [
       "magi-reco.com",
       "sisyphus.systems",
       "magica.f4samurai.com"
+    ],
+    "lines": [
+      {
+        "name": "主站 • api.example.test",
+        "base": "https://api.example.test/stream/",
+        "weight": 100,
+        "enabled": true
+      }
     ],
     "web_mode": "measure"
   }

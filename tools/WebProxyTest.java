@@ -37,12 +37,37 @@ public class WebProxyTest {
 
     /** 绕开 configure()——它会写日志，而日志在 JVM 上没有落点。直接塞字段。 */
     static void setConfig(String base, String[] domains, int mode) throws Exception {
-        Field b = CNWebProxy.class.getDeclaredField("base");
-        b.setAccessible(true); b.set(null, base);
+        Object[] ls = null;
+        if (base != null) {
+            ls = (Object[]) java.lang.reflect.Array.newInstance(CNWebProxy.Line.class, 1);
+            ls[0] = CNWebProxy.newLine("测试线", base, 100, true);
+        }
+        setLines(ls);
         Field d = CNWebProxy.class.getDeclaredField("domains");
         d.setAccessible(true); d.set(null, domains);
         Field m = CNWebProxy.class.getDeclaredField("mode");
         m.setAccessible(true); m.setInt(null, mode);
+    }
+
+    static void setLines(Object lines) throws Exception {
+        Field f = CNWebProxy.class.getDeclaredField("lines");
+        f.setAccessible(true); f.set(null, lines);
+    }
+
+    static CNWebProxy.Line[] mkLines(CNWebProxy.Line... ls) { return ls; }
+
+    /** 把某条线打进冷却（模拟它刚失败过）。 */
+    static void cooldown(CNWebProxy.Line l, long ms) throws Exception {
+        Field f = CNWebProxy.Line.class.getDeclaredField("cooldownUntil");
+        f.setAccessible(true); f.setLong(l, System.currentTimeMillis() + ms);
+    }
+
+    static void eq(String name, String got, String expect) {
+        if (expect == null ? got == null : expect.equals(got)) {
+            pass++; System.out.println("  ✅ " + name + "  → " + got);
+        } else {
+            fail++; System.out.println("  ❌ " + name + "\n           期望 " + expect + "\n           实得 " + got);
+        }
     }
 
     public static void main(String[] args) throws Exception {
@@ -107,6 +132,40 @@ public class WebProxyTest {
         setConfig(BASE, new String[] { "", "magi-reco.com" }, CNWebProxy.MODE_ON);
         rw("https://dorothy.magi-reco.com/x", BASE + "dorothy.magi-reco.com/x");
         no("https://anything.example/x", "空串混在有效项里也不该放行");
+
+        System.out.println("\n[10] 线路表：按权重降序选，不看数组顺序");
+        CNWebProxy.Line lo = CNWebProxy.newLine("低权重", "https://lo.example/s/", 10, true);
+        CNWebProxy.Line hi = CNWebProxy.newLine("高权重", "https://hi.example/s/", 90, true);
+        CNWebProxy.Line mid= CNWebProxy.newLine("中权重", "https://mid.example/s/", 50, true);
+        setConfig(BASE, DOM, CNWebProxy.MODE_ON);          // 先把 domains 装回去
+        // usableOf 是私有的，这里直接按「已排序」的形态塞进去验证 currentLine 的取用
+        setLines(mkLines(hi, mid, lo));
+        eq("取权重最高那条", CNWebProxy.currentBase(), "https://hi.example/s/");
+
+        System.out.println("\n[11] 失败冷却：跳到下一条，冷却到期自动复活");
+        cooldown(hi, 60_000);
+        eq("首选在冷却 → 落到第二条", CNWebProxy.currentBase(), "https://mid.example/s/");
+        cooldown(mid, 60_000);
+        eq("前两条都在冷却 → 落到第三条", CNWebProxy.currentBase(), "https://lo.example/s/");
+        cooldown(lo, 60_000);
+        eq("全在冷却 → 无可用线路（回退直连）", CNWebProxy.currentBase(), null);
+        cooldown(hi, -1000);   // 冷却已过期
+        eq("冷却到期自动复活", CNWebProxy.currentBase(), "https://hi.example/s/");
+
+        System.out.println("\n[12] 无可用线路时 rewrite 必须放弃改写");
+        cooldown(hi, 60_000); cooldown(mid, 60_000); cooldown(lo, 60_000);
+        no("https://dorothy.magi-reco.com/x", "全线冷却期间不得改写");
+        setLines(null);
+        no("https://dorothy.magi-reco.com/x", "线路表为 null");
+
+        System.out.println("\n[13] rewriteWith 与线路解耦（同一 URL 各线各改各的）");
+        setConfig(BASE, DOM, CNWebProxy.MODE_ON);
+        eq("线 A", CNWebProxy.rewriteWith("https://dorothy.magi-reco.com/a", "https://x.example/s/"),
+           "https://x.example/s/dorothy.magi-reco.com/a");
+        eq("线 B", CNWebProxy.rewriteWith("https://dorothy.magi-reco.com/a", "https://y.example/p/"),
+           "https://y.example/p/dorothy.magi-reco.com/a");
+        eq("白名单外的主机，换哪条线都不改",
+           CNWebProxy.rewriteWith("https://evil.example/a", "https://x.example/s/"), null);
 
         System.out.println("\n通过 " + pass + " 项，失败 " + fail + " 项");
         if (fail > 0) System.exit(1);

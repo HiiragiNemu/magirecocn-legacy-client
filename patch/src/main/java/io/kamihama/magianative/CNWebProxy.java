@@ -115,9 +115,59 @@ public final class CNWebProxy {
     /** 配对测速只取前这么多字节，够算 TTFB 就行，不为了测速把流量打满。 */
     private static final int  MEASURE_SAMPLE_BYTES = 16 * 1024;
 
+    /** 一条线路失败后的冷却时长。冷却期内跳过它，到期自动复活。 */
+    private static final long LINE_COOLDOWN_MS = 60_000L;
+
     private static volatile int      mode    = MODE_OFF;
-    private static volatile String   base    = null;   // https://api.example.test/stream/
     private static volatile String[] domains = null;
+    /** 代理线路表，按权重降序。configure 之后要么非空，要么为 null（= 没有代理可用）。 */
+    private static volatile Line[]   lines   = null;
+
+    /**
+     * 一条代理线路。
+     *
+     * <p>做成表而不是单个 {@code base}，是因为代理入口也会有「换了台机器 /
+     * 某条临时不通」的需求，而这类调整不该要求重打 APK。
+     *
+     * <h3>⚠ 代理线路与下载线路是两回事，永远不要合并</h3>
+     *
+     * 字段名（name/base/weight/enabled）和 {@code mirrors} 长得一样，纯粹是为了
+     * 填配置的人少记一套约定。**两张表不可互换，也不该共用任何选路逻辑：**
+     *
+     * <ul>
+     *   <li>{@code mirrors} 里绝大多数是<b>公共 CDN</b>（edge / ESA / gh-proxy /
+     *       对象存储直连）。它们只会分发我们放上去的静态文件，
+     *       <b>根本不会转发 API 请求</b>——把 API 指过去只会拿到 404 或它们自己的
+     *       错误页。</li>
+     *   <li>选路判据也不同。下载线路按<b>吞吐</b>竞速（{@code raceTopMirrors} 拿
+     *       256 KB 预热对象量 KB/s），因为那边是几 GB 的大文件；代理线路要看的是
+     *       <b>首字节延迟</b>，因为这边是几 KB 的 API 往返，吞吐再高也救不了 RTT。
+     *       拿吞吐去挑代理线，会挑出一条"带宽大但绕地球一圈"的。</li>
+     *   <li>失败语义也不同。下载线路失败可以换线续传，字节不丢；代理线路失败只能
+     *       回退直连，代价是这一个请求慢一点。</li>
+     * </ul>
+     *
+     * <p>所以这里是**自成一套**的线路表 + 冷却，不复用 {@link CNMirrors} 的任何
+     * 竞速/降级机制，也不从 {@code mirrors} 里取任何一条。
+     */
+    public static final class Line {
+        public final String  name;
+        public final String  base;      // 以 '/' 结尾
+        public final int     weight;
+        public final boolean enabled;
+        /** 失败冷却到期时刻（毫秒）。0 表示没在冷却。 */
+        volatile long cooldownUntil;
+
+        Line(String name, String base, int weight, boolean enabled) {
+            this.name = name; this.base = base; this.weight = weight; this.enabled = enabled;
+        }
+        @Override public String toString() { return name + "=" + base; }
+    }
+
+    /** 给 {@link CNMirrors} 造线路用（构造函数是包内可见的，这里开个正门）。 */
+    public static Line newLine(String name, String base, int weight, boolean enabled) {
+        return new Line(name, base, weight, enabled);
+    }
 
     private static final AtomicBoolean INSTALLED     = new AtomicBoolean(false);
     private static final AtomicBoolean WRAPPED       = new AtomicBoolean(false);
@@ -140,17 +190,81 @@ public final class CNWebProxy {
      * @param d       域名后缀白名单
      * @param modeStr config.json 的 {@code proxy.web_mode}，无法识别一律当 off
      */
-    public static void configure(String b, String[] d, String modeStr) {
+    public static void configure(Line[] ls, String[] d, String modeStr) {
         int m = parseMode(modeStr);
-        if (b == null || b.isEmpty() || d == null || d.length == 0) {
+        Line[] usable = usableOf(ls);
+        if (usable == null || d == null || d.length == 0) {
             // 配置不全就没有代理可谈，无论 web_mode 写了什么
-            base = null; domains = null; mode = MODE_OFF;
-            CNLog.i(TAG, "未配置代理入口/白名单，拦截层保持透传");
+            lines = null; domains = null; mode = MODE_OFF;
+            CNLog.i(TAG, "未配置代理线路/白名单，拦截层保持透传");
             return;
         }
-        base = b; domains = d; mode = m;
-        CNLog.i(TAG, "拦截层代理配置：mode=" + modeName(m) + " base=" + b
-                     + " domains=" + d.length);
+        lines = usable; domains = d; mode = m;
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < usable.length; i++) sb.append(' ').append(usable[i]);
+        CNLog.i(TAG, "拦截层代理配置：mode=" + modeName(m)
+                     + " 线路=" + usable.length + sb + " domains=" + d.length);
+    }
+
+    /** 滤掉禁用/畸形的，按权重降序排稳。全没了返回 null。 */
+    private static Line[] usableOf(Line[] ls) {
+        if (ls == null || ls.length == 0) return null;
+        java.util.ArrayList<Line> keep = new java.util.ArrayList<Line>();
+        for (int i = 0; i < ls.length; i++) {
+            Line l = ls[i];
+            if (l == null || !l.enabled) continue;
+            if (l.base == null || l.base.isEmpty() || l.base.charAt(l.base.length() - 1) != '/') continue;
+            keep.add(l);
+        }
+        if (keep.isEmpty()) return null;
+        // minSdk 21：不能用 List.sort，走 Collections.sort + 具名比较器
+        java.util.Collections.sort(keep, new ByWeightDesc());
+        return keep.toArray(new Line[0]);
+    }
+
+    /**
+     * 按权重降序。
+     *
+     * <p>写成具名静态类而非匿名类，也不让它实现 {@code Comparator<Line>}——
+     * d8 对「带泛型参数的接口」和「嵌套类方法内的匿名类」都崩过（见 CLAUDE.md 铁律 4）。
+     * 用裸 {@code Comparator} 再在 compare 里转型，是本仓库既有的规避写法。
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static final class ByWeightDesc implements java.util.Comparator {
+        @Override public int compare(Object a, Object b) {
+            int wa = ((Line) a).weight, wb = ((Line) b).weight;
+            return wa == wb ? 0 : (wa > wb ? -1 : 1);
+        }
+    }
+
+    /**
+     * 当前该用哪条线：按权重顺序取第一条不在冷却里的。
+     *
+     * <p>全都在冷却就返回 {@code null} —— 那就是「这一阵子代理都不好使」，
+     * 拦截层照常回退直连。宁可慢一点，也不往明知刚失败过的线上撞。
+     */
+    private static Line currentLine() {
+        Line[] ls = lines;
+        if (ls == null) return null;
+        long now = System.currentTimeMillis();
+        for (int i = 0; i < ls.length; i++) {
+            if (ls[i].cooldownUntil <= now) return ls[i];
+        }
+        return null;
+    }
+
+    /** 某条线失败了：打进冷却，下一次请求自动落到下一条。 */
+    private static void reportLineFailure(Line l, String why) {
+        if (l == null) return;
+        l.cooldownUntil = System.currentTimeMillis() + LINE_COOLDOWN_MS;
+        CNLog.w(TAG, "代理线路 " + l.name + " 失败，冷却 "
+                     + (LINE_COOLDOWN_MS / 1000) + "s：" + why);
+    }
+
+    /** 当前线路的入口前缀；没有可用线路时为 null。 */
+    public static String currentBase() {
+        Line l = currentLine();
+        return l == null ? null : l.base;
     }
 
     private static int parseMode(String s) {
@@ -373,7 +487,9 @@ public final class CNWebProxy {
         if (m == MODE_OFF) return null;
 
         String url = (req.getUrl() == null) ? null : req.getUrl().toString();
-        String rewritten = rewrite(url);
+        Line line = currentLine();
+        if (line == null) return null;               // 没有可用线路（或全在冷却）→ 直连
+        String rewritten = rewriteWith(url, line.base);
         if (rewritten == null) return null;          // 不是 https / 不在白名单 / 是我们自己
 
         // POST 拿不到 body（平台就没给），只能直连
@@ -392,10 +508,10 @@ public final class CNWebProxy {
         }
 
         if (m == MODE_MEASURE) {
-            maybeMeasure(url, rewritten);
+            maybeMeasure(url);
             return null;                             // measure 模式绝不接管
         }
-        return fetchViaProxy(url, rewritten, reqHeaders);
+        return fetchViaProxy(url, rewritten, reqHeaders, line);
     }
 
     /**
@@ -427,12 +543,21 @@ public final class CNWebProxy {
      * <p>规则与 native 的 {@code tryRewriteUrl} 保持一致，包括「排除自身」——
      * {@code *.example.test} 是 config/线路表/资源所在，改写它会打成死循环。
      *
-     * <p>是纯函数，没有任何状态；{@code tools/WebProxyTest.java} 直接拿它当测试面。
+     * <p>用当前选中的线路改写。线路的选取见 {@link #currentLine()}。
      *
      * @return 改写后的 URL；不该改写时返回 {@code null}
      */
     public static String rewrite(String url) {
-        String b = base;
+        return rewriteWith(url, currentBase());
+    }
+
+    /**
+     * 用指定的入口前缀改写。是纯函数，没有任何状态——
+     * {@code tools/WebProxyTest.java} 直接拿它当测试面。
+     *
+     * @return 改写后的 URL；不该改写时返回 {@code null}
+     */
+    public static String rewriteWith(String url, String b) {
         String[] d = domains;
         if (url == null || b == null || d == null) return null;
         if (b.isEmpty() || b.charAt(b.length() - 1) != '/') return null;
@@ -488,7 +613,7 @@ public final class CNWebProxy {
     // ==================================================================
 
     private static WebResourceResponse fetchViaProxy(String origUrl, String proxyUrl,
-                                                     Map<String, String> reqHeaders) {
+                                                     Map<String, String> reqHeaders, Line line) {
         HttpURLConnection c = null;
         long t0 = System.currentTimeMillis();
         try {
@@ -508,8 +633,14 @@ public final class CNWebProxy {
 
             int status = c.getResponseCode();
             if (status < 200 || status >= 400) {
-                // 代理这边不正常就别硬撑，交回去让 WebView 直连
-                CNLog.w(TAG, "代理取数 HTTP " + status + "，回退直连：" + origUrl);
+                // 代理这边不正常就别硬撑，交回去让 WebView 直连。
+                // 5xx / 407 这类是「这条线现在不行」，打进冷却让下一次落到下一条；
+                // 4xx（除 407）多半是上游自己的回答，照实转不了但也不该赖线路。
+                if (status >= 500 || status == 407) {
+                    reportLineFailure(line, "HTTP " + status);
+                } else {
+                    CNLog.w(TAG, "代理取数 HTTP " + status + "，回退直连：" + origUrl);
+                }
                 return null;
             }
             InputStream in = c.getInputStream();
@@ -541,12 +672,13 @@ public final class CNWebProxy {
                 }
             }
 
-            CNLog.i(TAG, "代理命中 " + ttfb + "ms " + origUrl);
+            CNLog.i(TAG, "代理命中 " + ttfb + "ms [" + line.name + "] " + origUrl);
             String reason = c.getResponseMessage();
             if (reason == null || reason.isEmpty()) reason = "OK";
             return new WebResourceResponse(mime, enc, status, reason, respHeaders, in);
         } catch (Throwable t) {
-            CNLog.w(TAG, "代理取数失败，回退直连（" + t + "）：" + origUrl);
+            // 连不上/超时是「这条线现在不行」，打进冷却换下一条
+            reportLineFailure(line, String.valueOf(t));
             if (c != null) { try { c.disconnect(); } catch (Throwable ignore) {} }
             return null;
         }
@@ -592,18 +724,23 @@ public final class CNWebProxy {
     // ==================================================================
 
     /**
-     * 对同一个 URL 各拉一次直连与代理，把两边的 TTFB 记进日志。
+     * 对同一个 URL 拉一次直连、再逐条线路各拉一次，把所有 TTFB 记进同一行日志。
      *
      * <p><b>为什么必须在真机上量：</b>开发机（境外容器、出口还套着一层 agent proxy）
      * 量出来 {@code /stream/} 每次都比直连慢 2～8 倍，但那个数字对国内玩家毫无参考
-     * 价值——国内直连 {@code dorothy.magi-reco.com} 可能很糟，而
-     * {@code api.example.test} 是国内加速入口，符号完全可能反过来。既然做代理的目的
-     * 是加速，就只能拿玩家设备上的数字来判。
+     * 价值——国内直连 {@code dorothy.magi-reco.com} 可能很糟，而国内加速入口可能好得
+     * 多，符号完全可能反过来。既然做代理的目的是加速，就只能拿玩家设备上的数字来判。
      *
-     * <p>成对拉同一个 URL 而不是各测各的，是为了把「这个对象本来就慢」从对比里消掉。
+     * <p><b>为什么逐条都测：</b>加了线路表之后，要回答的就不再是「代理比直连快吗」，
+     * 而是「哪条线最快、值不值得把权重调过去」。一行日志里横向摆开才好比。
+     *
+     * <p>全部拉<b>同一个</b> URL，是为了把「这个对象本来就慢」从对比里消掉。
      * 只取前 {@value #MEASURE_SAMPLE_BYTES} 字节，够算 TTFB，不为了测速把流量打满。
+     *
+     * <p>注意这里测的是<b>首字节延迟</b>而不是吞吐——这正是代理线路与下载线路必须
+     * 分开的地方：几 KB 的 API 往返里，带宽再大也救不了 RTT。
      */
-    private static void maybeMeasure(String origUrl, String proxyUrl) {
+    private static void maybeMeasure(String origUrl) {
         long now = System.currentTimeMillis();
         long last = lastMeasureAt.get();
         if (now - last < MEASURE_INTERVAL_MS) return;
@@ -611,7 +748,7 @@ public final class CNWebProxy {
         if (!lastMeasureAt.compareAndSet(last, now)) return;   // 抢到名额才测
         measureRounds.incrementAndGet();
         try {
-            Thread t = new Thread(new Measure(origUrl, proxyUrl), "cnv-webproxy-measure");
+            Thread t = new Thread(new Measure(origUrl, lines), "cnv-webproxy-measure");
             t.setDaemon(true);
             t.start();
         } catch (Throwable ignore) {}
@@ -619,18 +756,30 @@ public final class CNWebProxy {
 
     private static final class Measure implements Runnable {
         private final String direct;
-        private final String viaProxy;
-        Measure(String d, String p) { this.direct = d; this.viaProxy = p; }
+        private final Line[] ls;
+        Measure(String d, Line[] ls) { this.direct = d; this.ls = ls; }
 
         @Override public void run() {
             long a = probe(direct);
-            long b = probe(viaProxy);
-            String verdict;
-            if (a < 0 || b < 0)      verdict = "有一边失败";
-            else if (b < a)          verdict = "代理快 " + (a - b) + "ms";
-            else                     verdict = "直连快 " + (b - a) + "ms";
-            CNLog.i(TAG, "配对测速 直连=" + fmt(a) + " 代理=" + fmt(b)
-                         + "（" + verdict + "） " + direct);
+            StringBuilder sb = new StringBuilder("配对测速 直连=").append(fmt(a));
+            long best = -1; String bestName = null;
+            if (ls != null) {
+                for (int i = 0; i < ls.length; i++) {
+                    String u = rewriteWith(direct, ls[i].base);
+                    long v = (u == null) ? -1 : probe(u);
+                    sb.append("  ").append(ls[i].name).append('=').append(fmt(v));
+                    if (v >= 0 && (best < 0 || v < best)) { best = v; bestName = ls[i].name; }
+                }
+            }
+            if (a < 0 && best < 0)        sb.append("（全部失败）");
+            else if (best < 0)            sb.append("（代理全失败，直连可用）");
+            else if (a < 0)               sb.append("（直连失败，最快代理 ").append(bestName).append('）');
+            else if (best < a)            sb.append("（最快 ").append(bestName)
+                                            .append("，比直连快 ").append(a - best).append("ms）");
+            else                          sb.append("（直连最快，比最好的代理快 ")
+                                            .append(best - a).append("ms）");
+            sb.append(' ').append(direct);
+            CNLog.i(TAG, sb.toString());
         }
 
         private static String fmt(long v) { return v < 0 ? "失败" : (v + "ms"); }

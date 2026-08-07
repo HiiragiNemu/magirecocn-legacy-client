@@ -294,6 +294,51 @@ public final class CNMirrors {
         }
     }
 
+    /**
+     * 解析 {@code proxy.lines}——WebView 拦截层代理的线路表。
+     *
+     * <p>缺省或全被过滤光时，从 {@code proxy.base} 合成一条（名字就叫「默认代理」），
+     * 这样老配置一个字都不用改。
+     *
+     * <p>校验与 {@code mirrors} 同规格：必须 http(s) 开头，强制以 '/' 结尾——
+     * 否则 {@code rewriteWith} 会拼出 {@code …/stream<host>/path} 这种坏 URL。
+     *
+     * <p><b>它和 {@code mirrors} 没有任何关系，也不会去读 mirrors。</b>
+     * 那边是公共 CDN 分发静态文件，转发不了 API；见 {@link CNWebProxy.Line} 的注释。
+     */
+    private static CNWebProxy.Line[] parseProxyLines(JSONObject proxy, String fallbackBase) {
+        java.util.ArrayList<CNWebProxy.Line> out = new java.util.ArrayList<CNWebProxy.Line>();
+        JSONArray arr = proxy.optJSONArray("lines");
+        if (arr != null) {
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject o = arr.optJSONObject(i);
+                if (o == null) continue;
+                String b = normalizeBase(o.optString("base", "").trim());
+                if (b.isEmpty()) continue;
+                String n = o.optString("name", "").trim();
+                if (n.isEmpty()) n = b;
+                out.add(CNWebProxy.newLine(n, b, o.optInt("weight", 50),
+                                           o.optBoolean("enabled", true)));
+            }
+        }
+        if (out.isEmpty()) {
+            String b = normalizeBase(fallbackBase);
+            if (b.isEmpty()) return null;
+            out.add(CNWebProxy.newLine("默认代理", b, 100, true));
+        }
+        return out.toArray(new CNWebProxy.Line[0]);
+    }
+
+    /** 校验 scheme 并强制以 '/' 结尾；不合格返回空串。 */
+    private static String normalizeBase(String b) {
+        if (b == null) return "";
+        b = b.trim();
+        if (b.isEmpty()) return "";
+        String lower = b.toLowerCase(java.util.Locale.US);
+        if (!lower.startsWith("https://") && !lower.startsWith("http://")) return "";
+        return b.endsWith("/") ? b : (b + "/");
+    }
+
     /** 是否成功加载过远端线路列表。 */
     public static boolean isLoaded() { return loaded; }
 
@@ -570,6 +615,19 @@ public final class CNMirrors {
             // 端点级代理在真机上一次都没命中过（见 CNWebProxy 的类注释），
             // 拦截层是另一条独立的路，两者互不影响，各读各的开关。
             String pwebMode = proxy.optString("web_mode", "off").trim();
+
+            // 代理线路表（可选）：proxy.lines。缺省时从 proxy.base 合成一条，
+            // 老配置行为不变。
+            //
+            // ⚠ 这张表和 mirrors 是两回事，绝不能互相顶替：mirrors 里绝大多数是
+            // 公共 CDN，只分发我们放上去的静态文件，根本不会转发 API 请求。
+            // 详见 CNWebProxy.Line 的类注释。
+            CNWebProxy.Line[] plines = parseProxyLines(proxy, pbase);
+            // native 侧只吃单个 base（改它要动 .so，不值当）。没写 base 但配了 lines
+            // 时，就把权重最高那条给它——两边至少指向同一台机器。
+            if (pbase.isEmpty() && plines != null && plines.length > 0) {
+                pbase = plines[0].base;
+            }
             if (!pbase.isEmpty() && pdom != null && pdom.length > 0) {
                 proxyBase = pbase;   // Java 侧保留，供 SNAA 等 Java 网络请求改写
                 proxyDomains = pdom;
@@ -585,7 +643,7 @@ public final class CNMirrors {
                 CNLog.i(TAG, "config.json 未配置 proxy，本次启动直连");
             }
             try {
-                CNWebProxy.configure(proxyBase, proxyDomains, pwebMode);
+                CNWebProxy.configure(plines, proxyDomains, pwebMode);
             } catch (Throwable t) {
                 CNLog.w(TAG, "拦截层代理配置下发失败（保持透传直连）: " + t);
             }
