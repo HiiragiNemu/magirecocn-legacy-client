@@ -1,8 +1,7 @@
 {
-  "schema": 2,
-  "updated": "2026-08-03T13:22:42Z",
-  "comment": "客户端从 https://api.example.test/legacy/config.json 读取本文件。settings 与 mirrors 都是可选的：settings 缺省时用客户端内置默认值；mirrors 为空或整个文件拉取失败时，客户端回退到内置默认线路 https://r2.assets.example.test/ ，行为与加入换线功能之前一致。client 段也是可选的：缺省时客户端跳过版本检查。",
-
+  "schema": 8,
+  "updated": "2026-08-07T11:20:00Z",
+  "comment": "客户端从 https://api.example.test/legacy/config.json 读取本文件。settings 与 mirrors 都是可选的：settings 缺省时用客户端内置默认值；mirrors 为空或整个文件拉取失败时，客户端回退到内置默认线路 https://r2.assets.example.test/ ，行为与加入换线功能之前一致。client 段也是可选的：缺省时客户端跳过版本检查。proxy 段也是可选的：base 是代理入口前缀（必须以 / 结尾），domains 是允许被代理的域名后缀白名单，两者缺一则本次启动全程直连；web_mode 控制 WebView 拦截层代理，off = 纯透传（默认），measure = 仍然直连但后台配对测速并记日志，on = 本地文件没命中的 GET 改走代理、失败自动回退直连。",
   "settings": {
     "chunks": 4,
     "min_chunk_bytes": 8388608,
@@ -11,55 +10,145 @@
     "min_speed_kbps": 6400,
     "cooldown_ms": 60000
   },
-
   "client": {
-    "version": "1.0.0",
+    "version": "1.0.14",
     "apk_url": "https://assets.example.test/legacy-client.apk",
-    "note": "客户端强制更新通道：每次启动时客户端先读本段，version 高于本端内置版本（CI 构建时注入，1.0.<run_number>，与 APK 的 versionName/versionCode 无关）就弹窗引导去 apk_url 下载新包。要强制旧包更新时，把 version 抬到目标构建号之上即可；note 会显示在弹窗里，可留空。"
+    "note": "你的客户端版本过低，请下载新版本后继续。由于运维团队精力有限，旧版本将不再获得任何技术支持。"
   },
-
   "mirrors": [
     {
-      "name": "国内CDN加速 • （已退役线路丙）.example.test",
-      "base": "https://（已退役线路丙）.example.test/",
-      "weight": 95,
+      "name": "香港CDN加速 • （已下线线路）",
+      "base": "https://（已下线线路）/g/m/releases/download/latest/",
+      "weight": 100,
+      "chunks": 16,
+      "enabled": true
+    },
+    {
+      "name": "edge加速 • assets.example",
+      "base": "https://assets.example/",
+      "weight": 80,
+      "chunks": 8,
+      "enabled": true
+    },
+    {
+      "name": "阿里ESA加速 • esa.assets.example.test",
+      "base": "https://esa.assets.example.test/",
+      "weight": 60,
+      "chunks": 8,
+      "enabled": true
+    },
+    {
+      "name": "object-storage直连 • r2.assets.example.test",
+      "base": "https://r2.assets.example.test/",
+      "weight": 40,
       "chunks": 8,
       "enabled": false
     },
     {
-      "name": "CDN加速线路2 • （已退役线路乙）.example.test",
-      "base": "https://（已退役线路乙）.example.test/",
-      "weight": 70,
-      "chunks": 4,
-      "enabled": false
-    },
-    {
-      "name": "CDN加速线路1 • （已退役线路甲）.example.test",
-      "base": "https://（已退役线路甲）.example.test/",
-      "weight": 45,
-      "chunks": 8,
-      "enabled": false
-    },
-    {
-      "name": "服务器直连 • assets.example.test",
-      "base": "https://assets.example.test/",
-      "weight": 20,
-      "chunks": 4,
-      "enabled": false
-    },
-    {
-      "name": "gh-proxy镜像 • v4.gh-proxy.org",
+      "name": "gh-proxy镜像v4 • v4.gh-proxy.org",
       "base": "https://v4.gh-proxy.org/https://（外部发布渠道）/releases/download/latest/",
-      "weight": 95,
+      "weight": 30,
       "chunks": 4,
       "enabled": true
     },
     {
       "name": "gh-proxy镜像 • gh-proxy.org",
       "base": "https://gh-proxy.org/https://（外部发布渠道）/releases/download/latest/",
-      "weight": 50,
+      "weight": 20,
       "chunks": 4,
-      "enabled": false
+      "enabled": true
     }
-  ]
+  ],
+  "ui_credits": {
+    "list": [
+      {
+        "type": "title",
+        "text": "魔法纪录Totentanz中文化"
+      },
+      {
+        "type": "item",
+        "text": "【核心逆向开发】MadeInMagius【B站ID】",
+        "url": "https://b23.tv/aNjcz1p",
+        "span": "MadeInMagius"
+      },
+      {
+        "type": "sub",
+        "text": "(独立完成汉化引擎以及下载系统和日服国服资源合并)"
+      },
+      {
+        "type": "item",
+        "text": "【补丁与自动化】PhotonFlow【B站ID】",
+        "url": "https://b23.tv/9vyRcI8",
+        "span": "PhotonFlow"
+      },
+      {
+        "type": "head",
+        "text": "其他相关网站"
+      },
+      {
+        "type": "item",
+        "text": "reader.pages.example【魔法纪录剧情中日双语阅读网站】",
+        "url": "https://reader.pages.example",
+        "span": "reader.pages.example"
+      },
+      {
+        "type": "item",
+        "text": "live2d.pages.example【MagiaExedra和魔法纪录Live2D网站】",
+        "url": "https://live2d.pages.example",
+        "span": "live2d.pages.example"
+      },
+      {
+        "type": "item",
+        "text": "callsearch.pages.example【魔法少女称呼关系搜索与身高对比网站】",
+        "url": "https://callsearch.pages.example",
+        "span": "callsearch.pages.example"
+      },
+      {
+        "type": "head",
+        "text": "【协助与鸣谢】"
+      },
+      {
+        "type": "item",
+        "text": "国服文件之外的翻译和校对：水银h2oag【阅读器网站为主，资源已同步至游戏】",
+        "url": "https://b23.tv/ovvbrNw",
+        "span": "水银h2oag"
+      },
+      {
+        "type": "item",
+        "text": "下载加速及资源自动化推送：CyberNova",
+        "url": "https://b23.tv/9vyRcI8",
+        "span": "CyberNova"
+      },
+      {
+        "type": "item",
+        "text": "国服数据留存：segfault",
+        "url": "https://b23.tv/xjXW9DI",
+        "span": "segfault"
+      },
+      {
+        "type": "item",
+        "text": "项目官网：www.example.test【通往其他相关网站和提供联系方式】",
+        "url": "https://www.example.test",
+        "span": "www.example.test"
+      },
+      {
+        "type": "item",
+        "text": "bilibili视频教程：BV1faRiBBExk",
+        "url": "https://www.bilibili.com/video/BV1faRiBBExk",
+        "span": "BV1faRiBBExk"
+      }
+    ],
+    "footer": "汉化引擎与内容打包:  @MadeInMagius【B站、XHS、TX同名】 | 新版hook、国内加速+修复：@PhotonFlow/CyberNova | 如果需要联系请先B站私信，会提供群聊 | 该游戏支持后续剧情更新",
+    "github_url": "https://github.com/MagirecoCN-Revival-Project",
+    "footer_marquee": false
+  },
+  "proxy": {
+    "base": "https://api.example.test/stream/",
+    "domains": [
+      "magi-reco.com",
+      "sisyphus.systems",
+      "magica.f4samurai.com"
+    ],
+    "web_mode": "measure"
+  }
 }
