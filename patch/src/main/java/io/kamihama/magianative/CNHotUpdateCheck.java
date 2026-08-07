@@ -206,6 +206,11 @@ public final class CNHotUpdateCheck {
             }
         }, "cnv-mirrors-prewarm").start();
 
+        // WebView 拦截层代理：起个守护线程等 WebView 出现再接管它的 WebViewClient。
+        // 放在这里是因为它要等的东西（WebView）比热更晚得多，早点挂上等着不占代价；
+        // 真正走不走代理由 config.json 的 proxy.web_mode 决定，默认纯透传。
+        CNWebProxy.install();
+
         Activity act = awaitUsableActivity();
         if (act == null) {
             // 没有界面也要把检查跑完：更新照样能应用，只是玩家看不到进度。

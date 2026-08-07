@@ -425,8 +425,14 @@ public final class CNMirrors {
     /** Java 侧代理入口前缀（供 SNAA 等 Java 网络请求改写）；未配置为 null。 */
     private static volatile String proxyBase;
 
+    /** Java 侧域名后缀白名单（供 {@link CNWebProxy} 判断该不该改写）；未配置为 null。 */
+    private static volatile String[] proxyDomains;
+
     /** Java 侧代理入口前缀；未配置为 null。 */
     public static String proxyBase() { return proxyBase; }
+
+    /** Java 侧域名后缀白名单；未配置为 null。调用方不要改返回的数组。 */
+    public static String[] proxyDomains() { return proxyDomains; }
 
     private static String fetch(String url, boolean direct) throws IOException {
         URL u = new URL(url);
@@ -497,8 +503,13 @@ public final class CNMirrors {
                 }
                 if (!list.isEmpty()) pdom = list.toArray(new String[0]);
             }
+            // WebView 拦截层代理的模式（off / measure / on），缺省 off。
+            // 端点级代理在真机上一次都没命中过（见 CNWebProxy 的类注释），
+            // 拦截层是另一条独立的路，两者互不影响，各读各的开关。
+            String pwebMode = proxy.optString("web_mode", "off").trim();
             if (!pbase.isEmpty() && pdom != null && pdom.length > 0) {
                 proxyBase = pbase;   // Java 侧保留，供 SNAA 等 Java 网络请求改写
+                proxyDomains = pdom;
                 try {
                     nativeSetProxyConfig(pbase, pdom);
                     CNLog.i(TAG, "代理配置已下发 base=" + pbase + " domains=" + pdom.length);
@@ -509,6 +520,11 @@ public final class CNMirrors {
                 // 云端拿掉了 proxy 配置 —— 什么都不用做：代理只在本次启动成功读到
                 // config.json 且其中有 proxy 段时才生效，没有任何持久状态要清。
                 CNLog.i(TAG, "config.json 未配置 proxy，本次启动直连");
+            }
+            try {
+                CNWebProxy.configure(proxyBase, proxyDomains, pwebMode);
+            } catch (Throwable t) {
+                CNLog.w(TAG, "拦截层代理配置下发失败（保持透传直连）: " + t);
             }
         }
 
