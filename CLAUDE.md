@@ -65,7 +65,7 @@ Agent 侧的 PreToolUse 钩子来「接上电」。）
 
 | 钩子 | 拦什么 | 逃生口 |
 |---|---|---|
-| `commit-msg` | 标题非中文 / 缺 `Co-authored-by` / 缺「文档:」交代 | 信息里单独一行写 `[skip-hooks]` |
+| `commit-msg` | 标题非中文 / 缺 `Co-authored-by` / 缺「文档:」交代 | 信息里**顶格独占一行**写 `[skip-hooks]` |
 | `pre-push` | 新建远端分支违反 `AGENTS.md` §0 | `SKIP_BRANCH_HOOK=1 git push` |
 | `agent-guard.py` | `git commit/push --no-verify`（绕过上面两个且不留痕迹） | 无——请改用上面两个逃生口 |
 

@@ -16,12 +16,20 @@
 
 ## 逃生口
 
-确实需要跳过（修 typo、纯格式调整）时，**单独起一行**写 [skip-hooks]。
+确实需要跳过（修 typo、纯格式调整）时，**顶格独占一行**写 [skip-hooks]。
 用它意味着你**明确知道自己在跳过什么**——不要养成习惯。
 
-要求「单独一行」不是讲究格式：早先是在全文里搜这个字符串，结果第一个
-**介绍这个钩子**的提交（信息里引用了标记本身）把自己给跳过了。凡是提到它的
-提交信息都会中招。独占一行既写得出来，也不会被顺手提一句给误触发。
+要求「顶格独占一行」不是讲究格式，是两次被咬出来的：
+
+  · 早先在全文里搜这个字符串，于是第一个**介绍这个钩子**的提交（信息里引用了
+    标记本身）把自己给跳过了——凡是提到它的提交信息都会中招；
+  · 改成整行匹配（允许缩进）之后仍然漏：`git commit -v` 会把 diff 附在剪刀线
+    之后一并写进这个文件，而 diff 的上下文行带一个前导空格。本仓库 AGENTS.md
+    里恰好就有一行顶格的 [skip-hooks]，于是**任何用 -v 提交且改到 AGENTS.md 的
+    人都会被静默放行**。
+
+所以现在两道都做：先按剪刀线截断（-v 的 diff 与注释一律不参与判定），再要求
+标记顶格独占一行。
 """
 
 import re
@@ -29,14 +37,23 @@ import sys
 
 CJK = re.compile(r"[一-鿿]")
 SKIP = "[skip-hooks]"
-# 独占一行才算（允许前后空白），避免「提了一嘴」就被当成要跳过
-SKIP_LINE = re.compile(r"^\s*\[skip-hooks\]\s*$", re.M)
+# 顶格独占一行才算：不允许前导空白，因为 `git commit -v` 的 diff 上下文行正是
+# 「一个空格 + 原文」，本仓库又确实有一行顶格的 [skip-hooks]（AGENTS.md）。
+SKIP_LINE = re.compile(r"^\[skip-hooks\][ \t]*$", re.M)
+# git commit -v / commit.cleanup=scissors 的剪刀线，其后是 diff，不参与判定
+SCISSORS = re.compile(r"^#?\s*-+\s*>8\s*-+", re.M)
 
 
 def main():
     path = sys.argv[1]
     with open(path, "r", encoding="utf-8", errors="replace") as f:
         raw = f.read()
+
+    # 先砍掉剪刀线之后的一切：`git commit -v` 把整个 diff 附在那后面，
+    # 而 git 自己也会丢弃它——判定必须只看真正会成为提交信息的部分。
+    m = SCISSORS.search(raw)
+    if m:
+        raw = raw[:m.start()]
 
     # 去掉注释行（git 自己加的 # 开头说明）
     lines = [l for l in raw.split("\n") if not l.startswith("#")]

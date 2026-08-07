@@ -13,7 +13,7 @@
 #   tools/githooks/pre-push    分支纪律（AGENTS.md §0：别再乱开分支）
 #
 # 跳过单次检查：
-#   提交信息里单独一行写 [skip-hooks]  跳过 commit-msg
+#   提交信息里顶格独占一行写 [skip-hooks]  跳过 commit-msg
 #   SKIP_BRANCH_HOOK=1 git push ...  跳过 pre-push
 #
 # 卸载：git config --unset core.hooksPath
