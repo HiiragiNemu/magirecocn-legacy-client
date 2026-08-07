@@ -203,6 +203,10 @@ public final class CNHotUpdateCheck {
             @Override public void run() {
                 CNMirrors.refresh(false);
                 if (!CNMirrors.isLoaded()) CNMirrors.refresh(true);
+                // 这两次是背靠背发的，相隔几毫秒——开机头一两秒网络还没就绪时
+                // 必然一起失败（0117 真机就是这样，6 次全挤在同一秒）。
+                // 失败了就交给带退避的后台重试，别让整场会话跑在默认线路上。
+                CNMirrors.ensureLoadedAsync();
             }
         }, "cnv-mirrors-prewarm").start();
 

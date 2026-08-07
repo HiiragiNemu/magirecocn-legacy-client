@@ -297,6 +297,69 @@ public final class CNMirrors {
     /** 是否成功加载过远端线路列表。 */
     public static boolean isLoaded() { return loaded; }
 
+    /** 后台重试只跑一轮，重复调用无副作用。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean RETRY_STARTED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /** 退避表（毫秒）。总跨度约 2 分钟——网络就绪一般是秒级的事，拖太久没意义。 */
+    private static final long[] RETRY_BACKOFF_MS = { 3000L, 6000L, 12000L, 24000L, 48000L, 48000L };
+
+    /**
+     * 拉不到 config.json 时在后台带退避重试，直到成功或退避表用完。
+     *
+     * <h3>为什么需要它（2026-08-07 真机 0117）</h3>
+     *
+     * 那次启动里 6 次 {@code refresh} 全部以
+     * {@code SSLHandshakeException: connection closed} 失败，而且<b>全挤在同一秒</b>
+     * （开机后约 1 秒），{@code CNVersion} 也在同一刻挂掉。8 秒后 WebView 拉
+     * {@code dorothy.magi-reco.com} 一切正常——**网络那会儿只是还没就绪**。
+     *
+     * <p>问题在于调用方那对「先代理、失败再直连」是背靠背发的，两次相隔几毫秒，
+     * 网络没起来时必然一起失败；而 {@link #refresh} 本身没有任何重试。结果就是
+     * 整场会话跑在内置默认线路上，`proxy` 段也从来没下发过——
+     * {@link CNWebProxy} 拿不到配置，一直是 off。
+     *
+     * <p>失败是静默的（只有一行 WARN），后果却是全局的，所以值得单独补这一层。
+     * 成功后 {@link #parse} 会照常调 {@code CNWebProxy.configure}，配置迟到但会到；
+     * 拦截层读的是 volatile 的 mode，中途变更即时生效，不需要额外协调。
+     */
+    public static void ensureLoadedAsync() {
+        try {
+            if (loaded) return;
+            if (!RETRY_STARTED.compareAndSet(false, true)) return;
+            Thread t = new Thread(new RetryLoader(), "cnv-mirrors-retry");
+            t.setDaemon(true);
+            t.start();
+        } catch (Throwable t) {
+            CNLog.w(TAG, "线路表重试线程起不来（沿用默认线路）: " + t);
+        }
+    }
+
+    /** 具名静态类而非匿名类：避开 d8 对嵌套匿名类的老毛病。 */
+    private static final class RetryLoader implements Runnable {
+        @Override public void run() {
+            for (int i = 0; i < RETRY_BACKOFF_MS.length; i++) {
+                try {
+                    Thread.sleep(RETRY_BACKOFF_MS[i]);
+                } catch (InterruptedException ie) {
+                    return;
+                }
+                if (loaded) return;
+                CNLog.i(TAG, "线路表仍未加载，第 " + (i + 1) + " 次重试");
+                try {
+                    refresh(false);
+                    if (!loaded) refresh(true);
+                } catch (Throwable ignore) {}
+                if (loaded) {
+                    CNLog.i(TAG, "线路表在第 " + (i + 1) + " 次重试后加载成功");
+                    return;
+                }
+            }
+            CNLog.w(TAG, "线路表重试 " + RETRY_BACKOFF_MS.length
+                         + " 次仍失败，本次启动沿用内置默认线路（代理配置也不会下发）");
+        }
+    }
+
     /**
      * 首选镜像竞速：前两条已启用镜像并发拉取同一真实文件的前 {@link #RACE_BYTES}
      * 字节，按实测吞吐（bytes/sec）定胜负——首字节延迟只反映 RTT，
