@@ -341,7 +341,15 @@ public final class CNWebProxy {
 
                     Object wv = findWebView();
                     if (wv != null) {
-                        new Handler(Looper.getMainLooper()).post(new Wrapper((WebView) wv));
+                        // 只在「换了一个 WebView 实例」时才往主线程扔活。
+                        //
+                        // 原先是发现非空就无条件 post，于是包好之后仍然每 5 秒
+                        // 往主线程队列塞一个 Runnable——进程活多久塞多久，而
+                        // Wrapper.run() 只是判个 instanceof 就返回。游戏全程被
+                        // 这么骚扰主线程，纯属白费。
+                        if (!alreadyHandled((WebView) wv)) {
+                            new Handler(Looper.getMainLooper()).post(new Wrapper((WebView) wv));
+                        }
                     } else if (warmup) {
                         // 找不到时按 10 / 30 / 60 / 120 秒各记一次，别刷屏。
                         // 之前这里全程静默，真机上只看得到「等了 180s 没等到」，
@@ -372,9 +380,13 @@ public final class CNWebProxy {
         @Override public void run() {
             try {
                 WebViewClient orig = wv.getWebViewClient();
-                if (orig == null) return;
-                if (orig instanceof Delegating) return;   // 已经包过了，别套娃
+                if (orig == null) return;   // 还没准备好，下一轮再来（不记 handled）
+                if (orig instanceof Delegating) {
+                    markHandled(wv);        // 已经包过了，别套娃，也别再来
+                    return;
+                }
                 wv.setWebViewClient(new Delegating(orig));
+                markHandled(wv);
                 boolean first = WRAPPED.compareAndSet(false, true);
                 CNLog.i(TAG, (first ? "已接管 WebViewClient（原对象 " : "WebView 被重建，重新接管（原对象 ")
                              + orig.getClass().getName() + "），当前 mode=" + modeName(mode));
@@ -400,11 +412,35 @@ public final class CNWebProxy {
      *
      * <p>反射失败或字段为空一律当作「还没到时候」，不报错。
      */
+    /**
+     * 上一个已经处理过的 WebView。
+     *
+     * <p>用弱引用：它只是个「这个实例我处理过了」的标记，不该因此把一个已经被
+     * {@code removeWebView()} 销毁的 WebView 钉在内存里。
+     */
+    private static volatile java.lang.ref.WeakReference<WebView> handled;
+
+    private static boolean alreadyHandled(WebView wv) {
+        java.lang.ref.WeakReference<WebView> h = handled;
+        return h != null && h.get() == wv;
+    }
+
+    private static void markHandled(WebView wv) {
+        handled = new java.lang.ref.WeakReference<WebView>(wv);
+    }
+
+    /** 反射出来的字段缓存一次。轮询是长期跑的，没必要每轮都重新查一遍。 */
+    private static volatile Field webViewField;
+
     private static Object findWebView() {
         try {
-            Class<?> c = Class.forName("jp.f4samurai.web.WebViewHelper");
-            Field f = c.getDeclaredField("sWebView");
-            f.setAccessible(true);
+            Field f = webViewField;
+            if (f == null) {
+                Class<?> c = Class.forName("jp.f4samurai.web.WebViewHelper");
+                f = c.getDeclaredField("sWebView");
+                f.setAccessible(true);
+                webViewField = f;
+            }
             Object o = f.get(null);
             return (o instanceof WebView) ? o : null;
         } catch (Throwable t) {
@@ -795,6 +831,16 @@ public final class CNWebProxy {
      * 分开的地方：几 KB 的 API 往返里，带宽再大也救不了 RTT。
      */
     private static void maybeMeasure(String origUrl) {
+        // 只拿静态资源测，绝不碰 /magica/api/。
+        //
+        // 原拦截器对 api/ 开头的路径直接不处理，所以游戏的 API 请求也会落到
+        // afterLocalMiss 这儿来。而 probe 是**不带任何会话上下文**重发一遍——
+        // 测出来的是未鉴权路径的耗时（多半还是 401/403，按 >=400 记成"失败"），
+        // 既不代表真实情况，又白白让服务端多收 N 倍的裸 API 请求。
+        //
+        // 静态资源没有这个问题：无状态、可重复取，量出来的 TTFB 才是干净的对比。
+        if (origUrl == null || origUrl.contains("/magica/api/")) return;
+
         long now = System.currentTimeMillis();
         long last = lastMeasureAt.get();
         if (now - last < MEASURE_INTERVAL_MS) return;

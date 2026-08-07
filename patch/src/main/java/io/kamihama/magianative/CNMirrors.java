@@ -313,8 +313,14 @@ public final class CNMirrors {
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject o = arr.optJSONObject(i);
                 if (o == null) continue;
-                String b = normalizeBase(o.optString("base", "").trim());
-                if (b.isEmpty()) continue;
+                String raw = o.optString("base", "").trim();
+                String b = normalizeBase(raw);
+                if (b.isEmpty()) {
+                    // 静默跳过会让「配了却不生效」变成哑谜。宁可吵一行。
+                    CNLog.w(TAG, "忽略代理线路（非 https 或格式不合法）: "
+                                 + o.optString("name", "?") + " base=" + raw);
+                    continue;
+                }
                 String n = o.optString("name", "").trim();
                 if (n.isEmpty()) n = b;
                 out.add(CNWebProxy.newLine(n, b, o.optInt("weight", 50),
@@ -322,6 +328,10 @@ public final class CNMirrors {
             }
         }
         if (out.isEmpty()) {
+            if (arr != null && arr.length() > 0) {
+                CNLog.w(TAG, "proxy.lines 配了 " + arr.length()
+                             + " 条但没有一条合法，回落到 proxy.base");
+            }
             String b = normalizeBase(fallbackBase);
             if (b.isEmpty()) return null;
             out.add(CNWebProxy.newLine("默认代理", b, 100, true));
