@@ -12,6 +12,8 @@ dist/
 work/
 hot/
 tx-test/
+/t/
+/tf/
 payload.bin
 
 # 编辑器 / 系统
