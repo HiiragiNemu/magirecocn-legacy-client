@@ -329,14 +329,77 @@ public final class CNMirrors {
         return out.toArray(new CNWebProxy.Line[0]);
     }
 
-    /** 校验 scheme 并强制以 '/' 结尾；不合格返回空串。 */
+    /**
+     * 校验 scheme 并强制以 '/' 结尾；不合格返回空串。
+     *
+     * <h3>为什么只收 https，明文 http 一律拒绝</h3>
+     *
+     * 本项目的完整性前提是「DNSSEC + 完整 TLS 验证都开着，能在这种情况下劫持
+     * 约等于服务器已被攻破」。而这个前提<b>本身就是 config.json 能关掉的</b>——
+     * 只要往 {@code mirrors[].base} 或 {@code proxy.base} 里填一个 {@code http://}，
+     * TLS 就整个不参与了，防线被它要防的东西一句话解除。
+     *
+     * <p>后果不只是「被人看见下了什么」。安装器那 15 个基础包<b>没有 md5/sha 校验</b>
+     * （只有热更包有 {@code verifyZip}），完整性全押在 TLS 上；
+     * 而 {@code extractChecked} 只验结构不验内容。于是：
+     *
+     * <pre>
+     * 配置被改 → 明文线路 → 投毒 zip → 结构合法照单全收
+     *   → 恶意 JS 落进 &lt;files&gt;/magica/js/
+     *   → WebView 本地优先且热更只写不删，永久执行
+     *   → androidCommand.jsCallback 进 native
+     * </pre>
+     *
+     * <p>拒收 http 就把这条链在第一环切断，代价是零：线上六条线路本来全是 https。
+     */
     private static String normalizeBase(String b) {
         if (b == null) return "";
         b = b.trim();
         if (b.isEmpty()) return "";
+        // 控制字符（含换行）会让后续拼出的 URL 变成两条请求，直接拒
+        for (int i = 0; i < b.length(); i++) {
+            if (b.charAt(i) < 0x20 || b.charAt(i) == 0x7f) return "";
+        }
         String lower = b.toLowerCase(java.util.Locale.US);
-        if (!lower.startsWith("https://") && !lower.startsWith("http://")) return "";
+        if (!lower.startsWith("https://")) return "";
+        if (lower.length() <= "https://".length()) return "";   // 只有 scheme
         return b.endsWith("/") ? b : (b + "/");
+    }
+
+    /**
+     * 代理域名白名单的最小粒度校验。
+     *
+     * <p>{@code proxy.domains} 是<b>后缀</b>匹配（{@code magi-reco.com} 命中
+     * {@code dorothy.magi-reco.com}）。没有下限的话，填一个 {@code "com"} 就能
+     * 把玩家所有 {@code .com} 流量吸进代理——配置被改时这是个极便宜的全量劫持。
+     *
+     * <p>所以要求至少两段（含一个点），每段非空，且不是裸的公共后缀。
+     * 这不能挡住所有情况（{@code co.uk} 这类多级公共后缀仍会通过），但把
+     * 「一个词吸走整个顶级域」这种最省事的攻击拦掉了。
+     */
+    private static boolean isSaneProxyDomain(String d) {
+        if (d == null) return false;
+        d = d.trim().toLowerCase(java.util.Locale.US);
+        if (d.isEmpty() || d.length() > 253) return false;
+        if (d.charAt(0) == '.' || d.charAt(d.length() - 1) == '.') return false;
+        for (int i = 0; i < d.length(); i++) {
+            char c = d.charAt(i);
+            boolean ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.';
+            if (!ok) return false;
+        }
+        String[] labels = d.split("\\.", -1);
+        if (labels.length < 2) return false;              // 裸 TLD，例如 "com"
+        for (int i = 0; i < labels.length; i++) {
+            if (labels[i].isEmpty()) return false;        // 连续的点
+        }
+        // 常见的两级公共后缀，直接点名拒掉
+        if ("com.cn".equals(d) || "net.cn".equals(d) || "org.cn".equals(d)
+                || "gov.cn".equals(d) || "co.uk".equals(d) || "co.jp".equals(d)
+                || "com.au".equals(d) || "pages".equals(d)
+                || "github.io".equals(d) || "vercel.app".equals(d)) {
+            return false;
+        }
+        return true;
     }
 
     /** 是否成功加载过远端线路列表。 */
@@ -590,16 +653,13 @@ public final class CNMirrors {
         // 缺失或为空时客户端不代理、直连（兼容旧版）。
         JSONObject proxy = root.optJSONObject("proxy");
         if (proxy != null) {
-            String pbase = proxy.optString("base", "").trim();
-            // 与 mirrors 同样校验 scheme 并强制以 '/' 结尾，
-            // 避免 C++ tryRewriteUrl 拼出 "…/stream<host>/path" 这类坏 URL。
-            if (!pbase.isEmpty()) {
-                String lower = pbase.toLowerCase(java.util.Locale.US);
-                if (!lower.startsWith("https://") && !lower.startsWith("http://")) {
-                    pbase = "";
-                } else if (!pbase.endsWith("/")) {
-                    pbase = pbase + "/";
-                }
+            // 与 mirrors 同一套校验：只收 https、强制以 '/' 结尾（见 normalizeBase）。
+            // 结尾的 '/' 是必需的，否则 C++ tryRewriteUrl 会拼出
+            // "…/stream<host>/path" 这类坏 URL。
+            String pbaseRaw = proxy.optString("base", "").trim();
+            String pbase = normalizeBase(pbaseRaw);
+            if (pbase.isEmpty() && !pbaseRaw.isEmpty()) {
+                CNLog.w(TAG, "忽略 proxy.base（非 https 或格式不合法）: " + pbaseRaw);
             }
             JSONArray pdomains = proxy.optJSONArray("domains");
             String[] pdom = null;
@@ -607,7 +667,13 @@ public final class CNMirrors {
                 java.util.ArrayList<String> list = new java.util.ArrayList<String>();
                 for (int i = 0; i < pdomains.length(); i++) {
                     String d = pdomains.optString(i, "").trim();
-                    if (!d.isEmpty()) list.add(d);
+                    if (d.isEmpty()) continue;
+                    // 粒度太粗的后缀会把无关流量一起吸进代理，见 isSaneProxyDomain
+                    if (!isSaneProxyDomain(d)) {
+                        CNLog.w(TAG, "忽略 proxy.domains 条目（粒度过粗或格式不合法）: " + d);
+                        continue;
+                    }
+                    list.add(d);
                 }
                 if (!list.isEmpty()) pdom = list.toArray(new String[0]);
             }
@@ -675,15 +741,11 @@ public final class CNMirrors {
         for (int i = 0; i < arr.length(); i++) {
             JSONObject o = arr.optJSONObject(i);
             if (o == null) continue;
-            String base = o.optString("base", "").trim();
-            if (base.isEmpty()) continue;
-            // 只接受 http/https，避免线路列表被塞进奇怪的 scheme
-            String lower = base.toLowerCase(java.util.Locale.US);
-            if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
-                CNLog.w(TAG, "忽略非 http(s) 线路: " + base);
+            String base = normalizeBase(o.optString("base", "").trim());
+            if (base.isEmpty()) {
+                CNLog.w(TAG, "忽略线路（非 https 或格式不合法）: " + o.optString("base", ""));
                 continue;
             }
-            if (!base.endsWith("/")) base = base + "/";
             String name    = o.optString("name", base);
             int    weight  = o.optInt("weight", 0);
             int    chunks  = o.optInt("chunks", 0);

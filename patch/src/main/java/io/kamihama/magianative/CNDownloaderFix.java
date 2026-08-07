@@ -1015,10 +1015,33 @@ public final class CNDownloaderFix {
     // ==================================================================
 
     /**
-     * 解压 {@code archive} 到 {@code root}，带 Zip Slip 防护与逐条目大小核对。
+     * 解压膨胀比上限。超过它、且已经写出 {@link #EXTRACT_MIN_BYTES_BEFORE_RATIO}
+     * 之后才判定为 zip 炸弹。
+     *
+     * <p>游戏资源本来就是 PNG / 音频 / 已压缩的容器，实测膨胀比接近 1，
+     * 离 200 差着两个数量级，正常包不可能误伤。
+     */
+    private static final long EXTRACT_MAX_RATIO = 200L;
+
+    /**
+     * 小包不看比例。几 KB 的包里放一个高度可压的小文件，比例很容易冲上去，
+     * 但那点绝对量根本谈不上「把磁盘写满」，没必要为它中止。
+     */
+    private static final long EXTRACT_MIN_BYTES_BEFORE_RATIO = 256L * 1024 * 1024;
+
+    /**
+     * 解压 {@code archive} 到 {@code root}，带 Zip Slip 防护、逐条目大小核对
+     * 与膨胀比上限。
      *
      * <p>包内可见（而非 private）是因为热更新走的是同一套解压要求：
      * {@link CNHotUpdateCheck} 直接复用，不再另写一份。
+     *
+     * <h3>为什么要看膨胀比</h3>
+     *
+     * 归档的 md5/大小校验（只有热更包有，见 {@code CNHotUpdateCheck.verifyZip}）
+     * 管的是<b>压缩后</b>那份，管不到解压出来有多大。一个几十 MB 的包完全可以
+     * 炸出几十 GB，把玩家的存储写满——而写满之后倒霉的不只是游戏，整台机器都会
+     * 开始出问题。这一条与内容是否可信无关，纯粹是别让一个坏包能造成不可逆的破坏。
      */
     static void extractChecked(File archive, File root) throws IOException {
         if (!archive.isFile()) {
@@ -1029,6 +1052,10 @@ public final class CNDownloaderFix {
         }
         String rootCanonical = root.getCanonicalPath();
         String prefix        = rootCanonical + File.separator;
+
+        final long archiveBytes = Math.max(1L, archive.length());
+        final long ratioCap     = archiveBytes * EXTRACT_MAX_RATIO;
+        long writtenTotal = 0L;
 
         ZipFile zip = new ZipFile(archive);
         try {
@@ -1064,6 +1091,15 @@ public final class CNDownloaderFix {
                     while ((n = in.read(buf)) >= 0) {
                         os.write(buf, 0, n);
                         copied += n;
+                        writtenTotal += n;
+                        // 边写边看，而不是写完再算——zip 炸弹的伤害就在于「写出去」本身，
+                        // 等它铺完磁盘再报错已经晚了
+                        if (writtenTotal > EXTRACT_MIN_BYTES_BEFORE_RATIO
+                                && writtenTotal > ratioCap) {
+                            throw new ZipException("解压膨胀比超限（已写 " + writtenTotal
+                                    + "B，归档 " + archiveBytes + "B，上限 "
+                                    + EXTRACT_MAX_RATIO + "x）：" + archive.getName());
+                        }
                     }
                     os.flush();
                     if (entry.getSize() >= 0 && copied != entry.getSize()) {
