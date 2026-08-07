@@ -13,6 +13,11 @@ matcher = "^Bash$"
 
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = 'python3 "$(git rev-parse --show-toplevel)/tools/agent-guard.py"'
+# 必须先判存在再执行：python3 打不开文件时退出码是 2，而 2 在两边的钩子契约里
+# 都表示「拒绝这次工具调用」。cwd 不在本仓库内（或没装这份仓库）时直接 exit 0，
+# 否则每一条 Bash 命令都会被拒掉。
+command = '''
+sh -c 'p="$(git rev-parse --show-toplevel 2>/dev/null)/tools/agent-guard.py"; [ -f "$p" ] || exit 0; exec python3 "$p"'
+'''
 timeout = 15
 statusMessage = "核对提交/分支规范"
