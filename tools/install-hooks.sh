@@ -10,24 +10,29 @@
 # 这样它们跟着仓库走，而不是躺在每个人各自的 .git/hooks 里自生自灭。
 #
 #   tools/githooks/commit-msg  提交信息规范（中文 / Co-authored-by / 文档:）
-#   tools/githooks/pre-push    分支纪律（AGENTS.md §0：别再乱开分支）
+#   tools/githooks/pre-push    推送时的提交信息复查（§1）+ 分支纪律（§0）
+#   tools/githooks/_msgrules.py 两个钩子共用的提交信息判据（不是钩子本身）
 #
 # 跳过单次检查：
 #   提交信息里顶格独占一行写 [skip-hooks]  跳过 commit-msg
-#   SKIP_BRANCH_HOOK=1 git push ...  跳过 pre-push
+#   SKIP_MSG_HOOK=1    git push ...  跳过 pre-push 的提交信息检查
+#   SKIP_BRANCH_HOOK=1 git push ...  跳过 pre-push 的分支纪律检查
 #
 # 卸载：git config --unset core.hooksPath
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-chmod +x tools/githooks/*
+# 只给真正的钩子加执行位。下划线开头的是共用模块（_msgrules.py），
+# git 不会去执行它，也就没必要标成可执行。
+chmod +x tools/githooks/commit-msg tools/githooks/pre-push
 git config core.hooksPath tools/githooks
 
 echo "✔ 已把 core.hooksPath 指向 tools/githooks"
 echo
 echo "  生效的钩子："
 for h in tools/githooks/*; do
+  case "$(basename "$h")" in _*) continue ;; esac
   [ -f "$h" ] && printf "    %-12s %s\n" "$(basename "$h")" \
     "$(sed -n '3s|^"""||p;3s|。.*||p' "$h" 2>/dev/null | head -1)"
 done

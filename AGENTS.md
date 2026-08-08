@@ -298,7 +298,8 @@ git 钩子唯一挡不住的就是绕过 git 钩子本身，所以这一条必�
 | `commit-msg` | 标题非中文 | §1 一 |
 | | 缺 `Co-authored-by` trailer | §1 三 |
 | | 缺「文档:」交代 | §1 四 |
-| `pre-push` | 新建名字像 CI 触发器的分支（`ci/*`、`build/*`、`*-driver-*`、`*-success`、带 run-id） | §2 |
+| `pre-push` | 本次推送**新增**提交的信息不合规（判据同上，与 `commit-msg` 共用一份） | §1 |
+| | 新建名字像 CI 触发器的分支（`ci/*`、`build/*`、`*-driver-*`、`*-success`、带 run-id） | §2 |
 | | 远端已有非白名单分支时再开一条 | §0 规则二 |
 | | 2 小时内有分支活动时再开一条 | §0 规则三 |
 | `agent-guard.py` | `--no-verify` 与 `-c core.hooksPath=…`（绕过上面两个且不留痕迹） | 本节 |
@@ -310,6 +311,9 @@ git 钩子唯一挡不住的就是绕过 git 钩子本身，所以这一条必�
 **逃生口**（用它意味着你明确知道自己在跳过什么，并准备好向维护者解释）：
 
 ```bash
+# 跳过 pre-push 的提交信息检查：
+SKIP_MSG_HOOK=1 git push ...
+
 # 跳过 commit-msg：在提交信息里**顶格独占一行**写这个标记
 # （行内提一句不算，缩进也不算——后者是 git commit -v 的 diff 上下文行的样子）
 [skip-hooks]

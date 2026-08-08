@@ -1,12 +1,30 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""pre-push 钩子：把 AGENTS.md §0 的分支纪律变成硬拦截。
+"""pre-push 钩子：把 AGENTS.md §0 的分支纪律与 §1 的提交规范变成硬拦截。
 
 装法见 tools/install-hooks.sh。
 
 ## 拦什么
 
-**新建远端分支**这一个动作。已存在的分支继续推、推 main、删分支，都放行。
+两件事，互相独立，各有各的逃生口。
+
+### 一、本次推送新增的提交，信息不合规（§1）
+
+判据与 commit-msg 完全一致（共用 tools/githooks/_msgrules.py）。之所以在推送时
+再查一遍：commit-msg 只管得住「提交这个动作发生在这份克隆里」。2026-08-08 进来的
+那 12 个英文标题提交是在别处产生、然后作为分支推进来的，commit-msg 从头到尾没有
+机会运行——**只有 commit-msg 的话，这套东西挡不住当初催生它的那件事**。
+
+只查**本次推送新增的**提交：已经在远端的历史一律不碰（`remote..local`，新建分支
+则是 `local --not --remotes=origin`），另外再加一道时间闸 CUTOFF_EPOCH，
+早于它的提交一律不查。所以既不会翻旧账，也不会因为历史里有不合规的老提交就把
+第一次推送卡死。合并提交（多个父）跳过——那是 git 自己生成的信息。
+
+逃生口：`SKIP_MSG_HOOK=1 git push ...`
+
+### 二、新建远端分支（§0）
+
+只有**新建**这一个动作。已存在的分支继续推、推 main、删分支，都放行。
 
 新建分支时按 AGENTS.md §0 判定：
 
@@ -23,7 +41,8 @@
 
 ## 逃生口
 
-    SKIP_BRANCH_HOOK=1 git push ...
+    SKIP_MSG_HOOK=1    git push ...   跳过提交信息检查
+    SKIP_BRANCH_HOOK=1 git push ...   跳过分支纪律检查
 
 用它意味着你**明确知道自己在跳过什么**，并且准备好向维护者解释。
 """
@@ -33,6 +52,15 @@ import re
 import subprocess
 import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _msgrules                                              # noqa: E402
+
+# 提交信息检查只查这个时刻之后的提交（2026-08-08 00:10 UTC，本检查上线时）。
+# 「不限制历史提交，从现在开始检查」——历史里的老提交不翻旧账，否则谁 rebase
+# 一下旧分支都会被一堆与自己无关的提交卡死。
+CUTOFF_EPOCH = 1786147800
+MAX_COMMITS = 200                 # 单次推送最多查这么多，超出的不查（护栏不是审计）
 
 ALLOW = (re.compile(r"^main$"), re.compile(r"^archive/"), re.compile(r"^research/"))
 CI_SHAPED = (
@@ -55,13 +83,14 @@ def allowed(name):
     return any(p.search(name) for p in ALLOW)
 
 
-def main():
-    if os.environ.get("SKIP_BRANCH_HOOK"):
-        sys.stderr.write("pre-push: SKIP_BRANCH_HOOK=1，跳过分支纪律检查\n")
-        return 0
+def parse_stdin():
+    """stdin: <local ref> <local sha> <remote ref> <remote sha>，逐行。
 
-    # stdin: <local ref> <local sha> <remote ref> <remote sha>
-    new_branches = []
+    返回 [(local_sha, branch, remote_sha)]，只含 refs/heads/ 且非删除的条目。
+    全零 OID = 「不存在」；长度随仓库哈希算法变（SHA-1 40 / SHA-256 64），
+    所以按「全是 0」判，别写死 40。
+    """
+    out = []
     for line in sys.stdin.read().split("\n"):
         parts = line.split()
         if len(parts) != 4:
@@ -69,16 +98,93 @@ def main():
         _, local_sha, remote_ref, remote_sha = parts
         if not remote_ref.startswith("refs/heads/"):
             continue
-        # 全零 OID = 「不存在」。长度随仓库哈希算法变（SHA-1 40 / SHA-256 64），
-        # 所以按「全是 0」判，别写死 40。
-        if set(local_sha) == {"0"}:        # 删除分支，放行
+        if set(local_sha) == {"0"}:                  # 删除分支，放行
             continue
-        if set(remote_sha) != {"0"}:       # 已存在的分支，放行
-            continue
-        new_branches.append(remote_ref[len("refs/heads/"):])
+        out.append((local_sha, remote_ref[len("refs/heads/"):], remote_sha))
+    return out
 
-    if not new_branches:
+
+def new_commits(local_sha, remote_sha):
+    """本次推送**新增**的提交 SHA 列表（不含合并提交）。
+
+    已存在的分支用 remote..local，精确且不需要任何远端信息；
+    新建分支用 local --not --remotes=origin，把已经在远端的历史全部排除掉。
+    """
+    if set(remote_sha) != {"0"}:
+        rng = ["%s..%s" % (remote_sha, local_sha)]
+    else:
+        rng = [local_sha, "--not", "--remotes=origin"]
+    r = sh("git", "rev-list", "--no-merges",
+           "--max-count=%d" % MAX_COMMITS, *rng)
+    if r.returncode != 0:
+        return []                                    # 算不出来就不查（fail-open）
+    return [x for x in r.stdout.split() if x]
+
+
+def check_messages(refs):
+    """检查本次推送新增提交的信息。返回给用户看的问题列表。"""
+    bad = []
+    for local_sha, branch, remote_sha in refs:
+        for sha in new_commits(local_sha, remote_sha):
+            r = sh("git", "log", "-1", "--format=%ct%x1f%B", sha)
+            if r.returncode != 0:
+                continue
+            ts, _, raw = r.stdout.partition("\x1f")
+            try:
+                if int(ts.strip()) < CUTOFF_EPOCH:   # 历史提交不翻旧账
+                    continue
+            except ValueError:
+                continue
+            probs = _msgrules.problems(raw)
+            if probs:
+                subj = (raw.strip().split("\n") or [""])[0][:60]
+                bad.append((sha[:8], branch, subj, probs))
+    return bad
+
+
+def report_messages(bad):
+    sys.stderr.write("\n✘ push 被 pre-push 钩子拦下：%d 个提交的信息不合规\n\n"
+                     % len(bad))
+    for sha, branch, subj, probs in bad:
+        sys.stderr.write("  %s (%s)  %s\n" % (sha, branch, subj))
+        for p in probs:
+            sys.stderr.write("      · %s\n" % p.replace("\n      ", "\n        "))
+        sys.stderr.write("\n")
+    sys.stderr.write("  这一道查的是**本次推送新增的**提交——commit-msg 只管得住在\n"
+                     "  这份克隆里做的提交，在别处提交再推进来的它看不见。\n\n")
+    sys.stderr.write("  改法: git rebase -i --exec 'git commit --amend' 或重写这几条的信息\n")
+    sys.stderr.write("  规则出处: CLAUDE.md「提交约定」/ AGENTS.md §1\n")
+    sys.stderr.write("  确需跳过: SKIP_MSG_HOOK=1 git push ...\n\n")
+
+
+def main():
+    refs = parse_stdin()
+    if not refs:
         return 0
+
+    rc = 0
+
+    # ── 一、提交信息（§1）────────────────────────────────────
+    if os.environ.get("SKIP_MSG_HOOK"):
+        sys.stderr.write("pre-push: SKIP_MSG_HOOK=1，跳过提交信息检查\n")
+    else:
+        try:
+            bad = check_messages(refs)
+        except Exception:
+            bad = []                                 # fail-open
+        if bad:
+            report_messages(bad)
+            rc = 1
+
+    # ── 二、分支纪律（§0）────────────────────────────────────
+    if os.environ.get("SKIP_BRANCH_HOOK"):
+        sys.stderr.write("pre-push: SKIP_BRANCH_HOOK=1，跳过分支纪律检查\n")
+        return rc
+
+    new_branches = [b for local_sha, b, remote_sha in refs
+                    if set(remote_sha) == {"0"}]
+    if not new_branches:
+        return rc
 
     problems = []
     for name in new_branches:
@@ -94,7 +200,7 @@ def main():
         problems.append("`%s` 是一条新的非白名单分支。" % name)
 
     if not problems:
-        return 0
+        return rc
 
     # 远端现状：有没有可接续的 / 2 小时内动过的
     r = sh("git", "ls-remote", "--heads", "origin")

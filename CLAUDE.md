@@ -66,12 +66,18 @@ Agent 侧的 PreToolUse 钩子来「接上电」。）
 | 钩子 | 拦什么 | 逃生口 |
 |---|---|---|
 | `commit-msg` | 标题非中文 / 缺 `Co-authored-by` / 缺「文档:」交代 | 信息里**顶格独占一行**写 `[skip-hooks]` |
-| `pre-push` | 新建远端分支违反 `AGENTS.md` §0 | `SKIP_BRANCH_HOOK=1 git push` |
+| `pre-push` | 本次推送**新增**的提交信息不合规（在别处提交再推进来的，`commit-msg` 看不见） | `SKIP_MSG_HOOK=1 git push` |
+| | 新建远端分支违反 `AGENTS.md` §0 | `SKIP_BRANCH_HOOK=1 git push` |
 | `agent-guard.py` | `--no-verify` 与 `-c core.hooksPath=…`（绕过上面两个且不留痕迹） | 无——请改用上面两个逃生口 |
 
 之所以要拦：这几条在文档里躺了很久，然后 2026-08-08 一口气进来 12 个英文标题、
 作者是 `github-actions[bot]`、没有任何 `Co-authored-by` 的提交。
 **文档挡不住不读文档的人，钩子可以。**
+
+那 12 个提交是在**别处**产生、然后作为分支推进来的——`commit-msg` 从头到尾没有
+机会运行。所以 `pre-push` 也查一遍本次推送新增的提交信息，否则这套东西挡不住
+当初催生它的那件事。只查**新增的**（`remote..local`）且晚于上线时刻的提交，
+历史不翻旧账。
 
 > 分支纪律另见 [`AGENTS.md`](AGENTS.md)——那份是给 Codex / GPT 等自动化协作者的，
 > 与本文件同级生效，冲突时以本文件为准。
