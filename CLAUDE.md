@@ -19,9 +19,31 @@
    `Build.VERSION.SDK_INT` 守卫。编译期 classpath 只有 android.jar + OkHttp，
    不要引第三方依赖。
 
-4. **d8 的已知坑**：不要写「嵌套类的方法内的匿名类」，也不要让类实现带泛型参数的
-   接口（如 `Comparator<T>`）——当前 d8 版本会以 NPE 崩掉。用具名静态类代替。
-   这不是猜测，是本仓库构建时实测撞过三次的问题。
+4. **d8 的已知坑**（2026-08-08 在 build-tools 34.0.0 / R8 8.2.2-dev 上逐条复现，
+   订正了此前过宽又漏项的旧说法）。两种形状会让 d8 以
+
+   ```
+   NullPointerException: Cannot invoke "String.length()" because "<parameter1>" is null
+   ```
+
+   崩掉——没有行号，只有类名：
+
+   | | 崩 | 不崩 |
+   |---|---|---|
+   | **带 `this$0` 的类** | 非静态内部类；**实例**方法里的匿名类/局部类 | 静态嵌套类；**静态**方法里的匿名类（哪怕捕获局部变量） |
+   | **`Comparator`** | `implements Comparator<String>` | `implements Comparator`（裸类型）；`Callable<Boolean>`、`Iterable<String>` 等其他泛型父型 |
+
+   所以真正的判据是**有没有 `this$0`**，与「嵌套」「匿名」都无关：本仓库现有 32 个
+   匿名类全在静态方法里，一个都不用改；而 5 个 `implements Callable<...>` 也一直
+   构建正常——泛型父型本身没问题，逐个试下来只有 `Comparator` 会崩。
+
+   改法：非静态内部类改成 `static` 嵌套类，把外部实例作为构造参数传进去
+   （见 `CNRestartActivity.LaunchTask`）；`Comparator` 用裸类型
+   （见 `CNMirrors.ByWeightDesc`）。
+
+   `tools/check-d8-pitfalls.py` 在 CI 里于 javac 之后、d8 之前跑，撞上时给出可操作的
+   提示而不是那句 NPE。它**只认上表中已实测的形状**——宁可漏报也不误报，
+   一个会拦下正常代码的检查比没有检查更糟。
 
 5. **线路表直连主线，其余一律走换线**。只有 `config.json`（线路表本身）必须
    直连 `api.example.test`——它定义了线路，没得选。两份 version json

@@ -264,6 +264,11 @@ jobs:
                 -cp "${CP}" -d .build/classes \
                 "${SRC[@]}" .build/stubs/io/kamihama/magianative/RestClient.java
 
+          # d8 撞上「带 this$0 的类」或「implements Comparator<T>」时，只会报一句
+          # R8 内部的 NullPointerException，没有行号也没有别的线索。在这里先拦一道，
+          # 把它换成能照着改的话。判据与实测记录见脚本头部。
+          python3 tools/check-d8-pitfalls.py .build/classes
+
           # ── 分两组出 dex：UI 类进 classes2，其余补丁类进 classes3 ──
           # 这个划分必须与仓库里 smali_classes2/ 和 smali_classes3/ 的现状一致，
           # 否则同一个类会在两个 dex 里各出现一次。
