@@ -25,7 +25,9 @@ cd "$(dirname "$0")/.."
 
 # 只给真正的钩子加执行位。下划线开头的是共用模块（_msgrules.py），
 # git 不会去执行它，也就没必要标成可执行。
-chmod +x tools/githooks/commit-msg tools/githooks/pre-push
+# 用 || true 兜住：set -e 之下少一个钩子文件会让脚本在设 hooksPath 之前就退出，
+# 反而什么都没装上。
+chmod +x tools/githooks/commit-msg tools/githooks/pre-push 2>/dev/null || true
 git config core.hooksPath tools/githooks
 
 echo "✔ 已把 core.hooksPath 指向 tools/githooks"
