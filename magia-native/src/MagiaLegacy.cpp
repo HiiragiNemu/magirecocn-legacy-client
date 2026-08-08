@@ -97,6 +97,7 @@
 #include <vector>
 
 #include <dirent.h>
+#include <errno.h>    // loadDebugFlags 报「目录读不进去」时带上 errno
 #include <sys/stat.h>
 #include <pthread.h>
 #include <dlfcn.h>
@@ -219,6 +220,31 @@ static const DebugFlagDef kDebugFlags[] = {
 static void loadDebugFlags() {
     int on = 0;
     LOGI("[DEBUG] 调试开关目录: %s", DEBUG_DIR.c_str());
+
+    // 先判目录本身读不读得了，且**打在开关表前面**。
+    //
+    // 为什么必须单独说：读不到目录时，下面整张表会全部打成「关」，而这和「确实
+    // 一个都没开」在日志里一模一样。2026-08-08 就撞上了——有人建好了
+    // logI18nMissAll，日志里却全是 [   ]，两边都看不出区别，只能靠猜。
+    // 最常见的成因是拿 su/root 建目录：属主 root、模式 700，应用（uid 10xxx）
+    // 连遍历都进不去，于是每个 stat() 都失败 → 每个开关都读成「关」。
+    bool dirReadable = false;
+    struct stat dst;
+    if (::stat(DEBUG_DIR.c_str(), &dst) != 0) {
+        LOGI("[DEBUG] 目录不存在，全部开关按关闭处理（正常状态）");
+    } else if (!S_ISDIR(dst.st_mode)) {
+        LOGE("[DEBUG] ⚠ 这个路径不是目录——所有开关都会读成「关」");
+    } else if (::access(DEBUG_DIR.c_str(), R_OK | X_OK) != 0) {
+        LOGE("[DEBUG] ⚠ 目录在，但应用读不进去（errno=%d，属主 uid=%d，模式 0%o）"
+             "——所有开关都会读成「关」，这**不是**「一个都没开」。"
+             "多半是用 su/root 建的；请改用 run-as 重建：",
+             errno, (int)dst.st_uid, (unsigned)(dst.st_mode & 07777));
+        LOGE("[DEBUG]   adb shell \"run-as io.kamihama.totentanz "
+             "mkdir -p files/madomagi/debug\"");
+    } else {
+        dirReadable = true;
+    }
+
     for (size_t i = 0; i < sizeof(kDebugFlags) / sizeof(kDebugFlags[0]); i++) {
         const DebugFlagDef& f = kDebugFlags[i];
         struct stat st;
@@ -227,7 +253,8 @@ static void loadDebugFlags() {
         LOGI("[DEBUG]   [%s] %-18s %s", *f.slot ? "ON " : "   ", f.name, f.desc);
     }
     // 把目录里不认识的文件单独列出来：名字打错时最容易的误判是「开关没用」。
-    DIR* d = ::opendir(DEBUG_DIR.c_str());
+    // 目录读不了时跳过——上面已经点破原因了，这里再报一遍只是噪音。
+    DIR* d = dirReadable ? ::opendir(DEBUG_DIR.c_str()) : nullptr;
     if (d) {
         struct dirent* e;
         while ((e = ::readdir(d)) != nullptr) {

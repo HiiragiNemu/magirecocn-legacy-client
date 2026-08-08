@@ -170,9 +170,27 @@ public final class CNDebugFlags {
         loaded = true;
         java.util.HashSet<String> found = new java.util.HashSet<String>();
         try {
-            String[] names = new File(DEBUG_DIR).list();
+            File dir = new File(DEBUG_DIR);
+            String[] names = dir.list();
             if (names != null) {
                 for (int i = 0; i < names.length; i++) found.add(names[i]);
+            } else {
+                // list() 返回 null 有两种原因，**结论完全不同**，必须分开说：
+                // 目录不存在是正常状态（没人在排查），而目录在却读不出来是故障
+                // ——最常见的是拿 su/root 建的目录，属主是 root、模式 700，
+                // 应用（uid 10xxx）连遍历都进不去，于是**每个开关都读成「关」**。
+                //
+                // 不分开的话，这两种情况在日志里长得一模一样，人会得出
+                // 「开关坏了」这个错结论——而这套开关存在的意义恰恰是不让人误判。
+                if (!dir.exists()) {
+                    CNLog.i(TAG, "[DEBUG] 目录不存在，全部开关按关闭处理（正常状态）");
+                } else {
+                    CNLog.w(TAG, "[DEBUG] ⚠ 目录在，但列不出内容——应用没有读权限，"
+                            + "所有开关都会读成「关」。多半是用 su/root 建的（属主不是"
+                            + "应用）。请改用 run-as 重建：\n"
+                            + "  adb shell \"run-as io.kamihama.totentanz "
+                            + "mkdir -p files/madomagi/debug\"");
+                }
             }
         } catch (Throwable t) {
             CNLog.w(TAG, "[DEBUG] 读调试开关目录失败（按全部关闭处理）: " + t);
