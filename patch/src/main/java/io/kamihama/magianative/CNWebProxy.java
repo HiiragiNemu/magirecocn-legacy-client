@@ -118,6 +118,11 @@ public final class CNWebProxy {
     /** 一条线路失败后的冷却时长。冷却期内跳过它，到期自动复活。 */
     private static final long LINE_COOLDOWN_MS = 60_000L;
 
+    /** 非 GET 观测的汇总节流：每这么久打一次表。 */
+    private static final long PASSTHRU_REPORT_MS  = 60_000L;
+    /** 路径表条数上限。异常情况下（比如带随机路径）不至于把内存吃了。 */
+    private static final int  PASSTHRU_MAX_PATHS  = 60;
+
     private static volatile int      mode    = MODE_OFF;
     private static volatile String[] domains = null;
     /** 代理线路表，按权重降序。configure 之后要么非空，要么为 null（= 没有代理可用）。 */
@@ -173,6 +178,12 @@ public final class CNWebProxy {
     private static final AtomicBoolean WRAPPED       = new AtomicBoolean(false);
     private static final AtomicLong    lastMeasureAt = new AtomicLong(0L);
     private static final AtomicLong    measureRounds = new AtomicLong(0L);
+
+    /** 非 GET 观测：总数、按「方法 路径」计数、上次打表时间。 */
+    private static final AtomicLong    passthruTotal = new AtomicLong(0L);
+    private static final AtomicLong    lastPassthruReportAt = new AtomicLong(0L);
+    private static final java.util.LinkedHashMap<String, int[]> passthruPaths =
+            new java.util.LinkedHashMap<String, int[]>();
 
     private CNWebProxy() {}
 
@@ -537,7 +548,10 @@ public final class CNWebProxy {
 
         // POST 拿不到 body（平台就没给），只能直连
         String method = req.getMethod();
-        if (method != null && !"GET".equalsIgnoreCase(method)) return null;
+        if (method != null && !"GET".equalsIgnoreCase(method)) {
+            notePassthrough(method, url);
+            return null;
+        }
 
         // Range 请求不接管。206 的语义要靠 Content-Range/Content-Length 一起表达，
         // 而我们下面为了避开分帧问题把 Content-Length 摘掉了，两者凑在一起容易出
@@ -835,6 +849,63 @@ public final class CNWebProxy {
      * <p>注意这里测的是<b>首字节延迟</b>而不是吞吐——这正是代理线路与下载线路必须
      * 分开的地方：几 KB 的 API 往返里，带宽再大也救不了 RTT。
      */
+    /**
+     * 记一笔「本可以代理、但因为不是 GET 只能透传」的请求。<b>只观测，不改写。</b>
+     *
+     * <h3>它回答的问题，以及它答不了的那半</h3>
+     *
+     * 要不要为了 POST 去做本地 TLS 终结点（那要 WebView 88+、API 24+、设备端生成
+     * 证书、native 栈再 hook 一层，每一条都在削老设备覆盖），前提是先知道
+     * <b>POST 占多少、都打向哪儿</b>。这里给的就是这个。
+     *
+     * <p><b>拿不到耗时。</b>这一层只看得见请求：POST 是 WebView 自己发的，我们既不
+     * 经手也看不到响应，没有任何位置可以计时。想要「POST 慢多少」只能换架构，而那
+     * 正是这份数据要用来决定的事——所以先别把它当成能顺带做出来的东西。
+     *
+     * <p>计数点在 {@code rewriteWith} 之后：也就是说只统计<b>域名在白名单内、
+     * 本地又没命中</b>的那些——真·「如果 POST 能代理就会被代理」的集合，而不是
+     * 全部非 GET 请求。
+     */
+    private static void notePassthrough(String method, String url) {
+        try {
+            String path = url;
+            if (path != null) {
+                int q = path.indexOf('?');
+                if (q >= 0) path = path.substring(0, q);
+                int h = path.indexOf("//");
+                int s = (h >= 0) ? path.indexOf('/', h + 2) : -1;
+                if (s >= 0) path = path.substring(s);          // 只留路径，去掉主机
+            }
+            String key = (method == null ? "?" : method.toUpperCase(Locale.US))
+                       + " " + (path == null ? "?" : path);
+            long total = passthruTotal.incrementAndGet();
+
+            String table = null;
+            synchronized (passthruPaths) {
+                int[] cell = passthruPaths.get(key);
+                if (cell != null) {
+                    cell[0]++;
+                } else if (passthruPaths.size() < PASSTHRU_MAX_PATHS) {
+                    passthruPaths.put(key, new int[] { 1 });
+                }
+                long now = System.currentTimeMillis();
+                long last = lastPassthruReportAt.get();
+                if (now - last >= PASSTHRU_REPORT_MS && lastPassthruReportAt.compareAndSet(last, now)) {
+                    StringBuilder sb = new StringBuilder();
+                    sb.append("非 GET 透传汇总：共 ").append(total).append(" 次");
+                    if (passthruPaths.size() >= PASSTHRU_MAX_PATHS) sb.append("（路径表已满，后续不再计入新路径）");
+                    for (java.util.Map.Entry<String, int[]> e : passthruPaths.entrySet()) {
+                        sb.append("\n    ").append(e.getValue()[0]).append("×  ").append(e.getKey());
+                    }
+                    table = sb.toString();
+                }
+            }
+            if (table != null) CNLog.i(TAG, table);   // 锁外打日志
+        } catch (Throwable ignore) {
+            // 观测绝不能把请求搞挂：任何异常都当没记过
+        }
+    }
+
     private static void maybeMeasure(String origUrl) {
         // 只拿静态资源测，绝不碰 /magica/api/。
         //

@@ -659,6 +659,62 @@ public final class CNMirrors {
     /** Java 侧代理入口前缀；未配置为 null。 */
     public static String proxyBase() { return proxyBase; }
 
+    /** 非 JSON 响应体在异常信息里保留多少字符。够认出是谁返回的就行。 */
+    private static final int BODY_PEEK_CHARS = 200;
+
+    /**
+     * 响应体不像 JSON 时抛出，<b>并把响应体开头带上</b>。
+     *
+     * <h3>为什么非做不可</h3>
+     *
+     * 原先直接 {@code new JSONObject(body)}，拿到 HTML 时抛的是
+     * {@code JSONException: Value <html> of type java.lang.String cannot be
+     * converted to JSONObject}——只说明「不是 JSON」，而<b>响应体被丢掉了</b>。
+     *
+     * <p>2026-08-08 真机上连续四次拿到 HTML，日志里就只有这一句。那页 HTML 本来
+     * 会写明是谁拦的（系统代理/VPN 的错误页、WAF 挑战页、运营商门户、CDN 错误页
+     * ……），是唯一能定位的线索，却被扔了，排查因此停在「不知道是什么东西返回的」。
+     *
+     * <p>这<b>不是</b>说服务端返回错了：本类与 {@code CNVersionCheck} 都刻意尊重
+     * 系统代理（显式 {@code NO_PROXY} 会绕开用户已配好的代理链，那才是更早一次
+     * 真机长超时的成因），所以中途多一跳是被允许的——正因如此，出问题时更要说清楚
+     * 是哪一跳。
+     */
+    static void requireJsonBody(String body, String contentType) throws IOException {
+        String s = (body == null) ? "" : body.trim();
+        if (!s.isEmpty() && s.charAt(0) == '﻿') s = s.substring(1).trim();   // BOM
+        if (s.startsWith("{")) return;
+
+        StringBuilder sb = new StringBuilder("config.json 不是 JSON");
+        if (contentType != null && !contentType.isEmpty()) {
+            sb.append("（Content-Type: ").append(contentType).append('）');
+        }
+        sb.append("。多半是中途有东西把请求拦了——系统代理/VPN 的错误页、WAF 挑战页、"
+                + "运营商门户或 CDN 错误页。响应体开头：");
+        if (s.isEmpty()) {
+            sb.append("（空）");
+        } else {
+            // 压成一行：多行内容在 logcat 里会被拆开，抓下来就对不上了。
+            // 连续空白合并成一个——HTML 错误页满是换行与缩进，逐个保留会把这
+            // BODY_PEEK_CHARS 的预算全喂给空白，真正有信息的那几个字反而被截掉。
+            int kept = 0;
+            boolean lastWasSpace = false;
+            for (int i = 0; i < s.length() && kept < BODY_PEEK_CHARS; i++) {
+                char ch = s.charAt(i);
+                boolean isSpace = (ch == '\n' || ch == '\r' || ch == '\t' || ch == ' ');
+                if (isSpace) {
+                    if (lastWasSpace) continue;
+                    ch = ' ';
+                }
+                lastWasSpace = isSpace;
+                sb.append(ch);
+                kept++;
+            }
+            if (kept >= BODY_PEEK_CHARS) sb.append("…（共 ").append(s.length()).append(" 字符）");
+        }
+        throw new IOException(sb.toString());
+    }
+
     private static String fetch(String url, boolean direct) throws IOException {
         URL u = new URL(url);
         HttpURLConnection c = (HttpURLConnection)
@@ -686,7 +742,9 @@ public final class CNMirrors {
                 if (total > MAX_JSON_BYTES) throw new IOException("config.json 过大");
                 bos.write(buf, 0, n);
             }
-            return new String(bos.toByteArray(), StandardCharsets.UTF_8);
+            String body = new String(bos.toByteArray(), StandardCharsets.UTF_8);
+            requireJsonBody(body, c.getContentType());
+            return body;
         } finally {
             if (is != null) { try { is.close(); } catch (IOException ignore) {} }
             c.disconnect();

@@ -245,7 +245,11 @@ public final class CNVersionCheck {
             // config.json 只有几 KB；设个上限免得对面返回一坨东西把内存吃了
             while ((n = in.read(buf)) >= 0 && bos.size() < 262144) bos.write(buf, 0, n);
             in.close();
-            return new JSONObject(bos.toString("UTF-8")).optJSONObject("client");
+            String body = bos.toString("UTF-8");
+            // 不是 JSON 时把响应体开头带进异常——否则只剩一句「Value <html> …」，
+            // 而那页 HTML 恰恰写着是谁拦的。判据与措辞见 CNMirrors.requireJsonBody。
+            CNMirrors.requireJsonBody(body, c.getContentType());
+            return new JSONObject(body).optJSONObject("client");
         } finally {
             try { c.disconnect(); } catch (Throwable ignore) {}
         }

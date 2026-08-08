@@ -30,7 +30,7 @@ import java.lang.reflect.Method;
 public class ConfigGuardTest {
 
     static int pass = 0, fail = 0;
-    static Method normalizeBase, isSaneProxyDomain;
+    static Method normalizeBase, isSaneProxyDomain, requireJsonBody;
 
     static {
         try {
@@ -38,6 +38,9 @@ public class ConfigGuardTest {
             normalizeBase.setAccessible(true);
             isSaneProxyDomain = CNMirrors.class.getDeclaredMethod("isSaneProxyDomain", String.class);
             isSaneProxyDomain.setAccessible(true);
+            requireJsonBody = CNMirrors.class.getDeclaredMethod(
+                    "requireJsonBody", String.class, String.class);
+            requireJsonBody.setAccessible(true);
         } catch (Exception e) {
             throw new RuntimeException("取不到待测方法（改名了？）: " + e, e);
         }
@@ -68,6 +71,38 @@ public class ConfigGuardTest {
     static void noDom(String d, String note) throws Exception {
         if (!dom(d)) { pass++; System.out.println("  ✅ 拦下  " + note); }
         else { fail++; System.out.println("  ❌ 本该拦下却放行了  " + note + "  （" + d + "）"); }
+    }
+
+    static String cause(Exception e) {
+        Throwable t = (e.getCause() != null) ? e.getCause() : e;
+        return t.getMessage();
+    }
+
+    /** 期望被当成 JSON 放行。 */
+    static void okJson(String body, String ct, String why) throws Exception {
+        try {
+            requireJsonBody.invoke(null, body, ct);
+            pass++; System.out.println("  ✅ 放行  " + why);
+        } catch (Exception e) {
+            fail++; System.out.println("  ❌ 本该放行却抛了  " + why + "  → " + cause(e));
+        }
+    }
+
+    /** 期望抛出，且异常信息里带上指定的证据片段。 */
+    static void badJson(String body, String ct, String why, String[] mustContain) throws Exception {
+        try {
+            requireJsonBody.invoke(null, body, ct);
+            fail++; System.out.println("  ❌ 本该抛出却放行了  " + why);
+            return;
+        } catch (Exception e) {
+            String msg = String.valueOf(cause(e));
+            StringBuilder missing = new StringBuilder();
+            for (int i = 0; i < mustContain.length; i++) {
+                if (!msg.contains(mustContain[i])) missing.append(" [").append(mustContain[i]).append(']');
+            }
+            if (missing.length() == 0) { pass++; System.out.println("  ✅ 抛出且带证据  " + why); }
+            else { fail++; System.out.println("  ❌ " + why + "  信息里缺:" + missing + "\n           实际: " + msg); }
+        }
     }
 
     public static void main(String[] args) throws Exception {
@@ -128,6 +163,24 @@ public class ConfigGuardTest {
         noDom("*.example.com", "通配符");
         noDom("例子.com", "非 ASCII（应走 punycode）");
         noDom("https://example.com", "整个 URL 而非域名");
+
+        System.out.println("\n[8] 响应体不是 JSON 时，必须把「是谁返回的」留下来");
+        // 2026-08-08：真机连续四次拿到 HTML，日志里只有一句
+        // 「Value <html> … cannot be converted to JSONObject」——响应体被丢了，
+        // 而那页 HTML 恰恰写着是谁拦的。这几条钉住「证据不许再被扔掉」。
+        okJson("{\"a\":1}",       null,               "正常 JSON");
+        okJson("  \n {\"a\":1} ", "application/json", "前导空白");
+        okJson("﻿{\"a\":1}", "application/json", "带 UTF-8 BOM");
+
+        badJson("<html><head><title>403 Forbidden</title></head><body>blocked by X</body></html>",
+                "text/html", "HTML 错误页",
+                new String[] { "text/html", "403 Forbidden", "blocked by X" });
+        badJson("",     "text/html",        "空响应体",   new String[] { "（空）" });
+        badJson(null,   null,               "null 响应体", new String[] { "（空）" });
+        badJson("[1,2]", "application/json", "顶层是数组不是对象", new String[] { "[1,2]" });
+        // 多行必须压成一行：否则 logcat 会把它拆开，抓下来对不上
+        badJson("<html>\r\na\tb\n</html>", "text/html", "多行压成一行",
+                new String[] { "<html> a b </html>" });
 
         System.out.println("\n通过 " + pass + " 项，失败 " + fail + " 项");
         if (fail > 0) System.exit(1);
