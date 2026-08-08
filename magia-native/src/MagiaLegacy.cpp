@@ -1707,9 +1707,16 @@ static void loadingSetTitleNew(void* self, const void* text) {
 // LbUtility::initLabel(Node*, Label*&, const char* text, float, Vec2, int, Size, Color4B, int)
 // const char* 直传，命中就换指针。钩子与原函数用完全相同的原型声明，
 // 由编译器保证两侧参数布局一致（不用变参转发，避免 HFA/小聚合体 ABI 坑）。
+//
+// ⚠ 这几个替身结构体**必须与 cocos2d 的原型逐字节一致**，否则上面那句话就是空话。
+// CNColor4B 曾经只写了 r,g,b 三个字节——而 cocos2d::Color4B 是 {r,g,b,a} 四字节。
+// AAPCS64 下 3 字节和 4 字节的小聚合体都占一个通用寄存器，所以**参数位置不会错**，
+// 编译器也不会报错；但我们转发时只搬 3 个字节，**alpha 被丢掉**，引擎拿到的透明度
+// 是寄存器里的残留值。表现是「文字时有时无/整块 UI 看不见」这种极难归因的毛病，
+// 而不是干脆的崩溃——正因为它不崩，才在库里躺了很久。
 struct CNVec2    { float x, y; };
 struct CNSize    { float w, h; };
-struct CNColor4B { unsigned char r, g, b; };
+struct CNColor4B { unsigned char r, g, b, a; };
 using InitLabelFn = void (*)(void*, void*, const char*, float,
                              CNVec2, int, CNSize, CNColor4B, int);
 static InitLabelFn initLabelOld = nullptr;
