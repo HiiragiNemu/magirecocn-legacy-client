@@ -71,4 +71,18 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # 顶层 fail-open：检查自身出了任何意外，都**放行**并把 traceback 打出来。
+    # 不这么做的话，一个 FileNotFoundError 或 IndexError 会以退出码 1 冒出去，
+    # git 当成「检查没过」——于是钩子自己的 bug 就把整个仓库锁死了，
+    # 而屏幕上只有一段谁也看不懂的 Python traceback。
+    # （SystemExit 继承自 BaseException，不会被 except Exception 吞掉，
+    #   所以 main() 正常返回的 0/1 照常生效。）
+    try:
+        sys.exit(main())
+    except Exception:
+        import traceback
+        sys.stderr.write(
+            "\n\u26a0 " + HOOK_NAME + ": 检查自身出错，本次放行。"
+            "请把下面这段贴给维护者：\n")
+        traceback.print_exc()
+        sys.exit(0)

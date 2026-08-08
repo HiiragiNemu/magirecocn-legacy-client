@@ -24,6 +24,12 @@ hookdir=$(dirname "$0")
 impl="$hookdir/commit_msg.py"
 [ -f "$impl" ] || exit 0          # 实现不在也放行
 
+# 让 Python 用 UTF-8 写 stderr。不设的话，stderr 是管道时 Python 走 locale 编码，
+# 在中文/西欧 Windows 上整段提示会变成 \u63d0\u4ea4... 这种转义序列——人被拦下了，
+# 却读不懂为什么。规则讲不清楚就等于没有规则。
+PYTHONIOENCODING=utf-8
+export PYTHONIOENCODING
+
 for cand in python3 python "py -3"; do
     # 故意不加引号：要让 "py -3" 拆成两个词
     if $cand -c 'import sys; sys.exit(0 if sys.version_info[0] >= 3 else 1)' \
