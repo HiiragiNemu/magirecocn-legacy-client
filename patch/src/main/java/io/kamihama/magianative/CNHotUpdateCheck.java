@@ -338,18 +338,25 @@ public final class CNHotUpdateCheck {
                 VerMeta meta = metas[i];
                 if (meta == null) {
                     anyFailure = true;
-                    continue;  // 查询失败已在 fetchMetaSafe / 总 deadline 里提示
+                    // 版本查不到 ≠ 已是最新。原先这里直接 continue，槽位就沿用
+                    // syncInstalledUiState 恢复出来的「✓ 完成」——把「不知道」
+                    // 显示成了「已确认最新」，而这恰恰是最该让玩家看见的情况：
+                    // 热更没生效时，界面反而最像一切正常。
+                    CNCNDownloadUI.markFileUnchecked(pkg.slot, "版本查询失败 · 未检查");
+                    continue;
                 }
                 int local = readLocalVersion(pkg.versionKey);
                 locals[i] = local;
                 CNLog.i(TAG, "[" + pkg.label + "] server=" + meta.version + " local=" + local);
                 if (meta.version <= local) {
+                    // 这一支是**本轮真的查过**的，标完成名副其实。
                     CNCNDownloadUI.updateSimple("检查热更新",
                             pkg.label + "：已是最新（v" + local + "）", 0);
+                    CNCNDownloadUI.markFileDone(pkg.slot);
                     continue;
                 }
-                // 只有真正需要更新的槽位回到等待/0%；其余有效 marker 的
-                // 13 个基础资源继续显示 100% / 已完成。
+                // 需要更新的槽位回到等待/0%。（其余 13 个基础包本轮不检查，
+                // 已由 syncInstalledUiState 标成「未检查」，不再冒充完成。）
                 CNCNDownloadUI.markFilePending(pkg.slot);
                 File tmp = new File(FILES_DIR, pkg.tmpName);
                 // 上一次跑到一半留下的残骸会让 download() 直接判定「目标已存在」而跳过

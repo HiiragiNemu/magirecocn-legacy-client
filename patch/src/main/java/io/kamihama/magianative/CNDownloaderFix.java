@@ -130,6 +130,10 @@ public final class CNDownloaderFix {
 
     private static final int ARCHIVE_COUNT = 15;
 
+    /** 热更那一轮真正检查的两个槽位，与 {@code CNHotUpdateCheck.PACKAGES} 的 slot 对应。 */
+    static final int HOT_SLOT_SCENARIO = 0;   // cn_scenario_update.zip
+    static final int HOT_SLOT_JS       = 1;   // cn_js_update.zip
+
     /** 防止 native hook 与 Java 侧同时触发安装器。 */
     private static final AtomicBoolean installerStarted = new AtomicBoolean(false);
 
@@ -1470,18 +1474,39 @@ public final class CNDownloaderFix {
     // UI 状态同步
     // ==================================================================
 
-    /** 按 15 个完成 marker 把 UI 恢复成真实已安装状态，供正常启动/热更新复用。 */
+    /**
+     * 按 15 个完成 marker 把 UI 恢复成真实已安装状态，供正常启动/热更新复用。
+     *
+     * <p><b>本轮不涉及的槽位标成「未检查」，不是「完成」。</b>这个方法只在热更
+     * 场景下被调（首次安装走 runInstaller，不经过这里），而热更那一轮只检查
+     * 台词包与前端脚本包两个；另外 13 个基础包压根不在本轮范围里。
+     *
+     * <p>原先它们一律沿用安装时的 marker 显示成绿色「✓ 完成」——把「上次装好过」
+     * 说成了「本轮已确认」。玩家看到满屏绿勾，实际上这一轮什么都没查；热更没生效
+     * 的时候，界面反而最像一切正常。这不是显示问题，是谎报。
+     */
     static void syncInstalledUiState() {
         resetUiForRun();
-        int done = 0;
+        int installed = 0, missing = 0;
         for (int i = 0; i < ARCHIVE_COUNT; i++) {
+            boolean hot = (i == HOT_SLOT_SCENARIO || i == HOT_SLOT_JS);
             int status = (CNCNDownloadUI.fileStatus != null) ? CNCNDownloadUI.fileStatus[i] : -1;
-            int progress = (CNCNDownloadUI.fileProgress != null) ? CNCNDownloadUI.fileProgress[i] : -1;
-            if (status == 2 && progress == 100) done++;
-            CNLog.i(TAG, "[Hotupdate UI] marker sync slot=" + i + " file=" + FILE_NAMES[i]
-                    + " status=" + status + " progress=" + progress);
+            if (hot) {
+                // 本轮要查的两个：先回到「等待中」，查完由热更流程按真实结果落状态。
+                // 保留 marker 恢复出来的大小，等待中那一支会把它显示出来。
+                if (CNCNDownloadUI.fileStatus != null) {
+                    CNCNDownloadUI.fileStatus[i] = CNCNDownloadUI.ST_WAIT;
+                }
+                CNLog.i(TAG, "[Hotupdate UI] slot=" + i + " " + FILE_NAMES[i] + " 本轮待检查");
+                continue;
+            }
+            // 其余 13 个：本轮不检查。装没装过只是**背景信息**，不是本轮结论。
+            boolean ok = (status == 2);
+            if (ok) installed++; else missing++;
+            CNCNDownloadUI.markFileUnchecked(i, ok ? "已装 · 本轮未检查" : "未装 · 本轮未检查");
         }
-        CNLog.i(TAG, "[Hotupdate UI] marker sync complete done=" + done + "/" + ARCHIVE_COUNT);
+        CNLog.i(TAG, "[Hotupdate UI] 本轮不检查的基础包：已装 " + installed
+                + " 未装 " + missing + "（均标记为未检查，不计入本轮进度）");
     }
 
     private static void resetUiForRun() {

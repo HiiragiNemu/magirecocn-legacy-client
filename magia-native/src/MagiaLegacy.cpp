@@ -177,6 +177,14 @@ static bool g_dbgNoOverlayGate   = false;
 static bool g_dbgNoProxyEndpoint = false;
 static bool g_dbgNoHttp2Bump     = false;
 static bool g_dbgNoAdxSampleRate = false;
+// 下面两个是「**根本不装**这个钩子」，与上面「装了但空转」是两回事。
+//
+// 分开是必须的：2026-08-08 那次战斗崩溃的元凶是 initLabel 钩子的**原型声明错了**
+// （CNColor4B 少了 alpha 字节）。这类错在「装了但空转」时照样发生——空转那一支
+// 仍然要按同一个错原型把参数转发回去。也就是说 noI18nLabel 根本测不出它。
+// 想把「钩子存在本身」排除掉，只能连 H() 安装一起跳过。
+static bool g_dbgNoInitLabelHook = false;
+static bool g_dbgNoTtfHooks      = false;
 
 struct DebugFlagDef { const char* name; bool* slot; const char* desc; };
 static const DebugFlagDef kDebugFlags[] = {
@@ -192,6 +200,9 @@ static const DebugFlagDef kDebugFlags[] = {
     // ── 关掉从 libuwasa 移植的两条性能/音频改动 ──
     { "noHttp2Bump",     &g_dbgNoHttp2Bump,     "HTTP/2 并发数保持引擎原本的 4，不提到 10" },
     { "noAdxSampleRate", &g_dbgNoAdxSampleRate, "不锁 ADX2 采样率 48000，用设备实际值" },
+    // ── 「根本不装」，用来排除「钩子存在本身」（含原型声明错）──
+    { "noInitLabelHook", &g_dbgNoInitLabelHook, "**不安装** LbUtility::initLabel 钩子（排除原型/ABI 问题）" },
+    { "noTtfHooks",      &g_dbgNoTtfHooks,      "**不安装** createWithTTF/setTTFConfig 三个钩子（同上）" },
 };
 
 static void loadDebugFlags() {
@@ -2160,16 +2171,24 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       (void*)urlConfigWebObserve, (void**)&urlConfigWebOld, "proxy: UrlConfig::web(只读观测)");
     // nghttp2 的 host_service_from_uri / session::submit 钩子维持禁用：
     // 真机复现为请求回调 UAF（栈在 request_impl::on_response），不再启用。
-    H("_ZN9LbUtility9initLabelEPN7cocos2d4NodeERPNS0_5LabelEPKcfNS0_4Vec2EiNS0_4SizeENS0_7Color4BEi",
-      (void*)initLabelNew, (void**)&initLabelOld, "i18n: LbUtility::initLabel");
+    if (g_dbgNoInitLabelHook) {
+        LOGE("[DEBUG] noInitLabelHook 生效：**不安装** LbUtility::initLabel 钩子");
+    } else {
+        H("_ZN9LbUtility9initLabelEPN7cocos2d4NodeERPNS0_5LabelEPKcfNS0_4Vec2EiNS0_4SizeENS0_7Color4BEi",
+          (void*)initLabelNew, (void**)&initLabelOld, "i18n: LbUtility::initLabel");
+    }
 
     // ── 引擎 UI 字体路径重定向（MTF4a5kp → mbm_20160902）──
+    if (g_dbgNoTtfHooks) {
+        LOGE("[DEBUG] noTtfHooks 生效：**不安装** createWithTTF/setTTFConfig 三个钩子");
+    } else {
     H("_ZN7cocos2d5Label13createWithTTFERKNS_10_ttfConfigERKNSt6__ndk112basic_stringIcNS4_11char_traitsIcEENS4_9allocatorIcEEEENS_14TextHAlignmentEi",
       (void*)createWithTtfCfgNew, (void**)&createWithTtfCfgOld, "font: createWithTTF(cfg)");
     H("_ZN7cocos2d5Label13createWithTTFERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEES9_fRKNS_4SizeENS_14TextHAlignmentENS_14TextVAlignmentE",
       (void*)createWithTtfStrNew, (void**)&createWithTtfStrOld, "font: createWithTTF(str)");
     H("_ZN7cocos2d5Label20setTTFConfigInternalERKNS_10_ttfConfigE",
       (void*)setTtfCfgInternalNew, (void**)&setTtfCfgInternalOld, "font: setTTFConfigInternal");
+    }
 
     // ── 下载浮层期间挂起引擎 BGM（QbUtility::playBgmDirect）──
     H("_ZN9QbUtility13playBgmDirectEPKc",

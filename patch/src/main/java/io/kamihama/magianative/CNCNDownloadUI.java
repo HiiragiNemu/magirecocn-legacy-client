@@ -104,7 +104,23 @@ public class CNCNDownloadUI {
         "movie.zip", "movie2.zip"
     };
 
+    // 槽位状态。0/1/2/3 是原有的四个；4 是这次补的。
+    //
+    // 为什么要补第五个：热更那一轮**只检查两个包**（台词、前端脚本），另外 13 个
+    // 基础包压根不在本轮范围里；而版本 json 拉不到时，连那两个也没验成。这些槽位
+    // 原先一律沿用安装时留下的 marker 显示成「✓ 完成」——把「上次装好过」说成了
+    // 「本轮已确认」。玩家看到满屏绿勾，实际上这一轮什么都没查。
+    //
+    // 这不是显示问题，是**谎报**：热更没生效时，界面反而最像一切正常。
+    public static final int ST_WAIT      = 0;   // 等待中（灰）
+    public static final int ST_RUNNING   = 1;   // 下载中
+    public static final int ST_DONE      = 2;   // 本轮确认完成（绿 ✓）
+    public static final int ST_ERROR     = 3;   // 失败（红 ✗）
+    public static final int ST_UNCHECKED = 4;   // **本轮未检查**（中性色，不打勾）
+
     public static int[]   fileStatus     = new int[15];
+    /** {@link #ST_UNCHECKED} 时显示的说明（如「已装」「版本查询失败」）。 */
+    public static String[] fileNote      = new String[15];
     public static int[]   fileProgress   = new int[15];
     public static float[] fileSize       = new float[15];
     public static float[] fileSpeed      = new float[15];
@@ -2453,6 +2469,10 @@ public class CNCNDownloadUI {
             float totalSize = 0f, totalDone = 0f;
             if (size != null && downloaded != null && status != null) {
                 for (int i = 0; i < FILE_COUNT; i++) {
+                    // 本轮未检查的槽位**分子分母都不计**：把 13 个基础包（体积
+                    // 占绝大头）算进分母，热更那两个小包再怎么动，进度条也基本
+                    // 不动——玩家会以为卡住了。本轮进度就只该反映本轮的事。
+                    if (status[i] == 4) continue;
                     if (size[i] <= 0f) continue;
                     totalSize += size[i];
                     // 已完成的文件按整包计入，避免它的 downloaded 被清零后
@@ -2501,6 +2521,7 @@ public class CNCNDownloadUI {
                     case 1:  color = COLOR_ACCENT; break;   // 下载中
                     case 2:  color = 0xFF66BB6A;   break;   // 完成（绿）
                     case 3:  color = 0xFFE53935;   break;   // 失败（红）
+                    case 4:  color = 0x553F51B5;   break;   // 本轮未检查（中性蓝灰）
                     default: color = 0x55888888;   break;   // 等待（灰）
                 }
                 if (Build.VERSION.SDK_INT >= 21) {
@@ -2516,6 +2537,12 @@ public class CNCNDownloadUI {
                 } else if (st == 3) {
                     sv.infoView.setTextColor(0xFFE53935);
                     sv.infoView.setText("✗");
+                } else if (st == 4) {
+                    // 中性色、**不打勾**：勾是「本轮确认过」的意思，这里没确认过。
+                    sv.infoView.setTextColor(COLOR_SUB);
+                    String note = (fileNote != null) ? fileNote[i] : null;
+                    if (note == null || note.length() == 0) note = "本轮未检查";
+                    sv.infoView.setText(note);
                 } else if (st == 1) {
                     sv.infoView.setTextColor(COLOR_SUB);
                     StringBuilder sb = new StringBuilder();
@@ -2544,15 +2571,24 @@ public class CNCNDownloadUI {
 
         // 汇总：已完成文件数 + 总体积
         if (vAggregate != null && status != null) {
-            int done = 0;
-            for (int i = 0; i < FILE_COUNT; i++) if (status[i] == 2) done++;
-            vAggregate.setText(done + " / " + FILE_COUNT + " 文件");
+            // 分母只数**本轮涉及**的槽位：把未检查的也算进分母，会得到
+            // 「2 / 15 文件」这种看着像坏了的数字，而实际上本轮就只该管 2 个。
+            int done = 0, inScope = 0, unchecked = 0;
+            for (int i = 0; i < FILE_COUNT; i++) {
+                if (status[i] == 4) { unchecked++; continue; }
+                inScope++;
+                if (status[i] == 2) done++;
+            }
+            String t = done + " / " + inScope + " 文件";
+            if (unchecked > 0) t += "（另 " + unchecked + " 项本轮未检查）";
+            vAggregate.setText(t);
         }
         if (vOverallText != null) {
             String text = "总进度";
             if (size != null && downloaded != null && status != null) {
                 float totalSize = 0f, totalDone = 0f;
                 for (int i = 0; i < FILE_COUNT; i++) {
+                    if (status[i] == 4) continue;      // 同上：本轮未检查的不计
                     if (size[i] <= 0f) continue;
                     totalSize += size[i];
                     totalDone += (status[i] == 2) ? size[i] : Math.min(downloaded[i], size[i]);
@@ -2731,7 +2767,8 @@ public class CNCNDownloadUI {
         StringBuilder sb = new StringBuilder("=== MagiaCN Installer ===\n");
         for (int i = 0; i < FILE_COUNT; i++) {
             int st = status[i];
-            sb.append(st == 2 ? "[OK] " : st == 1 ? "[ > ] " : st == 3 ? "[ERR] " : "[  ] ")
+            sb.append(st == 2 ? "[OK] " : st == 1 ? "[ > ] " : st == 3 ? "[ERR] "
+                      : st == 4 ? "[ - ] " : "[  ] ")
               .append(i + 1).append(".").append(names[i]);
             if (st == 1) {
                 sb.append("  ").append(progress[i]).append("%");
@@ -2819,6 +2856,21 @@ public class CNCNDownloadUI {
         vTutorialPill = null;
         tutorialModal = null;
         slowModal = null;
+    }
+
+    /**
+     * 把某个槽位标成「本轮未检查」。
+     *
+     * @param note 给玩家看的说明，如「已装」「版本查询失败」。为空则显示「本轮未检查」。
+     */
+    public static void markFileUnchecked(int i, String note) {
+        int[] status = fileStatus;
+        if (status != null && i >= 0 && i < status.length) {
+            status[i] = ST_UNCHECKED;
+            String[] notes = fileNote;
+            if (notes != null && i < notes.length) notes[i] = note;
+        }
+        throttledUpdate();
     }
 
     public static void markFileDone(int i) {
