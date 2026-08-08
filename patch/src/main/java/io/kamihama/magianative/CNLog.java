@@ -45,13 +45,29 @@ public final class CNLog {
     };
 
     /**
-     * 日志目录（相对各基准目录）。每次启动一个新文件，命名为
-     * {@code <四位启动序号>_<yyyyMMdd-HHmmss>.log}，例如
-     * {@code 0007_20260802-014530.log}。
+     * 日志目录名（相对基准目录）。每次启动一个新文件，命名为
+     * {@code <启动序号>_<yyyyMMdd-HHmmss>.log}，例如
+     * {@code 0007_20260802-014530.log}。序号至少四位，超过 9999 就是五位——
+     * 排序一律按数值走（见 {@link #sortKey}），别再假设它是定宽的。
      *
      * <p>为什么不是单文件轮转：这类问题常常「第 N 次启动才复现」，需要同时看到
-     * 出问题那次**和它之前几次**的记录。按启动次数分文件，排序即时间顺序，
-     * 一眼就能定位到第几次启动出的问题。
+     * 出问题那次**和它之前几次**的记录。按启动次数分文件，一眼就能定位到第几次
+     * 启动出的问题。
+     *
+     * <h3>🔴 落点只有一个：{@value #PRIV_DIR}/log</h3>
+     *
+     * 唯一的写入路径是 {@link #initEarly()} → {@code init(new File(PRIV_DIR))}，
+     * 所以日志和 {@code .seq} 都在 <b>{@code /data/data/io.kamihama.totentanz/log}</b>
+     * ——注意它和 {@code files/} <b>平级</b>，不在 {@code files/} 里面。
+     *
+     * <p><b>{@code files/log} 是历史遗留，已经没有任何代码写它，可以直接删。</b>
+     * 2026-08-02（commit 67ac26a9）之前日志是从浮层起的，那时调的是
+     * {@code CNLog.init(activity.getFilesDir())}，落点就是 {@code files/log}；
+     * 改成从 native 入口起之后落点换了，而旧目录没人清理，就一直留在设备上。
+     *
+     * <p>这个残留坑过人：2026-08-08 有人把 {@code files/log/.seq} 改成 9999 想探
+     * 边界，结果「序号纹丝不动、目录空空如也」——因为那个文件根本没有代码读。
+     * 排查绕了好几轮才发现是在看一个死目录。所以这里写死：**只有一个落点**。
      */
     private static final String LOG_DIR   = "log";
     /** 启动序号计数器文件（放在日志目录内）。 */
@@ -188,6 +204,31 @@ public final class CNLog {
         write("日志", "INFO", "日志已启动（第 " + launchSeq + " 次启动）"
                 + " 文件=" + currentLogPath()
                 + " 保留最近 " + KEEP_LOGS + " 次", null);
+        warnStaleLogDir();
+    }
+
+    /**
+     * 只要设备上还留着老版本的 {@code files/log}，就在**真**日志里点它一次名。
+     *
+     * <p>光把注释改对是挡不住的：那个目录已经在设备上了，名字又恰好叫 log，
+     * 任何人去找日志都可能先撞见它。2026-08-08 就有人对着它改 {@code .seq}、
+     * 等日志出现，得出「序号不动、目录空空如也」的结论，排查绕了好几轮才发现
+     * 是在看一个没有任何代码读写的死目录。
+     *
+     * <p>这行警告写在真日志里，所以只要有人拿到了正确的那份，就一定会看到它，
+     * 顺带也就知道自己手上这份是哪一个。
+     */
+    private static void warnStaleLogDir() {
+        try {
+            File stale = new File(PRIV_DIR + "/files/" + LOG_DIR);
+            if (!stale.isDirectory()) return;
+            String[] n = stale.list();
+            write("日志", "WARN", "检测到历史遗留目录 " + stale
+                    + "（" + (n == null ? "读不到内容" : n.length + " 项") + "）"
+                    + " —— 它是 67ac26a9 之前的落点，**现在没有任何代码读写它**。"
+                    + "本次日志写的是 " + currentLogPath()
+                    + "。那边的 .log 与 .seq 都是死的，可以整个删掉。", null);
+        } catch (Throwable ignore) {}
     }
 
     /**
@@ -231,7 +272,10 @@ public final class CNLog {
             if (dir == null) return;
             boolean append = openedOnce;
             if (!append) {
-                // 本进程第一次开：分配启动序号并定下文件名，两个目录用同一个名字
+                // 本进程第一次开：分配启动序号并定下文件名。
+                // （原注释写的是「两个目录用同一个名字」——那是 67ac26a9 之前的
+                //   事实，当时浮层还会往 files/log 再开一份。现在只有一个落点，
+                //   见 LOG_DIR 的说明。）
                 Date now = new Date();
                 launchSeq = nextSeq(new File(dir, LOG_DIR));
                 logName   = String.format(Locale.US, "%04d_%s.log",
