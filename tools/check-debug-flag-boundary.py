@@ -1,6 +1,28 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""断言调试开关**没有伸进安全判据里**。
+"""调试开关的两条不变量：**不伸进安全判据**，且**两侧路径逐字一致**。
+
+## 检查二：跨 JNI 的路径常量必须逐字一致
+
+同一个文件/目录被 Java 与 native 两侧各自硬编码一份。写歪一个字符不会有任何报错
+——两边各写各的文件，各读各的，谁也不抱怨：
+
+  · `DEBUG_DIR` 不一致 → 开关建在 A 处、代码读 B 处，整表打成「关」，
+    和「一个都没开」在日志里完全一样（2026-08-08 为这类现象绕了整整一轮）；
+  · `cn_base_done.flag` 不一致 → 安装完成标记查不到，每次启动重跑安装器；
+  · `cn_force_tutorial.flag` 不一致 → 玩家选了播序章，native 侧永远读不到；
+  · `cn_overlay_active.flag` 不一致 → 浮层闸门失效，引擎在下载中途抢跑主页。
+
+这些不变量原本只写在注释里（native 侧就有「⚠ 必须与 CNTutorialPrompt.
+FORCE_TUTORIAL_FLAG 逐字一致」「已逐字节核对」这类句子）。注释挡不住改动——
+逐字节核对是**人**做的，做过一次不代表下次还会做。所以钉在这里。
+
+解析支持字符串拼接（`CNHotUpdateCheck.FINAL_FLAG = FILES_DIR + "madomagi/..."`），
+解析不出来一律按失败处理：那说明声明的形状变了，需要人来看一眼，而不是悄悄跳过。
+
+---
+
+## 检查一：调试开关没有伸进安全判据里
 
 ## 守的是哪条规矩
 
@@ -59,6 +81,81 @@ PROTECTED = [
 ]
 
 BANNED = re.compile(r"CNDebugFlags|g_dbg[A-Z]")
+
+
+# ── 检查二用：跨 JNI 必须逐字一致的路径常量 ────────────────────────────
+# (说明, [(文件, 常量名), ...])  —— 同一组里的所有常量必须解析出同一个值。
+CROSS_JNI_PATHS = [
+    ("调试开关目录", [
+        (J + "CNDebugFlags.java",     "DEBUG_DIR"),
+        (N,                           "DEBUG_DIR"),
+    ]),
+    ("安装完成标记", [
+        (J + "CNDownloaderFix.java",  "FINAL_FLAG"),
+        (J + "CNHotUpdateCheck.java", "FINAL_FLAG"),   # 这个是 FILES_DIR + "..." 拼的
+        (N,                           "FLAG_PATH"),
+    ]),
+    ("强制序章标记", [
+        (J + "CNTutorialPrompt.java", "FORCE_TUTORIAL_FLAG"),
+        (N,                           "FORCE_TUTORIAL_FLAG_PATH"),
+    ]),
+    ("浮层活动标记", [
+        (J + "CNCNDownloadUI.java",   "OVERLAY_FLAG"),
+        (N,                           "OVERLAY_FLAG_PATH"),
+    ]),
+]
+
+# 声明右侧一直取到分号。`[^;]` 会跨行，所以两侧那种「等号后换行再写字面量」的
+# 排版也吃得下。
+DECL = r"\b%s\s*=\s*([^;]*);"
+# 表达式里的记号：字符串字面量（含转义）或标识符
+TOKEN = re.compile(r'"((?:[^"\\]|\\.)*)"|([A-Za-z_][A-Za-z_0-9]*)')
+
+
+def const_value(src, name, seen=None):
+    """解析 `NAME = <字面量与标识符的 + 拼接>;`，返回字符串值；解析不出返回 None。"""
+    seen = set() if seen is None else seen
+    if name in seen:
+        return None                      # 循环引用
+    seen.add(name)
+    m = re.search(DECL % re.escape(name), src)
+    if not m:
+        return None
+    out = []
+    for tok in TOKEN.finditer(m.group(1)):
+        if tok.group(1) is not None:
+            out.append(tok.group(1).replace('\\"', '"').replace("\\\\", "\\"))
+        else:
+            v = const_value(src, tok.group(2), seen)
+            if v is None:
+                return None              # 引用了解析不了的东西
+            out.append(v)
+    return "".join(out) if out else None
+
+
+def check_cross_jni(problems):
+    for what, refs in CROSS_JNI_PATHS:
+        seen = []
+        for path, name in refs:
+            if not os.path.isfile(path):
+                problems.append("找不到文件 %s（%s 的常量表过期了？）" % (path, what))
+                continue
+            v = const_value(open(path, encoding="utf-8").read(), name)
+            if v is None:
+                problems.append(
+                    "解析不出 %s 里的常量 %s（%s）。\n"
+                    "      **按失败处理**：声明的形状变了，或者常量被改名/删掉了。\n"
+                    "      请确认它与同组其它几处仍然逐字一致，然后更新本脚本的\n"
+                    "      CROSS_JNI_PATHS —— 不要只把这一条删掉。" % (path, name, what))
+                continue
+            seen.append((path, name, v))
+        vals = set(v for _, _, v in seen)
+        if len(vals) > 1:
+            lines = "\n".join("        %s %s = %r" % (p, n, v) for p, n, v in seen)
+            problems.append(
+                "「%s」在各处的值不一致——两边各写各的文件、各读各的，"
+                "运行时不会有任何报错：\n%s" % (what, lines))
+
 
 
 # 怎么认「这行是定义而不是调用」：**行首必须是声明关键字**。
@@ -130,14 +227,18 @@ def main():
                 "      调用方；后者这个开关就不该存在。"
                 % (where, hit.group(0), line, what))
 
+    check_cross_jni(problems)
+
     if not problems:
         print("✔ 调试开关边界检查通过（%d 个保护区）" % len(PROTECTED))
+        print("✔ 跨 JNI 路径常量逐字一致（%d 组）" % len(CROSS_JNI_PATHS))
         return 0
 
-    print("\n✘ 调试开关越界（%d 项）：\n" % len(problems))
+    print("\n✘ 检查未通过（%d 项）：\n" % len(problems))
     for i, p in enumerate(problems, 1):
         print("  %d. %s\n" % (i, p))
-    print("  规矩出处：CNDebugFlags 类注释 / README「调试开关目录」的边界一节\n")
+    print("  规矩出处：CNDebugFlags 类注释 / README「调试开关目录」，"
+          "以及各常量声明处的「必须与 X 逐字一致」注释\n")
     return 1
 
 
