@@ -125,6 +125,20 @@ public final class CNDebugFlags {
 
     private CNDebugFlags() {}
 
+    /**
+     * 在后台线程上把目录先读掉。
+     *
+     * <p>{@link #isOn} 是懒加载的：**第一次**调用要读一次目录、再打十几行日志
+     * （{@code CNLog} 每行都 flush）。这点开销本身无所谓，但它落在哪个线程上是
+     * 随机的——{@code show()} 里那次调用就可能发生在 UI 线程上。
+     *
+     * <p>所以由 {@code triggerInstaller} 在自己的后台线程上先调一次，把这次读盘
+     * 钉死在那儿。调不调都不影响正确性，只是不让它有机会落到 UI 线程。
+     */
+    public static void preload() {
+        try { ensureLoaded(); } catch (Throwable ignore) {}
+    }
+
     /** 某个开关是否打开。任何异常一律当作「没开」——排查工具绝不能自己把游戏搞挂。 */
     public static boolean isOn(String name) {
         try {

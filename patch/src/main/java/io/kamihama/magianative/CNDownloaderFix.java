@@ -222,6 +222,9 @@ public final class CNDownloaderFix {
                 @Override public void run() {
                     try {
                         CNLog.initEarly();
+                        // 紧跟 initEarly：调试开关的首次读取要落在这条后台线程上，
+                        // 而不是碰运气落到 UI 线程（见 CNDebugFlags.preload）。
+                        CNDebugFlags.preload();
 
                         // WebView 拦截层代理：放在分支**之前**，两条路都覆盖得到。
                         //

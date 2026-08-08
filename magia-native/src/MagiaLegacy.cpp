@@ -798,6 +798,9 @@ static void pushSceneTopNew(void* self, const std::string& arg) {
     // 调用，我们把这条命令**原替换**成 pushScenePrologue：同一时刻队列里
     // 永远只有一条切换命令，不存在撞车窗口。引擎侧 SceneCommand 全部走
     // 游戏主线程的 deque（见 0xb82610），入队动作本身是串行的。
+    // ⚠ 开关放在最前面是有意的:短路之后 consumeForceTutorial() 不会执行,
+    // 也就**不会消费掉标记文件**。关掉开关重启,序章照样还能触发——调试开关
+    // 不该顺手把玩家的状态改了。
     if (!g_dbgNoTutorialForce && pushScenePrologueFn && consumeForceTutorial()) {
         // callback=nativeCallback 是 v1 缺的字段，缺了它 notifyJs 下发的
         // JS 全是残的，前端收不到任何段通知（见本节开头的 bug 分析）。
@@ -1742,12 +1745,15 @@ static SetStringFn loadingSetTitleOld     = nullptr;
 
 static void setStringTrampoline(SetStringFn old, void* self, const void* text,
                                 const char* /*label*/) {
-    maybeReleaseDeferredTop();  // 浮层若在刚才撤掉，这里补推主页跳转/补放 BGM
-    if (g_dbgNoI18nSetString) {    // 调试开关：原样转交，不做任何替换
-        old(self, text);        // ⚠ 释放闸门要留在开关之前——它与翻译无关，
-        return;                 //    关掉翻译不该顺带把浮层收尾也关掉
-    }
+    // ⚠ 这两句的**顺序与相对位置都不能动**：开关关着时本函数必须与加开关之前
+    // 逐行等价。第一版把开关塞在两者之间、顺手把它们换了个个儿——那是个即使
+    // 开关全关也会生效的改动，正是调试设施最不该干的事。
     maybeReloadEngineI18n();
+    maybeReleaseDeferredTop();  // 浮层若在刚才撤掉，这里补推主页跳转/补放 BGM
+    if (g_dbgNoI18nSetString) { // 调试开关：原样转交，不做任何替换。
+        old(self, text);        // 放在两句之后——它们与翻译无关，关掉翻译不该
+        return;                 // 顺带把浮层收尾也关掉。
+    }
     const std::string* zh = engineLookup(text);
     if (zh) {
         FakeNdkStr fk;
