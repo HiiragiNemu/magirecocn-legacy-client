@@ -287,7 +287,9 @@ public final class CNLog {
                     if (line != null) seq = Integer.parseInt(line.trim());
                 } finally { try { br.close(); } catch (Throwable ignore) {} }
             }
-        } catch (Throwable ignore) {}
+        } catch (Throwable t) {
+            Log.w("CNLog", ".seq 读取失败，改用「已有文件数+1」: " + t);
+        }
         if (seq <= 0) {
             String[] names = logDir.list();
             seq = names == null ? 0 : names.length;
@@ -297,7 +299,20 @@ public final class CNLog {
             java.io.Writer w = new OutputStreamWriter(new FileOutputStream(f, false), "UTF-8");
             try { w.write(Integer.toString(seq)); w.flush(); }
             finally { try { w.close(); } catch (Throwable ignore) {} }
-        } catch (Throwable ignore) {}
+        } catch (Throwable t) {
+            // 原先这里是 catch (Throwable ignore) {}。写不回去只是「下次序号会重复」，
+            // 不影响本次记录，所以当初判成可以忽略——**但那让它变得不可诊断**。
+            //
+            // 2026-08-08：有人把 .seq 设成 9999 探边界，结果 log/ 空空如也而 .seq
+            // 纹丝不动。「.seq 没变」恰恰是最有信息量的那条线索（说明 nextSeq 要么
+            // 没跑，要么写不进去），可它当时一个字都没留下，只能靠猜。
+            // 沉默的代价不是这次写失败，是下次没人知道发生过什么。
+            Log.w("CNLog", ".seq 写回失败，下次启动序号会重复（当前 " + seq + "）: " + t
+                    + " —— 多半是 " + logDir + " 或 .seq 不可写，"
+                    + "常见于用 su/root 建的目录/文件（属主不是应用）。"
+                    + "请用 run-as 重建：adb shell \"run-as io.kamihama.totentanz "
+                    + "rm -rf log\"");
+        }
         return seq;
     }
 
