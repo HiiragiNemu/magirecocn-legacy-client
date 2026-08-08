@@ -32,12 +32,17 @@ public final class CNRestartActivity extends Activity {
     }
 
     /**
-     * 具名静态类而非匿名类。
+     * 具名静态类而非匿名类。<b>这里是真的必须。</b>
      *
-     * <p>CLAUDE.md 铁律 4：当前 d8 对「方法里的匿名类」会直接崩
-     * （{@code NullPointerException: Cannot invoke "String.length()"}，
-     * 报在 {@code CNRestartActivity$1.class} 上）。javac 是过的，所以这个坑
-     * 只在 dex 阶段才现形——本仓库已经为它栽过三次。
+     * <p>CLAUDE.md 铁律 4：当前 d8 撞上带合成字段 {@code this$0} 的类会直接崩
+     * （{@code NullPointerException: Cannot invoke "String.length()"}，只报类名、
+     * 没有行号）。而 {@code onResume()} / {@code launchMain()} 都是**实例**方法，
+     * 写在里头的匿名类 javac 一定会塞 {@code this$0} 进去——所以这两处非改不可。
+     *
+     * <p>反过来，**静态**方法里的匿名类不带 {@code this$0}，完全没问题：本仓库
+     * 另外 32 个匿名类全在静态方法里，一个都不用动。判据是 this$0，不是「匿不匿名」。
+     * javac 一律能过，只在 dex 阶段现形，所以 CI 里有
+     * {@code tools/check-d8-pitfalls.py} 在 d8 之前先拦一道。
      */
     private static final class LaunchTask implements Runnable {
         private final CNRestartActivity act;

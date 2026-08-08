@@ -225,9 +225,13 @@ public final class CNWebProxy {
     /**
      * 按权重降序。
      *
-     * <p>写成具名静态类而非匿名类，也不让它实现 {@code Comparator<Line>}——
-     * d8 对「带泛型参数的接口」和「嵌套类方法内的匿名类」都崩过（见 CLAUDE.md 铁律 4）。
+     * <p><b>不能写成 {@code Comparator<Line>}</b>：当前 d8 撞上带类型实参的
+     * {@code Comparator} 会以 R8 内部 NPE 崩掉（CLAUDE.md 铁律 4，已实测）。
      * 用裸 {@code Comparator} 再在 compare 里转型，是本仓库既有的规避写法。
+     *
+     * <p>写成具名静态类只是顺手——它在静态上下文里，就算写成匿名类也不带
+     * {@code this$0}，并不会触发那个坑。别照着这里去把静态方法里的匿名类改名，
+     * 那是白改：真正的判据是**有没有 this$0**，不是「匿不匿名」。
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static final class ByWeightDesc implements java.util.Comparator {
@@ -316,8 +320,7 @@ public final class CNWebProxy {
     }
 
     /**
-     * 轮询等 WebView 出现，出现（或被重建）就包一层。单独成类而不用匿名类，
-     * 避开 d8 对嵌套匿名类的老毛病。
+     * 轮询等 WebView 出现，出现（或被重建）就包一层。
      *
      * <p><b>为什么一直轮下去而不是包一次就收工：</b>
      * {@code WebViewHelper.removeWebView()} 会 {@code destroy()} 掉当前 WebView
@@ -752,8 +755,6 @@ public final class CNWebProxy {
      * 关、关不关，全在 WebView 手里。读到 EOF 再 close 的话 HttpURLConnection 会把
      * 连接放回池子；但中途放弃（页面被换掉、请求被取消）时只有 close 没有 EOF，
      * 那条连接就悬着了。挂在这里是唯一能同时覆盖两种收尾的地方。
-     *
-     * <p>具名静态类而非匿名类：d8 对嵌套匿名类崩过（CLAUDE.md 铁律 4）。
      */
     private static final class DisconnectOnClose extends java.io.FilterInputStream {
         private final HttpURLConnection conn;

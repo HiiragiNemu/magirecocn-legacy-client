@@ -453,7 +453,7 @@ public final class CNMirrors {
         }
     }
 
-    /** 具名静态类而非匿名类：避开 d8 对嵌套匿名类的老毛病。 */
+    /** 退避重试的循环体。 */
     private static final class RetryLoader implements Runnable {
         @Override public void run() {
             for (int i = 0; i < RETRY_BACKOFF_MS.length; i++) {

@@ -41,7 +41,9 @@ public final class CNVersionCheck {
 
     private static final String TAG = "CNVersion";
 
-    // config 是可选控制面：失败必须快速放行，不能先白等 15+15 秒。
+    // config 是可选控制面：失败必须快速放行。**原先是 15s + 15s**，落在启动关键
+    // 路径上就是最多白等半分钟，而这一步失败本来就只意味着「本次不弹强更框」。
+    // 所以收到下面这两个值——不是「随手调紧」，是这一步的失败代价本来就近乎为零。
     private static final int CONNECT_TIMEOUT_MS = 1800;
     private static final int READ_TIMEOUT_MS = 2200;
 
