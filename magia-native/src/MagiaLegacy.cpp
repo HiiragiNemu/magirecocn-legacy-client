@@ -95,6 +95,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <dirent.h>
 #include <sys/stat.h>
 #include <pthread.h>
 #include <dlfcn.h>
@@ -126,6 +127,92 @@ static jclass gClsCNMirrors       = nullptr; // io.kamihama.magianative.CNMirror
 
 namespace cocos2d {
     struct Data { unsigned char* _bytes; ssize_t _size; };
+}
+
+// ═══ 调试开关目录 ════════════════════════════════════════════════════
+//
+//     /data/data/io.kamihama.totentanz/files/madomagi/debug/<开关名>
+//
+// 目录里**建一个同名空文件就是打开该开关**，删掉就是关闭，重启游戏生效。
+//
+// ## 为什么做成这个形状
+//
+// 本仓库反复遇到同一类问题：某个 hook 疑似干扰引擎，表现是黑屏/卡死/闪退，
+// 而定位手段只有「改代码 → 重打包 → 找人真机走一遍」。setURI、nghttp2 逐请求、
+// web 端点、以及这次的战斗崩溃，每一次都烧掉整轮往返，一次 CI 还只能验一个假设。
+//
+// 有了这个目录，**一次构建就能验多个假设**：装一次包，在设备上建/删文件、重启，
+// 逐个排除。可以把排查交给手上有设备的人，不必每次都回到构建流程。
+//
+// ## 为什么放在 app 私有目录
+//
+// 这里在非 root 的正式包上**玩家碰不到**（`run-as` 只对 debuggable 包有效），
+// 所以不构成面向普通玩家的风险面；而有能力自查的人拿 root 或 debuggable 包
+// 就能用。这正是想要的分界。
+//
+// ## 边界：只关我们自己加的东西
+//
+// 这些开关一律只做一件事——**把客户端退回更接近原包的行为**。绝不设置任何
+// 削弱安全判定的开关（外链白名单、签名/完整性校验、https 强制等一概不做成开关），
+// 否则这个目录就从排查工具变成了攻击面：一旦有人能写进这里，就能把防线一条条关掉。
+//
+// ## 用法
+//
+//     adb shell "run-as io.kamihama.totentanz mkdir -p files/madomagi/debug"
+//     adb shell "run-as io.kamihama.totentanz touch files/madomagi/debug/no_font_hook"
+//     # 重启游戏；logcat 里 [DEBUG] 会把当前生效的开关列出来
+//
+// 启动时无论开没开都会打印全表，所以「有哪些开关」看一眼日志就知道，
+// 不必回来翻源码。写错名字也会被单独列出来——否则你会以为开关没用。
+static const std::string DEBUG_DIR =
+    "/data/data/io.kamihama.totentanz/files/madomagi/debug";
+
+static bool g_dbgNoFontHook     = false;   // 停掉字体路径重定向
+static bool g_dbgNoI18nLabel    = false;   // 停掉 LbUtility::initLabel 的文案替换
+static bool g_dbgNoI18nSetStr   = false;   // 停掉 Label/LabelAtlas/MenuItem::setString 的替换
+static bool g_dbgNoTutorialGuard= false;   // 停掉序章期间的 WebView 看门狗
+static bool g_dbgNoProxyEndpoint= false;   // 停掉 UrlConfig::api/chat 的端点重写
+static bool g_dbgNoHttp2Bump    = false;   // 不把 setMaxConnectionNum 4 提到 10
+static bool g_dbgNoAdxSampleRate= false;   // 不锁 ADX2 采样率为 48000
+
+struct DebugFlagDef { const char* name; bool* slot; const char* desc; };
+static const DebugFlagDef kDebugFlags[] = {
+    { "no_font_hook",      &g_dbgNoFontHook,      "停用字体路径重定向（UI 字体回到原包的 MTF4a5kp）" },
+    { "no_i18n_label",     &g_dbgNoI18nLabel,     "停用 initLabel 文案替换（引擎侧标签回到日文）" },
+    { "no_i18n_setstring", &g_dbgNoI18nSetStr,    "停用 setString 系文案替换" },
+    { "no_tutorial_guard", &g_dbgNoTutorialGuard, "停用序章期间的 WebView 看门狗" },
+    { "no_proxy_endpoint", &g_dbgNoProxyEndpoint, "停用 UrlConfig::api/chat 端点重写（直连）" },
+    { "no_http2_bump",     &g_dbgNoHttp2Bump,     "不把 HTTP/2 并发数 4 提到 10" },
+    { "no_adx_samplerate", &g_dbgNoAdxSampleRate, "不锁 ADX2 采样率 48000（用设备实际值）" },
+};
+
+static void loadDebugFlags() {
+    int on = 0;
+    LOGI("[DEBUG] 调试开关目录: %s", DEBUG_DIR.c_str());
+    for (size_t i = 0; i < sizeof(kDebugFlags) / sizeof(kDebugFlags[0]); i++) {
+        const DebugFlagDef& f = kDebugFlags[i];
+        struct stat st;
+        *f.slot = (::stat((DEBUG_DIR + "/" + f.name).c_str(), &st) == 0);
+        if (*f.slot) on++;
+        LOGI("[DEBUG]   [%s] %-18s %s", *f.slot ? "ON " : "   ", f.name, f.desc);
+    }
+    // 把目录里不认识的文件单独列出来：名字打错时最容易的误判是「开关没用」。
+    DIR* d = ::opendir(DEBUG_DIR.c_str());
+    if (d) {
+        struct dirent* e;
+        while ((e = ::readdir(d)) != nullptr) {
+            if (e->d_name[0] == '.') continue;
+            bool known = false;
+            for (size_t i = 0; i < sizeof(kDebugFlags) / sizeof(kDebugFlags[0]); i++) {
+                if (::strcmp(e->d_name, kDebugFlags[i].name) == 0) { known = true; break; }
+            }
+            if (!known) LOGE("[DEBUG] ⚠ 目录里有不认识的文件 %s —— 名字打错了？", e->d_name);
+        }
+        ::closedir(d);
+    }
+    if (on > 0) {
+        LOGE("[DEBUG] ⚠ 共 %d 个开关生效——这是排查用的降级模式，不是正常配置", on);
+    }
 }
 
 // 安装完成标记。必须与 Java 侧 CNDownloaderFix.FINAL_FLAG 逐字一致，
@@ -721,7 +808,7 @@ static void pushSceneTopNew(void* self, const std::string& arg) {
         g_tutorialActive.store(true);
         // v5 guard: hide resurfaced WebView, but honor grace windows around actual
         // front-end/native stage transitions so ADV -> battle is not interrupted.
-        if (!g_uiWatchdogOn.exchange(true)) {
+        if (!g_dbgNoTutorialGuard && !g_uiWatchdogOn.exchange(true)) {
             pthread_t t;
             if (pthread_create(&t, nullptr, uiWatchdogMain, nullptr) == 0) {
                 pthread_detach(t);
@@ -895,13 +982,17 @@ static void resolvePrologueEntry(const char* lib) {
 // 轻微偏移。锁 48000 与内容母带一致。
 static int criNcvGetHwSampleRateNew(void) {
     int orig = criNcvGetHwSampleRateOld ? criNcvGetHwSampleRateOld() : 0;
+    if (g_dbgNoAdxSampleRate) {
+        LOGI("[ADX2] GetHardwareSamplingRate: device=%d（调试开关：不锁 48000）", orig);
+        return orig;
+    }
     LOGI("[ADX2] GetHardwareSamplingRate: device=%d → 48000", orig);
     return 48000;
 }
 // 游戏初始化调 setMaxConnectionNum(4)，4 条并发 HTTP/2 stream 拉资产。
 // 提到 10 能明显缩短首次资产加载。
 static void setMaxConnectionNumNew(void* _this, int n) {
-    int patched = (n == 4) ? 10 : n;
+    int patched = (!g_dbgNoHttp2Bump && n == 4) ? 10 : n;
     if (patched != n) LOGI("[http2] setMaxConnectionNum %d → %d", n, patched);
     setMaxConnectionNumOld(_this, patched);
 }
@@ -1205,6 +1296,7 @@ static const std::string* endpointRewrite(UrlGetterFn old, void* self, int type,
     if (type < 0 || type >= URLCFG_MAX_SLOTS) return orig;
     try {
         endpointObserve(slot, type, *orig, tag);
+        if (g_dbgNoProxyEndpoint) return orig;   // 调试开关：只观测，不重写
         std::string base;
         std::vector<std::string> domains;
         if (!proxySnapshot(base, domains)) return orig;
@@ -1642,8 +1734,12 @@ static SetStringFn loadingSetTitleOld     = nullptr;
 
 static void setStringTrampoline(SetStringFn old, void* self, const void* text,
                                 const char* /*label*/) {
-    maybeReloadEngineI18n();
     maybeReleaseDeferredTop();  // 浮层若在刚才撤掉，这里补推主页跳转/补放 BGM
+    if (g_dbgNoI18nSetStr) {    // 调试开关：原样转交，不做任何替换
+        old(self, text);        // ⚠ 释放闸门要留在开关之前——它与翻译无关，
+        return;                 //    关掉翻译不该顺带把浮层收尾也关掉
+    }
+    maybeReloadEngineI18n();
     const std::string* zh = engineLookup(text);
     if (zh) {
         FakeNdkStr fk;
@@ -1722,6 +1818,10 @@ using InitLabelFn = void (*)(void*, void*, const char*, float,
 static InitLabelFn initLabelOld = nullptr;
 static void initLabelNew(void* node, void* label, const char* text, float f,
                          CNVec2 v2, int i1, CNSize sz, CNColor4B c4b, int i2) {
+    if (g_dbgNoI18nLabel) {            // 调试开关：原样转发，不做任何替换
+        initLabelOld(node, label, text, f, v2, i1, sz, c4b, i2);
+        return;
+    }
     maybeReloadEngineI18n();
     const char* use = text;
     static thread_local std::string combined;  // 前缀规则命中时的拼接缓冲
@@ -1785,6 +1885,7 @@ static void fontPathOverwrite(void* strObj, const char* nv, size_t n) {
 //     UI 跟着用之后两处字形一致，且引擎少加载一个 8MB 字体。
 //   · 更安全——见下面那段关于长度的说明。
 static void fontPathFix(void* strObj, const char* tag) {
+    if (g_dbgNoFontHook) return;       // 调试开关：完全不碰字体路径
     static const char kFrom[] = "fonts/MTF4a5kp.ttf";        // 18 字符
     static const char kTo[]   = "fonts/mbm_20160902.ttf";    // 22 字符
     // ⚠ 这 22 不是巧合，改这个常量前先读懂：libc++ 的 std::string 短串上限
@@ -1833,6 +1934,7 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     JNIEnv* env = nullptr;
     if (vm->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) return JNI_ERR;
 
+    loadDebugFlags();
     LOGI("========== MagiaLegacy JNI_OnLoad ==========");
     LOGI("[VERSION] magia-native v1（取代 libuwasa；下载流水线待接管）");
 

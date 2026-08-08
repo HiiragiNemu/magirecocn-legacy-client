@@ -304,6 +304,10 @@ public final class CNWebProxy {
     public static void install() {
         try {
             if (!INSTALLED.compareAndSet(false, true)) return;
+            if (CNDebugFlags.isOn(CNDebugFlags.NO_WEBPROXY)) {
+                CNLog.i(TAG, "调试开关 no_webproxy 生效，拦截层代理不安装（透传直连）");
+                return;
+            }
             if (Build.VERSION.SDK_INT < MIN_SDK_FOR_WRAP) {
                 // getWebViewClient() 是 API 26 才有的，拿不到原对象就没法包。
                 // 这种设备直接不装——透传直连，与没有本类时一致。

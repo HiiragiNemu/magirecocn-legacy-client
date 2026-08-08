@@ -203,6 +203,10 @@ public final class CNHotUpdateCheck {
                 CNLog.i(TAG, "热更检查已经在跑，忽略重复调用");
                 return;
             }
+            if (CNDebugFlags.isOn(CNDebugFlags.NO_HOTUPDATE)) {
+                CNLog.i(TAG, "调试开关 no_hotupdate 生效，跳过热更检查直接进游戏");
+                return;
+            }
             Thread t = new Thread("cnv-hotupdate") {
                 @Override public void run() {
                     try {
