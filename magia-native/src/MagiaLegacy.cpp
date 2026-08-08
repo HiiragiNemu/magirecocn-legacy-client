@@ -173,10 +173,6 @@ namespace cocos2d {
 // 热更后集体消失且查不出原因。挪出来就不存在这个问题。
 static const std::string DEBUG_DIR =
     "/data/data/io.kamihama.totentanz/debug";
-// 2026-08-08 之前的落点。**不再读**，只在 loadDebugFlags 里点名——
-// 静默兼容会造出「文件还在、开关却没生效」而日志毫无差别的局面。
-static const std::string LEGACY_DEBUG_DIR =
-    "/data/data/io.kamihama.totentanz/files/madomagi/debug";
 
 // 开关名用**小驼峰**，与 Java 侧保持一致（同一个目录，两边名字风格不该分裂）。
 static bool g_dbgNoFontHook      = false;
@@ -251,16 +247,6 @@ static void loadDebugFlags() {
         LOGE("[DEBUG]   adb shell \"run-as io.kamihama.totentanz mkdir -p debug\"");
     } else {
         dirReadable = true;
-    }
-
-    // 旧落点里还有东西就大声点名：那些文件已经不起作用了。
-    // 换路径最容易造成的伤害不是「要重建一次」，而是「以为自己开着、其实没开」
-    // ——文件还躺在那儿，日志里却整表都是「关」，两者都不报错。
-    struct stat lst;
-    if (::stat(LEGACY_DEBUG_DIR.c_str(), &lst) == 0 && S_ISDIR(lst.st_mode)) {
-        LOGE("[DEBUG] ⚠ 旧调试开关目录 %s 还在 —— **里面的开关已经不起作用了**，"
-             "落点已改到 %s（与 log/ 平级）。请把文件搬过去。",
-             LEGACY_DEBUG_DIR.c_str(), DEBUG_DIR.c_str());
     }
 
     for (size_t i = 0; i < sizeof(kDebugFlags) / sizeof(kDebugFlags[0]); i++) {

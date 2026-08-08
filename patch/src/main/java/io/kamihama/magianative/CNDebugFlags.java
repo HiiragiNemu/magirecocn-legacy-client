@@ -84,16 +84,6 @@ public final class CNDebugFlags {
     private static final String DEBUG_DIR =
         "/data/data/io.kamihama.totentanz/debug";
 
-    /**
-     * 2026-08-08 之前的落点。<b>已不再读写</b>，只用来点名。
-     *
-     * <p>不做静默兼容（也不去读它）是有意的：两个目录同时生效，就会出现「我明明
-     * 建了开关却没生效」而日志毫无差别的局面。刚被 {@code files/log} 那个死目录
-     * 坑过一轮，不能在同一处再造一个。所以这里是干净切换 + 大声点名。
-     */
-    private static final String LEGACY_DEBUG_DIR =
-        "/data/data/io.kamihama.totentanz/files/madomagi/debug";
-
     // ── skipXxx：启动链上每一步各一个（顺序即启动顺序）────────────────
     /** `CNWebProxy.install()` 不装 WebView 拦截层代理，一律透传直连。 */
     public static final String SKIP_WEB_PROXY      = "skipWebProxy";
@@ -192,30 +182,6 @@ public final class CNDebugFlags {
         }
     }
 
-    /**
-     * 旧落点里还有东西的话，大声点名——那些文件<b>已经不起作用了</b>。
-     *
-     * <p>换路径最容易造成的伤害不是「要重建一次」，而是「以为自己开着、其实没开」：
-     * 开关文件还躺在那儿，日志里却整表都是「关」，两者都不报错。这正是刚被
-     * {@code files/log} 坑过的形状，不能重演。
-     */
-    private static void warnLegacyDir() {
-        try {
-            File old = new File(LEGACY_DEBUG_DIR);
-            if (!old.isDirectory()) return;
-            String[] n = old.list();
-            int cnt = (n == null) ? -1 : n.length;
-            if (cnt == 0) return;                     // 空目录，不值得吵
-            CNLog.w(TAG, "[DEBUG] ⚠ 旧调试开关目录 " + LEGACY_DEBUG_DIR
-                    + " 里还有 " + (cnt < 0 ? "内容（读不到）" : cnt + " 项")
-                    + " —— **它们已经不起作用了**。落点已改到 " + DEBUG_DIR
-                    + "（与 log/ 平级）。请搬过去：\n"
-                    + "  adb shell \"run-as io.kamihama.totentanz sh -c "
-                    + "'mkdir -p debug && mv files/madomagi/debug/* debug/ "
-                    + "&& rmdir files/madomagi/debug'\"");
-        } catch (Throwable ignore) {}
-    }
-
     private static synchronized void ensureLoaded() {
         if (loaded) return;
         loaded = true;
@@ -242,7 +208,6 @@ public final class CNDebugFlags {
                             + "  adb shell \"run-as io.kamihama.totentanz mkdir -p debug\"");
                 }
             }
-            warnLegacyDir();
         } catch (Throwable t) {
             CNLog.w(TAG, "[DEBUG] 读调试开关目录失败（按全部关闭处理）: " + t);
         }
