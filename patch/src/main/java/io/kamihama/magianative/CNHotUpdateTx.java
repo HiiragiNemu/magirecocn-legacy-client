@@ -152,6 +152,12 @@ public final class CNHotUpdateTx {
         if (root == null || (!root.isDirectory() && !root.mkdirs() && !root.isDirectory())) {
             throw new IOException("建不出解压根: " + root);
         }
+        if (CNDebugFlags.isOn(CNDebugFlags.FAIL_HOTUPDATE_APPLY)) {
+            // 在建暂存目录之前就抛：调用方按「应用失败」处理，
+            // 下次启动 recover() 会看到（没有）journal 并原样通过——
+            // 想验真正的中途回滚，把这个注入点往 commit 之前挪。
+            throw new IOException("[DEBUG] failHotUpdateApply 注入的失败");
+        }
         File tx     = txDir(root, tag);
         File stage  = new File(tx, STAGE);
         File backup = new File(tx, BACKUP);

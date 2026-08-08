@@ -254,6 +254,11 @@ public final class CNDownloaderFix {
                             // 的 pushSceneTop 闸门），比前端导航可靠得多。
                             return;
                         }
+                        if (CNDebugFlags.isOn(CNDebugFlags.SKIP_INSTALLER)) {
+                            CNLog.w(TAG, "调试开关 skipInstaller 生效，不跑首次安装"
+                                       + "（资源没装齐的话游戏会停在这里）");
+                            return;
+                        }
                         CNLog.i(TAG, "triggerInstaller: flag 不存在，由 Java 侧启动安装器");
                         runInstaller();
                     } catch (Throwable t) {
@@ -550,6 +555,10 @@ public final class CNDownloaderFix {
             awaitTutorialChoice();
             CNCNDownloadUI.hide();
 
+            if (CNDebugFlags.isOn(CNDebugFlags.SKIP_RESTART)) {
+                CNLog.i(TAG, "调试开关 skipRestart 生效，装完不自动重启");
+                return;
+            }
             if (new File(NO_RESTART_FLAG).isFile()) {
                 CNLog.i(TAG, "Test no-restart marker present; restart suppressed");
                 return;

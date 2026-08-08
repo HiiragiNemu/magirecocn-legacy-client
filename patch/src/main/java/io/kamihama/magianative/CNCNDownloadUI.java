@@ -1508,6 +1508,11 @@ public class CNCNDownloadUI {
      */
     public static void askTutorialOnce(Activity act, Runnable onDone) {
         try {
+            if (CNDebugFlags.isOn(CNDebugFlags.SKIP_TUTORIAL_PROMPT)) {
+                CNLog.i("序章", "调试开关 skipTutorialPrompt 生效，不弹询问框");
+                if (onDone != null) onDone.run();
+                return;
+            }
             if (CNTutorialPrompt.askedOnce()) {
                 CNLog.i("序章", "自动询问已问过，跳过");
                 if (onDone != null) onDone.run();
@@ -1778,8 +1783,8 @@ public class CNCNDownloadUI {
                                      final String waitLabel, final String skipLabel,
                                      final String waitDesc, final String skipCost,
                                      final long waitedMs) {
-        if (CNDebugFlags.isOn(CNDebugFlags.NO_SLOW_ASK)) {
-            CNLog.i(TAG, "[慢网询问] 调试开关 no_slow_ask 生效，按跳过处理：" + what);
+        if (CNDebugFlags.isOn(CNDebugFlags.SKIP_SLOW_ASK)) {
+            CNLog.i(TAG, "[慢网询问] 调试开关 skipSlowAsk 生效，按跳过处理：" + what);
             return SLOW_SKIP;
         }
         if (act == null || overlayView == null) {
@@ -2872,10 +2877,10 @@ public class CNCNDownloadUI {
     }
 
     public static void show(Activity activity) {
-        if (CNDebugFlags.isOn(CNDebugFlags.NO_OVERLAY)) {
+        if (CNDebugFlags.isOn(CNDebugFlags.SKIP_OVERLAY)) {
             // 浮层不显示 → startOverlayFlag() 不会跑 → native 的引擎闸门标记
             // 也不会下发，引擎从头到尾不被闸住。排查「闸门是否卡住场景跳转」时用。
-            CNLog.i(TAG, "调试开关 no_overlay 生效，不显示浮层（引擎闸门也不下发）");
+            CNLog.i(TAG, "调试开关 skipOverlay 生效，不显示浮层（引擎闸门也不下发）");
             return;
         }
         // 早先无条件 return 是个坑：进程未被杀死（如后台回收后重启 Activity）

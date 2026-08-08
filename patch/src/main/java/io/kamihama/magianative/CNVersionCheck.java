@@ -73,6 +73,11 @@ public final class CNVersionCheck {
                 CNLog.i(TAG, "版本检查已经在跑，忽略重复调用");
                 return;
             }
+            if (CNDebugFlags.isOn(CNDebugFlags.SKIP_VERSION_CHECK)) {
+                CNLog.i(TAG, "调试开关 skipVersionCheck 生效，直接接力热更检查");
+                CNHotUpdateCheck.start();
+                return;
+            }
             Thread t = new Thread("cnv-version-check") {
                 @Override public void run() {
                     try { runInner(); }

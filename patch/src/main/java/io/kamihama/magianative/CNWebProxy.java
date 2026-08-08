@@ -304,8 +304,8 @@ public final class CNWebProxy {
     public static void install() {
         try {
             if (!INSTALLED.compareAndSet(false, true)) return;
-            if (CNDebugFlags.isOn(CNDebugFlags.NO_WEBPROXY)) {
-                CNLog.i(TAG, "调试开关 no_webproxy 生效，拦截层代理不安装（透传直连）");
+            if (CNDebugFlags.isOn(CNDebugFlags.SKIP_WEB_PROXY)) {
+                CNLog.i(TAG, "调试开关 skipWebProxy 生效，拦截层代理不安装（透传直连）");
                 return;
             }
             if (Build.VERSION.SDK_INT < MIN_SDK_FOR_WRAP) {

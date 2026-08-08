@@ -60,6 +60,12 @@ public final class CNHotUpdate {
             CNLog.e(TAG, "参数为空，放弃下载 url=" + url + " dest=" + destPath);
             return false;
         }
+        if (CNDebugFlags.isOn(CNDebugFlags.FAIL_DOWNLOAD)) {
+            // 返回 false 而不是抛：调用方本来就按「这一项失败」处理，
+            // 走的是与真实下载失败完全相同的分支（换线、重试、上报）。
+            CNLog.w(TAG, "[DEBUG] failDownload 注入：直接判本次下载失败 " + displayName);
+            return false;
+        }
         File dest = new File(destPath);
 
         // 与原实现一致：目标文件已经在了就直接算完成

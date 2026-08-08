@@ -159,7 +159,7 @@ namespace cocos2d {
 // ## 用法
 //
 //     adb shell "run-as io.kamihama.totentanz mkdir -p files/madomagi/debug"
-//     adb shell "run-as io.kamihama.totentanz touch files/madomagi/debug/no_font_hook"
+//     adb shell "run-as io.kamihama.totentanz touch files/madomagi/debug/noFontHook"
 //     # 重启游戏；logcat 里 [DEBUG] 会把当前生效的开关列出来
 //
 // 启动时无论开没开都会打印全表，所以「有哪些开关」看一眼日志就知道，
@@ -167,23 +167,31 @@ namespace cocos2d {
 static const std::string DEBUG_DIR =
     "/data/data/io.kamihama.totentanz/files/madomagi/debug";
 
-static bool g_dbgNoFontHook     = false;   // 停掉字体路径重定向
-static bool g_dbgNoI18nLabel    = false;   // 停掉 LbUtility::initLabel 的文案替换
-static bool g_dbgNoI18nSetStr   = false;   // 停掉 Label/LabelAtlas/MenuItem::setString 的替换
-static bool g_dbgNoTutorialGuard= false;   // 停掉序章期间的 WebView 看门狗
-static bool g_dbgNoProxyEndpoint= false;   // 停掉 UrlConfig::api/chat 的端点重写
-static bool g_dbgNoHttp2Bump    = false;   // 不把 setMaxConnectionNum 4 提到 10
-static bool g_dbgNoAdxSampleRate= false;   // 不锁 ADX2 采样率为 48000
+// 开关名用**小驼峰**，与 Java 侧保持一致（同一个目录，两边名字风格不该分裂）。
+static bool g_dbgNoFontHook      = false;
+static bool g_dbgNoI18nLabel     = false;
+static bool g_dbgNoI18nSetString = false;
+static bool g_dbgNoTutorialGuard = false;
+static bool g_dbgNoTutorialForce = false;
+static bool g_dbgNoOverlayGate   = false;
+static bool g_dbgNoProxyEndpoint = false;
+static bool g_dbgNoHttp2Bump     = false;
+static bool g_dbgNoAdxSampleRate = false;
 
 struct DebugFlagDef { const char* name; bool* slot; const char* desc; };
 static const DebugFlagDef kDebugFlags[] = {
-    { "no_font_hook",      &g_dbgNoFontHook,      "停用字体路径重定向（UI 字体回到原包的 MTF4a5kp）" },
-    { "no_i18n_label",     &g_dbgNoI18nLabel,     "停用 initLabel 文案替换（引擎侧标签回到日文）" },
-    { "no_i18n_setstring", &g_dbgNoI18nSetStr,    "停用 setString 系文案替换" },
-    { "no_tutorial_guard", &g_dbgNoTutorialGuard, "停用序章期间的 WebView 看门狗" },
-    { "no_proxy_endpoint", &g_dbgNoProxyEndpoint, "停用 UrlConfig::api/chat 端点重写（直连）" },
-    { "no_http2_bump",     &g_dbgNoHttp2Bump,     "不把 HTTP/2 并发数 4 提到 10" },
-    { "no_adx_samplerate", &g_dbgNoAdxSampleRate, "不锁 ADX2 采样率 48000（用设备实际值）" },
+    // ── 关掉我们加的引擎改动（按启动链顺序）──
+    { "noOverlayGate",   &g_dbgNoOverlayGate,   "浮层期间不闸住 pushSceneTop/BGM（引擎照常推进）" },
+    { "noTutorialForce", &g_dbgNoTutorialForce, "不强制序章（即使标记在，也照常进主页）" },
+    { "noTutorialGuard", &g_dbgNoTutorialGuard, "序章期间不起 WebView 看门狗" },
+    { "noProxyEndpoint", &g_dbgNoProxyEndpoint, "UrlConfig::api/chat 只观测不重写（直连）" },
+    // ── 关掉渲染/文案改动 ──
+    { "noFontHook",      &g_dbgNoFontHook,      "不重定向字体路径（UI 字体回原包 MTF4a5kp）" },
+    { "noI18nLabel",     &g_dbgNoI18nLabel,     "initLabel 不替换文案（引擎侧标签回日文）" },
+    { "noI18nSetString", &g_dbgNoI18nSetString, "setString 系不替换文案" },
+    // ── 关掉从 libuwasa 移植的两条性能/音频改动 ──
+    { "noHttp2Bump",     &g_dbgNoHttp2Bump,     "HTTP/2 并发数保持引擎原本的 4，不提到 10" },
+    { "noAdxSampleRate", &g_dbgNoAdxSampleRate, "不锁 ADX2 采样率 48000，用设备实际值" },
 };
 
 static void loadDebugFlags() {
@@ -676,7 +684,7 @@ static void pushSceneTopNew(void* self, const std::string& arg);  // 前向声�
 using PlayBgmFn = void (*)(const char*);
 static PlayBgmFn playBgmDirectOld = nullptr;
 static void playBgmDirectNew(const char* name) {
-    if (overlayActive()) {
+    if (overlayActive() && !g_dbgNoOverlayGate) {
         LOGI("[Overlay] 浮层激活，挂起 BGM: %s", name ? name : "(null)");
         if (name) {
             std::lock_guard<std::mutex> lk(g_deferredMutex);
@@ -757,7 +765,7 @@ static void pushSceneTopNew(void* self, const std::string& arg) {
     // ── 下载浮层闸门：浮层（首装/热更）激活期间吞掉主页跳转 ──
     // 不然引擎在浮层后面直接推进到主页并开始放 BGM。
     // 被吞的跳转在浮层撤掉后由 maybeReleaseDeferredTop 补推（走完整逻辑）。
-    if (overlayActive()) {
+    if (overlayActive() && !g_dbgNoOverlayGate) {
         LOGI("[Overlay] 下载浮层激活，闸住 pushSceneTop(arg=%s)", arg.c_str());
         std::lock_guard<std::mutex> lk(g_deferredMutex);
         g_deferredTopSelf = self;
@@ -790,7 +798,7 @@ static void pushSceneTopNew(void* self, const std::string& arg) {
     // 调用，我们把这条命令**原替换**成 pushScenePrologue：同一时刻队列里
     // 永远只有一条切换命令，不存在撞车窗口。引擎侧 SceneCommand 全部走
     // 游戏主线程的 deque（见 0xb82610），入队动作本身是串行的。
-    if (pushScenePrologueFn && consumeForceTutorial()) {
+    if (!g_dbgNoTutorialForce && pushScenePrologueFn && consumeForceTutorial()) {
         // callback=nativeCallback 是 v1 缺的字段，缺了它 notifyJs 下发的
         // JS 全是残的，前端收不到任何段通知（见本节开头的 bug 分析）。
         static const std::string kPrologueArg =
@@ -1735,7 +1743,7 @@ static SetStringFn loadingSetTitleOld     = nullptr;
 static void setStringTrampoline(SetStringFn old, void* self, const void* text,
                                 const char* /*label*/) {
     maybeReleaseDeferredTop();  // 浮层若在刚才撤掉，这里补推主页跳转/补放 BGM
-    if (g_dbgNoI18nSetStr) {    // 调试开关：原样转交，不做任何替换
+    if (g_dbgNoI18nSetString) {    // 调试开关：原样转交，不做任何替换
         old(self, text);        // ⚠ 释放闸门要留在开关之前——它与翻译无关，
         return;                 //    关掉翻译不该顺带把浮层收尾也关掉
     }

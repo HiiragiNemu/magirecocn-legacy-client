@@ -258,6 +258,16 @@ public final class CNMirrors {
      */
     public static synchronized void refresh(boolean direct) {
         try {
+            if (CNDebugFlags.isOn(CNDebugFlags.SKIP_MIRROR_CONFIG)) {
+                CNLog.i(TAG, "调试开关 skipMirrorConfig 生效，不拉 config.json，沿用内置线路");
+                return;
+            }
+            if (CNDebugFlags.isOn(CNDebugFlags.FAIL_CONFIG_FETCH)) {
+                // 造一个与真实失败同形的异常：走的是同一条 catch，
+                // 所以退避重试、以及退避跑完那个「再试一次 / 用内置线路」的
+                // 询问框，都能照常验到。
+                throw new java.io.IOException("[DEBUG] failConfigFetch 注入的失败");
+            }
             String body = fetch(MIRRORS_URL, direct);
             List<Mirror> parsed = parse(body);
             if (parsed.isEmpty()) {

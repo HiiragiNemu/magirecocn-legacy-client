@@ -203,8 +203,8 @@ public final class CNHotUpdateCheck {
                 CNLog.i(TAG, "热更检查已经在跑，忽略重复调用");
                 return;
             }
-            if (CNDebugFlags.isOn(CNDebugFlags.NO_HOTUPDATE)) {
-                CNLog.i(TAG, "调试开关 no_hotupdate 生效，跳过热更检查直接进游戏");
+            if (CNDebugFlags.isOn(CNDebugFlags.SKIP_HOT_UPDATE)) {
+                CNLog.i(TAG, "调试开关 skipHotUpdate 生效，跳过热更检查直接进游戏");
                 return;
             }
             Thread t = new Thread("cnv-hotupdate") {
@@ -482,6 +482,13 @@ public final class CNHotUpdateCheck {
     /** 供并行预取版本号用：失败返回 null 并提示，调用方按「跳过本包」处理。 */
     private static VerMeta fetchMetaSafe(Pkg pkg) {
         try {
+            // 注入点放在真正发请求之前：拖慢的是「查询这件事」，
+            // 不是某一条线路——这样总闸与询问框的行为才和真实慢网一致。
+            CNDebugFlags.injectSlow(CNDebugFlags.SLOW_VERSION_QUERY,
+                                    "版本查询 " + pkg.label);
+            if (CNDebugFlags.isOn(CNDebugFlags.FAIL_VERSION_QUERY)) {
+                throw new java.io.IOException("[DEBUG] failVersionQuery 注入的失败");
+            }
             return fetchMeta(pkg.versionUrl);
         } catch (Throwable t) {
             CNLog.w(TAG, "[" + pkg.label + "] 版本查询失败，跳过：" + t);
