@@ -204,31 +204,6 @@ public final class CNLog {
         write("日志", "INFO", "日志已启动（第 " + launchSeq + " 次启动）"
                 + " 文件=" + currentLogPath()
                 + " 保留最近 " + KEEP_LOGS + " 次", null);
-        warnStaleLogDir();
-    }
-
-    /**
-     * 只要设备上还留着老版本的 {@code files/log}，就在**真**日志里点它一次名。
-     *
-     * <p>光把注释改对是挡不住的：那个目录已经在设备上了，名字又恰好叫 log，
-     * 任何人去找日志都可能先撞见它。2026-08-08 就有人对着它改 {@code .seq}、
-     * 等日志出现，得出「序号不动、目录空空如也」的结论，排查绕了好几轮才发现
-     * 是在看一个没有任何代码读写的死目录。
-     *
-     * <p>这行警告写在真日志里，所以只要有人拿到了正确的那份，就一定会看到它，
-     * 顺带也就知道自己手上这份是哪一个。
-     */
-    private static void warnStaleLogDir() {
-        try {
-            File stale = new File(PRIV_DIR + "/files/" + LOG_DIR);
-            if (!stale.isDirectory()) return;
-            String[] n = stale.list();
-            write("日志", "WARN", "检测到历史遗留目录 " + stale
-                    + "（" + (n == null ? "读不到内容" : n.length + " 项") + "）"
-                    + " —— 它是 67ac26a9 之前的落点，**现在没有任何代码读写它**。"
-                    + "本次日志写的是 " + currentLogPath()
-                    + "。那边的 .log 与 .seq 都是死的，可以整个删掉。", null);
-        } catch (Throwable ignore) {}
     }
 
     /**
