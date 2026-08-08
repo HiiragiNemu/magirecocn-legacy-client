@@ -38,10 +38,29 @@ public final class CNLog {
      */
     public static final int BUFFER_MAX = 3000;
 
-    /** 本模块自己的 tag：从 logcat 回收时要跳过，否则每条都会重复一遍。 */
+    /**
+     * 本模块自己的 tag：从 logcat 回收时要跳过，否则每条都会重复一遍。
+     *
+     * <h3>🔴 {@code "CNLog"} 不在这里，是故意的</h3>
+     *
+     * 这里列的是 {@link #write} 会用到的 tag（它拿 component 当 tag），跳过它们
+     * 才不会和文件里已有的记录重复。而 <b>{@code "CNLog"} 这个 tag 只被本类的
+     * 兜底诊断用到</b>——{@code .seq} 读写失败、日志文件打不开、日志目录打不开、
+     * 崩溃处理器装不上。这些走的是 {@code android.util.Log}，因为它们发生在
+     * <b>写入器还没建起来</b>的时刻，{@code write()} 那条路当时无处可去。
+     *
+     * <p>它曾经在这张表里，后果是：**恰恰这几条最关键的诊断永远进不了日志文件**。
+     * 它们只存在于原始 logcat，而人排查时发我的是日志文件。2026-08-08 就吃了这个
+     * 亏——`.seq` 停着不动、序号反复是同一个，日志文件里却一个字的解释都没有，
+     * 只能靠猜。加诊断的那次改动因此完全白做。
+     *
+     * <p>不会重复：{@code write()} 从不使用 {@code "CNLog"} 作 tag，两条路径没有
+     * 交集。logcat 回收带 {@code -T 1000} 回灌，所以即使诊断发生在采集启动之前，
+     * 也照样能被捞进文件。
+     */
     private static final String[] OWN_TAGS = {
         "MagiaCNDownloader", "MagiaCNChunk", "MagiaCNMirrors",
-        "MagiaCNHotUpdate", "CNLog", "界面"
+        "MagiaCNHotUpdate", "界面"
     };
 
     /**
