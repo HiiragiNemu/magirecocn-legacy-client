@@ -6,11 +6,11 @@
 | 谁渲染 | 改哪里 | 怎么下发 | 源在哪 |
 |---|---|---|---|
 | WebView（前端一半） | `frontend-strings.tsv` 等四张表 → 回填进前端代码 | 热更包 `cn_js_update.zip` | **本目录** |
-| cocos2d 原生引擎 | `engine_i18n.tsv`（文本 hook 的翻译表） | 落到 `<files>/madomagi/` | ⚠ **不在仓库里**，见下 |
+| cocos2d 原生引擎 | `engine_i18n.tsv`（文本 hook 的翻译表） | 热更包 `cn_scenario_update.zip` → `<files>/madomagi/` | **另一个仓库**，见下 |
 | 烘焙进 PNG／plist 图集的文字 | 只能改图片资源 | 资源包 | 无 |
 
-本目录管第一条。第二条的**方法**记在这里（因为没有别的地方记），但表本身还没有
-版本控制的源——这是个已知缺口，见「engine_i18n.tsv 没有源」一节。
+本目录只管第一条。第二条的源不在本仓库，但**判定方法和操作步骤记在这里**——
+客户端这边才有 hook 和调试开关，判据只能在这儿产生。
 
 ---
 
@@ -84,40 +84,50 @@ adb shell "run-as io.kamihama.totentanz sh -c \
 > 当场从界面上消失，而且是在没人改过译文的情况下悄悄发生。所以日志输出默认带
 > `#`，翻一条放开一条。
 
-验证通过之后，改动要回到版本控制里——而这一步目前**没有地方可去**，见下一节。
+> 上面这套是**在设备上就地验证**，改的是设备上那份副本，下次热更会被覆盖。
+> 验证通过之后，把同样的行提交到补丁仓库 `（外部发布渠道）` 的
+> `madomagi/engine_i18n.tsv`（去掉 `#`），推上去就会自动重打台词包并下发——
+> 见下一节。
 
 ---
 
-## ⚠ `engine_i18n.tsv` 没有源
+## `engine_i18n.tsv` 的源与下发链路
 
-现状，如实记录：
+**源不在本仓库**，在补丁仓库：
 
-- 那 295 条译文**只存在于设备上**的
-  `/data/data/io.kamihama.totentanz/files/madomagi/engine_i18n.tsv`。
-- 仓库里没有这个文件，没有生成它的工具，也没有把它打进任何热更包的步骤。
-  全仓库对它的引用只有 `MagiaLegacy.cpp` 里的那个路径常量。
-- 也就是说：**这份汉化没有备份。** 设备重装、清数据，或者哪次热更把 `<files>/`
-  下的东西清掉，295 条就没了，且无从重建。
+```
+（外部发布渠道）  →  madomagi/engine_i18n.tsv     ← 译文改这里
+```
 
-这不是「以后再说」的技术债，是随时会丢东西的状态。建议按下面两步补上，
-但需要先有人把设备上那份现表 dump 出来——我没有它，凭空造一个只会更糟
-（一个不完整的 `engine_i18n.tsv` 被当成源发出去，等于把没收录的条目全部删掉）。
+`（外部发布渠道）` 是它的组织下游，跑
+`.github/workflows/sync-and-upload.yml`：同步上游 → 打包 → 传 S3。整条链路：
 
-1. **入库**：把设备上的现表取回来，作为 `i18n/engine_i18n.tsv` 的第一次提交。
+```
+上游改 madomagi/engine_i18n.tsv
+  └─ 下游同步，detect 步骤匹配 ^madomagi/(resource/scenario/json/|engine_i18n\.tsv)
+      └─ HAS_SCENARIO=1 → 重打 cn_scenario_update.zip
+          （workflow 显式 cp 它进 _pack_scn/madomagi/，与 scenario/json/ 同包）
+          └─ version_scenario.json 版本号自 configures/ 递增 → 上传 S3
+              └─ 客户端 CNHotUpdateCheck 比对版本 → 下载 → 解到 <files>/
+                  └─ madomagi/engine_i18n.tsv 就位，native hook 3 秒内热重载
+```
 
-   ```bash
-   adb shell "run-as io.kamihama.totentanz cat files/madomagi/engine_i18n.tsv" \
-     > i18n/engine_i18n.tsv
-   ```
+也就是说**改一句译文只要在补丁仓库改一行**，剩下的全自动，客户端这边一行代码
+都不用动，也不用重出 APK。
 
-2. **随包下发**：放进 `cn_scenario_update.zip`，路径 `madomagi/engine_i18n.tsv`。
+> 🔴 **不要在本仓库建 `i18n/engine_i18n.tsv`。** 那会造出第二个源，两边一分叉，
+> 谁也说不清哪份是真的——而这张表「译文为空 = 删除该串」的语义会让分叉直接表现为
+> 界面上的文字消失。要改译文就去补丁仓库改。
 
-   选台词包而不是前端包，是因为解压根目录对得上（`<files>/`），而且**不会被
-   孤儿清理误删**：`CNHotUpdateTx.cleanupPrefixes("scenario")` 只清
-   `madomagi/resource/scenario/json/` 前缀，`madomagi/engine_i18n.tsv` 在这个
-   前缀之外。加前缀之前照例要做一次路径交集验证（理由见 `CNHotUpdateTx` 的注释）。
+几条对得上的旁证（2026-08-08 核对）：
 
-在这两步做完之前，改译文请**同时**留一份到仓库外的安全位置，别只留在设备上。
+- 补丁仓库那份 298 行 = 1 行注释 + 295 条精确条目 + 2 条前缀规则；设备日志是
+  `[i18n] 已加载 295 条 + 2 前缀规则（第 298 行止，坏行 0）`。**逐字吻合，没有漂移。**
+- 解压根是 `/data/data/io.kamihama.totentanz/files/`（`CNHotUpdateCheck.FILES_DIR`），
+  所以包内路径 `madomagi/engine_i18n.tsv` 正好落到 `MagiaLegacy.cpp` 的
+  `ENGINE_I18N_PATH`。
+- 它**不会被孤儿清理误删**：`CNHotUpdateTx.cleanupPrefixes("scenario")` 只清
+  `madomagi/resource/scenario/json/` 前缀，这个文件在该前缀之外。
 
 ---
 
