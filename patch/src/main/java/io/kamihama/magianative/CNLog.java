@@ -301,23 +301,62 @@ public final class CNLog {
         return seq;
     }
 
-    /** 只保留最近 {@link #KEEP_LOGS} 个日志文件，多余的按文件名（含序号）从旧删起。 */
+    /** 只保留最近 {@link #KEEP_LOGS} 个日志文件，多余的按**启动序号**从旧删起。 */
     private static void pruneOldLogs(File logDir) {
         try {
             String[] names = logDir.list();
             if (names == null || names.length <= KEEP_LOGS) return;
-            java.util.ArrayList<String> logs = new java.util.ArrayList<String>();
+            java.util.ArrayList<String> keyed = new java.util.ArrayList<String>();
             for (int i = 0; i < names.length; i++) {
-                if (names[i].endsWith(".log")) logs.add(names[i]);
+                if (names[i].endsWith(".log")) keyed.add(sortKey(names[i]));
             }
-            if (logs.size() <= KEEP_LOGS) return;
-            java.util.Collections.sort(logs);   // 名字以四位序号开头，字典序即时间序
-            int remove = logs.size() - KEEP_LOGS;
+            if (keyed.size() <= KEEP_LOGS) return;
+            java.util.Collections.sort(keyed);   // 键里序号已定宽零填充，字典序即序号序
+            int remove = keyed.size() - KEEP_LOGS;
             for (int i = 0; i < remove; i++) {
-                try { new File(logDir, logs.get(i)).delete(); } catch (Throwable ignore) {}
+                String k = keyed.get(i);
+                String name = k.substring(k.indexOf('|') + 1);
+                try { new File(logDir, name).delete(); } catch (Throwable ignore) {}
             }
             Log.i("CNLog", "清理了 " + remove + " 个旧日志");
         } catch (Throwable ignore) {}
+    }
+
+    /**
+     * 排序键：定宽零填充的启动序号 + {@code '|'} + 原文件名。
+     *
+     * <h3>为什么不能直接对文件名排字典序</h3>
+     *
+     * 原先就是那么做的，注释写着「名字以四位序号开头，字典序即时间序」。这个前提
+     * 在序号涨到 5 位时**静默失效**：{@code %04d} 是<b>最小</b>宽度，10000 照样
+     * 格式化成 {@code "10000"}，不报错也不截断。而字典序里
+     * {@code "10000_" < "9999_"}（{@code '1' < '9'}），于是：
+     *
+     * <ul>
+     *   <li>最新的日志被当成最旧的，**每次启动都把上一次那份删掉**；</li>
+     *   <li>4 位的老日志永远排在后面，反而再也删不掉——保留策略整个倒过来。</li>
+     * </ul>
+     *
+     * 表现是「刚跑完那次没有日志」，极易误判成日志线程崩了（2026-08-08 实际发生
+     * 过一次，起因是把 {@code .seq} 设成 9999 探边界）。所以这里按**数值**排，
+     * 而不是按字面。
+     *
+     * <p>不用 {@code Comparator}：带类型实参的 {@code Comparator} 会让 d8 崩
+     * （CLAUDE.md 铁律 4 / {@code tools/check-d8-pitfalls.py}），裸类型又要一路
+     * 强转，不如把键做对。19 位够 {@code long} 用到底，序号再涨也不会重蹈覆辙。
+     *
+     * <p>解析不出序号的（不是我们生成的名字）记 -1，排在最前先删——{@code '-'}
+     * 的码位小于 {@code '0'}，零填充后的字典序天然如此。
+     */
+    private static String sortKey(String name) {
+        int i = 0;
+        while (i < name.length() && name.charAt(i) >= '0' && name.charAt(i) <= '9') i++;
+        long seq = -1L;
+        if (i > 0) {
+            try { seq = Long.parseLong(name.substring(0, i)); }
+            catch (Throwable ignore) { seq = -1L; }   // 位数超出 long 的极端情况
+        }
+        return String.format(Locale.US, "%019d|%s", seq, name);
     }
 
     /** 关闭日志文件。 */

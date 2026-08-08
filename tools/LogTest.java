@@ -53,6 +53,37 @@ public class LogTest {
               String.format("%04d_", CNLog.launchSeq())), l3[l3.length-1]);
         check("最旧的已被删除", !l3[0].startsWith("0001_"), l3[0]);
 
+        System.out.println("\n[3b] 序号涨到 5 位时，删的仍然是最旧的那份");
+        // 回归用例。原实现对文件名排字典序，注释写着「名字以四位序号开头，字典序
+        // 即时间序」——序号一过 9999 这个前提就静默失效：字典序里 "10000_" 排在
+        // "9995_" 前面（'1' < '9'），于是每次启动都把**最新**那份当成最旧的删掉，
+        // 4 位的老日志反而永远删不掉，保留策略整个倒过来。表现是「刚跑完那次没有
+        // 日志」，极易误判成日志线程崩了。这里把数值序钉死。
+        // ⚠ 数据必须选「首位数字大于 '1' 的 4 位序号」（这里 9970..9999）与 5 位
+        // 序号共存。用 0001.. 那种前导零的名字是抓不到的：'0' < '1'，字典序恰好
+        // 也对，测试会在坏代码上一起通过——写回归测试时最容易掉进的坑。
+        File pd3b = new File(new File(root, "seq5").getAbsolutePath(), "log");
+        pd3b.mkdirs();
+        Method prune = CNLog.class.getDeclaredMethod("pruneOldLogs", File.class);
+        prune.setAccessible(true);
+        Field keepF = CNLog.class.getDeclaredField("KEEP_LOGS"); keepF.setAccessible(true);
+        int keepN = keepF.getInt(null);
+        for (int i = 0; i < keepN; i++)                       // 9970..9999，最旧
+            new File(pd3b, String.format("%04d_20260808-100000.log", 10000-keepN+i))
+                    .createNewFile();
+        new File(pd3b, "10000_20260808-173756.log").createNewFile();   // 跨过 9999
+        new File(pd3b, "10001_20260808-174500.log").createNewFile();
+        prune.invoke(null, pd3b);
+        List<String> left = Arrays.asList(logs(pd3b));
+        check("5 位序号的最新两份没有被删",
+              left.contains("10000_20260808-173756.log")
+                  && left.contains("10001_20260808-174500.log"),
+              "剩 "+left.size()+" 个");
+        check("被删的是序号最小的那两份",
+              !left.contains(String.format("%04d_20260808-100000.log", 10000-keepN))
+                  && !left.contains(String.format("%04d_20260808-100000.log", 10001-keepN)),
+              left.isEmpty()?"空":"最小剩余 "+left.get(0));
+
         System.out.println("\n[4] 来源过滤即时生效");
         CNLog.setShowLogcat(true); CNLog.setShowNative(true);
         int base=CNLog.visibleSize();
