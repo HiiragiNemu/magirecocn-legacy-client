@@ -474,8 +474,47 @@ public final class CNMirrors {
                     return;
                 }
             }
-            CNLog.w(TAG, "线路表重试 " + RETRY_BACKOFF_MS.length
-                         + " 次仍失败，本次启动沿用内置默认线路（代理配置也不会下发）");
+            // 退避表用完仍然没拉到。到这一步为止玩家什么都不知道——原先只有一行
+            // WARN 进日志，而后果是全局的（整场会话跑内置线路、proxy 段从未下发）。
+            // 这正是「静默失败」最讨厌的地方：出了事没人知道，只能靠事后翻日志。
+            //
+            // 注意这里问的**不是**「要不要继续等」。线路表从设计上就不在启动关键
+            // 路径里（见 ensureLoadedAsync 的说明：内置默认线路从进程启动起就可用，
+            // api.example.test 故障绝不能卡住启动），没有任何人在等它——问「继续等
+            // 吗」是个假选择。真正的取舍是「再试一次，还是就用内置线路过日子」。
+            askAfterExhausted();
+        }
+    }
+
+    /**
+     * 退避表用完之后问玩家一次：再试，还是用内置线路继续。
+     *
+     * <p>只在浮层还在时才问得成——浮层收了之后玩家已经在游戏里，这时候弹框既打扰
+     * 又没意义，退回记一行日志。{@code askSlowNetwork} 自己会处理「浮层不在」和
+     * 「被在 UI 线程上调用」两种情况并返回 SKIP，所以这里不必重复判断。
+     *
+     * <p>选「再试一次」就把退避表整轮重跑（RETRY_STARTED 复位后再起一趟）。
+     * 不做无限循环：每一轮结束都会再问一次，要不要继续始终由玩家定。
+     */
+    private static void askAfterExhausted() {
+        try {
+            android.app.Activity act = RestClient.getCurrentActivity();
+            int choice = CNCNDownloadUI.askSlowNetwork(act, "线路表",
+                    "一直没能取到线路表（config.json）",
+                    "再试一次", "用内置线路",
+                    "重新按退避节奏试一轮。网络刚恢复时选这个。",
+                    "本次启动用内置默认线路继续，下载可能慢一些；重启游戏会再试。",
+                    0L);
+            if (choice == CNCNDownloadUI.SLOW_WAIT) {
+                CNLog.i(TAG, "玩家选择重试线路表，重跑一轮退避");
+                RETRY_STARTED.set(false);
+                ensureLoadedAsync();
+            } else {
+                CNLog.w(TAG, "线路表重试 " + RETRY_BACKOFF_MS.length
+                             + " 次仍失败，本次启动沿用内置默认线路（代理配置也不会下发）");
+            }
+        } catch (Throwable t) {
+            CNLog.w(TAG, "线路表失败询问出错，沿用内置默认线路: " + t);
         }
     }
 

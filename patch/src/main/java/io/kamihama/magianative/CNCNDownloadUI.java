@@ -424,6 +424,8 @@ public class CNCNDownloadUI {
     private static TextView vTutorialPill;
     /** 教程询问的模态框。非空即表示正在显示，用于防重入。 */
     private static FrameLayout tutorialModal;
+    /** 「网络慢，要不要继续等」询问框。非空即表示正在显示，用于防重入。 */
+    private static FrameLayout slowModal;
 
     /** 每个文件一个槽位。 */
     private static final class SlotViews {
@@ -1720,6 +1722,206 @@ public class CNCNDownloadUI {
     }
 
     // ==================================================================
+    // 网络慢时的「你来定」询问框
+    // ==================================================================
+
+    /** {@link #askSlowNetwork} 的返回值：玩家选了「再来一次」（继续等 / 重试）。 */
+    public static final int SLOW_WAIT = 1;
+    /** {@link #askSlowNetwork} 的返回值：玩家选了「算了」，或者根本没条件问。 */
+    public static final int SLOW_SKIP = 2;
+
+    /** 询问结果的信箱。用数组是为了让具名内部类能写回去（不能捕获非 final 局部量）。 */
+    private static final class SlowAnswer {
+        final int[] choice = new int[]{ SLOW_SKIP };
+        final java.util.concurrent.CountDownLatch latch =
+                new java.util.concurrent.CountDownLatch(1);
+    }
+
+    /**
+     * 网络慢到超过预算时，<b>问玩家</b>要不要继续等，而不是替他决定。
+     *
+     * <h3>为什么要问</h3>
+     *
+     * 这件事众口难调：网好的人觉得被慢线路拖着，网差的人觉得刚开始就被放弃。
+     * 任何一个写死的超时都会得罪一半人，而且两种得罪都是<b>静默</b>的——
+     * 玩家只看到「进游戏了但台词没更新」或者「白屏久了一点」，根本不知道
+     * 刚刚发生过一次取舍。所以把这个取舍摆到台面上，让他自己选。
+     *
+     * <h3>用法与线程</h3>
+     *
+     * <b>阻塞调用，只能在后台线程上用。</b>内部切到 UI 线程建框，然后在调用线程上
+     * 等玩家点。在 UI 线程上调会死锁，所以那种情况直接返回 {@link #SLOW_SKIP}
+     * 并记一条日志——宁可退回旧行为，也不能把主线程锁死。
+     *
+     * <p>浮层不在（还没建/已经收了）时无处挂框，同样返回 {@link #SLOW_SKIP}：
+     * 问不了就只能沿用原来的 fail-open，但会留下日志说明是「没条件问」而不是
+     * 「玩家选了跳过」——这两件事在排查时完全不同。
+     *
+     * <h3>两种形状</h3>
+     *
+     * 按钮文案是参数，因为两个调用点的取舍轴不一样：热更新那边玩家在<b>真的等</b>
+     * （继续等 / 跳过），线路表那边没人在等（重试 / 用内置线路继续）。框是同一个，
+     * 语义由调用方说清楚——别让玩家去猜「跳过」到底跳过了什么。
+     *
+     * @param act      宿主 Activity
+     * @param title    框标题，如「热更新」「线路表」
+     * @param what     出了什么事，一句话
+     * @param waitLabel 正面按钮文案，如「继续等待」「再试一次」
+     * @param skipLabel 次要按钮文案，如「跳过」「用内置线路」
+     * @param waitDesc 选正面按钮意味着什么
+     * @param skipCost 选次要按钮的代价，要说人话
+     * @param waitedMs 已经等了多久；&lt;=0 表示不显示时长
+     * @return {@link #SLOW_WAIT} 或 {@link #SLOW_SKIP}
+     */
+    public static int askSlowNetwork(final Activity act, final String title,
+                                     final String what,
+                                     final String waitLabel, final String skipLabel,
+                                     final String waitDesc, final String skipCost,
+                                     final long waitedMs) {
+        if (act == null || overlayView == null) {
+            CNLog.w(TAG, "[慢网询问] 浮层不在，无法询问「" + what + "」，按跳过处理");
+            return SLOW_SKIP;
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            CNLog.e(TAG, "[慢网询问] 被在 UI 线程上调用，会死锁；按跳过处理：" + what);
+            return SLOW_SKIP;
+        }
+        final SlowAnswer ans = new SlowAnswer();
+        try {
+            act.runOnUiThread(new SlowBuild(act, title, what, waitLabel, skipLabel,
+                                            waitDesc, skipCost, waitedMs, ans));
+            ans.latch.await();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            return SLOW_SKIP;
+        } catch (Throwable t) {
+            CNLog.e(TAG, "[慢网询问] 建框失败，按跳过处理", t);
+            return SLOW_SKIP;
+        }
+        return ans.choice[0];
+    }
+
+    /** 在 UI 线程上把询问框建出来。建不出来就立刻放行调用线程，别把它吊死。 */
+    private static final class SlowBuild implements Runnable {
+        private final Activity act;
+        private final String title, what, waitLabel, skipLabel, waitDesc, skipCost;
+        private final long waited; private final SlowAnswer ans;
+        SlowBuild(Activity act, String title, String what, String waitLabel,
+                  String skipLabel, String waitDesc, String skipCost,
+                  long waited, SlowAnswer ans) {
+            this.act = act; this.title = title; this.what = what;
+            this.waitLabel = waitLabel; this.skipLabel = skipLabel;
+            this.waitDesc = waitDesc; this.skipCost = skipCost;
+            this.waited = waited; this.ans = ans;
+        }
+        @Override public void run() {
+            try { buildSlowDialog(act, title, what, waitLabel, skipLabel,
+                                  waitDesc, skipCost, waited, ans); }
+            catch (Throwable t) {
+                CNLog.e(TAG, "[慢网询问] 构建失败，按跳过处理", t);
+                ans.latch.countDown();
+            }
+        }
+    }
+
+    /** 与教程询问框同一套样式：同样的调色板、圆角、按钮，宿主是引擎 Activity。 */
+    private static void buildSlowDialog(final Activity act, String title, String what,
+                                        String waitLabel, String skipLabel,
+                                        String waitDesc, String skipCost,
+                                        long waited, SlowAnswer ans) {
+        FrameLayout host = overlayView;
+        if (host == null || slowModal != null) {   // 浮层没了 / 已经开着一个
+            ans.latch.countDown();
+            return;
+        }
+        final FrameLayout modal = new FrameLayout(act);
+        modal.setBackgroundColor(COLOR_DIM);
+        modal.setClickable(true);        // 吃掉点击：这是必须做出的选择，
+        modal.setFocusable(true);        // 不许点框外糊弄过去
+
+        LinearLayout panel = new LinearLayout(act);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(act, 22), dp(act, 20), dp(act, 22), dp(act, 18));
+        GradientDrawable panelBg = new GradientDrawable();
+        panelBg.setColor(COLOR_LOG_PANEL_BG);
+        panelBg.setCornerRadius(dp(act, 16));
+        panelBg.setStroke(dp(act, 1), COLOR_CARD_STK);
+        panel.setBackground(panelBg);
+        FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
+                dp(act, 330), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        panelLp.leftMargin = panelLp.rightMargin = dp(act, 20);
+        modal.addView(panel, panelLp);
+
+        TextView t = new TextView(act);
+        t.setText(title + "：网络似乎不太顺");
+        t.setTextColor(COLOR_ACCENT);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f);
+        t.setTypeface(t.getTypeface(), Typeface.BOLD);
+        panel.addView(t, lpRow(0, dp(act, 10)));
+
+        TextView msg = new TextView(act);
+        msg.setText(what
+                  + (waited > 0 ? ("，已经等了 " + (waited / 1000) + " 秒还没有结果。")
+                                : "。")
+                  + "\n\n"
+                  + "· 「" + waitLabel + "」：" + waitDesc + "\n"
+                  + "· 「" + skipLabel + "」：" + skipCost + "\n\n"
+                  + "两种都不会损坏存档，也不影响账号。");
+        msg.setTextColor(COLOR_LOG_PANEL_TEXT);
+        msg.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
+        msg.setLineSpacing(dp(act, 2), 1f);
+        panel.addView(msg, lpRow(0, dp(act, 18)));
+
+        LinearLayout row = new LinearLayout(act);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.END);
+        panel.addView(row, lpRow(0, 0));
+
+        TextView skip = dialogButton(act, skipLabel, COLOR_LOG_PANEL_TEXT, 0x00000000, true);
+        TextView wait = dialogButton(act, waitLabel, 0xFFFFFFFF, COLOR_ACCENT, false);
+        LinearLayout.LayoutParams waitLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        waitLp.leftMargin = dp(act, 10);
+        row.addView(skip, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        row.addView(wait, waitLp);
+
+        skip.setOnClickListener(new SlowChoice(SLOW_SKIP, ans));
+        wait.setOnClickListener(new SlowChoice(SLOW_WAIT, ans));
+
+        host.addView(modal, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        slowModal = modal;
+    }
+
+    /** 记下选择 → 关框 → 放行等在后台线程上的调用方。 */
+    private static final class SlowChoice implements View.OnClickListener {
+        private final int choice; private final SlowAnswer ans;
+        SlowChoice(int choice, SlowAnswer ans) { this.choice = choice; this.ans = ans; }
+        @Override public void onClick(View v) {
+            try {
+                ans.choice[0] = choice;
+                CNLog.i(TAG, "[慢网询问] 玩家选择："
+                        + (choice == SLOW_WAIT ? "正面（继续/重试）" : "次要（跳过/放弃）"));
+                closeSlowDialog();
+            } catch (Throwable t) {
+                CNLog.e(TAG, "[慢网询问] 处理选择失败", t);
+            } finally {
+                ans.latch.countDown();   // 无论如何都要放行，否则后台线程永远卡在这
+            }
+        }
+    }
+
+    private static void closeSlowDialog() {
+        FrameLayout m = slowModal;
+        slowModal = null;
+        if (m != null && m.getParent() instanceof ViewGroup) {
+            ((ViewGroup) m.getParent()).removeView(m);
+        }
+    }
+
+    // ==================================================================
     // 强制更新弹窗（客户端版本检查）
     // ==================================================================
 
@@ -2473,6 +2675,7 @@ public class CNCNDownloadUI {
                 logModal      = null;
                 vTutorialPill = null;
                 tutorialModal = null;
+                slowModal     = null;
                 vLogScroll    = null;
                 themeChipBg   = null;
                 logPillBg     = null;
@@ -2606,6 +2809,7 @@ public class CNCNDownloadUI {
         vBgmPill = null;
         vTutorialPill = null;
         tutorialModal = null;
+        slowModal = null;
     }
 
     public static void markFileDone(int i) {
