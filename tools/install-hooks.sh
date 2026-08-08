@@ -9,9 +9,14 @@
 # 钩子放在 tools/githooks/（受版本控制），靠 core.hooksPath 指过去——
 # 这样它们跟着仓库走，而不是躺在每个人各自的 .git/hooks 里自生自灭。
 #
-#   tools/githooks/commit-msg  提交信息规范（中文 / Co-authored-by / 文档:）
-#   tools/githooks/pre-push    推送时的提交信息复查（§1）+ 分支纪律（§0）
-#   tools/githooks/_msgrules.py 两个钩子共用的提交信息判据（不是钩子本身）
+#   tools/githooks/commit-msg    提交信息规范（中文 / Co-authored-by / 文档:）
+#   tools/githooks/pre-push      推送时的提交信息复查（§1）+ 分支纪律（§0）
+#
+# 这两个是 POSIX sh 的启动层，只负责找一个能用的 Python 3；真正的实现分别在
+# commit_msg.py / pre_push.py，判据在两者共用的 _msgrules.py。分层是为了
+# Windows：那边 python3 常常不在 PATH，而钩子跑不起来会让**合规的提交也提不了**。
+#
+# Windows 用户不想开 Git Bash 的话，跑 tools\install-hooks.cmd，等价。
 #
 # 跳过单次检查：
 #   提交信息里顶格独占一行写 [skip-hooks]  跳过 commit-msg
@@ -33,10 +38,7 @@ git config core.hooksPath tools/githooks
 echo "✔ 已把 core.hooksPath 指向 tools/githooks"
 echo
 echo "  生效的钩子："
-for h in tools/githooks/*; do
-  case "$(basename "$h")" in _*) continue ;; esac
-  [ -f "$h" ] && printf "    %-12s %s\n" "$(basename "$h")" \
-    "$(sed -n '3s|^"""||p;3s|。.*||p' "$h" 2>/dev/null | head -1)"
-done
+printf "    %-12s %s\n" "commit-msg" "提交信息规范（中文 / Co-authored-by / 文档:）"
+printf "    %-12s %s\n" "pre-push"   "推送时复查提交信息 + 分支纪律"
 echo
 echo "  自检： git config --get core.hooksPath"

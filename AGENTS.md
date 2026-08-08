@@ -283,7 +283,13 @@ done
 
 > git 自己的钩子做不到这一点：`core.hooksPath` 是每份克隆的本地配置，没法从入库
 > 文件里设（clone 即执行任意代码，git 有意堵死了）。所以才需要绕这一圈。
-> 万一项目级 `.codex/` 层没被信任，手动补一次即可：`bash tools/install-hooks.sh`。
+> 万一项目级 `.codex/` 层没被信任，手动补一次即可：`bash tools/install-hooks.sh`
+> （Windows: `tools\install-hooks.cmd`）。
+
+两个 git 钩子分两层：`commit-msg` / `pre-push` 是 POSIX sh 启动层，只负责找一个
+能用的 Python 3（`python3` → `python` → `py -3`）；实现在 `commit_msg.py` /
+`pre_push.py`。找不到解释器、找不到实现、找不到判据模块——三种情况一律**放行
+并提示**。护栏坏掉时应该让路，不是把仓库锁死。
 
 `agent-guard.py` 自己只直接拦一件事：**绕过 git 钩子**——`git commit --no-verify`
 / `-n`、`git push --no-verify`，以及 `git -c core.hooksPath=… commit/push`。

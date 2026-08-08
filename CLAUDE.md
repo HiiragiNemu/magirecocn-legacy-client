@@ -54,7 +54,7 @@
 只有在「两个 Agent 都没碰过这份克隆」时才需要手动补一次：
 
 ```bash
-bash tools/install-hooks.sh
+bash tools/install-hooks.sh      # Windows 不想开 Git Bash 就跑 tools\install-hooks.cmd
 ```
 
 （git 自己的钩子没法从入库文件里自动生效：`core.hooksPath` 是每份克隆的本地配置，
@@ -69,6 +69,16 @@ Agent 侧的 PreToolUse 钩子来「接上电」。）
 | `pre-push` | 本次推送**新增**的提交信息不合规（在别处提交再推进来的，`commit-msg` 看不见） | `SKIP_MSG_HOOK=1 git push` |
 | | 新建远端分支违反 `AGENTS.md` §0 | `SKIP_BRANCH_HOOK=1 git push` |
 | `agent-guard.py` | `--no-verify` 与 `-c core.hooksPath=…`（绕过上面两个且不留痕迹） | 无——请改用上面两个逃生口 |
+
+两个 git 钩子分两层：`commit-msg` / `pre-push` 是 POSIX sh 的启动层，只负责找一个
+能用的 Python 3（`python3` → `python` → `py -3`，逐个真跑版本检查）；实现分别在
+`commit_msg.py` / `pre_push.py`，判据在共用的 `_msgrules.py`。**找不到解释器时放行
+并提示，不是拦下**——缺个 Python 不该让整个仓库提交不了。
+
+钩子不能是 `.bat`：git 找的是名为 `commit-msg`（无扩展名）的文件，在 Windows 上
+也用自带的 sh 执行它。能配 `.cmd` 的只有给人手动跑一次的安装动作。
+换行由 `.gitattributes` 钉成 LF——CRLF 会让 sh 报 `bad interpreter: ...^M`，
+同样是「合规的提交也提不了」。
 
 之所以要拦：这几条在文档里躺了很久，然后 2026-08-08 一口气进来 12 个英文标题、
 作者是 `github-actions[bot]`、没有任何 `Co-authored-by` 的提交。
