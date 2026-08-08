@@ -2074,7 +2074,13 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 
     loadDebugFlags();
     LOGI("========== MagiaLegacy JNI_OnLoad ==========");
-    LOGI("[VERSION] magia-native v1（取代 libuwasa；下载流水线待接管）");
+    // 这行只写**长期成立的职责**，不写「待接管」「暂未实现」这类进度。
+    // 原话是「下载流水线待接管」——接管早就做完了（下面 DLJson / SelectURL /
+    // AssetLoadState / DSL 那一串 hook 就是它），可这句在日志里又躺了很久，
+    // 而日志恰恰是别人排查时第一眼看的东西：一句过时的状态描述会让人从错的
+    // 前提出发。进度属于 README 和提交历史，不属于每次启动都打一遍的横幅。
+    LOGI("[VERSION] magia-native v1"
+         "（取代 libuwasa 与 libcn_hook：端点重定向 + 下载流水线 + 文案/字体）");
 
     // ── 先缓存 App 类的全局引用 ──
     // 本函数所在线程持有 App ClassLoader，这是唯一能 FindClass 到我们自己类的时机。
