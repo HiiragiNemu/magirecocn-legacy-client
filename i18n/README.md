@@ -23,8 +23,8 @@
 现在有了。`logI18nMiss` 调试开关会把「流经 hook 却没翻到」的串打出来：
 
 ```bash
-adb shell "run-as io.kamihama.totentanz mkdir -p files/madomagi/debug"
-adb shell "run-as io.kamihama.totentanz touch files/madomagi/debug/logI18nMiss"
+adb shell "run-as io.kamihama.totentanz mkdir -p debug"
+adb shell "run-as io.kamihama.totentanz touch debug/logI18nMiss"
 # 重启游戏，把要查的流程走一遍，然后：
 adb logcat -d -s MagiaCN_Legacy | sed -n 's/.*\[i18n-miss\]\[[^]]*\] //p' | sort -u
 ```
@@ -66,7 +66,7 @@ adb logcat -d -s MagiaCN_Legacy | sed -n 's/.*\[i18n-miss\]\[[^]]*\] //p' | sort
 
 ```bash
 # 1. 收集这一局所有该翻没翻的串（骨架已经是 tsv 行格式）
-adb shell "run-as io.kamihama.totentanz touch files/madomagi/debug/logI18nMiss"
+adb shell "run-as io.kamihama.totentanz touch debug/logI18nMiss"
 # 重启，打一场，然后：
 adb logcat -d -s MagiaCN_Legacy | sed -n 's/.*\[i18n-miss\]\[[^]]*\] //p' | sort -u \
   > /tmp/miss.tsv

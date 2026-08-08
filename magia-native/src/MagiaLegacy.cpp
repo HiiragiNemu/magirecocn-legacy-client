@@ -133,7 +133,7 @@ namespace cocos2d {
 
 // ═══ 调试开关目录 ════════════════════════════════════════════════════
 //
-//     /data/data/io.kamihama.totentanz/files/madomagi/debug/<开关名>
+//     /data/data/io.kamihama.totentanz/debug/<开关名>
 //
 // 目录里**建一个同名空文件就是打开该开关**，删掉就是关闭，重启游戏生效。
 //
@@ -160,13 +160,22 @@ namespace cocos2d {
 //
 // ## 用法
 //
-//     adb shell "run-as io.kamihama.totentanz mkdir -p files/madomagi/debug"
-//     adb shell "run-as io.kamihama.totentanz touch files/madomagi/debug/noFontHook"
+//     adb shell "run-as io.kamihama.totentanz mkdir -p debug"
+//     adb shell "run-as io.kamihama.totentanz touch debug/noFontHook"
 //     # 重启游戏；logcat 里 [DEBUG] 会把当前生效的开关列出来
 //
 // 启动时无论开没开都会打印全表，所以「有哪些开关」看一眼日志就知道，
 // 不必回来翻源码。写错名字也会被单独列出来——否则你会以为开关没用。
+// 落点在私有目录根下，与 CNLog 的 log/ **平级**（<priv>/log 与 <priv>/debug）。
+// 不放 files/ 里：那是热更的解压根，CNHotUpdateTx 会按前缀算孤儿并删除。
+// 现在 cleanupPrefixes("scenario") 只清 madomagi/resource/scenario/json/，
+// 碰不到这里——但那是巧合不是保证，前缀哪天放宽到 madomagi/，开关就会在某次
+// 热更后集体消失且查不出原因。挪出来就不存在这个问题。
 static const std::string DEBUG_DIR =
+    "/data/data/io.kamihama.totentanz/debug";
+// 2026-08-08 之前的落点。**不再读**，只在 loadDebugFlags 里点名——
+// 静默兼容会造出「文件还在、开关却没生效」而日志毫无差别的局面。
+static const std::string LEGACY_DEBUG_DIR =
     "/data/data/io.kamihama.totentanz/files/madomagi/debug";
 
 // 开关名用**小驼峰**，与 Java 侧保持一致（同一个目录，两边名字风格不该分裂）。
@@ -239,10 +248,19 @@ static void loadDebugFlags() {
              "——所有开关都会读成「关」，这**不是**「一个都没开」。"
              "多半是用 su/root 建的；请改用 run-as 重建：",
              errno, (int)dst.st_uid, (unsigned)(dst.st_mode & 07777));
-        LOGE("[DEBUG]   adb shell \"run-as io.kamihama.totentanz "
-             "mkdir -p files/madomagi/debug\"");
+        LOGE("[DEBUG]   adb shell \"run-as io.kamihama.totentanz mkdir -p debug\"");
     } else {
         dirReadable = true;
+    }
+
+    // 旧落点里还有东西就大声点名：那些文件已经不起作用了。
+    // 换路径最容易造成的伤害不是「要重建一次」，而是「以为自己开着、其实没开」
+    // ——文件还躺在那儿，日志里却整表都是「关」，两者都不报错。
+    struct stat lst;
+    if (::stat(LEGACY_DEBUG_DIR.c_str(), &lst) == 0 && S_ISDIR(lst.st_mode)) {
+        LOGE("[DEBUG] ⚠ 旧调试开关目录 %s 还在 —— **里面的开关已经不起作用了**，"
+             "落点已改到 %s（与 log/ 平级）。请把文件搬过去。",
+             LEGACY_DEBUG_DIR.c_str(), DEBUG_DIR.c_str());
     }
 
     for (size_t i = 0; i < sizeof(kDebugFlags) / sizeof(kDebugFlags[0]); i++) {

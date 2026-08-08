@@ -7,7 +7,7 @@ import java.io.File;
  * {@code DEBUG_DIR} <b>是同一个目录</b>：
  *
  * <pre>
- *     /data/data/io.kamihama.totentanz/files/madomagi/debug/&lt;开关名&gt;
+ *     /data/data/io.kamihama.totentanz/debug/&lt;开关名&gt;
  * </pre>
  *
  * 建一个同名空文件就是打开该开关，删掉就是关闭，<b>重启游戏生效</b>。
@@ -54,8 +54,8 @@ import java.io.File;
  * <h3>用法</h3>
  *
  * <pre>
- *   adb shell "run-as io.kamihama.totentanz mkdir -p files/madomagi/debug"
- *   adb shell "run-as io.kamihama.totentanz touch files/madomagi/debug/skipHotUpdate"
+ *   adb shell "run-as io.kamihama.totentanz mkdir -p debug"
+ *   adb shell "run-as io.kamihama.totentanz touch debug/skipHotUpdate"
  *   # 重启游戏；logcat 里 [DEBUG] 会把全表和当前生效的开关列出来
  * </pre>
  */
@@ -63,8 +63,35 @@ public final class CNDebugFlags {
 
     private static final String TAG = "CNDebugFlags";
 
-    /** 与 native 侧 {@code DEBUG_DIR} 逐字一致。 */
+    /**
+     * 与 native 侧 {@code DEBUG_DIR} 逐字一致。
+     *
+     * <h3>为什么在 {@code PRIV_DIR} 下，而不是 {@code files/} 里</h3>
+     *
+     * 排查工具的落点统一放在应用私有目录根下，与 {@link CNLog} 的 {@code log/}
+     * <b>平级</b>：{@code <priv>/log} 与 {@code <priv>/debug}。两条理由：
+     *
+     * <ul>
+     *   <li><b>{@code files/} 是热更的解压根。</b>{@code CNHotUpdateTx} 会往那里
+     *       重建，还会按前缀算孤儿并删除。目前 {@code cleanupPrefixes("scenario")}
+     *       只清 {@code madomagi/resource/scenario/json/}，碰不到调试目录——但这是
+     *       <b>巧合而非保证</b>：哪天有人把前缀放宽到 {@code madomagi/}，开关就会
+     *       在某次热更后集体消失，而且查不出为什么。挪出来就不存在这个问题。</li>
+     *   <li>排查工具应当自成一处，不和下发内容混在一起：找日志和找开关是同一件
+     *       事，两个目录挨着放，说一次路径就够了。</li>
+     * </ul>
+     */
     private static final String DEBUG_DIR =
+        "/data/data/io.kamihama.totentanz/debug";
+
+    /**
+     * 2026-08-08 之前的落点。<b>已不再读写</b>，只用来点名。
+     *
+     * <p>不做静默兼容（也不去读它）是有意的：两个目录同时生效，就会出现「我明明
+     * 建了开关却没生效」而日志毫无差别的局面。刚被 {@code files/log} 那个死目录
+     * 坑过一轮，不能在同一处再造一个。所以这里是干净切换 + 大声点名。
+     */
+    private static final String LEGACY_DEBUG_DIR =
         "/data/data/io.kamihama.totentanz/files/madomagi/debug";
 
     // ── skipXxx：启动链上每一步各一个（顺序即启动顺序）────────────────
@@ -165,6 +192,30 @@ public final class CNDebugFlags {
         }
     }
 
+    /**
+     * 旧落点里还有东西的话，大声点名——那些文件<b>已经不起作用了</b>。
+     *
+     * <p>换路径最容易造成的伤害不是「要重建一次」，而是「以为自己开着、其实没开」：
+     * 开关文件还躺在那儿，日志里却整表都是「关」，两者都不报错。这正是刚被
+     * {@code files/log} 坑过的形状，不能重演。
+     */
+    private static void warnLegacyDir() {
+        try {
+            File old = new File(LEGACY_DEBUG_DIR);
+            if (!old.isDirectory()) return;
+            String[] n = old.list();
+            int cnt = (n == null) ? -1 : n.length;
+            if (cnt == 0) return;                     // 空目录，不值得吵
+            CNLog.w(TAG, "[DEBUG] ⚠ 旧调试开关目录 " + LEGACY_DEBUG_DIR
+                    + " 里还有 " + (cnt < 0 ? "内容（读不到）" : cnt + " 项")
+                    + " —— **它们已经不起作用了**。落点已改到 " + DEBUG_DIR
+                    + "（与 log/ 平级）。请搬过去：\n"
+                    + "  adb shell \"run-as io.kamihama.totentanz sh -c "
+                    + "'mkdir -p debug && mv files/madomagi/debug/* debug/ "
+                    + "&& rmdir files/madomagi/debug'\"");
+        } catch (Throwable ignore) {}
+    }
+
     private static synchronized void ensureLoaded() {
         if (loaded) return;
         loaded = true;
@@ -188,10 +239,10 @@ public final class CNDebugFlags {
                     CNLog.w(TAG, "[DEBUG] ⚠ 目录在，但列不出内容——应用没有读权限，"
                             + "所有开关都会读成「关」。多半是用 su/root 建的（属主不是"
                             + "应用）。请改用 run-as 重建：\n"
-                            + "  adb shell \"run-as io.kamihama.totentanz "
-                            + "mkdir -p files/madomagi/debug\"");
+                            + "  adb shell \"run-as io.kamihama.totentanz mkdir -p debug\"");
                 }
             }
+            warnLegacyDir();
         } catch (Throwable t) {
             CNLog.w(TAG, "[DEBUG] 读调试开关目录失败（按全部关闭处理）: " + t);
         }
