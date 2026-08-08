@@ -93,6 +93,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>   // logI18nMiss 的去重集
 #include <vector>
 
 #include <dirent.h>
@@ -185,6 +186,13 @@ static bool g_dbgNoAdxSampleRate = false;
 // 想把「钩子存在本身」排除掉，只能连 H() 安装一起跳过。
 static bool g_dbgNoInitLabelHook = false;
 static bool g_dbgNoTtfHooks      = false;
+// 下面两个既不关行为也不注入故障，只**记录**：把流经文本钩子却没被翻译的串打进
+// logcat。加它的理由是钩子原本只记命中、不记未命中——
+// 「这句为什么没汉化」因此天然无解：串不在表里时，无论它有没有流经钩子，日志
+// 都是同一片空白。于是每问一次都得靠猜，再出一次包去试。
+// 有了它，跑一局就能拿到「这一局所有本该翻却没翻的串」，一次抓全。
+static bool g_dbgLogI18nMiss     = false;
+static bool g_dbgLogI18nMissAll  = false;
 
 struct DebugFlagDef { const char* name; bool* slot; const char* desc; };
 static const DebugFlagDef kDebugFlags[] = {
@@ -203,6 +211,9 @@ static const DebugFlagDef kDebugFlags[] = {
     // ── 「根本不装」，用来排除「钩子存在本身」（含原型声明错）──
     { "noInitLabelHook", &g_dbgNoInitLabelHook, "**不安装** LbUtility::initLabel 钩子（排除原型/ABI 问题）" },
     { "noTtfHooks",      &g_dbgNoTtfHooks,      "**不安装** createWithTTF/setTTFConfig 三个钩子（同上）" },
+    // ── 只记录，不改行为：把「流经钩子但没翻到」的串打出来 ──
+    { "logI18nMiss",     &g_dbgLogI18nMiss,     "记录未命中翻译表的**含假名**串（tsv 行格式，去重）" },
+    { "logI18nMissAll",  &g_dbgLogI18nMissAll,  "同上但不筛内容（含英文/数字，噪音大，用于确认某串走没走 native 标签）" },
 };
 
 static void loadDebugFlags() {
@@ -1738,6 +1749,89 @@ static bool enginePrefixLookup(const char* data, size_t size, std::string& out) 
     return false;
 }
 
+// ─── 未命中记录（调试开关 logI18nMiss / logI18nMissAll）───────────────
+//
+// 钩子原本只在**命中**时打日志。于是「这句为什么没汉化」是问不出答案的：串不在
+// 表里时，它有没有流经钩子，日志长得一模一样。2026-08-08 战斗结束那句
+// 「カーテンコールで終いやな」就卡在这里——补表和改前端是两个方向完全不同的
+// 修法，而当时没有任何证据能分辨该走哪个。这两个开关就是把那片空白填上。
+//
+// **只记录，不改任何行为**：关着时 noteI18nMiss 头一行就返回，转发路径逐行不变。
+//
+// 输出按 tsv 的行格式打，换行/制表/反斜杠按同一套规则转义，所以 logcat 抓下来
+// `sed` 掉前缀就能直接当表的骨架用，不必手工誊写：
+//
+//     adb logcat -d -s MagiaCN_Legacy | sed -n 's/.*\[i18n-miss\]\[[^]]*\] //p' \
+//         | sort -u >> engine_i18n.tsv
+//
+// ⚠ 行首那个 `#` 是**故意**的，别去掉。这张表里「译文为空」不是「还没翻」，而是
+// **删除该串**（拼接式文案调语序用的）。也就是说未填译文的骨架行不是惰性的：照上面
+// 那条命令追加进去，这些串会当场从界面上消失，而且是在没人改译文的情况下悄悄发生。
+// 加上 `#` 后追加是纯粹的空操作（加载器第一件事就是跳过 `#` 行），翻一条放开一条。
+//
+// 为什么默认只记含**假名**的串：译文是简体中文，和日文汉字在字节上分不开，
+// 按「含 CJK」筛会把已经翻好的中文台词全量记一遍——去重集瞬间撑满，真正没翻的
+// 反而被埋掉。假名（U+3040–U+30FF）中文里不会出现，是唯一可靠的「这串没翻」标记。
+// 代价是漏掉纯汉字的日文短语（如「全体攻撃」）；需要时用 logI18nMissAll 兜。
+static std::mutex g_i18nMissMutex;
+static std::unordered_set<std::string> g_i18nMissSeen;
+static bool g_i18nMissFull = false;
+static const size_t I18N_MISS_MAX = 2000;   // 撑满就停，不能让排查工具自己吃爆内存
+
+// U+3040–U+30FF 的 UTF-8 恰好是 E3 81/82/83 xx。
+// 第二字节 0x80 是 U+3000–U+303F（「」、。等 CJK 标点），中文里也用，必须排除，
+// 否则每一句中文台词都会被当成「没翻」。
+static bool containsKana(const char* d, size_t n) {
+    for (size_t i = 0; i + 1 < n; i++) {
+        if ((unsigned char)d[i] != 0xE3) continue;
+        unsigned char b = (unsigned char)d[i + 1];
+        if (b >= 0x81 && b <= 0x83) return true;
+    }
+    return false;
+}
+
+// i18nUnescape 的逆：让多行文案在 logcat 里保持**一行**。
+// 不转义的话一条带 \n 的文案会被 logcat 拆成好几行，抓下来既没法去重也没法回填。
+static std::string i18nEscape(const char* d, size_t n) {
+    std::string out;
+    out.reserve(n + 8);
+    for (size_t i = 0; i < n; i++) {
+        char c = d[i];
+        if      (c == '\n') out += "\\n";
+        else if (c == '\t') out += "\\t";
+        else if (c == '\\') out += "\\\\";
+        else                out += c;
+    }
+    return out;
+}
+
+static void noteI18nMiss(const char* d, size_t n, const char* from) {
+    if (!g_dbgLogI18nMiss && !g_dbgLogI18nMissAll) return;   // 关着时零开销
+    if (d == nullptr || n == 0 || n > 512) return;  // 超长的多半是拼好的整段，
+                                                    // 当表项用不了，记了只是噪音
+    if (!g_dbgLogI18nMissAll && !containsKana(d, n)) return;
+
+    std::string s(d, n);
+    {
+        std::lock_guard<std::mutex> lk(g_i18nMissMutex);
+        if (g_i18nMissFull) return;
+        if (g_i18nMissSeen.size() >= I18N_MISS_MAX) {
+            g_i18nMissFull = true;
+            // 记满是**结论会不完整**，必须显式说，否则会以为「就这么多」。
+            LOGE("[i18n-miss] 已记满 %zu 条，后续不再记录——这份清单不完整。"
+                 "若是开着 logI18nMissAll，多半是被伤害数字之类的一次性串灌满了，"
+                 "改用 logI18nMiss 再跑一局。", I18N_MISS_MAX);
+            return;
+        }
+        if (!g_i18nMissSeen.insert(s).second) return;   // 这串见过了
+    }
+    // 锁外打日志：__android_log_print 可能阻塞，不该压着别的渲染线程。
+    // 形状是 `#原文<TAB>`——`#` 见上面的警告；末尾 TAB 是留给译文的空列。
+    // 即使 logcat 把行尾空白吃掉也没关系：`#` 在最前面，那行照样是注释。
+    std::string esc = i18nEscape(s.data(), s.size());
+    LOGI("[i18n-miss][%s] #%s\t", from, esc.c_str());
+}
+
 // 伪造一个 long 布局的 std::string 传给原函数（原函数只在调用期内读它）。
 // zh 是表内 static 存储，指针在整个调用期有效。
 struct FakeNdkStr { size_t cap; size_t size; const char* data; };
@@ -1755,7 +1849,7 @@ static SetStringFn loadingSetTextOld      = nullptr;
 static SetStringFn loadingSetTitleOld     = nullptr;
 
 static void setStringTrampoline(SetStringFn old, void* self, const void* text,
-                                const char* /*label*/) {
+                                const char* label) {   // label 只在 logI18nMiss 时用
     // ⚠ 这两句的**顺序与相对位置都不能动**：开关关着时本函数必须与加开关之前
     // 逐行等价。第一版把开关塞在两者之间、顺手把它们换了个个儿——那是个即使
     // 开关全关也会生效的改动，正是调试设施最不该干的事。
@@ -1783,6 +1877,8 @@ static void setStringTrampoline(SetStringFn old, void* self, const void* text,
             return;
         }
     }
+    // 两级查找都没命中 —— 记下来（开关关着时下面这句立刻返回，转发路径不变）
+    noteI18nMiss(v.data, v.size, label);
     old(self, text);
 }
 static void labelSetStringNew(void* self, const void* text) {
@@ -1849,6 +1945,7 @@ static void initLabelNew(void* node, void* label, const char* text, float f,
     }
     maybeReloadEngineI18n();
     const char* use = text;
+    bool hit = false;
     static thread_local std::string combined;  // 前缀规则命中时的拼接缓冲
     if (text && g_engineI18nReady.load()) {
         auto it = g_engineI18n.find(text);
@@ -1857,10 +1954,15 @@ static void initLabelNew(void* node, void* label, const char* text, float f,
             if (n <= 10 || n % 100 == 0)
                 LOGI("[i18n] 替换 #%llu: %.40s", (unsigned long long)n, text);
             use = it->second.c_str();
+            hit = true;
         } else if (enginePrefixLookup(text, strlen(text), combined)) {
             use = combined.c_str();
+            hit = true;
         }
     }
+    // 没命中就记下来。表没加载成功时（g_engineI18nReady 为假）也算没命中——
+    // 那种情况下这份清单会是「所有流经的串」，与 setString 侧的口径一致。
+    if (!hit && text) noteI18nMiss(text, strlen(text), "LbUtility::initLabel");
     initLabelOld(node, label, use, f, v2, i1, sz, c4b, i2);
 }
 
