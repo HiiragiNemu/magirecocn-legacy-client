@@ -1618,9 +1618,16 @@ static void removeLegacyProxyCache() {
 //
 // 翻译表来自热更文件，改译文不用重出 APK（铁律：补丁可热维护）：
 //   /data/data/io.kamihama.totentanz/files/madomagi/engine_i18n.tsv
-// 格式与 legacy-client 的对照表一致：每行 ja<TAB>zhCN，换行/制表/反斜杠
-// 写作 \n \t \\；zhCN 为空表示**删除**该串（拼接式文案的语序调整用）。
+// 格式：每行 ja<TAB>zhCN，换行/制表/反斜杠写作 \n \t \\；`^` 开头是前缀规则；
+// `#` 开头是注释；zhCN 为空表示**删除**该串（拼接式文案的语序调整用）。
 // 表在启动时加载，之后每 3 秒节流行检查一次 mtime，热更替换后免重启生效。
+//
+// ⚠ 上面那个路径是**运行时副本，不是源**。源在补丁仓库：
+//     （外部发布渠道）  →  madomagi/engine_i18n.tsv
+// 它由该仓库的 sync-and-upload.yml 打进 cn_scenario_update.zip（台词包），
+// 客户端热更下来解到 <files>/，正好落在上面这个路径。也就是说**直接改设备上
+// 那份只是就地验证，下一次台词包更新会把它整个盖掉**——译文要落地必须提到补丁
+// 仓库去。完整链路与操作步骤见本仓库 i18n/README.md。
 
 static const std::string ENGINE_I18N_PATH =
     "/data/data/io.kamihama.totentanz/files/madomagi/engine_i18n.tsv";
@@ -1762,12 +1769,16 @@ static bool enginePrefixLookup(const char* data, size_t size, std::string& out) 
 // `sed` 掉前缀就能直接当表的骨架用，不必手工誊写：
 //
 //     adb logcat -d -s MagiaCN_Legacy | sed -n 's/.*\[i18n-miss\]\[[^]]*\] //p' \
-//         | sort -u >> engine_i18n.tsv
+//         | sort -u > miss.tsv
 //
 // ⚠ 行首那个 `#` 是**故意**的，别去掉。这张表里「译文为空」不是「还没翻」，而是
-// **删除该串**（拼接式文案调语序用的）。也就是说未填译文的骨架行不是惰性的：照上面
-// 那条命令追加进去，这些串会当场从界面上消失，而且是在没人改译文的情况下悄悄发生。
+// **删除该串**（拼接式文案调语序用的）。也就是说未填译文的骨架行不是惰性的：不带
+// `#` 直接追加进表，这些串会当场从界面上消失，而且是在没人改译文的情况下悄悄发生。
 // 加上 `#` 后追加是纯粹的空操作（加载器第一件事就是跳过 `#` 行），翻一条放开一条。
+//
+// ⚠ 填好的译文**要提到补丁仓库**（（外部发布渠道） 的
+// madomagi/engine_i18n.tsv），不是留在设备上——设备上那份是热更下发的运行时副本，
+// 下一次台词包更新会把它整个盖掉。就地追加只用于验证。见 i18n/README.md。
 //
 // 为什么默认只记含**假名**的串：译文是简体中文，和日文汉字在字节上分不开，
 // 按「含 CJK」筛会把已经翻好的中文台词全量记一遍——去重集瞬间撑满，真正没翻的
