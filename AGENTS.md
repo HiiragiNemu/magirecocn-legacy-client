@@ -343,6 +343,7 @@ git 钩子唯一挡不住的就是绕过 git 钩子本身，所以这一条必�
 | | 缺 `Co-authored-by` trailer | §1 三 |
 | | 缺「文档:」交代 | §1 四 |
 | `pre-push` | 本次推送**新增**提交的信息不合规（判据同上，与 `commit-msg` 共用一份） | §1 |
+| | 红灯期间推 main 且新增提交不全是修复类（`fix(`/`fix:`/`revert` 开头） | 红灯协议 |
 | | 新建名字像 CI 触发器的分支（`ci/*`、`build/*`、`*-driver-*`、`*-success`、带 run-id） | §2 |
 | | 远端已有非白名单分支时再开一条 | §0 规则二 |
 | | 2 小时内有分支活动时再开一条 | §0 规则三 |
@@ -365,8 +366,11 @@ SKIP_MSG_HOOK=1 git push ...
 # （行内提一句不算，缩进也不算——后者是 git commit -v 的 diff 上下文行的样子）
 [skip-hooks]
 
-# 跳过 pre-push：
+# 跳过 pre-push 的分支纪律检查：
 SKIP_BRANCH_HOOK=1 git push ...
+
+# 跳过 pre-push 的红灯闸门（联网查不到红灯状态时它自己会跳过）：
+SKIP_REDLIGHT_HOOK=1 git push ...
 ```
 
 > 为什么要做成钩子：§1 和 §0 的内容在 `CLAUDE.md` 里躺了很久，然后 2026-08-08

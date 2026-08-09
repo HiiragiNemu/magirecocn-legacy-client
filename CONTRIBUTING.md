@@ -98,7 +98,11 @@ push 到 main
    （仓库变量 `NOTIFY_URL` / `NOTIFY_FROM` / `NOTIFY_FROM_NAME` /
    `NOTIFY_TO` + secret `NOTIFY_TOKEN`，宝塔 webhook 格式）时同步发信；
    `NOTIFY_TO` 支持逗号/分号/空格分隔的多个收件人，逐人各发一封；
-2. 红灯期间：只允许修复主线的提交，新功能开发本地继续但**不许 push**；
+2. 红灯期间：只允许修复主线的提交，新功能开发本地继续但**不许 push**。
+   这条由 pre-push 钩子的红灯闸门执行：推 main 前联网查最近一次全量回归
+   的结论，红灯且新增提交不全是修复类（`fix(`/`fix:`/`revert` 开头）就
+   拦下；查不到状态时放行并提示。客户端钩子只管得住装了钩子的克隆，
+   属「机器提醒 + 自觉」级，逃生口 `SKIP_REDLIGHT_HOOK=1`；
 3. 引入者负责修，修不了就 `git revert` 先恢复绿灯，问题回炉；
 4. 找不到引入者 → `git bisect` 从 `last-green` 二分定位。
 

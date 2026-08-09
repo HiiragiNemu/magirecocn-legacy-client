@@ -41,10 +41,20 @@
 本地开分支无所谓，随便开。**留在远端**才是问题——维护者这几天逐条手工删了
 六条一次性分支。所以闸门设在「往远端推一条新分支」这一刻。
 
+### 三、红灯期间推 main（红灯协议，CONTRIBUTING.md §五）
+
+只在**往 main 推**时查。联网问 GitHub API：main 上最近一次**已跑完**的
+「🟢 全量回归 + last-green」是什么结论。是 failure（红灯）时，本次推送新增的
+提交**必须全是修复类**（标题以 `fix(` / `fix:` / `revert` 开头），否则拦下。
+查不到（没网、API 限流、返回变了）一律放行并提示——护栏坏了让路，不锁仓库。
+
+逃生口：`SKIP_REDLIGHT_HOOK=1 git push ...`
+
 ## 逃生口
 
-    SKIP_MSG_HOOK=1    git push ...   跳过提交信息检查
-    SKIP_BRANCH_HOOK=1 git push ...   跳过分支纪律检查
+    SKIP_MSG_HOOK=1       git push ...   跳过提交信息检查
+    SKIP_BRANCH_HOOK=1    git push ...   跳过分支纪律检查
+    SKIP_REDLIGHT_HOOK=1  git push ...   跳过红灯闸门
 
 用它意味着你**明确知道自己在跳过什么**，并且准备好向维护者解释。
 """
@@ -92,6 +102,12 @@ CI_SHAPED = (
     re.compile(r"\d{9,}"),
 )
 RECENT_HOURS = 2.0
+
+# 红灯闸门：标题以这些开头的算「修复类」提交（红灯期间唯一允许推 main 的）
+FIXISH = re.compile(r"^\s*(fix[(：:]|revert)", re.IGNORECASE)
+REDLIGHT_API = ("https://api.github.com/repos/{slug}/actions/workflows/"
+                "last-green.yml/runs?branch=main&status=completed&per_page=1")
+REDLIGHT_TIMEOUT = 15
 
 
 def sh(*a):
@@ -186,6 +202,77 @@ def report_messages(bad):
     sys.stderr.write("  确需跳过: SKIP_MSG_HOOK=1 git push ...\n\n")
 
 
+def repo_slug():
+    """从远端 URL 解出 owner/repo。解不出来返回 None（本检查 fail-open）。"""
+    r = sh("git", "remote", "get-url", remote_name())
+    if r.returncode != 0:
+        return None
+    url = r.stdout.strip()
+    m = re.search(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?$", url)
+    return m.group(1) if m else None
+
+
+def remote_main_is_red():
+    """main 最近一次已跑完的全量回归是不是红灯。查不到返回 None。"""
+    slug = repo_slug()
+    if not slug:
+        return None
+    import json
+    import urllib.request
+    req = urllib.request.Request(
+        REDLIGHT_API.format(slug=slug),
+        headers={"Accept": "application/vnd.github+json",
+                 "User-Agent": "magireco-pre-push-hook"})
+    try:
+        with urllib.request.urlopen(req, timeout=REDLIGHT_TIMEOUT) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        runs = data.get("workflow_runs") or []
+        if not runs:
+            return None
+        return runs[0].get("conclusion") == "failure"
+    except Exception:
+        return None
+
+
+def check_redlight(refs):
+    """红灯期间推 main：新增提交必须全是修复类。返回非修复类提交的 (sha, subj) 列表；
+    不在推 main、不是红灯、或查不到状态，都返回空（fail-open）。"""
+    main_refs = [(l, b, r) for l, b, r in refs if b == "main"]
+    if not main_refs:
+        return []
+    red = remote_main_is_red()
+    if red is None:
+        sys.stderr.write("pre-push: 红灯状态查询失败（网络/API），本次跳过红灯闸门\n")
+        return []
+    if not red:
+        return []
+    bad, seen = [], set()
+    for local_sha, _, remote_sha in main_refs:
+        for sha in new_commits(local_sha, remote_sha):
+            if sha in seen:
+                continue
+            seen.add(sha)
+            r = sh("git", "log", "-1", "--format=%s", sha)
+            if r.returncode != 0:
+                continue
+            subj = r.stdout.strip()
+            if not FIXISH.search(subj):
+                bad.append((sha[:8], subj))
+    return bad
+
+
+def report_redlight(bad):
+    sys.stderr.write("\n✘ push 被 pre-push 钩子拦下：main 现在是 🔴 红灯\n\n"
+                     "  最近一次全量回归失败。红灯期间只许修复主线的提交\n"
+                     "  （标题以 fix( / fix: / revert 开头），本次推送里有\n"
+                     "  %d 个提交不属于修复类：\n\n" % len(bad))
+    for sha, subj in bad:
+        sys.stderr.write("      %s  %s\n" % (sha, subj[:60]))
+    sys.stderr.write("\n  规则出处: CONTRIBUTING.md「红灯协议」\n"
+                     "  稳定锚点: git checkout last-green\n"
+                     "  确需跳过: SKIP_REDLIGHT_HOOK=1 git push ...\n\n")
+
+
 def main():
     refs = parse_stdin()
     if not refs:
@@ -203,6 +290,18 @@ def main():
             bad = []                                 # fail-open
         if bad:
             report_messages(bad)
+            rc = 1
+
+    # ── 三、红灯闸门（红灯协议）──────────────────────────────
+    if os.environ.get("SKIP_REDLIGHT_HOOK"):
+        sys.stderr.write("pre-push: SKIP_REDLIGHT_HOOK=1，跳过红灯闸门\n")
+    else:
+        try:
+            red_bad = check_redlight(refs)
+        except Exception:
+            red_bad = []                             # fail-open
+        if red_bad:
+            report_redlight(red_bad)
             rc = 1
 
     # ── 二、分支纪律（§0）────────────────────────────────────
