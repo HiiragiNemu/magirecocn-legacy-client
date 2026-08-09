@@ -73,8 +73,24 @@ public final class CNHotUpdateCheck {
     private static final int  ACTIVITY_WAIT_TRIES = 150;
     private static final long ACTIVITY_WAIT_STEP_MS = 100L;
 
-    /** 没有更新时，把「已是最新」这个结论留在屏幕上的时间。 */
-    private static final long IDLE_LINGER_MS = 900L;
+    /**
+     * 没有更新时，把「已是最新」这个结论留在屏幕上的基础时长。
+     * 900ms 只够看见一行字，不够玩家反应过来去点教程胶囊（播序章）、
+     * BGM 胶囊这些手动入口——留 4 秒，给「看一眼再决定要不要动手」用。
+     */
+    private static final long IDLE_LINGER_MS = 4000L;
+
+    /**
+     * 玩家在浮层上每交互一次（任意按下），停留就从该时刻起再顺延这么长。
+     * 有弹窗/日志面板开着时则一直等（见 awaitPlayerWindow），直到总上限。
+     */
+    private static final long INTERACT_LINGER_MS = 3000L;
+
+    /**
+     * 玩家窗口的总上限。弹窗开着也会在这之后强制收浮层进游戏——
+     * 玩家开着弹窗走开了，不能让他永远停在启动画面。
+     */
+    private static final long PLAYER_WINDOW_MAX_MS = 120000L;
 
     /**
      * 收浮层前等 config.json 到位的上限。署名区内容来自 config 的 ui_credits，
@@ -470,9 +486,10 @@ public final class CNHotUpdateCheck {
                     "部分更新包处理失败已跳过，将保持旧版本进入游戏", 0);
         } else {
             CNLog.i(TAG, "热更检查完毕：无需更新");
-            CNCNDownloadUI.updateSimple("已是最新", "台词与前端脚本均为最新版本，即将进入游戏", 0);
+            CNCNDownloadUI.updateSimple("已是最新",
+                    "即将进入游戏；点按浮层（如「教程」胶囊播序章）可稍作停留", 0);
         }
-        sleep(IDLE_LINGER_MS);
+        awaitPlayerWindow();
         awaitConfigSettled();
         // running 要在浮层收掉之前清掉：之后再点胶囊（浮层还在的最后一刻）
         // 应当走「自己重启」那条路，而不是挂在一个马上就结束的检查上。
@@ -766,6 +783,41 @@ public final class CNHotUpdateCheck {
      * 放行，超时也放行。调试开关 skipMirrorConfig 下 config 永远不会到位，
      * 直接不等。
      */
+    /**
+     * 「玩家窗口」：检查结论出来后，收浮层之前留给玩家的时间。
+     *
+     * <p>三种结局共用一个窗口（已是最新 / 更新完成 / 更新未完成都一样要给
+     * 玩家读结论的时间）。规则：
+     * <ul>
+     *   <li>无交互：停 {@link #IDLE_LINGER_MS} 就走；</li>
+     *   <li>有交互：从最后一次按下起顺延 {@link #INTERACT_LINGER_MS}，
+     *       给点教程胶囊（播序章）、BGM 胶囊、翻署名这些手动入口留时间；</li>
+     *   <li>弹窗/日志面板开着：一直等，玩家正在操作，不能从他手底下抽走；</li>
+     *   <li>总上限 {@link #PLAYER_WINDOW_MAX_MS}：弹窗忘了关也最终放行，
+     *       不把玩家永远拦在启动画面。</li>
+     * </ul>
+     */
+    private static void awaitPlayerWindow() {
+        long start = android.os.SystemClock.uptimeMillis();
+        try {
+            while (true) {
+                long now = android.os.SystemClock.uptimeMillis();
+                long lastTouch = CNCNDownloadUI.lastInteractionMs();
+                boolean interacted = lastTouch > start;
+                // 只认窗口开始后的交互；更早的触摸属于检查过程本身，不该顺延
+                long anchor = interacted ? lastTouch : start;
+                long linger = interacted ? INTERACT_LINGER_MS : IDLE_LINGER_MS;
+                if (!CNCNDownloadUI.isModalOpen() && now - anchor >= linger) break;
+                if (now - start >= PLAYER_WINDOW_MAX_MS) {
+                    CNLog.w(TAG, "玩家窗口到达总上限，强制收浮层进游戏");
+                    break;
+                }
+                Thread.sleep(100);
+            }
+        } catch (Throwable ignore) {}
+    }
+
+    /** 收浮层前等 config.json 到位，只等「还在加载」这一种状态。 */
     private static void awaitConfigSettled() {
         try {
             if (CNMirrors.configState != 0) return;

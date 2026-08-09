@@ -20,8 +20,10 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -443,6 +445,13 @@ public class CNCNDownloadUI {
     /** 「网络慢，要不要继续等」询问框。非空即表示正在显示，用于防重入。 */
     private static FrameLayout slowModal;
 
+    /**
+     * 浮层上最后一次用户交互（任意按下）的时间（uptimeMillis）。
+     * 供热更收工后的「玩家窗口」判断：玩家刚点过东西，自动收浮层就得顺延。
+     * 只在 UI 线程写、后台线程读，volatile 保证立即可见。
+     */
+    private static volatile long sLastInteractMs = 0L;
+
     /** 每个文件一个槽位。 */
     private static final class SlotViews {
         final TextView    nameView;
@@ -589,6 +598,10 @@ public class CNCNDownloadUI {
         root.setClickable(true);
         // 打标记：hide() 据此摘除全部本类浮层（而非只摘 overlayView 那一个）
         root.setTag(TAG_OVERLAY);
+        // 记下玩家交互时刻：热更收工后的自动收浮层会据此顺延（见
+        // CNHotUpdateCheck.awaitPlayerWindow）。return false——只观察、不消费，
+        // 触摸照常落到子视图上。
+        root.setOnTouchListener(new TouchNote());
 
         // ── 第 0 层：背景图 ──
         ImageView bgView = new ImageView(act);
@@ -1186,6 +1199,40 @@ public class CNCNDownloadUI {
             if (overlayView != null) overlayView.removeView(supportModal);
         } catch (Throwable ignore) {}
         supportModal = null;
+        noteInteraction();
+    }
+
+    /** 记下一次玩家交互（任意线程可调）。 */
+    static void noteInteraction() {
+        sLastInteractMs = SystemClock.uptimeMillis();
+    }
+
+    /**
+     * 浮层根部的触摸观察器：只记录按下时刻、不消费事件。
+     * 具名静态嵌套类——方法体里的匿名类会撞 d8 内部错误（见 AGENTS.md §3）。
+     */
+    private static final class TouchNote implements View.OnTouchListener {
+        @Override public boolean onTouch(View v, MotionEvent e) {
+            if (e.getAction() == MotionEvent.ACTION_DOWN) noteInteraction();
+            return false;
+        }
+    }
+
+    /** 浮层上最后一次玩家交互的时间（uptimeMillis），没有过交互返回 0。 */
+    public static long lastInteractionMs() {
+        return sLastInteractMs;
+    }
+
+    /**
+     * 有任一弹窗/面板开着时为 true——玩家正在操作，自动收浮层必须等。
+     * logModal 常驻视图树（GONE/VISIBLE 切换），看可见性；其余三个
+     * 非空即在显示。
+     */
+    public static boolean isModalOpen() {
+        if (supportModal != null || tutorialModal != null
+                || slowModal != null || versionModal != null) return true;
+        FrameLayout lm = logModal;
+        return lm != null && lm.getVisibility() == View.VISIBLE;
     }
 
     /**
@@ -1740,6 +1787,7 @@ public class CNCNDownloadUI {
         if (m != null && m.getParent() instanceof ViewGroup) {
             ((ViewGroup) m.getParent()).removeView(m);
         }
+        noteInteraction();
     }
 
     // ==================================================================
@@ -1944,6 +1992,7 @@ public class CNCNDownloadUI {
         if (m != null && m.getParent() instanceof ViewGroup) {
             ((ViewGroup) m.getParent()).removeView(m);
         }
+        noteInteraction();
     }
 
     // ==================================================================
@@ -2239,6 +2288,7 @@ public class CNCNDownloadUI {
 
     private static void closeLogModal() {
         if (logModal != null) logModal.setVisibility(View.GONE);
+        noteInteraction();
     }
 
     /**
