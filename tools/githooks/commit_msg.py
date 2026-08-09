@@ -3,7 +3,8 @@
 
 装法见 tools/install-hooks.sh。拦下的三条都是文档里写死的：
 
-  1. 标题必须含中文（AGENTS.md §1 一）；
+  1. 标题必须是「type(scope): 中文描述」（AGENTS.md §1 一，
+     2026-08-09 起 Conventional 前缀为强制，没有中间地带）；
   2. 必须有 Co-authored-by trailer（CLAUDE.md 提交约定 / AGENTS.md §1 三）；
   3. 必须交代文档（AGENTS.md §1 四）——写「文档: 不影响任何文档描述」也算。
 

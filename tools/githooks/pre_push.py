@@ -27,11 +27,14 @@
 
 新建分支时按 AGENTS.md §0 判定：
 
-  · 白名单（main / archive/* / research/*）—— 放行；
+  · 白名单（main / hotfix/* / surgery/*——只有这三类，没有第三种分支；
+    另有三个具名临时例外，见 ALLOW 表注释）—— 放行；
   · 远端已有非白名单分支 —— **拦**，让你接着用那一条（规则二：全会话一条）；
   · 其中有 2 小时内活动过的 —— **拦**，并指名是哪一条（规则三）；
   · 名字像 CI 触发器（ci/*、build/*、*-driver-*、*-success、带 9 位以上数字的
     run-id）—— **拦**（§2）。日期后缀 -YYYYMMDD 是 8 位，不会误伤。
+
+有价值的历史分支打 `archive/*` tag 留存，不作为分支存在。
 
 ## 为什么拦在 pre-push 而不是 checkout
 
@@ -73,7 +76,13 @@ except ImportError:
 CUTOFF_EPOCH = 1786147800
 MAX_COMMITS = 200                 # 单次推送最多查这么多，超出的不查（护栏不是审计）
 
-ALLOW = (re.compile(r"^main$"), re.compile(r"^archive/"), re.compile(r"^research/"))
+ALLOW = (re.compile(r"^main$"), re.compile(r"^hotfix/"), re.compile(r"^surgery/"),
+         # ── 具名临时例外（2026-08-09 维护者特批）──────────────────
+         # 这三条是别的会话正在跑的活，允许活到合并进 main 为止；
+         # 合并删除后把对应行从本表移除，不要往这里加新名字。
+         re.compile(r"^agent/fix-mumu-initlabel-hook$"),
+         re.compile(r"^feature/battle-engine-i18n-20260808$"),
+         re.compile(r"^feature/native-i18n-authority-20260809$"))
 CI_SHAPED = (
     re.compile(r"^ci/"), re.compile(r"^build/"),
     re.compile(r"-driver-"), re.compile(r"-success$"),

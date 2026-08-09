@@ -24,6 +24,15 @@ SCISSORS = re.compile(r"^#?\s*-+\s*>8\s*-+", re.M)
 # 由 git 自己生成的信息，不强求
 AUTO_PREFIXES = ("Merge ", "Revert ", "fixup!", "squash!")
 
+# Conventional Commits 前缀（2026-08-09 起，协作方案 §二.5）：
+#   type(scope): 中文描述
+# 允许的类型。scope 可选，!（破坏性变更标记）可选。
+TYPES = ("feat", "fix", "refactor", "docs", "test", "chore", "ci", "perf", "build")
+PREFIX = re.compile(
+    r"^(?:" + "|".join(TYPES) + r")(?:\([A-Za-z0-9_./-]+\))?!?:\s*")
+# 「看起来想写前缀但类型不在表里」——用于给出更具体的报错
+LIKE_PREFIX = re.compile(r"^([A-Za-z]+)(?:\([^)]*\))?!?:")
+
 
 def normalize(raw, drop_comments):
     """返回 (subject, body)。
@@ -61,9 +70,23 @@ def problems(raw, drop_comments=False):
     out = []
     if not subject:
         out.append("提交信息是空的")
-    elif not CJK.search(subject):
-        out.append("标题必须用**中文**（AGENTS.md §1 一）\n"
-                   "      当前标题: " + subject[:72])
+    else:
+        m = PREFIX.match(subject)
+        if not m:
+            like = LIKE_PREFIX.match(subject)
+            if like:
+                out.append("Conventional 类型不在允许表内: " + like.group(1) + "\n"
+                           "      允许的 type: " + " ".join(TYPES) + "\n"
+                           "      当前标题: " + subject[:72])
+            else:
+                out.append("标题必须是「type(scope): 中文描述」"
+                           "（AGENTS.md §1 一，2026-08-09 起）\n"
+                           "      允许的 type: " + " ".join(TYPES) + "\n"
+                           "      例如: fix(hook): 修复注入时序空指针\n"
+                           "      当前标题: " + subject[:72])
+        elif not CJK.search(subject[m.end():]):
+            out.append("前缀之后的描述必须用**中文**（AGENTS.md §1 一）\n"
+                       "      当前标题: " + subject[:72])
 
     if not re.search(r"^Co-authored-by:\s*\S+", body, re.M):
         out.append("缺 Co-authored-by trailer（CLAUDE.md 提交约定）\n"
