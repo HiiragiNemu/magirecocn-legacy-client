@@ -155,6 +155,14 @@ jobs:
       - name: 🧭 钉住 initLabel 的真实调用 ABI
         run: python3 tools/check-initlabel-abi.py
 
+      # libc++ std::string 固定为三个机器字，但 ARM64 与 ARMv7 的字宽不同。
+      # 手写 +8/+16/22 会在 32 位包里读出对象边界；编译器和普通 APK 构建都
+      # 发现不了这种可编译的运行时 ABI 错误，所以单独钉住派生布局与双 ABI 合同。
+      - name: 🧵 钉住 native string 双 ABI 布局
+        run: |
+          python3 tools/check-native-string-layout.py
+          python3 tools/test-check-native-string-layout.py
+
       # 兜底线路(DEFAULT_BASE)与规范前缀(CANONICAL_BASE)是两个概念，早先耦合在
       # 同一个常量上。换兜底线路时若把规范前缀一起动了，热更会**静默停摆**——
       # 版本查询每条线路都失败，被当成「已是最新」，没有任何报错。

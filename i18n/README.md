@@ -161,6 +161,10 @@ adb shell "run-as io.kamihama.totentanz sh -c \
 
 - **热重载**：启动时加载一次，之后每 3 秒节流检查一次 mtime，改完免重启。
 - **没有 TAB 的行**算坏行，会计入启动日志的「坏行 N」，但不影响其余条目。
+- native 收到的 `std::__ndk1::string` 是三个机器字：ARM64 为 24 字节、短串上限
+  22，ARMv7 为 12 字节、短串上限 10；读取偏移必须由机器字宽度派生，不能把
+  ARM64 的 `+8/+16/22` 写死到双 ABI 源码中。CI 的
+  `check-native-string-layout.py` 与单元测试钉住这条合同。
 - 命中的 hook 入口共 6 个：`cocos2d::Label::setString`、`LabelAtlas::setString`、
   `MenuItemLabel::setString`、`LoadingSceneLayerInfo::setText` / `setTitle`、
   `LbUtility::initLabel`。前五个收 `std::string`，最后一个收 `const char*`。

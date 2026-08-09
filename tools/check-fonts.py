@@ -155,8 +155,9 @@ def check_redirect_target():
     引擎加载失败后自己回落，界面看上去只是「字体没生效」，而这在真机上要
     肉眼比对才发现，历史上字体这条线已经为类似的沉默失败来回过几轮。
 
-    顺带校验长度：libc++ 短串上限是 22 字符，超了就会让 fontPathOverwrite
-    走「另分配缓冲」的那条路——5df4b46d 修过堆破坏的那一条。
+    顺带校验长度：libc++ classic string 的短串上限取决于 ABI——ARM64 是 22，
+    ARMv7 是 10。当前 22 字符目标在 ARM64 走短串、ARMv7 走 long；超过 22
+    才会让两个 ABI 都进入「另分配缓冲」路径。
     """
     if not os.path.isfile(NATIVE_SRC):
         return ["找不到 " + NATIVE_SRC]
@@ -174,9 +175,9 @@ def check_redirect_target():
     path_len = len("fonts/" + target)
     if path_len > 22:
         problems.append(
-            "重定向目标路径 fonts/%s 是 %d 字符，超过 libc++ 短串上限 22。"
-            "这会让每次重定向都走 fontPathOverwrite 的独立分配路径"
-            "（5df4b46d 修过堆破坏的那条）。确认过所有权约定再放行。"
+            "重定向目标路径 fonts/%s 是 %d 字符，超过 ARM64 libc++ 短串上限 22。"
+            "这会让 ARM64 与本来就是 long 的 ARMv7 都走 fontPathOverwrite 的"
+            "独立分配路径。确认过两个 ABI 的所有权约定再放行。"
             % (target, path_len))
     return problems
 

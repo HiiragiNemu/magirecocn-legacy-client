@@ -1893,13 +1893,28 @@ static void maybeReloadEngineI18n() {
     }
 }
 
-// NDK libc++ std::string（arm64）只读视图。
-// __short: 首字节 = size<<1（LSB=0），数据在 +1；
-// __long : 首 size_t 的 LSB=1 作标记，+8 是 size，+16 是数据指针。
+// NDK libc++ classic std::string 只读视图。对象固定由 3 个机器字组成：
+// __short: 首字节 = size<<1（LSB=0），数据在 +1；容量 = 3*word-2；
+// __long : 首 size_t 的 LSB=1 作标记，随后依次是 size、数据指针。
+//
+// 因此 ARM64 是 24B / short cap 22 / size@+8 / data@+16；
+// ARMv7 是 12B / short cap 10 / size@+4 / data@+8。这里必须从机器字宽度
+// 派生，绝不能把 ARM64 偏移写死——同一个源码会构建进两个 ABI。
+static constexpr size_t kNdkStringWordBytes      = sizeof(size_t);
+static constexpr size_t kNdkStringObjectBytes    = 3 * kNdkStringWordBytes;
+static constexpr size_t kNdkStringLongSizeOffset = kNdkStringWordBytes;
+static constexpr size_t kNdkStringLongDataOffset = 2 * kNdkStringWordBytes;
+static constexpr size_t kNdkStringShortCapacity  = kNdkStringObjectBytes - 2;
+static_assert(sizeof(size_t) == sizeof(void*), "NDK string word/pointer width mismatch");
+static_assert(kNdkStringShortCapacity == (sizeof(void*) == 8 ? 22u : 10u),
+              "unexpected libc++ classic string layout");
 struct NdkStrView { const char* data; size_t size; };
 static NdkStrView ndkStrRead(const void* strObj) {
     const unsigned char* s = (const unsigned char*)strObj;
-    if (s[0] & 1) return { *(const char* const*)(s + 16), *(const size_t*)(s + 8) };
+    if (s[0] & 1) {
+        return { *(const char* const*)(s + kNdkStringLongDataOffset),
+                 *(const size_t*)(s + kNdkStringLongSizeOffset) };
+    }
     return { (const char*)(s + 1), (size_t)(s[0] >> 1) };
 }
 
@@ -2041,6 +2056,8 @@ static void noteI18nMiss(const char* d, size_t n, const char* from) {
 // 伪造一个 long 布局的 std::string 传给原函数（原函数只在调用期内读它）。
 // zh 是表内 static 存储，指针在整个调用期有效。
 struct FakeNdkStr { size_t cap; size_t size; const char* data; };
+static_assert(sizeof(FakeNdkStr) == kNdkStringObjectBytes,
+              "fake NDK string must match the target ABI object size");
 static void fakeNdkStr(FakeNdkStr& fk, const std::string& zh) {
     fk.cap  = (zh.size() + 1) | 1;
     fk.size = zh.size();
@@ -2206,11 +2223,11 @@ static void fontPathOverwrite(void* strObj, const char* nv, size_t n) {
     if (s[0] & 1) {  // long：直接在原缓冲上改写（新路径不长于原路径才走这里）
         size_t cap = (*(size_t*)s) & ~(size_t)1;
         if (n + 1 <= cap) {   // 要写 n 个字符 + 结尾 NUL，共 n+1 字节
-            memcpy(*(char**)(s + 16), nv, n + 1);
-            *(size_t*)(s + 8) = n;
+            memcpy(*(char**)(s + kNdkStringLongDataOffset), nv, n + 1);
+            *(size_t*)(s + kNdkStringLongSizeOffset) = n;
             return;
         }
-    } else if (n <= 22) {  // short
+    } else if (n <= kNdkStringShortCapacity) {  // short
         s[0] = (unsigned char)(n << 1);
         memcpy(s + 1, nv, n + 1);
         return;
@@ -2226,9 +2243,15 @@ static void fontPathOverwrite(void* strObj, const char* nv, size_t n) {
     if (!buf) return;
     memcpy(buf, nv, n);
     buf[n] = '\0';
-    *(const char**)(s + 16) = buf;
-    *(size_t*)(s + 8)  = n;
+    char* oldLongData = (s[0] & 1)
+        ? *(char**)(s + kNdkStringLongDataOffset)
+        : nullptr;
+    *(const char**)(s + kNdkStringLongDataOffset) = buf;
+    *(size_t*)(s + kNdkStringLongSizeOffset) = n;
     *(size_t*)s        = (n + 1) | 1;
+    // ARMv7 的原路径（18B）本来就是 long。若它原有容量装不下新路径，换入
+    // 新缓冲后必须释放旧缓冲；只覆盖指针会在每次建 Label 时泄漏一块。
+    if (oldLongData) ::operator delete(oldLongData);
 }
 
 // 引擎里硬编码的字体路径只有三条（两个 ABI 一致，strings 核对过）：
@@ -2247,14 +2270,13 @@ static void fontPathFix(void* strObj, const char* tag) {
     if (g_dbgNoFontHook) return;       // 调试开关：完全不碰字体路径
     static const char kFrom[] = "fonts/MTF4a5kp.ttf";        // 18 字符
     static const char kTo[]   = "fonts/mbm_20160902.ttf";    // 22 字符
-    // ⚠ 这 22 不是巧合，改这个常量前先读懂：libc++ 的 std::string 短串上限
-    // 正好是 22 字符。kFrom 是 18 字符 → 引擎那个 string 必然是短串（内联），
-    // 目标也 ≤22 就能全程写在内联缓冲里，一次堆分配都不做。
+    // ⚠ ARM64 的短串上限是 22，kFrom=18、kTo=22，二者都走内联；ARMv7 的
+    // 短串上限只有 10，二者都走 long。fontPathOverwrite 必须同时覆盖这两种路径。
     // 先前的 "fonts/TTZhiHeiGB3-W4.ttf" 是 24 字符，超了，于是每次重定向都要走
     // fontPathOverwrite 末尾那条「另分配缓冲交给引擎 string 持有」的路径——
     // 也就是 5df4b46d 修过堆破坏的那一条。现在它基本不会再被走到。
-    // 若将来把目标换成超过 22 字符的路径，那条路径会重新变成热路径，
-    // 届时请重新审视它的所有权约定。
+    // 若将来把目标换成超过 22 字符的路径，ARM64 也会进入独立分配路径，届时
+    // 请重新审视它的所有权约定；ARMv7 现在已经持续覆盖这条路径。
     NdkStrView v = ndkStrRead(strObj);
     if (v.size == sizeof(kFrom) - 1 && memcmp(v.data, kFrom, sizeof(kFrom) - 1) == 0) {
         fontPathOverwrite(strObj, kTo, sizeof(kTo) - 1);
