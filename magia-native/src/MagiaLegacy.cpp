@@ -1663,11 +1663,46 @@ static void removeLegacyProxyCache() {
 static const std::string ENGINE_I18N_PATH =
     "/data/data/io.kamihama.totentanz/files/madomagi/engine_i18n.tsv";
 
-static std::unordered_map<std::string, std::string> g_engineI18n;
-static std::vector<std::pair<std::string, std::string>> g_enginePrefixRules;  // '^' 前缀规则
+// ─── 表的持有方式：整体快照，不可变，引用计数 ───────────────────────
+//
+// 🔴 原先是两个裸全局容器 + 重载时 swap()，那是**两个并发缺陷叠在一起**：
+//
+//   一、`find()` 与 `swap()` 并发本身就是 UB。maybeReloadEngineI18n() 在
+//       setStringTrampoline（任意线程）和 initLabelNew（GL 线程）里都会调，
+//       任何一次重载都可能撞上另一线程正在查表。
+//   二、更要命的是查完之后：engineLookup 返回 `&it->second`、initLabelNew 取
+//       `it->second.c_str()`，都是**指向容器内部的指针**，然后跨函数调用继续
+//       用（fakeNdkStr → old()、initLabelOld()）。swap 一发生，旧表连同这些
+//       字符串一起析构，手里的指针立刻悬空 —— 典型 use-after-free。
+//
+// 触发条件是 mtime 变化，而 engine_i18n.tsv 随台词包下发，也就是**每次热更之后
+// 都会打开一次窗口**。2026-08-09 那次「进战斗就崩、隔天自己好了」正卡在这个形状
+// 上（相关性确凿：唯一崩过的那场也是唯一重载过的那场；因果未证——27 次重载 +
+// 6 场战斗的复现实验没崩，内容不变时释放的块多半又被同样的字符串填回去了）。
+//
+// 因果没证死不影响这里该改：上面两条是代码事实，不是推测。
+//
+// 现在的形状：表做成 shared_ptr<const …> 的不可变快照。读者一次性取走快照，
+// 在整个使用期间持有它；重载只是让全局指针指向新快照，旧快照等最后一个读者
+// 撒手才析构。读者之间零竞争，指针也不可能悬空。
+struct EngineI18nTable {
+    std::unordered_map<std::string, std::string>        exact;
+    std::vector<std::pair<std::string, std::string>>    prefix;   // '^' 前缀规则
+};
+using EngineI18nPtr = std::shared_ptr<const EngineI18nTable>;
+
+static std::mutex    g_engineI18nMutex;      // 只保护下面这个指针的读写
+static EngineI18nPtr g_engineI18nTable;      // 可能为空（表还没加载）
+
+/** 取一份当前快照。返回的对象在调用方手里一直有效，与重载完全解耦。 */
+static EngineI18nPtr engineI18nSnapshot() {
+    std::lock_guard<std::mutex> lk(g_engineI18nMutex);
+    return g_engineI18nTable;
+}
+
 static std::atomic<bool>     g_engineI18nReady{false};
 static std::atomic<time_t>   g_engineI18nLastCheck{0};
-static time_t                g_engineI18nMtime = 0;
+static std::atomic<time_t>   g_engineI18nMtime{0};
 static std::atomic<uint64_t> g_engineI18nHits{0};
 
 static std::string i18nUnescape(const std::string& s) {
@@ -1693,8 +1728,7 @@ static void loadEngineI18n() {
             LOGI("[i18n] 表文件暂缺，保持现状: %s", ENGINE_I18N_PATH.c_str());
         return;
     }
-    std::unordered_map<std::string, std::string> fresh;
-    std::vector<std::pair<std::string, std::string>> freshPrefix;
+    std::shared_ptr<EngineI18nTable> fresh = std::make_shared<EngineI18nTable>();
     char buf[8192];
     size_t lineno = 0, bad = 0;
     while (fgets(buf, sizeof(buf), f)) {
@@ -1709,21 +1743,27 @@ static void loadEngineI18n() {
         if (line[0] == '^') {
             std::string ja = i18nUnescape(line.substr(1, tab - 1));
             std::string zh = i18nUnescape(line.substr(tab + 1));
-            if (!ja.empty()) freshPrefix.emplace_back(ja, zh);
+            if (!ja.empty()) fresh->prefix.emplace_back(ja, zh);
             continue;
         }
         std::string ja = i18nUnescape(line.substr(0, tab));
         std::string zh = i18nUnescape(line.substr(tab + 1));
-        if (!ja.empty()) fresh[ja] = zh;
+        if (!ja.empty()) fresh->exact[ja] = zh;
     }
     fclose(f);
     struct stat st;
-    if (::stat(ENGINE_I18N_PATH.c_str(), &st) == 0) g_engineI18nMtime = st.st_mtime;
-    g_engineI18n.swap(fresh);
-    g_enginePrefixRules.swap(freshPrefix);
-    g_engineI18nReady.store(!g_engineI18n.empty());
+    if (::stat(ENGINE_I18N_PATH.c_str(), &st) == 0)
+        g_engineI18nMtime.store(st.st_mtime);
+    size_t nExact = fresh->exact.size(), nPrefix = fresh->prefix.size();
+    {
+        // 只在这把锁里换指针。旧快照的析构发生在锁外、且要等最后一个读者撒手
+        // ——绝不会在别人正拿着它查表时被拆掉。
+        std::lock_guard<std::mutex> lk(g_engineI18nMutex);
+        g_engineI18nTable = fresh;
+    }
+    g_engineI18nReady.store(nExact != 0 || nPrefix != 0);
     LOGI("[i18n] 已加载 %zu 条 + %zu 前缀规则（第 %zu 行止，坏行 %zu）",
-         g_engineI18n.size(), g_enginePrefixRules.size(), lineno, bad);
+         nExact, nPrefix, lineno, bad);
 }
 
 // 节流重载检查：热更可能在我们启动后才把表放进来/换掉
@@ -1750,30 +1790,41 @@ static NdkStrView ndkStrRead(const void* strObj) {
     return { (const char*)(s + 1), (size_t)(s[0] >> 1) };
 }
 
-static const std::string* engineLookup(const void* strObj) {
-    if (!g_engineI18nReady.load()) return nullptr;
+/**
+ * 精确查表。命中则把译文**拷进** out 并返回 true。
+ *
+ * ⚠ 刻意不返回 `&it->second`。原先那么写，调用方拿着指向表内部的指针跨函数调用
+ * 继续用（fakeNdkStr → old()），一旦另一线程重载把旧表拆掉，指针立刻悬空。
+ * 拷一份的代价是一次短字符串复制，换掉的是一整类 use-after-free。
+ */
+static bool engineLookup(const void* strObj, std::string& out) {
+    if (!g_engineI18nReady.load()) return false;
+    EngineI18nPtr t = engineI18nSnapshot();
+    if (!t) return false;
     NdkStrView v = ndkStrRead(strObj);
-    if (v.size == 0 || v.size > 8192) return nullptr;
-    auto it = g_engineI18n.find(std::string(v.data, v.size));
-    if (it == g_engineI18n.end()) return nullptr;
+    if (v.size == 0 || v.size > 8192) return false;
+    auto it = t->exact.find(std::string(v.data, v.size));
+    if (it == t->exact.end()) return false;
+    out = it->second;
     uint64_t n = ++g_engineI18nHits;
     if (n <= 10 || n % 100 == 0)
         LOGI("[i18n] 替换 #%llu: %.40s", (unsigned long long)n, v.data);
-    return &it->second;
+    return true;
 }
 
 // 前缀规则查找：命中返回「zh前缀 + 原串剩余部分」（写入 out，调用期内有效）。
 // 用于尾部带变量的文案，如 「ネットワーク接続に失敗しました。再接続しますか？\nエラーコード：1」。
 // 只在文本含假名（UTF-8 lead 0xE3/0xE4）时才扫规则，未翻译的英文/数字串零开销。
 static bool enginePrefixLookup(const char* data, size_t size, std::string& out) {
-    if (g_enginePrefixRules.empty()) return false;
+    EngineI18nPtr t = engineI18nSnapshot();
+    if (!t || t->prefix.empty()) return false;
     bool hasKana = false;
     for (size_t i = 0; i < size; i++) {
         unsigned char b = (unsigned char)data[i];
         if (b == 0xE3 || b == 0xE4) { hasKana = true; break; }
     }
     if (!hasKana) return false;
-    for (const auto& rule : g_enginePrefixRules) {
+    for (const auto& rule : t->prefix) {
         const std::string& pre = rule.first;
         if (size >= pre.size() && memcmp(data, pre.data(), pre.size()) == 0) {
             out = rule.second;
@@ -1901,10 +1952,12 @@ static void setStringTrampoline(SetStringFn old, void* self, const void* text,
         old(self, text);        // 放在两句之后——它们与翻译无关，关掉翻译不该
         return;                 // 顺带把浮层收尾也关掉。
     }
-    const std::string* zh = engineLookup(text);
-    if (zh) {
+    // thread_local：fakeNdkStr 交给引擎的是这块缓冲的指针，必须在 old() 返回前
+    // 一直有效。放线程局部既保证生命周期，又不引入跨线程共享。
+    static thread_local std::string zh;
+    if (engineLookup(text, zh)) {
         FakeNdkStr fk;
-        fakeNdkStr(fk, *zh);
+        fakeNdkStr(fk, zh);
         old(self, &fk);
         return;
     }
@@ -1988,14 +2041,20 @@ static void initLabelNew(void* node, void* label, const char* text, float f,
     maybeReloadEngineI18n();
     const char* use = text;
     bool hit = false;
-    static thread_local std::string combined;  // 前缀规则命中时的拼接缓冲
-    if (text && g_engineI18nReady.load()) {
-        auto it = g_engineI18n.find(text);
-        if (it != g_engineI18n.end()) {
+    // thread_local：use 会被交给引擎（initLabelOld 期间要一直有效）。
+    // ⚠ 绝不能再写成 `use = it->second.c_str()`——那是指向表内部的指针，
+    // 另一线程一重载就悬空。拷进这块缓冲，生命周期由我们自己保证。
+    static thread_local std::string combined;
+    EngineI18nPtr t = (text && g_engineI18nReady.load()) ? engineI18nSnapshot()
+                                                        : EngineI18nPtr();
+    if (t) {
+        auto it = t->exact.find(text);
+        if (it != t->exact.end()) {
             uint64_t n = ++g_engineI18nHits;
             if (n <= 10 || n % 100 == 0)
                 LOGI("[i18n] 替换 #%llu: %.40s", (unsigned long long)n, text);
-            use = it->second.c_str();
+            combined = it->second;
+            use = combined.c_str();
             hit = true;
         } else if (enginePrefixLookup(text, strlen(text), combined)) {
             use = combined.c_str();
