@@ -9,8 +9,8 @@ name: 🟢 全量回归 + last-green
 # ║   通过 → 把 `last-green` tag 移到本次提交。它是所有人的「时空锚点」： ║
 # ║          拉到坏代码时 `git checkout last-green` 立刻回到稳定点。      ║
 # ║   失败 → 🔴 红灯：在失败提交下留言标记；若配置了邮件通知               ║
-# ║          （vars.NOTIFY_URL/NOTIFY_FROM/NOTIFY_FROM_NAME/              ║
-# ║           NOTIFY_TO + secret NOTIFY_TOKEN）则同步发信。红灯期间       ║
+# ║          （vars.NOTIFY_URL/NOTIFY_FROM/NOTIFY_FROM_NAME +             ║
+# ║          secrets.NOTIFY_TO/NOTIFY_TOKEN）则同步发信。红灯期间         ║
 # ║          只许修主线的提交（见 CONTRIBUTING.md「红灯协议」）。          ║
 # ║                                                                    ║
 # ║   tag 只是内部锚点，不是对外产物——不违反「不做自动发版」。            ║
@@ -112,13 +112,14 @@ jobs:
           REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          # 邮件通知渠道（宝塔 webhook 格式）：地址与收发件人走仓库变量，
-          # Bearer 令牌走 secret。NOTIFY_TO 可用逗号/分号/空格配多个收件人。
-          # 变量未配置则整段跳过。
+          # 邮件通知渠道（宝塔 webhook 格式）：地址与发件人走仓库变量，
+          # 收件人与 Bearer 令牌走 secret（收件人明文放变量里等于公开
+          # 通讯录）。NOTIFY_TO 可用逗号/分号/空格配多个收件人。
+          # 未配齐则整段跳过。
           NOTIFY_URL: ${{ vars.NOTIFY_URL }}
           NOTIFY_FROM: ${{ vars.NOTIFY_FROM }}
           NOTIFY_FROM_NAME: ${{ vars.NOTIFY_FROM_NAME }}
-          NOTIFY_TO: ${{ vars.NOTIFY_TO }}
+          NOTIFY_TO: ${{ secrets.NOTIFY_TO }}
           NOTIFY_TOKEN: ${{ secrets.NOTIFY_TOKEN }}
         run: |
           # 注意：本步骤刻意不用 set -e。它是失败后的通知步骤，任何一路通知

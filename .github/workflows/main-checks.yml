@@ -46,7 +46,7 @@ jobs:
           NOTIFY_URL: ${{ vars.NOTIFY_URL }}
           NOTIFY_FROM: ${{ vars.NOTIFY_FROM }}
           NOTIFY_FROM_NAME: ${{ vars.NOTIFY_FROM_NAME }}
-          NOTIFY_TO: ${{ vars.NOTIFY_TO }}
+          NOTIFY_TO: ${{ secrets.NOTIFY_TO }}
           NOTIFY_TOKEN: ${{ secrets.NOTIFY_TOKEN }}
         run: |
           set -euo pipefail

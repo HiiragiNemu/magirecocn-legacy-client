@@ -95,8 +95,9 @@ push 到 main
 ## 五、红灯协议（main 挂了的处理 SOP）
 
 1. 全量回归失败 → CI 自动在失败提交下留言标记 🔴；配置了邮件通知
-   （仓库变量 `NOTIFY_URL` / `NOTIFY_FROM` / `NOTIFY_FROM_NAME` /
-   `NOTIFY_TO` + secret `NOTIFY_TOKEN`，宝塔 webhook 格式）时同步发信；
+   （仓库变量 `NOTIFY_URL` / `NOTIFY_FROM` / `NOTIFY_FROM_NAME` +
+   secret `NOTIFY_TO` / `NOTIFY_TOKEN`，宝塔 webhook 格式）时同步发信；
+   收件人走 secret 不明文示人；
    `NOTIFY_TO` 支持逗号/分号/空格分隔的多个收件人，逐人各发一封。
    并发预警触发（24h 内同文件有他人改动）时另发 🟡 黄灯邮件；
    **无预警、全绿都不发邮件**。
