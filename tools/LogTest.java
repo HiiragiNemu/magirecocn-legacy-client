@@ -29,10 +29,13 @@ public class LogTest {
         check("log/ 目录已建且有一个日志", l1.length==1, Arrays.toString(l1));
         check("命名为 序号_时间.log", l1.length==1 && l1[0].matches("\\d{4}_\\d{8}-\\d{6}\\.log"), l1.length==1?l1[0]:"");
         check("序号为 1", CNLog.launchSeq()==1, "seq="+CNLog.launchSeq());
+        // PRIV_DIR 现在经 CNPaths 动态解析（PC 上跑测试时解析到的是
+        // /data/data/<测试主类名> 这种兜底值），所以断言不变量本身：
+        // 「日志目录 = 解析出的数据目录 + /log」，而不是某个具体字面值。
         check("日志目录在应用数据目录下", CNLog.logDirPath()
-              .equals("/data/data/io.kamihama.totentanz/log"), CNLog.logDirPath());
+              .equals(CNPaths.privDir() + "/log"), CNLog.logDirPath());
         check("当前日志路径 = 目录 + 文件名", CNLog.currentLogPath()
-              .startsWith("/data/data/io.kamihama.totentanz/log/"), CNLog.currentLogPath());
+              .startsWith(CNPaths.privDir() + "/log/"), CNLog.currentLogPath());
 
         System.out.println("\n[2] 再启动 4 次，序号递增、文件各自独立");
         for(int i=0;i<4;i++){ resetOpened(); Thread.sleep(1100);

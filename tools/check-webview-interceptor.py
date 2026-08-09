@@ -119,9 +119,11 @@ def main():
          "查询串被丢弃：本地文件一旦存在，服务端改版本号也不会生效"
          "（CSS 冻结陷阱的根源，见 README）", "拦截器")
 
-    # ── 7. 本地根目录 ───────────────────────────────────────────────
-    need(icept, 'const-string v2, "/data/data/io.kamihama.totentanz/files/magica/"',
-         "本地文件根目录（热更包正是解压到这里）", "拦截器")
+    # ── 7. 本地根目录：经 CNPaths 动态解析（不再硬编码 /data/data）─────────
+    need(icept,
+         r"invoke-static \{\}, Lio/kamihama/magianative/CNPaths;->filesDir\(\)Ljava/lang/String;",
+         "本地文件根目录经 CNPaths 解析（/data/data 只是兼容软链，不能硬编码）",
+         "拦截器", regex=True)
 
     # ── 8. 本地优先：exists() → 构造 WebResourceResponse ─────────────
     need(icept, "invoke-virtual {v3}, Ljava/io/File;->exists()Z",

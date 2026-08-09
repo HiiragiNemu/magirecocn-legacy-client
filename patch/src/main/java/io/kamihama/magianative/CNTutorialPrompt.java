@@ -56,7 +56,7 @@ public final class CNTutorialPrompt {
      * 改名只会让升级上来的设备留下一个永远没人读的残留文件。
      */
     private static final String FORCE_TUTORIAL_FLAG =
-            "/data/data/io.kamihama.totentanz/files/madomagi/magica/cn_force_tutorial.flag";
+            CNPaths.filesDir() + "/madomagi/magica/cn_force_tutorial.flag";
 
     private static final String PREFS_NAME = "cnv_tutorial";
     /** 自动询问是否已经问过（无论当时答的是什么）。 */

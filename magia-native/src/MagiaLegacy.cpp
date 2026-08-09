@@ -133,7 +133,9 @@ namespace cocos2d {
 
 // ═══ 调试开关目录 ════════════════════════════════════════════════════
 //
-//     /data/data/io.kamihama.totentanz/debug/<开关名>
+//     <应用数据目录>/debug/<开关名>
+//     （数据目录经下方 resolvePrivDir() 解析，正规设备上即
+//      /data/data/io.kamihama.totentanz/debug/<开关名>）
 //
 // 目录里**建一个同名空文件就是打开该开关**，删掉就是关闭，重启游戏生效。
 //
@@ -171,8 +173,45 @@ namespace cocos2d {
 // 现在 cleanupPrefixes("scenario") 只清 madomagi/resource/scenario/json/，
 // 碰不到这里——但那是巧合不是保证，前缀哪天放宽到 madomagi/，开关就会在某次
 // 热更后集体消失且查不出原因。挪出来就不存在这个问题。
-static const std::string DEBUG_DIR =
-    "/data/data/io.kamihama.totentanz/debug";
+// ─── 应用私有目录解析 ────────────────────────────────────────────
+// 历史上这里全部硬编码 /data/data/<pkg>。那是 Android 4.2+ 设备上指向
+// /data/user/0 的兼容软链——正规设备都有，但非标准容器/深度定制 ROM 可能
+// 没建这个软链。真碰到时引擎没事（走 Context.getFilesDir()），补丁层全瘫：
+// FINAL_FLAG 永远读不到 → 每次启动都判定「未安装」→ 反复全量重下。
+// 统一改成：读 /proc/self/cmdline 拿包名（不依赖 JNI 就绪时机），按
+// /data/user/0 → /data/data 的顺序探测真实存在的目录。与 Java 侧 CNPaths
+// 同一套算法——两边共享一批 flag 文件（安装标记、引擎闸门、序章标记），
+// 必须解析出同一个目录，改算法时两边一起改。
+static std::string resolvePrivDir() {
+    std::string pkg = "io.kamihama.totentanz";
+    FILE* f = ::fopen("/proc/self/cmdline", "rb");
+    if (f) {
+        char buf[128];
+        size_t n = ::fread(buf, 1, sizeof(buf) - 1, f);
+        ::fclose(f);
+        if (n > 0) {
+            buf[n] = 0;
+            std::string s(buf);
+            if (!s.empty() && s.find('/') == std::string::npos) pkg = s;
+        }
+    }
+    const std::string userDir = "/data/user/0/" + pkg;
+    const std::string dataDir = "/data/data/" + pkg;
+    struct stat st;
+    if (::stat(userDir.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) return userDir;
+    if (::stat(dataDir.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) return dataDir;
+    // 极端环境两个都探测不到：沿用历史路径，让错误暴露在原位。
+    return dataDir;
+}
+
+// 解析一次缓存：进程内路径不会变，每次 flag 读写都重新 stat 太浪费。
+static const std::string& privDir() {
+    static const std::string dir = resolvePrivDir();
+    return dir;
+}
+static std::string filesDir() { return privDir() + "/files"; }
+
+static const std::string DEBUG_DIR = privDir() + "/debug";
 
 // 开关名用**小驼峰**，与 Java 侧保持一致（同一个目录，两边名字风格不该分裂）。
 static bool g_dbgNoFontHook      = false;
@@ -276,18 +315,17 @@ static void loadDebugFlags() {
     }
 }
 
-// 安装完成标记。必须与 Java 侧 CNDownloaderFix.FINAL_FLAG 逐字一致，
-// 也与 libcn_hook 内建的 BASE_DIR + "madomagi/" + "magica/cn_base_done.flag"
-// 一致（已逐字节核对）。
+// 安装完成标记。与 Java 侧 CNDownloaderFix.FINAL_FLAG 解析的是同一个文件
+// （两边同一套 CNPaths/resolvePrivDir 算法）。
 static const std::string FLAG_PATH =
-    "/data/data/io.kamihama.totentanz/files/madomagi/magica/cn_base_done.flag";
+    filesDir() + "/madomagi/magica/cn_base_done.flag";
 
 // 强制序章标记。由 Java 侧 CNTutorialPrompt 在玩家选「是」时写出，
 // 我们在引擎首个「进主页」命令上消费它。放在与安装标记同一个目录，
 // 那个目录在资源装完时必定存在，不必额外 mkdir。
-// ⚠ 必须与 CNTutorialPrompt.FORCE_TUTORIAL_FLAG 逐字一致。
+// ⚠ 与 CNTutorialPrompt.FORCE_TUTORIAL_FLAG 指向同一个文件（两边同一套解析算法）。
 static const std::string FORCE_TUTORIAL_FLAG_PATH =
-    "/data/data/io.kamihama.totentanz/files/madomagi/magica/cn_force_tutorial.flag";
+    filesDir() + "/madomagi/magica/cn_force_tutorial.flag";
 
 // ─── 原函数指针 ──────────────────────────────────────────
 static bool (*checkParseJsonOld)(void*, const cocos2d::Data&) = nullptr;
@@ -715,7 +753,7 @@ static void setGameUiVisible(bool visible);   // 前向声明：定义在 pushSc
 // 渲染同时打满 CPU 时，守护心跳线程可能被饿过 6s（约 3 次心跳），过早
 // 失效会让引擎在下载中途抢跑主页跳转/BGM。10s 对应约 5 次心跳的容错。
 static const std::string OVERLAY_FLAG_PATH =
-    "/data/data/io.kamihama.totentanz/files/madomagi/cn_overlay_active.flag";
+    filesDir() + "/madomagi/cn_overlay_active.flag";
 
 static bool overlayActive() {
     struct stat st;
@@ -1626,7 +1664,7 @@ static void nativeSetProxyConfig(JNIEnv* env, jclass, jstring base, jobjectArray
 //
 // 顺带把历史遗留的缓存文件删掉：老玩家设备上已经有一份，留着只会让人以为它还在用。
 static const std::string PROXY_CACHE_LEGACY_PATH =
-    "/data/data/io.kamihama.totentanz/files/madomagi/cn_proxy_config.tsv";
+    filesDir() + "/madomagi/cn_proxy_config.tsv";
 
 static void removeLegacyProxyCache() {
     if (remove(PROXY_CACHE_LEGACY_PATH.c_str()) == 0) {
@@ -1648,7 +1686,7 @@ static void removeLegacyProxyCache() {
 //   LbUtility::initLabel                 游戏自建标签（const char* 直传）
 //
 // 翻译表来自热更文件，改译文不用重出 APK（铁律：补丁可热维护）：
-//   /data/data/io.kamihama.totentanz/files/madomagi/engine_i18n.tsv
+//   <files>/madomagi/engine_i18n.tsv（files 目录经 resolvePrivDir() 解析）
 // 格式：每行 ja<TAB>zhCN，换行/制表/反斜杠写作 \n \t \\；`^` 开头是前缀规则；
 // `#` 开头是注释；zhCN 为空表示**删除**该串（拼接式文案的语序调整用）。
 // 表在启动时加载，之后每 3 秒节流行检查一次 mtime，热更替换后免重启生效。
@@ -1661,7 +1699,7 @@ static void removeLegacyProxyCache() {
 // 仓库去。完整链路与操作步骤见本仓库 i18n/README.md。
 
 static const std::string ENGINE_I18N_PATH =
-    "/data/data/io.kamihama.totentanz/files/madomagi/engine_i18n.tsv";
+    filesDir() + "/madomagi/engine_i18n.tsv";
 
 // ─── 表的持有方式：整体快照，不可变，引用计数 ───────────────────────
 //

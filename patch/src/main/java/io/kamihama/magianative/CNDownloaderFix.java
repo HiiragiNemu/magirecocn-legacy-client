@@ -69,13 +69,13 @@ public final class CNDownloaderFix {
         return BOOTSTRAP_URL;
     }
     private static final int    CONNECT_TIMEOUT_MS = 15000;
-    private static final String FILE_ROOT = "/data/data/io.kamihama.totentanz/files";
-    private static final String FINAL_FLAG = "/data/data/io.kamihama.totentanz/files/madomagi/magica/cn_base_done.flag";
-    private static final String INSTALL_ROOT = "/data/data/io.kamihama.totentanz/files/";
+    private static final String FILE_ROOT = CNPaths.filesDir();
+    private static final String FINAL_FLAG = FILE_ROOT + "/madomagi/magica/cn_base_done.flag";
+    private static final String INSTALL_ROOT = FILE_ROOT + "/";
     private static final int    MAX_ATTEMPTS = 4;
     private static final int    MAX_DOWNLOADS = 4;
     private static final int    MIN_SNAA_VERSION = 128;
-    private static final String NO_RESTART_FLAG = "/data/data/io.kamihama.totentanz/files/madomagi/magica/.cn_installer/r128-downloader-v1/no_restart";
+    private static final String NO_RESTART_FLAG = FILE_ROOT + "/madomagi/magica/.cn_installer/r128-downloader-v1/no_restart";
     private static final int    READ_TIMEOUT_MS = 30000;
     // 低速看门狗：read timeout 管的是「完全没字节」，管不了「每秒几十 KB 的滴速」。
     // 窗口速度持续低于 MIN_OK_BPS 超过 SLOW_FAIL_NS 就抛异常走换线。
@@ -100,7 +100,7 @@ public final class CNDownloaderFix {
      * 而不是直接改这个常量。{@code tools/check-base-urls.py} 会把它钉住。
      */
     private static final String RESOURCE_BASE_URL = "https://assets.example.test/";
-    private static final String STATE_ROOT = "/data/data/io.kamihama.totentanz/files/madomagi/magica/.cn_installer/r128-downloader-v1";
+    private static final String STATE_ROOT = FILE_ROOT + "/madomagi/magica/.cn_installer/r128-downloader-v1";
     private static final String TAG = "MagiaCNDownloader";
 
     private static final long   STALE_SPEED_NS = TimeUnit.SECONDS.toNanos(2);

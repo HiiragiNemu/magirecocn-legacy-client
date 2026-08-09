@@ -63,7 +63,7 @@ public final class CNHotUpdateCheck {
 
     private static final String TAG = "MagiaCNHotUpdate";
 
-    private static final String FILES_DIR  = "/data/data/io.kamihama.totentanz/files/";
+    private static final String FILES_DIR  = CNPaths.filesDir() + "/";
     private static final String FINAL_FLAG = FILES_DIR + "madomagi/magica/cn_base_done.flag";
 
     /** 版本号存放的 SharedPreferences 文件名，与原实现一致，不能改。 */

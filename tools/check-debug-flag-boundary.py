@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 """调试开关的两条不变量：**不伸进安全判据**，且**两侧路径逐字一致**。
 
-## 检查二：跨 JNI 的路径常量必须逐字一致
+## 检查二：跨 JNI 的路径必须指向同一个文件
 
-同一个文件/目录被 Java 与 native 两侧各自硬编码一份。写歪一个字符不会有任何报错
+同一个文件/目录被 Java 与 native 两侧各自引用一份。写歪一个字符不会有任何报错
 ——两边各写各的文件，各读各的，谁也不抱怨：
 
   · `DEBUG_DIR` 不一致 → 开关建在 A 处、代码读 B 处，整表打成「关」，
@@ -16,6 +16,9 @@
 这些不变量原本只写在注释里（native 侧就有「⚠ 必须与 CNTutorialPrompt.
 FORCE_TUTORIAL_FLAG 逐字一致」「已逐字节核对」这类句子）。注释挡不住改动——
 逐字节核对是**人**做的，做过一次不代表下次还会做。所以钉在这里。
+
+2026-08-09 起两侧都改成「统一解析器 + 相对后缀」（见 CROSS_JNI_PATHS 上方
+注释），本检查跟着解析成符号形式再比对，钉的还是同一条不变量。
 
 解析支持字符串拼接（`CNHotUpdateCheck.FINAL_FLAG = FILES_DIR + "madomagi/..."`），
 解析不出来一律按失败处理：那说明声明的形状变了，需要人来看一眼，而不是悄悄跳过。
@@ -83,8 +86,14 @@ PROTECTED = [
 BANNED = re.compile(r"CNDebugFlags|g_dbg[A-Z]")
 
 
-# ── 检查二用：跨 JNI 必须逐字一致的路径常量 ────────────────────────────
+# ── 检查二用：跨 JNI 必须指向同一个文件的路径常量 ────────────────────
 # (说明, [(文件, 常量名), ...])  —— 同一组里的所有常量必须解析出同一个值。
+#
+# 2026-08-09 起各常量不再硬编码字面值，而是「统一解析器 + 相对后缀」：
+# Java 侧 CNPaths.filesDir()/privDir()，native 侧 filesDir()/privDir()，
+# 两侧解析器算法相同（见 CNPaths 的类注释）。因此本检查解析成**符号形式**
+# （<files>/…、<priv>/…）再比对——它钉的不变量不变：同一组的每一处必须用
+# 同一个基座 + 同一个后缀。谁把后缀写歪一个字符，这里照样拦得住。
 CROSS_JNI_PATHS = [
     ("调试开关目录", [
         (J + "CNDebugFlags.java",     "DEBUG_DIR"),
@@ -111,9 +120,20 @@ DECL = r"\b%s\s*=\s*([^;]*);"
 # 表达式里的记号：字符串字面量（含转义）或标识符
 TOKEN = re.compile(r'"((?:[^"\\]|\\.)*)"|([A-Za-z_][A-Za-z_0-9]*)')
 
+# 统一路径解析器的调用 → 符号基座。Java 侧 CNPaths.xxxDir() 与 native 侧
+# xxxDir() 是同一套算法（见 CNPaths 类注释），这里映射成同一个符号后比对。
+BASE_CALLS = {
+    "CNPaths.filesDir()": "<files>",
+    "CNPaths.privDir()":  "<priv>",
+    "filesDir()":         "<files>",
+    "privDir()":          "<priv>",
+}
+
 
 def const_value(src, name, seen=None):
-    """解析 `NAME = <字面量与标识符的 + 拼接>;`，返回字符串值；解析不出返回 None。"""
+    """解析 `NAME = <字面量/标识符/基座调用 的 + 拼接>;`，返回字符串值；
+    解析不出返回 None。基座调用（CNPaths.filesDir() 等）先替换成符号字面量
+    （"<files>" / "<priv>"），所以比对的是「同一个基座 + 同一个后缀」。"""
     seen = set() if seen is None else seen
     if name in seen:
         return None                      # 循环引用
@@ -121,8 +141,11 @@ def const_value(src, name, seen=None):
     m = re.search(DECL % re.escape(name), src)
     if not m:
         return None
+    rhs = m.group(1)
+    for call, sym in BASE_CALLS.items():
+        rhs = rhs.replace(call, '"%s"' % sym)
     out = []
-    for tok in TOKEN.finditer(m.group(1)):
+    for tok in TOKEN.finditer(rhs):
         if tok.group(1) is not None:
             out.append(tok.group(1).replace('\\"', '"').replace("\\\\", "\\"))
         else:

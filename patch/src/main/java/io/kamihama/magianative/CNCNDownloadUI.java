@@ -2982,7 +2982,7 @@ public class CNCNDownloadUI {
     // hide 时停止心跳并删除。进程被杀导致心跳中断时，标记 6 秒后自动失效，
     // native 侧自动放行，引擎不会被闸死。
     private static final String OVERLAY_FLAG =
-        "/data/data/io.kamihama.totentanz/files/madomagi/cn_overlay_active.flag";
+        CNPaths.filesDir() + "/madomagi/cn_overlay_active.flag";
     private static Thread overlayHeartbeat;
 
     private static void startOverlayFlag() {

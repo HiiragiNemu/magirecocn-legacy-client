@@ -7,9 +7,11 @@ import java.io.File;
  * {@code DEBUG_DIR} <b>是同一个目录</b>：
  *
  * <pre>
- *     /data/data/io.kamihama.totentanz/debug/&lt;开关名&gt;
+ *     &lt;应用数据目录&gt;/debug/&lt;开关名&gt;
  * </pre>
  *
+ * 数据目录经 {@link CNPaths#privDir()} 解析（正规设备上即
+ * {@code /data/data/io.kamihama.totentanz}，与 native 侧同一套算法）。
  * 建一个同名空文件就是打开该开关，删掉就是关闭，<b>重启游戏生效</b>。
  * 开关名一律**小驼峰**，两侧同一风格。
  *
@@ -81,8 +83,7 @@ public final class CNDebugFlags {
      *       事，两个目录挨着放，说一次路径就够了。</li>
      * </ul>
      */
-    private static final String DEBUG_DIR =
-        "/data/data/io.kamihama.totentanz/debug";
+    private static final String DEBUG_DIR = CNPaths.privDir() + "/debug";
 
     // ── skipXxx：启动链上每一步各一个（顺序即启动顺序）────────────────
     /** `CNWebProxy.install()` 不装 WebView 拦截层代理，一律透传直连。 */

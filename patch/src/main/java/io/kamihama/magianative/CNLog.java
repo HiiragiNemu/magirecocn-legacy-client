@@ -73,10 +73,10 @@ public final class CNLog {
      * 出问题那次**和它之前几次**的记录。按启动次数分文件，一眼就能定位到第几次
      * 启动出的问题。
      *
-     * <h3>🔴 落点只有一个：{@value #PRIV_DIR}/log</h3>
+     * <h3>🔴 落点只有一个：{@code PRIV_DIR/log}</h3>
      *
      * 唯一的写入路径是 {@link #initEarly()} → {@code init(new File(PRIV_DIR))}，
-     * 所以日志和 {@code .seq} 都在 <b>{@code /data/data/io.kamihama.totentanz/log}</b>
+     * 所以日志和 {@code .seq} 都在 <b>{@code <数据目录>/log}</b>
      * ——注意它和 {@code files/} <b>平级</b>，不在 {@code files/} 里面。
      *
      * <p><b>{@code files/log} 是历史遗留，已经没有任何代码写它，可以直接删。</b>
@@ -157,7 +157,8 @@ public final class CNLog {
     private static final Object FILE_LOCK = new Object();
 
     /**
-     * 应用数据目录（写死：早期初始化时拿不到 Context）。
+     * 应用数据目录。由 {@link CNPaths#privDir()} 解析（早期初始化拿不到
+     * Context，解析器走 /proc/self/cmdline + 目录探测，不硬编码 /data/data）。
      *
      * <p>日志落在 {@code <数据目录>/log/} 下。曾经额外往
      * {@code /sdcard/Android/data/<包名>/files/} 也写一份「方便取出」，已移除：
@@ -165,7 +166,7 @@ public final class CNLog {
      * 是失败的（该目录须由框架经 getExternalFilesDir() 创建），写了也白写，
      * 反而让人误以为那里会有东西。
      */
-    private static final String PRIV_DIR = "/data/data/io.kamihama.totentanz";
+    private static final String PRIV_DIR = CNPaths.privDir();
 
     private static BufferedWriter writer;
     /**

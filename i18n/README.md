@@ -136,7 +136,8 @@ adb shell "run-as io.kamihama.totentanz sh -c \
 
 - 补丁仓库那份 298 行 = 1 行注释 + 295 条精确条目 + 2 条前缀规则；设备日志是
   `[i18n] 已加载 295 条 + 2 前缀规则（第 298 行止，坏行 0）`。**逐字吻合，没有漂移。**
-- 解压根是 `/data/data/io.kamihama.totentanz/files/`（`CNHotUpdateCheck.FILES_DIR`），
+- 解压根是 `<应用数据目录>/files/`（`CNHotUpdateCheck.FILES_DIR`，经 `CNPaths`
+  动态解析，正规设备上即 `/data/data/io.kamihama.totentanz/files/`），
   所以包内路径 `madomagi/engine_i18n.tsv` 正好落到 `MagiaLegacy.cpp` 的
   `ENGINE_I18N_PATH`。
 - 它**不会被孤儿清理误删**：`CNHotUpdateTx.cleanupPrefixes("scenario")` 只清
