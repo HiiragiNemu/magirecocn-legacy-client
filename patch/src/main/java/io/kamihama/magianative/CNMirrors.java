@@ -429,8 +429,16 @@ public final class CNMirrors {
     private static final java.util.concurrent.atomic.AtomicBoolean RETRY_STARTED =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
-    /** 退避表（毫秒）。总跨度约 2 分钟——网络就绪一般是秒级的事，拖太久没意义。 */
-    private static final long[] RETRY_BACKOFF_MS = { 5000L, 15000L, 45000L, 90000L };
+    /**
+     * 退避表（毫秒）。总跨度约 2 分钟——网络就绪一般是秒级的事，拖太久没意义。
+     *
+     * <p>第一档 2 秒是有讲究的：收浮层前的 config 到位窗口只有 3 秒
+     * （CNHotUpdateCheck.CONFIG_SETTLE_MS）。第一档若比窗口长，「首载失败→
+     * 重试成功」这条路径永远赶不上窗口，署名区照样落空——2026-08-07 那次
+     * 真机（开机 1 秒网络未就绪、约 8 秒就绪）要能被覆盖，第一档必须短于
+     * 窗口。
+     */
+    private static final long[] RETRY_BACKOFF_MS = { 2000L, 15000L, 45000L, 90000L };
 
     /**
      * 拉不到 config.json 时在后台带退避重试，直到成功或退避表用完。
@@ -494,6 +502,13 @@ public final class CNMirrors {
                                         : "线路表在第 " + i + " 次重试后加载成功");
                     return;
                 }
+                // refresh 的 catch 每次失败都把 configState 拨成 2（终态失败），
+                // 但只要还有下一次重试，对外语义就仍是「加载中」：收浮层的到位
+                // 窗口（awaitConfigSettled 只等 state==0）若在首次失败那一瞬
+                // 就看到 2，会立刻放行、拆掉浮层——等退避后重试成功时
+                // refreshCredits 已无人接收，署名还是落空。那正是本循环要
+                // 覆盖的场景，所以把状态拨回 0，让窗口继续等满它的时间。
+                if (i < RETRY_BACKOFF_MS.length) configState = 0;
             }
             // 退避表用完仍然没拉到。到这一步为止玩家什么都不知道——原先只有一行
             // WARN 进日志，而后果是全局的（整场会话跑内置线路、proxy 段从未下发）。
@@ -625,7 +640,13 @@ public final class CNMirrors {
         }
     }
 
-    /** 配置加载状态：0=拉取中（未见结果） 1=成功 2=失败（本轮拉取没拿到）。 */
+    /**
+     * 配置加载状态：0=未见最终结果（拉取中，或失败但还有退避重试在路上）
+     * 1=成功 2=最终失败（重试也用完，或没人会再试）。
+     *
+     * <p>「失败但还会重试」必须留在 0：收浮层前的到位窗口
+     * （CNHotUpdateCheck.awaitConfigSettled）只等 0，2 会立刻放行。
+     */
     public static volatile int configState = 0;
 
     // ---- 浮层署名配置 ----

@@ -776,7 +776,8 @@ public final class CNHotUpdateCheck {
                 Thread.sleep(100);
             }
             CNLog.i(TAG, "收浮层前 config 状态=" + CNMirrors.configState
-                    + "（0=等到超时仍未加载）");
+                    + (CNMirrors.configState == 0 ? "（等到超时仍未加载）"
+                                                  : "（1=成功 2=最终失败）"));
         } catch (Throwable ignore) {}
     }
 }
