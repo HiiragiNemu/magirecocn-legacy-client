@@ -8,9 +8,10 @@ name: 🟢 全量回归 + last-green
 # ║                                                                    ║
 # ║   通过 → 把 `last-green` tag 移到本次提交。它是所有人的「时空锚点」： ║
 # ║          拉到坏代码时 `git checkout last-green` 立刻回到稳定点。      ║
-# ║   失败 → 🔴 红灯：在失败提交下留言标记；若配置了群 webhook             ║
-# ║          （secret GROUP_WEBHOOK_URL）则同步发群。红灯期间只许修       ║
-# ║          主线的提交（见 CONTRIBUTING.md「红灯协议」）。               ║
+# ║   失败 → 🔴 红灯：在失败提交下留言标记；若配置了邮件通知               ║
+# ║          （vars.NOTIFY_URL/NOTIFY_FROM/NOTIFY_FROM_NAME/              ║
+# ║           NOTIFY_TO + secret NOTIFY_TOKEN）则同步发信。红灯期间       ║
+# ║          只许修主线的提交（见 CONTRIBUTING.md「红灯协议」）。          ║
 # ║                                                                    ║
 # ║   tag 只是内部锚点，不是对外产物——不违反「不做自动发版」。            ║
 # ╚════════════════════════════════════════════════════════════════════╝
@@ -110,8 +111,14 @@ jobs:
           : ${{ github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
-          WEBHOOK: ${{ secrets.GROUP_WEBHOOK_URL }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # 邮件通知渠道（宝塔 webhook 格式）：地址与收发件人走仓库变量，
+          # Bearer 令牌走 secret。变量未配置则整段跳过。
+          NOTIFY_URL: ${{ vars.NOTIFY_URL }}
+          NOTIFY_FROM: ${{ vars.NOTIFY_FROM }}
+          NOTIFY_FROM_NAME: ${{ vars.NOTIFY_FROM_NAME }}
+          NOTIFY_TO: ${{ vars.NOTIFY_TO }}
+          NOTIFY_TOKEN: ${{ secrets.NOTIFY_TOKEN }}
         run: |
           set -euo pipefail
           MSG=$(printf '🔴 **红灯**：main 全量回归在本提交失败（%s）。\n\n红灯期间只许修复主线的提交，新功能本地继续但不许 push（见 CONTRIBUTING.md「红灯协议」）。\n引入者负责修；修不了就先 `git revert` 恢复绿灯。稳定锚点：`git checkout last-green`。' "$RUN_URL")
@@ -122,12 +129,16 @@ jobs:
             "https://api.github.com/repos/${REPO}/commits/${SHA}/comments" \
             -d @/tmp/red.json > /dev/null
           echo "已在 ${SHA} 下标记红灯"
-          # 群通知：webhook 未配置则跳过（企业微信/钉钉机器人地址，配置后即生效）
-          if [ -n "${WEBHOOK:-}" ]; then
-            printf '%s' "$MSG" | python3 -c 'import json,sys; print(json.dumps({"msgtype": "markdown", "markdown": {"content": sys.stdin.read()}}))' > /tmp/hook.json
-            curl -sS -X POST -H "Content-Type: application/json" \
-              -d @/tmp/hook.json "$WEBHOOK" > /dev/null
-            echo "已发群通知"
+          # 邮件通知：POST JSON 到 NOTIFY_URL，证书校验开启（curl 默认）
+          if [ -n "${NOTIFY_URL:-}" ] && [ -n "${NOTIFY_TOKEN:-}" ]; then
+            TITLE="🔴 main 红灯：全量回归失败" MSG="$MSG" \
+              python3 -c 'import json,os; print(json.dumps({"from": os.environ.get("NOTIFY_FROM", ""), "fromName": os.environ.get("NOTIFY_FROM_NAME", ""), "to": os.environ.get("NOTIFY_TO", ""), "title": os.environ["TITLE"], "msg": os.environ["MSG"], "type": "text"}, ensure_ascii=False))' \
+              > /tmp/notify.json
+            curl -sS -X POST \
+              -H "Authorization: Bearer ${NOTIFY_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d @/tmp/notify.json "$NOTIFY_URL" > /dev/null
+            echo "已发邮件通知"
           else
-            echo "（未配置 GROUP_WEBHOOK_URL，跳过群通知）"
+            echo "（未配置 NOTIFY_URL / NOTIFY_TOKEN，跳过邮件通知）"
           fi

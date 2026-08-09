@@ -94,8 +94,9 @@ push 到 main
 
 ## 五、红灯协议（main 挂了的处理 SOP）
 
-1. 全量回归失败 → CI 自动在失败提交下留言标记 🔴；配置了
-   `GROUP_WEBHOOK_URL` secret 时同步发群通知；
+1. 全量回归失败 → CI 自动在失败提交下留言标记 🔴；配置了邮件通知
+   （仓库变量 `NOTIFY_URL` / `NOTIFY_FROM` / `NOTIFY_FROM_NAME` /
+   `NOTIFY_TO` + secret `NOTIFY_TOKEN`，宝塔 webhook 格式）时同步发信；
 2. 红灯期间：只允许修复主线的提交，新功能开发本地继续但**不许 push**；
 3. 引入者负责修，修不了就 `git revert` 先恢复绿灯，问题回炉；
 4. 找不到引入者 → `git bisect` 从 `last-green` 二分定位。
