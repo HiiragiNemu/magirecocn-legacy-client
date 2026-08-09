@@ -98,7 +98,8 @@ push 到 main
    （仓库变量 `NOTIFY_URL` / `NOTIFY_FROM` / `NOTIFY_FROM_NAME` /
    `NOTIFY_TO` + secret `NOTIFY_TOKEN`，宝塔 webhook 格式）时同步发信；
    `NOTIFY_TO` 支持逗号/分号/空格分隔的多个收件人，逐人各发一封。
-   push 级检查（main-checks）失败则发 🟡 黄灯邮件；**绿灯不发邮件**。
+   并发预警触发（24h 内同文件有他人改动）时另发 🟡 黄灯邮件；
+   **无预警、全绿都不发邮件**。
    邮件发送统一走 `tools/notify-mail.sh`，发送失败只打 warning 不阻断；
 2. 红灯期间：只允许修复主线的提交，新功能开发本地继续但**不许 push**。
    这条由 pre-push 钩子的红灯闸门执行：推 main 前联网查最近一次全量回归

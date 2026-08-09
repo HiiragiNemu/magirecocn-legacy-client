@@ -7,13 +7,10 @@ name: ✅ main 复验 + 并发预警
 # ║      重组/签名完整跑一遍。本地过 ≠ CI 过（d8 的坑撞过四次），         ║
 # ║      所以 CI 要独立复验一次。                                        ║
 # ║   2. 并发预警：本次 push 改动的文件，若 24 小时内有**别人**动过，      ║
-# ║      在该提交下留言提醒（不阻断）——主干开发最容易踩的对撞，           ║
-# ║      早知道早对齐。                                                  ║
+# ║      在该提交下留言提醒（不阻断）+ 🟡 黄灯邮件（无预警即绿灯，          ║
+# ║      不发邮件）——主干开发最容易踩的对撞，早知道早对齐。               ║
 # ║   3. 分层提示：按改动路径给出要求的验证级别（方案 §二.3）。           ║
 # ║      实机测试 CI 替代不了，只能提示，不能自动执行。                   ║
-# ║                                                                    ║
-# ║   任何一个 job 失败 → 🟡 黄灯：邮件通知（与红灯共用                  ║
-# ║   tools/notify-mail.sh；绿灯不发邮件）。                            ║
 # ╚════════════════════════════════════════════════════════════════════╝
 
 on:
@@ -45,6 +42,12 @@ jobs:
           REPO: ${{ github.repository }}
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NOTIFY_URL: ${{ vars.NOTIFY_URL }}
+          NOTIFY_FROM: ${{ vars.NOTIFY_FROM }}
+          NOTIFY_FROM_NAME: ${{ vars.NOTIFY_FROM_NAME }}
+          NOTIFY_TO: ${{ vars.NOTIFY_TO }}
+          NOTIFY_TOKEN: ${{ secrets.NOTIFY_TOKEN }}
         run: |
           set -euo pipefail
           FILES=$(git diff --name-only "$BEFORE" "$AFTER" || true)
@@ -75,6 +78,10 @@ jobs:
               -d @/tmp/comment.json > /dev/null
             echo "已留言预警："
             echo "$WARN"
+            # 🟡 黄灯邮件：预警内容同步发信（绿灯——无预警——不发）
+            TITLE="🟡 main 黄灯：24h 内有他人改动同文件" \
+            MSG="🟡 **黄灯（并发预警）**：本次 push 改动的文件中，有文件在 24 小时内被其他人/会话改过（${RUN_URL}）："$'\n\n'"${WARN}"$'\n\n'"建议开工前先 git pull --rebase，并在 ACTIVE.md 登记自己在动哪片。" \
+              bash tools/notify-mail.sh
           else
             echo "24h 内无同文件的他人改动"
           fi
@@ -116,25 +123,3 @@ jobs:
             esac
           } >> "$GITHUB_STEP_SUMMARY"
           echo "tier=$TIER"
-
-  # ── 黄灯通知：任一检查 job 失败 → 邮件（绿灯不发）────────────────
-  notify-yellow:
-    if: failure()
-    needs: [recheck, collision-warning, tier-hint]
-    runs-on: ubuntu-latest
-    steps:
-      - name: 📦 检出（取通知脚本）
-        uses: actions/checkout@v4
-
-      - name: 🟡 黄灯邮件
-        env:
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          NOTIFY_URL: ${{ vars.NOTIFY_URL }}
-          NOTIFY_FROM: ${{ vars.NOTIFY_FROM }}
-          NOTIFY_FROM_NAME: ${{ vars.NOTIFY_FROM_NAME }}
-          NOTIFY_TO: ${{ vars.NOTIFY_TO }}
-          NOTIFY_TOKEN: ${{ secrets.NOTIFY_TOKEN }}
-        run: |
-          TITLE="🟡 main 黄灯：push 级检查失败" \
-          MSG="🟡 **黄灯**：main 复验/并发预警/分层提示有 job 失败（${RUN_URL}）。全量回归（last-green）可能仍绿，但 push 级检查挂了，请尽快处理。" \
-            bash tools/notify-mail.sh
