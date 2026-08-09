@@ -76,6 +76,14 @@ public final class CNHotUpdateCheck {
     /** 没有更新时，把「已是最新」这个结论留在屏幕上的时间。 */
     private static final long IDLE_LINGER_MS = 900L;
 
+    /**
+     * 收浮层前等 config.json 到位的上限。署名区内容来自 config 的 ui_credits，
+     * 秒退路径下热更收工常常比 config 到位还早，不给这个窗口玩家就永远只能
+     * 看到「署名加载中…」。只等「还在加载」这一种状态，成功/失败立即放行——
+     * 绝不能让它长成第二条启动关键路径。
+     */
+    private static final long CONFIG_SETTLE_MS = 3000L;
+
     /** 看门狗周期：与安装器路径一致地把浮层按回视图树。 */
     private static final long WATCHDOG_PERIOD_MS = 1000L;
 
@@ -465,6 +473,7 @@ public final class CNHotUpdateCheck {
             CNCNDownloadUI.updateSimple("已是最新", "台词与前端脚本均为最新版本，即将进入游戏", 0);
         }
         sleep(IDLE_LINGER_MS);
+        awaitConfigSettled();
         // running 要在浮层收掉之前清掉：之后再点胶囊（浮层还在的最后一刻）
         // 应当走「自己重启」那条路，而不是挂在一个马上就结束的检查上。
         running = false;
@@ -748,5 +757,26 @@ public final class CNHotUpdateCheck {
     private static void sleep(long ms) {
         try { Thread.sleep(ms); }
         catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+    }
+
+    /**
+     * 收浮层前给云端配置一个短短的到位窗口（{@link #CONFIG_SETTLE_MS}）。
+     *
+     * <p>只等「还在加载」（configState==0）这一种状态：加载成功/失败都立刻
+     * 放行，超时也放行。调试开关 skipMirrorConfig 下 config 永远不会到位，
+     * 直接不等。
+     */
+    private static void awaitConfigSettled() {
+        try {
+            if (CNMirrors.configState != 0) return;
+            if (CNDebugFlags.isOn(CNDebugFlags.SKIP_MIRROR_CONFIG)) return;
+            long deadline = android.os.SystemClock.uptimeMillis() + CONFIG_SETTLE_MS;
+            while (CNMirrors.configState == 0
+                    && android.os.SystemClock.uptimeMillis() < deadline) {
+                Thread.sleep(100);
+            }
+            CNLog.i(TAG, "收浮层前 config 状态=" + CNMirrors.configState
+                    + "（0=等到超时仍未加载）");
+        } catch (Throwable ignore) {}
     }
 }

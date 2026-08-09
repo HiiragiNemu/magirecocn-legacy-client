@@ -463,24 +463,35 @@ public final class CNMirrors {
         }
     }
 
-    /** 退避重试的循环体。 */
+    /** 首载 + 退避重试的循环体。 */
     private static final class RetryLoader implements Runnable {
         @Override public void run() {
-            for (int i = 0; i < RETRY_BACKOFF_MS.length; i++) {
-                try {
-                    Thread.sleep(RETRY_BACKOFF_MS[i]);
-                } catch (InterruptedException ie) {
-                    return;
+            // i=0 是**首载**，立即发请求；退避只加在失败后的重试之间。
+            //
+            // 原先循环无条件先 sleep(RETRY_BACKOFF_MS[0])（5 秒）再发第一次
+            // 请求——首载也被当成了重试。后果：热更「已是最新」这类秒退路径
+            // 两三百毫秒查完版本、900ms 驻留后就拆浮层，而 config.json 要到
+            // 第 5 秒才发请求，署名区永远停在「加载中」就随浮层一起消失了。
+            // 退避防的是「开机网络未就绪时的背靠背轰炸」，不是把首载也推迟；
+            // 网络没起来时首次失败，后面的退避重试照样兜得住。
+            for (int i = 0; i <= RETRY_BACKOFF_MS.length; i++) {
+                if (i > 0) {
+                    try {
+                        Thread.sleep(RETRY_BACKOFF_MS[i - 1]);
+                    } catch (InterruptedException ie) {
+                        return;
+                    }
+                    if (loaded) return;
+                    CNLog.i(TAG, "线路表仍未加载，第 " + i + " 次重试");
                 }
-                if (loaded) return;
-                CNLog.i(TAG, "线路表仍未加载，第 " + (i + 1) + " 次重试");
                 try {
                 // Remote config is optional. Use the Android/system route once; if it
                 // fails, keep built-in mirrors and retry later in the background.
                 refresh(false);
                 } catch (Throwable ignore) {}
                 if (loaded) {
-                    CNLog.i(TAG, "线路表在第 " + (i + 1) + " 次重试后加载成功");
+                    CNLog.i(TAG, i == 0 ? "线路表首次拉取成功"
+                                        : "线路表在第 " + i + " 次重试后加载成功");
                     return;
                 }
             }
