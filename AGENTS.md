@@ -96,9 +96,8 @@ git push origin --delete <分支名>
 | `hotfix/*` | 修红灯专用，寿命以小时计，用完即归档 |
 | `surgery/*` | 核心层大手术，≤ 3 天，开工先登记 ACTIVE.md |
 
-> 另有三个**具名临时例外**（2026-08-09 维护者特批，合并即删、届时移除）：
-> `agent/fix-mumu-initlabel-hook`、`feature/battle-engine-i18n-20260808`、
-> `feature/native-i18n-authority-20260809`。
+> 另有两个**具名临时例外**（2026-08-09 维护者特批，合并即删、届时移除）：
+> `feature/battle-engine-i18n-20260808`、`feature/native-i18n-authority-20260809`。
 
 **分支退役不许直接删**：先打 `archive/<原分支名>` tag 存档、确认推上远端，
 然后才删分支——用 CI 干这个事：Actions →「🗄️ 归档分支为 tag」。

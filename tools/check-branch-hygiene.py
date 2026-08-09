@@ -51,9 +51,8 @@ ALLOW = (
     re.compile(r"^hotfix/"),
     re.compile(r"^surgery/"),
     # ── 具名临时例外（2026-08-09 维护者特批）──────────────────────
-    # 这三条是别的会话正在跑的活，允许活到合并进 main 为止；
+    # 这两条是别的会话正在跑的活，允许活到合并进 main 为止；
     # 合并删除后把对应行从本表移除，不要往这里加新名字。
-    re.compile(r"^agent/fix-mumu-initlabel-hook$"),
     re.compile(r"^feature/battle-engine-i18n-20260808$"),
     re.compile(r"^feature/native-i18n-authority-20260809$"),
 )
