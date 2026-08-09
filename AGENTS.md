@@ -44,16 +44,18 @@ git push -u origin main
 修 bug、加测试、改文档、调参数、重构——**全部直接提 `main`**。
 
 不要为了"看起来规范"建一条 feature 分支再自己合并。没有人会 review 它，
-它只会变成远端一条没人再看的 ref。
+它只会变成远端一条没人再看的 ref。**feature 分支用 feature flag 替代**
+（CONTRIBUTING.md §三）。
 
-### 规则二：真要开分支，全会话只许开**一条**
+### 规则二：只有两类例外分支，全会话只许开**一条**
 
-只有两种情况允许开分支，且都要求**用完即删**：
+允许开的分支只有两类（协作方案 §一）：
 
-1. 人类**明确要求**开分支或开 PR；
-2. 改动大到需要人类先过目才敢进 `main`（换基础 APK、重写下载链路这个量级）。
+1. `hotfix/*` —— 修主线红灯，寿命以**小时**计；
+2. `surgery/*` —— 核心 hook/注入层大重构，寿命 **≤ 3 天**，开工前必须
+   群里说一声 + 在 `ACTIVE.md` 登记。
 
-一旦开了，**本次会话的全部工作都留在那一条上**。
+两类都**用完即删**（合入后立即删；超期会被 `check-branch-hygiene.py` 点名）：
 
 - 推失败了？`git push --force-with-lease` 到**同一条**，不要另开。
 - 改了方向？`git commit --amend` 或 `git reset` 到**同一条**，不要另开。
@@ -86,13 +88,22 @@ python3 tools/check-branch-hygiene.py
 git push origin --delete <分支名>
 ```
 
-远端**只应该**长期存在这三类 ref：
+远端**只应该**存在这三类 ref（没有第三种分支，没有中间地带）：
 
 | ref | 说明 |
 |---|---|
-| `main` | 唯一在维护的线 |
-| `archive/*` | 已归档、只读，**不要往上推** |
-| `research/*` | 长期研究分支，**不是你的，别动** |
+| `main` | 唯一长期分支（已保护：禁 force push / 禁删除） |
+| `hotfix/*` | 修红灯专用，寿命以小时计，用完即归档 |
+| `surgery/*` | 核心层大手术，≤ 3 天，开工先登记 ACTIVE.md |
+
+> 另有三个**具名临时例外**（2026-08-09 维护者特批，合并即删、届时移除）：
+> `agent/fix-mumu-initlabel-hook`、`feature/battle-engine-i18n-20260808`、
+> `feature/native-i18n-authority-20260809`。
+
+**分支退役不许直接删**：先打 `archive/<原分支名>` tag 存档、确认推上远端，
+然后才删分支——用 CI 干这个事：Actions →「🗄️ 归档分支为 tag」。
+`archive/*` tag 不可变（远端 ruleset 禁删/禁强推），不存在 `archive/*`、
+`research/*` 这类长期挂着的**分支**。
 
 ### 这条规则是拿真事换来的
 
@@ -116,10 +127,18 @@ ci/runtime-fix-build-31212457531-success
 
 ## §1 提交规范
 
-### 一、commit 信息必须用**中文**
+### 一、commit 信息必须用 **Conventional 前缀 + 中文**
 
-不接受英文 commit。`Fix runtime startup restart overlay and prologue flow`
-这样的标题一律要改成中文。
+格式：`type(scope): 中文描述`（2026-08-09 起，协作方案 §二.5）。
+
+```
+fix(hook): 修复注入时序空指针
+feat(i18n): 战斗文本钩子加前缀规则
+```
+
+允许的 type：`feat` `fix` `refactor` `docs` `test` `chore` `ci` `perf`
+`build`；scope 自选。`Fix runtime startup restart overlay` 这样的纯英文
+标题、以及没有类型前缀的标题，一律会被钩子拦下（历史提交不在此列）。
 
 信息要说清**为什么**，不只是做了什么——本仓库的注释与提交信息都以「为什么」
 为主，因为半年后回头看时，"做了什么"看 diff 就有，"为什么"只有当时的人知道。
@@ -187,14 +206,15 @@ Co-authored-by: Codex <noreply@openai.com>
 - 建 `ci/xxx-<run-id>`、`build/xxx-<日期>`、`*-driver-*`、`*-success` 之类的分支
   让 workflow 跑起来；
 - 每失败一次就推一条新分支重试；
-- 新增任何 `on: push:` 触发的 workflow——直接违反 `CLAUDE.md` 铁律 6
-  「**不做自动发版**，CI 只保留 `workflow_dispatch`」。
+- 新增任何 `on: push:` 触发的 **APK 构建/发版** workflow——`CLAUDE.md` 铁律 6
+  修订后只允许**检查类** workflow（`main-checks` / `last-green`）push 触发，
+  构建与发版仍然只手动。
 
 **正确做法**：
 
 - 构建/发版由**人类**在 GitHub 网页上手动 `workflow_dispatch`；
 - 想验证代码能不能过 CI，**在本地跑**（§3）——那套命令与 CI 用的是同一份
-  classpath、同一套 dex 分组规则；
+  classpath、同一套 dex 分组规则；push 到 main 后 `main-checks` 会自动复验；
 - 一次性的构建触发器**不要留在远端**，本地跑完即删。
 
 ---
@@ -301,7 +321,7 @@ git 钩子唯一挡不住的就是绕过 git 钩子本身，所以这一条必�
 
 | 钩子 | 拦什么 | 对应条款 |
 |---|---|---|
-| `commit-msg` | 标题非中文 | §1 一 |
+| `commit-msg` | 标题缺 Conventional 前缀或描述非中文 | §1 一 |
 | | 缺 `Co-authored-by` trailer | §1 三 |
 | | 缺「文档:」交代 | §1 四 |
 | `pre-push` | 本次推送**新增**提交的信息不合规（判据同上，与 `commit-msg` 共用一份） | §1 |
@@ -311,7 +331,10 @@ git 钩子唯一挡不住的就是绕过 git 钩子本身，所以这一条必�
 | `agent-guard.py` | `--no-verify` 与 `-c core.hooksPath=…`（绕过上面两个且不留痕迹） | 本节 |
 
 **放行的**：推 `main`、删分支、往已存在的分支继续推、白名单
-（`main` / `archive/*` / `research/*`）。本地随便开分支也不拦——闸门只设在
+（`main` / `hotfix/*` / `surgery/*` + 三个具名临时例外，见 §0 表注。
+没有第三种分支；退役分支一律走「🗄️ 归档分支为 tag」CI，先打
+`archive/*` tag 存档再删，不许直接删）。
+本地随便开分支也不拦——闸门只设在
 「**往远端推一条新分支**」这一刻，因为留在远端的才是问题。
 
 **逃生口**（用它意味着你明确知道自己在跳过什么，并准备好向维护者解释）：

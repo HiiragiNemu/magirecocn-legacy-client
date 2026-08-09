@@ -51,12 +51,20 @@
    （2026-08-03 起；此前它们也直连主线，铁律已改）。改动涉及下载路径时，
    对照 README 的「网络出口」表逐条确认。
 
-6. **不做自动发版**。CI 只保留 `workflow_dispatch`；不要加 push 触发，
-   也不要自动建 Release。
+6. **不做自动发版**。APK 构建与 Release 只保留 `workflow_dispatch` 手动触发，
+   不自动建 Release。**例外**（2026-08-09 起，协作方案落地）：检查类 workflow
+   ——`main-checks.yml`（复验 + 并发预警）与 `last-green.yml`（全量回归 +
+   移动 `last-green` tag）——允许 push 触发。它们是守门用的，不产出对外
+   产物；`last-green` tag 是内部稳定锚点，不是发版。见 CONTRIBUTING.md §四。
 
 ## 提交约定
 
-- commit 信息用**中文**；一功能一 commit；直接提交 **main**（无 PR 流程，除非明确要求）。
+- commit 信息用 **Conventional Commits 前缀 + 中文描述**（2026-08-09 起，
+  见 CONTRIBUTING.md §二.5）：`fix(hook): 修复注入时序空指针`。允许的 type：
+  `feat` `fix` `refactor` `docs` `test` `chore` `ci` `perf` `build`；
+  一功能一 commit；直接提交 **main**（无 PR 流程，除非明确要求）。
+  分支只有 `hotfix/*`（修红灯）与 `surgery/*`（核心层大手术）两类例外，
+  开工先登记 ACTIVE.md。
 - 署名固定：作者一律 `CyberNova2333 <295488275+CyberNova2333@users.noreply.github.com>`
   （已写入本仓库的 `git config`），实际执笔的 Agent 以 `Co-authored-by` trailer
   署名（`Claude <noreply@anthropic.com>` / `Kimi <noreply@moonshot.cn>`）。
