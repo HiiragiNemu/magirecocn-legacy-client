@@ -113,7 +113,8 @@ jobs:
           SHA: ${{ github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           # 邮件通知渠道（宝塔 webhook 格式）：地址与收发件人走仓库变量，
-          # Bearer 令牌走 secret。变量未配置则整段跳过。
+          # Bearer 令牌走 secret。NOTIFY_TO 可用逗号/分号/空格配多个收件人。
+          # 变量未配置则整段跳过。
           NOTIFY_URL: ${{ vars.NOTIFY_URL }}
           NOTIFY_FROM: ${{ vars.NOTIFY_FROM }}
           NOTIFY_FROM_NAME: ${{ vars.NOTIFY_FROM_NAME }}
@@ -131,14 +132,18 @@ jobs:
           echo "已在 ${SHA} 下标记红灯"
           # 邮件通知：POST JSON 到 NOTIFY_URL，证书校验开启（curl 默认）
           if [ -n "${NOTIFY_URL:-}" ] && [ -n "${NOTIFY_TOKEN:-}" ]; then
-            TITLE="🔴 main 红灯：全量回归失败" MSG="$MSG" \
-              python3 -c 'import json,os; print(json.dumps({"from": os.environ.get("NOTIFY_FROM", ""), "fromName": os.environ.get("NOTIFY_FROM_NAME", ""), "to": os.environ.get("NOTIFY_TO", ""), "title": os.environ["TITLE"], "msg": os.environ["MSG"], "type": "text"}, ensure_ascii=False))' \
-              > /tmp/notify.json
-            curl -sS -X POST \
-              -H "Authorization: Bearer ${NOTIFY_TOKEN}" \
-              -H "Content-Type: application/json" \
-              -d @/tmp/notify.json "$NOTIFY_URL" > /dev/null
-            echo "已发邮件通知"
+            # NOTIFY_TO 支持逗号/分号/空格分隔的多个收件人，逐人各发一封
+            # （服务端是否支持群发不确定，逐人发是最稳的）
+            for TO in $(printf '%s' "${NOTIFY_TO}" | tr ',; ' '\n' | sed '/^$/d'); do
+              TO="$TO" TITLE="🔴 main 红灯：全量回归失败" MSG="$MSG" \
+                python3 -c 'import json,os; print(json.dumps({"from": os.environ.get("NOTIFY_FROM", ""), "fromName": os.environ.get("NOTIFY_FROM_NAME", ""), "to": os.environ["TO"], "title": os.environ["TITLE"], "msg": os.environ["MSG"], "type": "text"}, ensure_ascii=False))' \
+                > /tmp/notify.json
+              curl -sS -X POST \
+                -H "Authorization: Bearer ${NOTIFY_TOKEN}" \
+                -H "Content-Type: application/json" \
+                -d @/tmp/notify.json "$NOTIFY_URL" > /dev/null
+              echo "已发邮件通知 → ${TO}"
+            done
           else
             echo "（未配置 NOTIFY_URL / NOTIFY_TOKEN，跳过邮件通知）"
           fi
