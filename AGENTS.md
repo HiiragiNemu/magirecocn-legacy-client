@@ -272,10 +272,21 @@ d8 --min-api 21 --output .build/dex3  --lib .cache/deps/android.jar \
    $(find .build/classes -name '*.class' ! -name 'CNCNDownloadUI*.class')
 
 # 3) 测试与守卫
+# RestClient 是编译期桩（真实实现在 smali_classes2，不在 patch/src 下）
+mkdir -p .build/stubs/io/kamihama/magianative
+cat > .build/stubs/io/kamihama/magianative/RestClient.java <<'STUB'
+package io.kamihama.magianative;
+import android.app.Activity;
+public class RestClient {
+    public static Activity getCurrentActivity() { return null; }
+    public static void restartApp() {}
+}
+STUB
 python3 tools/proxy-test-server.py 8791 &
 javac -nowarn -source 8 -target 8 -encoding UTF-8 -cp .cache/deps/android.jar \
       -d .build-test $(find patch/src/main/java -name '*.java') \
-      tools/teststubs/android/webkit/WebResourceResponse.java tools/*Test.java
+      tools/teststubs/android/webkit/WebResourceResponse.java tools/*Test.java \
+      .build/stubs/io/kamihama/magianative/RestClient.java
 for t in HotUpdateTxTest SafeLinkTest WebProxyTest ConfigGuardTest \
          LogTest BgmLoopTest ThrottleTest FlushTest; do
   java -cp .build-test:.cache/deps/android.jar $t || echo "❌ $t"

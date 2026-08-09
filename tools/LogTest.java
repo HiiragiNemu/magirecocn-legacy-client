@@ -1,4 +1,5 @@
 import io.kamihama.magianative.CNLog;
+import io.kamihama.magianative.CNPaths;
 import java.io.*; import java.lang.reflect.*; import java.util.*;
 
 /** 验证日志目录：按序号+时间命名、序号递增、保留上限、来源过滤。 */

@@ -57,11 +57,23 @@ jobs:
       - name: 🧪 编译补丁源码与测试（与本地自检同 classpath）
         run: |
           set -euo pipefail
+          # RestClient 只作为编译期桩存在：真实实现在 smali_classes2 里，
+          # 不在 patch/src 下（与 build-apk.yml 里的处理方式一致）。
+          mkdir -p .build/stubs/io/kamihama/magianative
+          cat > .build/stubs/io/kamihama/magianative/RestClient.java <<'STUB'
+          package io.kamihama.magianative;
+          import android.app.Activity;
+          public class RestClient {
+              public static Activity getCurrentActivity() { return null; }
+              public static void restartApp() {}
+          }
+          STUB
           mkdir -p .build-test
           javac -nowarn -source 8 -target 8 -encoding UTF-8 \
                 -cp .cache/deps/android.jar \
                 -d .build-test $(find patch/src/main/java -name '*.java') \
-                tools/teststubs/android/webkit/WebResourceResponse.java tools/*Test.java
+                tools/teststubs/android/webkit/WebResourceResponse.java tools/*Test.java \
+                .build/stubs/io/kamihama/magianative/RestClient.java
 
       - name: 🧪 跑测试套件
         run: |
