@@ -272,6 +272,9 @@ d8 --min-api 21 --output .build/dex3  --lib .cache/deps/android.jar \
 
 # 3) 测试与守卫
 # RestClient 是编译期桩（真实实现在 smali_classes2，不在 patch/src 下）
+# orgjson.jar 是真 org.json（android.jar 里的全是 stub，方法一调就抛
+# "Stub!"），测试 JVM 跑真解析要用它，且必须排在 android.jar 前面。
+# 取法：maven central 的 org/json/json/20231013/json-20231013.jar
 mkdir -p .build/stubs/io/kamihama/magianative
 cat > .build/stubs/io/kamihama/magianative/RestClient.java <<'STUB'
 package io.kamihama.magianative;
@@ -287,9 +290,9 @@ javac -nowarn -source 8 -target 8 -encoding UTF-8 -cp .cache/deps/android.jar \
       .build/stubs/io/kamihama/magianative/RestClient.java
 for t in HotUpdateTxTest SafeLinkTest WebProxyTest ConfigGuardTest \
          LogTest BgmLoopTest ThrottleTest FlushTest; do
-  java -cp .build-test:.cache/deps/android.jar $t || echo "❌ $t"
+  java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar $t || echo "❌ $t"
 done
-java -cp .build-test:.cache/deps/android.jar ProxyFetchTest 8791
+java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar ProxyFetchTest 8791
 
 for g in check-proxy-hooks check-base-urls check-entry-guard \
          check-fonts check-webview-interceptor check-branch-hygiene; do

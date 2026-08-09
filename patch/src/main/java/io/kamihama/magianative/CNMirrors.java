@@ -715,7 +715,19 @@ public final class CNMirrors {
     static void requireJsonBody(String body, String contentType) throws IOException {
         String s = (body == null) ? "" : body.trim();
         if (!s.isEmpty() && s.charAt(0) == '\uFEFF') s = s.substring(1).trim();   // BOM
-        if (s.startsWith("{")) return;
+        if (s.startsWith("{")) {
+            // 「以 { 开头」不等于能解析：{<broken 这类截断/损坏体会放过首字符
+            // 守卫，随后在调用方 new JSONObject 抛出没有证据的老式异常——
+            // 证据保留就白做了。在这里先试解析一次，挂了同样落下面的证据异常。
+            // （好路径会解析两遍：这里一遍、调用方一遍。config.json 就几 KB，
+            //   换「坏体永远带证据」值这个价。）
+            try {
+                new JSONObject(s);
+                return;
+            } catch (Exception parseFail) {
+                // 落下去：与「不是 JSON」同一处构造带证据的异常
+            }
+        }
 
         StringBuilder sb = new StringBuilder("config.json 不是 JSON");
         if (contentType != null && !contentType.isEmpty()) {

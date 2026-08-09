@@ -170,7 +170,7 @@ public class ConfigGuardTest {
         // 而那页 HTML 恰恰写着是谁拦的。这几条钉住「证据不许再被扔掉」。
         okJson("{\"a\":1}",       null,               "正常 JSON");
         okJson("  \n {\"a\":1} ", "application/json", "前导空白");
-        okJson("﻿{\"a\":1}", "application/json", "带 UTF-8 BOM");
+        okJson("\uFEFF{\"a\":1}", "application/json", "带 UTF-8 BOM");
 
         badJson("<html><head><title>403 Forbidden</title></head><body>blocked by X</body></html>",
                 "text/html", "HTML 错误页",
@@ -178,6 +178,9 @@ public class ConfigGuardTest {
         badJson("",     "text/html",        "空响应体",   new String[] { "（空）" });
         badJson(null,   null,               "null 响应体", new String[] { "（空）" });
         badJson("[1,2]", "application/json", "顶层是数组不是对象", new String[] { "[1,2]" });
+        // 以 { 开头但体已损坏：首字符守卫放过它，真解析必须接住
+        badJson("{\"a\":", "application/json", "截断的 JSON",
+                new String[] { "{\"a\":" });
         // 多行必须压成一行：否则 logcat 会把它拆开，抓下来对不上
         badJson("<html>\r\na\tb\n</html>", "text/html", "多行压成一行",
                 new String[] { "<html> a b </html>" });

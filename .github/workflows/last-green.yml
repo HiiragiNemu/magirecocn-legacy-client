@@ -54,6 +54,11 @@ jobs:
             "https://repo1.maven.org/maven2/com/squareup/okhttp3/okhttp/3.12.13/okhttp-3.12.13.jar"
           curl -sSL -o .cache/deps/okio.jar \
             "https://repo1.maven.org/maven2/com/squareup/okio/okio/1.17.5/okio-1.17.5.jar"
+          # 真 org.json：android.jar 里的全是 stub（方法一调就抛 "Stub!"），
+          # 测试 JVM 上要跑真解析（requireJsonBody 的试解析）就得拿真实现，
+          # 且 classpath 必须排在 android.jar **前面**才轮得到它。
+          curl -sSL -o .cache/deps/orgjson.jar \
+            "https://repo1.maven.org/maven2/org/json/json/20231013/json-20231013.jar"
 
       - name: 🧪 编译补丁源码与测试（与本地自检同 classpath）
         run: |
@@ -82,9 +87,9 @@ jobs:
           sleep 1
           for t in HotUpdateTxTest SafeLinkTest WebProxyTest ConfigGuardTest \
                    LogTest BgmLoopTest ThrottleTest FlushTest; do
-            java -cp .build-test:.cache/deps/android.jar $t
+            java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar $t
           done
-          java -cp .build-test:.cache/deps/android.jar ProxyFetchTest 8791
+          java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar ProxyFetchTest 8791
 
       - name: 🛡 跑全部守卫
         run: |
