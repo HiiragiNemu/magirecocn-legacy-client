@@ -1,0 +1,115 @@
+name: ✅ main 复验 + 并发预警
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║   push 到 main 后的两道检查（协作方案第四节，见 CONTRIBUTING.md）     ║
+# ╠════════════════════════════════════════════════════════════════════╣
+# ║   1. 复验：原样调 build-apk.yml（verify_only）把 javac/d8/守卫/      ║
+# ║      重组/签名完整跑一遍。本地过 ≠ CI 过（d8 的坑撞过四次），         ║
+# ║      所以 CI 要独立复验一次。                                        ║
+# ║   2. 并发预警：本次 push 改动的文件，若 24 小时内有**别人**动过，      ║
+# ║      在该提交下留言提醒（不阻断）——主干开发最容易踩的对撞，           ║
+# ║      早知道早对齐。                                                  ║
+# ║   3. 分层提示：按改动路径给出要求的验证级别（方案 §二.3）。           ║
+# ║      实机测试 CI 替代不了，只能提示，不能自动执行。                   ║
+# ╚════════════════════════════════════════════════════════════════════╝
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write   # 并发预警要在提交下留言
+
+jobs:
+  # ── 复验：完整构建流水线（不上传产物）─────────────────────────────
+  recheck:
+    uses: ./.github/workflows/build-apk.yml
+    with:
+      verify_only: true
+
+  # ── 并发预警：24h 内同文件的他人改动 ─────────────────────────────
+  collision-warning:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📦 检出（全量历史）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔍 检查 24h 内同文件改动
+        env:
+          : ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          FILES=$(git diff --name-only "$BEFORE" "$AFTER" || true)
+          if [ -z "$FILES" ]; then echo "无文件改动"; exit 0; fi
+          # 本次 push 自己的提交集合（这些不算「别人动的」）
+          git rev-list "$BEFORE..$AFTER" > /tmp/own_commits
+
+          WARN_FILE=$(mktemp)
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            # 该文件 24h 内的全部改动，剔除本次 push 自己的提交
+            git log --since="24 hours ago" --format='%H|%h|%an|%s' -- "$f" \
+              | while IFS='|' read -r H h a s; do
+                  [ -z "$H" ] && continue
+                  grep -qx "$H" /tmp/own_commits && continue
+                  echo "- \`${f}\`：${h} ${a} — ${s}" >> "$WARN_FILE"
+                done
+          done <<< "$FILES"
+
+          if [ -s "$WARN_FILE" ]; then
+            WARN=$(sort -u "$WARN_FILE")
+            BODY=$(printf '⚠️ **并发预警**：本次提交改动的文件中，有以下文件在 24 小时内被**其他人/会话**改过（仅提醒，不阻断）：\n\n%s\n\n建议开工前先 `git pull --rebase`，并在 ACTIVE.md 登记自己在动哪片。' "$WARN")
+            printf '%s' "$BODY" | python3 -c 'import json,sys; print(json.dumps({"body": sys.stdin.read()}))' > /tmp/comment.json
+            curl -sS -X POST \
+              -H "Authorization: Bearer ${}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/commits/${AFTER}/comments" \
+              -d @/tmp/comment.json > /dev/null
+            echo "已留言预警："
+            echo "$WARN"
+          else
+            echo "24h 内无同文件的他人改动"
+          fi
+
+  # ── 分层提示：按改动路径给出验证级别 ─────────────────────────────
+  tier-hint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📦 检出
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # BEFORE 可能落后好几个提交，浅拉取 diff 不到
+
+      - name: 🧭 判定验证级别
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          FILES=$(git diff --name-only "$BEFORE" "$AFTER" || echo "")
+          TIER=1
+          CORE="^(magia-native/|smali/|smali_classes2/|patch/src/main/java/io/kamihama/magianative/(CNWebProxy|CNDownloaderFix|CNHotUpdate|CNSafeLink)\.java)"
+          UI="^(patch/src/main/java/|config\.json)"
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              *.md|docs/*|.github/*|tools/*) ;;                    # 文档/脚本/配置 → 1 级
+              *) if echo "$f" | grep -qE "$CORE"; then TIER=3
+                 elif echo "$f" | grep -qE "$UI" && [ "$TIER" -lt 2 ]; then TIER=2; fi ;;
+            esac
+          done <<< "$FILES"
+          {
+            echo "## 本次改动的验证级别（CONTRIBUTING.md §二.3）"
+            echo
+            case "$TIER" in
+              1) echo "**级别 1**：文档/脚本/配置 —— 静态检查 + 编译即可";;
+              2) echo "**级别 2**：调试选项/UI/外围功能 —— 需 CI 全量检查通过";;
+              3) echo "**级别 3**：⚠️ 核心 hook / 注入时序 / WebView 桥 —— **CI 之外还需实机测试**，实机过了才算完";;
+            esac
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "tier=$TIER"

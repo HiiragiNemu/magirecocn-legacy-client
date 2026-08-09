@@ -1,0 +1,121 @@
+name: 🟢 全量回归 + last-green
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║   main 每次 push 后的全量回归（协作方案第四节，见 CONTRIBUTING.md）   ║
+# ╠════════════════════════════════════════════════════════════════════╣
+# ║   比 main-checks 更「重」的一道：跑 tools/ 下全部测试套件 +           ║
+# ║   全部守卫脚本（与 AGENTS.md §3 的本地自检同一套）。                 ║
+# ║                                                                    ║
+# ║   通过 → 把 `last-green` tag 移到本次提交。它是所有人的「时空锚点」： ║
+# ║          拉到坏代码时 `git checkout last-green` 立刻回到稳定点。      ║
+# ║   失败 → 🔴 红灯：在失败提交下留言标记；若配置了群 webhook             ║
+# ║          （secret GROUP_WEBHOOK_URL）则同步发群。红灯期间只许修       ║
+# ║          主线的提交（见 CONTRIBUTING.md「红灯协议」）。               ║
+# ║                                                                    ║
+# ║   tag 只是内部锚点，不是对外产物——不违反「不做自动发版」。            ║
+# ╚════════════════════════════════════════════════════════════════════╝
+
+on:
+  push:
+    branches: [main]
+
+# 串行 + 不取消：保证 tag 严格按 push 顺序前移，不会被后跑的旧提交往回拖
+concurrency:
+  group: last-green
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # 移动 tag / 红灯留言
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 📦 检出仓库
+        uses: actions/checkout@v4
+
+      - name: ☕ 设置 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 📥 准备编译依赖（android.jar + OkHttp）
+        run: |
+          set -euo pipefail
+          mkdir -p .cache/deps
+          curl -sSL -o .cache/deps/platform.zip \
+            "https://dl.google.com/android/repository/platform-33_r02.zip"
+          unzip -o -q -j .cache/deps/platform.zip "*/android.jar" -d .cache/deps
+          rm -f .cache/deps/platform.zip
+          curl -sSL -o .cache/deps/okhttp.jar \
+            "https://repo1.maven.org/maven2/com/squareup/okhttp3/okhttp/3.12.13/okhttp-3.12.13.jar"
+          curl -sSL -o .cache/deps/okio.jar \
+            "https://repo1.maven.org/maven2/com/squareup/okio/okio/1.17.5/okio-1.17.5.jar"
+
+      - name: 🧪 编译补丁源码与测试（与本地自检同 classpath）
+        run: |
+          set -euo pipefail
+          mkdir -p .build-test
+          javac -nowarn -source 8 -target 8 -encoding UTF-8 \
+                -cp .cache/deps/android.jar \
+                -d .build-test $(find patch/src/main/java -name '*.java') \
+                tools/teststubs/android/webkit/WebResourceResponse.java tools/*Test.java
+
+      - name: 🧪 跑测试套件
+        run: |
+          set -euo pipefail
+          python3 tools/proxy-test-server.py 8791 &
+          sleep 1
+          for t in HotUpdateTxTest SafeLinkTest WebProxyTest ConfigGuardTest \
+                   LogTest BgmLoopTest ThrottleTest FlushTest; do
+            java -cp .build-test:.cache/deps/android.jar $t
+          done
+          java -cp .build-test:.cache/deps/android.jar ProxyFetchTest 8791
+
+      - name: 🛡 跑全部守卫
+        run: |
+          set -euo pipefail
+          for g in check-proxy-hooks check-base-urls check-entry-guard \
+                   check-fonts check-webview-interceptor check-branch-hygiene \
+                   check-debug-flag-boundary; do
+            python3 tools/$g.py
+          done
+
+      - name: 🟢 移动 last-green tag
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f last-green "${GITHUB_SHA}"
+          git push -f origin refs/tags/last-green
+          echo "last-green → ${GITHUB_SHA}"
+
+      - name: 🔴 红灯标记（回归失败时）
+        if: failure()
+        env:
+          : ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          WEBHOOK: ${{ secrets.GROUP_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          MSG=$(printf '🔴 **红灯**：main 全量回归在本提交失败（%s）。\n\n红灯期间只许修复主线的提交，新功能本地继续但不许 push（见 CONTRIBUTING.md「红灯协议」）。\n引入者负责修；修不了就先 `git revert` 恢复绿灯。稳定锚点：`git checkout last-green`。' "$RUN_URL")
+          printf '%s' "$MSG" | python3 -c 'import json,sys; print(json.dumps({"body": sys.stdin.read()}))' > /tmp/red.json
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${REPO}/commits/${SHA}/comments" \
+            -d @/tmp/red.json > /dev/null
+          echo "已在 ${SHA} 下标记红灯"
+          # 群通知：webhook 未配置则跳过（企业微信/钉钉机器人地址，配置后即生效）
+          if [ -n "${WEBHOOK:-}" ]; then
+            printf '%s' "$MSG" | python3 -c 'import json,sys; print(json.dumps({"msgtype": "markdown", "markdown": {"content": sys.stdin.read()}}))' > /tmp/hook.json
+            curl -sS -X POST -H "Content-Type: application/json" \
+              -d @/tmp/hook.json "$WEBHOOK" > /dev/null
+            echo "已发群通知"
+          else
+            echo "（未配置 GROUP_WEBHOOK_URL，跳过群通知）"
+          fi

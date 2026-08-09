@@ -39,6 +39,15 @@ on:
         description: '只构建校验，不上传产物'
         type: boolean
         default: false
+  # 供 main-checks.yml 复用（push 到 main 后的复验）。APK 构建本身的
+  # **手动触发**属性不变——这里只是允许另一个 workflow 以 verify_only
+  # 调进来跑一遍同样的流水线。见 CONTRIBUTING.md「CI 流水线」。
+  workflow_call:
+    inputs:
+      verify_only:
+        description: '只构建校验，不上传产物'
+        type: boolean
+        default: true
 
 permissions:
   contents: read
