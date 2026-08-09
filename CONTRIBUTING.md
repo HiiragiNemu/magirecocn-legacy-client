@@ -55,6 +55,10 @@ main（唯一长期分支，已保护：禁 force push / 禁删除）
    `build`。scope 自选（hook / inject / webview / ui / i18n / ci …）。
    中文描述与 `Co-authored-by`、「文档:」交代的要求不变（commit-msg 钩子
    照旧拦）。
+6. **署名**：作者固定为本仓库 git config 的维护者身份；实际执笔的 Agent
+   必须在末尾加 `Co-authored-by: Name <email>`（完整格式，钩子硬拦）。
+   已登记的署名表见 AGENTS.md §1 三，新 Agent 首次执笔时随同一个提交
+   登记进表。
 
 ## 三、Feature Flag 规范
 

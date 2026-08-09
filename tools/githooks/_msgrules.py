@@ -88,11 +88,15 @@ def problems(raw, drop_comments=False):
             out.append("前缀之后的描述必须用**中文**（AGENTS.md §1 一）\n"
                        "      当前标题: " + subject[:72])
 
-    if not re.search(r"^Co-authored-by:\s*\S+", body, re.M):
-        out.append("缺 Co-authored-by trailer（CLAUDE.md 提交约定）\n"
-                   "      末尾加一行，例如:\n"
+    if not re.search(r"^Co-authored-by:\s*\S[^<>\n]*<[^<>\s]+@[^<>\s]+>",
+                     body, re.M):
+        out.append("缺（或格式不对的）Co-authored-by trailer"
+                   "（CLAUDE.md 提交约定 / AGENTS.md §1 三）\n"
+                   "      必须是完整的 Name <email> 形式，末尾加一行，例如:\n"
                    "        Co-authored-by: Codex <noreply@openai.com>\n"
-                   "        Co-authored-by: Claude <noreply@anthropic.com>")
+                   "        Co-authored-by: Claude <noreply@anthropic.com>\n"
+                   "        Co-authored-by: Kimi <noreply@moonshot.cn>\n"
+                   "      「Co-authored-by: x」这种半截写法不算数。")
 
     if not re.search(r"^文档[:：]", body, re.M):
         out.append("缺「文档:」交代（AGENTS.md §1 四）\n"

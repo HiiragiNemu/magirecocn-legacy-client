@@ -172,15 +172,23 @@ Fix download UI runtime log tag compilation
 
 - 作者一律 `CyberNova2333 <295488275+CyberNova2333@users.noreply.github.com>`
   （已写入本仓库 `git config`，正常情况下不用管）；
-- **实际执笔的 Agent 用 `Co-authored-by` trailer 署名**，放在信息末尾：
+- **实际执笔的 Agent 用 `Co-authored-by` trailer 署名**，放在信息末尾，
+  必须是完整的 `Name <email>` 形式（钩子按此格式硬拦，半截写法不算数）：
 
 ```
 Co-authored-by: Codex <noreply@openai.com>
 ```
 
-其他已在用的：`Claude <noreply@anthropic.com>`、`Kimi <noreply@moonshot.cn>`。
+已登记的署名（新 Agent 首次执笔时在**同一个提交**里把它加进这张表）：
+
+| Agent | trailer |
+|---|---|
+| Codex | `Codex <noreply@openai.com>` |
+| Claude | `Claude <noreply@anthropic.com>` |
+| Kimi | `Kimi <noreply@moonshot.cn>` |
 
 **不要**让 `github-actions[bot]` 当作者——那说明你在用 CI 代提交，见 §2。
+（CI 自动打的 tag 不算提交，不在此列。）
 
 ### 四、结尾交代文档
 

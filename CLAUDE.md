@@ -67,7 +67,8 @@
   开工先登记 ACTIVE.md。
 - 署名固定：作者一律 `CyberNova2333 <295488275+CyberNova2333@users.noreply.github.com>`
   （已写入本仓库的 `git config`），实际执笔的 Agent 以 `Co-authored-by` trailer
-  署名（`Claude <noreply@anthropic.com>` / `Kimi <noreply@moonshot.cn>`）。
+  署名——必须是完整的 `Name <email>` 形式（钩子硬拦，已登记的署名表见
+  AGENTS.md §1 三）。
   历史提交已按此约定重写（2026-08，除首个提交外）。
 - 改了下载/续传/换线逻辑，跑一遍 `tools/` 下的测试套件再提交。
 - 作者身份**按实际执笔的人**记：上面那条「作者一律 CyberNova2333」说的是本仓库
