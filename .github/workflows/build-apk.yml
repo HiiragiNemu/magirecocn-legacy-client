@@ -163,6 +163,13 @@ jobs:
           python3 tools/check-native-string-layout.py
           python3 tools/test-check-native-string-layout.py
 
+      # 前缀规则是译表的显式合同，不是「日文专用」。服务端同一界面
+      # 可能下发日文、英文或汉字；字节范围预筛选会让合法规则永远不命中。
+      - name: 🧩 校验 engine i18n 前缀规则无字符集门槛
+        run: |
+          python3 tools/check-engine-i18n-prefix.py
+          python3 tools/test-check-engine-i18n-prefix.py
+
       # 兜底线路(DEFAULT_BASE)与规范前缀(CANONICAL_BASE)是两个概念，早先耦合在
       # 同一个常量上。换兜底线路时若把规范前缀一起动了，热更会**静默停摆**——
       # 版本查询每条线路都失败，被当成「已是最新」，没有任何报错。

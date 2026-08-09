@@ -6,7 +6,7 @@
 | 谁渲染 | 改哪里 | 怎么下发 | 源在哪 |
 |---|---|---|---|
 | WebView（前端一半） | `frontend-strings.tsv` 等四张表 → 回填进前端代码 | 热更包 `cn_js_update.zip` | **本目录** |
-| cocos2d 原生引擎 | `engine_i18n.tsv`（文本 hook 的翻译表） | 热更包 `cn_scenario_update.zip` → `<files>/madomagi/` | **另一个仓库**，见下 |
+| cocos2d 原生引擎 | `engine_i18n.tsv`（文本 hook 的翻译表） | 热更包 `cn_js_update.zip` 内的 `madomagi/engine_i18n.tsv` → `<files>/madomagi/` | **另一个仓库**，见下 |
 | 烘焙进 PNG／plist 图集的文字 | 只能改图片资源 | 资源包 | 无 |
 
 本目录只管第一条。第二条的源不在本仓库，但**判定方法和操作步骤记在这里**——
@@ -99,7 +99,7 @@ adb shell "run-as io.kamihama.totentanz sh -c \
 
 > 上面这套是**在设备上就地验证**，改的是设备上那份副本，下次热更会被覆盖。
 > 验证通过之后，把同样的行提交到补丁仓库 `（外部发布渠道）` 的
-> `madomagi/engine_i18n.tsv`（去掉 `#`），推上去就会自动重打台词包并下发——
+> `madomagi/engine_i18n.tsv`（去掉 `#`），推上去就会自动重打 JS 热更包并下发——
 > 见下一节。
 
 ---
@@ -117,10 +117,10 @@ adb shell "run-as io.kamihama.totentanz sh -c \
 
 ```
 上游改 madomagi/engine_i18n.tsv
-  └─ 下游同步，detect 步骤匹配 ^madomagi/(resource/scenario/json/|engine_i18n\.tsv)
-      └─ HAS_SCENARIO=1 → 重打 cn_scenario_update.zip
-          （workflow 显式 cp 它进 _pack_scn/madomagi/，与 scenario/json/ 同包）
-          └─ version_scenario.json 版本号自 configures/ 递增 → 上传 S3
+  └─ 下游同步，detect 步骤把该路径归入 JS，而不是 scenario
+      └─ HAS_JS=1 → 重打 cn_js_update.zip
+          （ZIP 根目录同时包含 magica/ 与 madomagi/engine_i18n.tsv）
+          └─ version_js.json 版本号自 configures/ 递增 → 上传 S3
               └─ 客户端 CNHotUpdateCheck 比对版本 → 下载 → 解到 <files>/
                   └─ madomagi/engine_i18n.tsv 就位，native hook 3 秒内热重载
 ```
@@ -132,16 +132,23 @@ adb shell "run-as io.kamihama.totentanz sh -c \
 > 谁也说不清哪份是真的——而这张表「译文为空 = 删除该串」的语义会让分叉直接表现为
 > 界面上的文字消失。要改译文就去补丁仓库改。
 
-几条对得上的旁证（2026-08-08 核对）：
+几条对得上的旁证（2026-08-09 核对）：
 
-- 补丁仓库那份 298 行 = 1 行注释 + 295 条精确条目 + 2 条前缀规则；设备日志是
-  `[i18n] 已加载 295 条 + 2 前缀规则（第 298 行止，坏行 0）`。**逐字吻合，没有漂移。**
+- 补丁仓库迁移前基线是 299 个逻辑行 = 1 行注释 + 296 条精确条目
+  + 2 条前缀规则；设备在现场验证前的备份与它按换行归一化后逐字一致。
+  现场追加的官方文案仅用于验证，下次热更可被覆盖，不能据设备行数反推权威源。
 - 解压根是 `<应用数据目录>/files/`（`CNHotUpdateCheck.FILES_DIR`，经 `CNPaths`
   动态解析，正规设备上即 `/data/data/io.kamihama.totentanz/files/`），
   所以包内路径 `madomagi/engine_i18n.tsv` 正好落到 `MagiaLegacy.cpp` 的
   `ENGINE_I18N_PATH`。
 - 它**不会被孤儿清理误删**：`CNHotUpdateTx.cleanupPrefixes("scenario")` 只清
-  `madomagi/resource/scenario/json/` 前缀，这个文件在该前缀之外。
+  `madomagi/resource/scenario/json/`，`cleanupPrefixes("js")` 只清 `magica/` 下四个
+  白名单前缀；该表在两者之外。`HotUpdateTxTest` 第 15 组覆盖了 scenario → JS
+  迁移、清单归属、覆盖和漏表保留。
+- 上一条只是**客户端消费合同**：测试用人工构造的 ZIP 证明客户端能正确
+  重建，不能代替补丁仓库的生产者验证。发布前还必须在补丁仓库检查：
+  改表只触发 JS 版本、scenario 成品不含该表、JS 成品的精确入包路径是
+  `madomagi/engine_i18n.tsv`。三项任一缺失，客户端测试依然可能全绿。
 
 ---
 
@@ -161,6 +168,8 @@ adb shell "run-as io.kamihama.totentanz sh -c \
 
 - **热重载**：启动时加载一次，之后每 3 秒节流检查一次 mtime，改完免重启。
 - **没有 TAB 的行**算坏行，会计入启动日志的「坏行 N」，但不影响其余条目。
+- **前缀命中不限字符集**：表里显式声明的日文、纯英文或纯汉字前缀都必须
+  扫描。只有「默认缺译日志」会用假名减少噪音；该日志筛选不得进入替换路径。
 - native 收到的 `std::__ndk1::string` 是三个机器字：ARM64 为 24 字节、短串上限
   22，ARMv7 为 12 字节、短串上限 10；读取偏移必须由机器字宽度派生，不能把
   ARM64 的 `+8/+16/22` 写死到双 ABI 源码中。CI 的

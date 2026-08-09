@@ -1942,16 +1942,14 @@ static bool engineLookup(const void* strObj, std::string& out) {
 
 // 前缀规则查找：命中返回「zh前缀 + 原串剩余部分」（写入 out，调用期内有效）。
 // 用于尾部带变量的文案，如 「ネットワーク接続に失敗しました。再接続しますか？\nエラーコード：1」。
-// 只在文本含假名（UTF-8 lead 0xE3/0xE4）时才扫规则，未翻译的英文/数字串零开销。
+//
+// 规则是译表显式声明的，所以这里不能用「原串必须含假名」作预筛选。
+// 服务端已经会为同一 UI 下发英文，而未来也可能需要纯汉字前缀；旧的
+// 0xE3/0xE4 字节门槛会让这些规则永远不可达。表通常只有少量前缀规则，
+// 直接按顺序比对既是正确语义，开销也可忽略。
 static bool enginePrefixLookup(const char* data, size_t size, std::string& out) {
     EngineI18nPtr t = engineI18nSnapshot();
     if (!t || t->prefix.empty()) return false;
-    bool hasKana = false;
-    for (size_t i = 0; i < size; i++) {
-        unsigned char b = (unsigned char)data[i];
-        if (b == 0xE3 || b == 0xE4) { hasKana = true; break; }
-    }
-    if (!hasKana) return false;
     for (const auto& rule : t->prefix) {
         const std::string& pre = rule.first;
         if (size >= pre.size() && memcmp(data, pre.data(), pre.size()) == 0) {
