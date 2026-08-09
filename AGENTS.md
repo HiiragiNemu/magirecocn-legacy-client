@@ -278,7 +278,6 @@ package io.kamihama.magianative;
 import android.app.Activity;
 public class RestClient {
     public static Activity getCurrentActivity() { return null; }
-    public static void restartApp() {}
 }
 STUB
 python3 tools/proxy-test-server.py 8791 &
