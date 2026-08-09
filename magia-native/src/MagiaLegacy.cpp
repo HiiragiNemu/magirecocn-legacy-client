@@ -2055,25 +2055,43 @@ static void loadingSetTitleNew(void* self, const void* text) {
 }
 
 // LbUtility::initLabel(Node*, Label*&, const char* text, float, Vec2, int, Size, Color4B, int)
-// const char* 直传，命中就换指针。钩子与原函数用完全相同的原型声明，
-// 由编译器保证两侧参数布局一致（不用变参转发，避免 HFA/小聚合体 ABI 坑）。
+// const char* 直传，命中就换指针。这里的替身原型必须复刻**编译器降级后的
+// 调用 ABI**，而不只是把每个类换成“尺寸一样”的 POD。
 //
-// ⚠ 这几个替身结构体**必须与 cocos2d 的原型逐字节一致**，否则上面那句话就是空话。
+// arm64 原函数 @0x8c51d0 的入口实际读取：
+//   s0 = float, s1/s2 = Vec2, w3 = int, x4 = Size*, w5 = Color4B, w6 = int
+// `cocos2d::Size` 按值写在 C++ 签名里，但它对调用 ABI 是非平凡类型，所以由调用方
+// 制作副本并以隐式指针传入。若误写成 `{float w, h;}`，AAPCS64 会把它当 HFA
+// 放进 s3/s4；后面的 Color4B/int 便从 x4/x5 整体错位，x6 中的末尾 int 甚至不会
+// 被转发。真机的 32 位路径可能恰好保留了原栈槽，但 arm64 转译器会稳定暴露错位。
+//
+// 因此 Size 故意用不透明指针原样透传；不解引、不复制，由原函数按它自己的
+// `cocos2d::Size` 类型处理。其余两个按值聚合体仍必须与引擎类型逐字节一致。
 // CNColor4B 曾经只写了 r,g,b 三个字节——而 cocos2d::Color4B 是 {r,g,b,a} 四字节。
 // AAPCS64 下 3 字节和 4 字节的小聚合体都占一个通用寄存器，所以**参数位置不会错**，
 // 编译器也不会报错；但我们转发时只搬 3 个字节，**alpha 被丢掉**，引擎拿到的透明度
 // 是寄存器里的残留值。表现是「文字时有时无/整块 UI 看不见」这种极难归因的毛病，
 // 而不是干脆的崩溃——正因为它不崩，才在库里躺了很久。
 struct CNVec2    { float x, y; };
-struct CNSize    { float w, h; };
 struct CNColor4B { unsigned char r, g, b, a; };
-using InitLabelFn = void (*)(void*, void*, const char*, float,
-                             CNVec2, int, CNSize, CNColor4B, int);
+using CNSizeAbiArg = void*;
+static_assert(sizeof(CNVec2) == 8 && alignof(CNVec2) == 4,
+              "cocos2d::Vec2 ABI layout changed");
+static_assert(sizeof(CNColor4B) == 4 && alignof(CNColor4B) == 1,
+              "cocos2d::Color4B ABI layout changed");
+static_assert(sizeof(CNSizeAbiArg) == sizeof(void*),
+              "cocos2d::Size ABI argument must stay indirect");
+static void initLabelNew(void* node, void* label, const char* text, float f,
+                         CNVec2 v2, int i1, CNSizeAbiArg sizeArg,
+                         CNColor4B c4b, int i2);
+// 直接从 replacement 声明推导 trampoline 类型，杜绝两处原型各自漂移。
+using InitLabelFn = decltype(&initLabelNew);
 static InitLabelFn initLabelOld = nullptr;
 static void initLabelNew(void* node, void* label, const char* text, float f,
-                         CNVec2 v2, int i1, CNSize sz, CNColor4B c4b, int i2) {
+                         CNVec2 v2, int i1, CNSizeAbiArg sizeArg,
+                         CNColor4B c4b, int i2) {
     if (g_dbgNoI18nLabel) {            // 调试开关：原样转发，不做任何替换
-        initLabelOld(node, label, text, f, v2, i1, sz, c4b, i2);
+        initLabelOld(node, label, text, f, v2, i1, sizeArg, c4b, i2);
         return;
     }
     maybeReloadEngineI18n();
@@ -2102,7 +2120,7 @@ static void initLabelNew(void* node, void* label, const char* text, float f,
     // 没命中就记下来。表没加载成功时（g_engineI18nReady 为假）也算没命中——
     // 那种情况下这份清单会是「所有流经的串」，与 setString 侧的口径一致。
     if (!hit && text) noteI18nMiss(text, strlen(text), "LbUtility::initLabel");
-    initLabelOld(node, label, use, f, v2, i1, sz, c4b, i2);
+    initLabelOld(node, label, use, f, v2, i1, sizeArg, c4b, i2);
 }
 
 
