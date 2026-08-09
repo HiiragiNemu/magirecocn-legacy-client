@@ -714,7 +714,7 @@ public final class CNMirrors {
      */
     static void requireJsonBody(String body, String contentType) throws IOException {
         String s = (body == null) ? "" : body.trim();
-        if (!s.isEmpty() && s.charAt(0) == '﻿') s = s.substring(1).trim();   // BOM
+        if (!s.isEmpty() && s.charAt(0) == '\uFEFF') s = s.substring(1).trim();   // BOM
         if (s.startsWith("{")) return;
 
         StringBuilder sb = new StringBuilder("config.json 不是 JSON");
