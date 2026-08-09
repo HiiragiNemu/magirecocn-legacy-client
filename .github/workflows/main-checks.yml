@@ -11,6 +11,9 @@ name: ✅ main 复验 + 并发预警
 # ║      早知道早对齐。                                                  ║
 # ║   3. 分层提示：按改动路径给出要求的验证级别（方案 §二.3）。           ║
 # ║      实机测试 CI 替代不了，只能提示，不能自动执行。                   ║
+# ║                                                                    ║
+# ║   任何一个 job 失败 → 🟡 黄灯：邮件通知（与红灯共用                  ║
+# ║   tools/notify-mail.sh；绿灯不发邮件）。                            ║
 # ╚════════════════════════════════════════════════════════════════════╝
 
 on:
@@ -113,3 +116,25 @@ jobs:
             esac
           } >> "$GITHUB_STEP_SUMMARY"
           echo "tier=$TIER"
+
+  # ── 黄灯通知：任一检查 job 失败 → 邮件（绿灯不发）────────────────
+  notify-yellow:
+    if: failure()
+    needs: [recheck, collision-warning, tier-hint]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📦 检出（取通知脚本）
+        uses: actions/checkout@v4
+
+      - name: 🟡 黄灯邮件
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NOTIFY_URL: ${{ vars.NOTIFY_URL }}
+          NOTIFY_FROM: ${{ vars.NOTIFY_FROM }}
+          NOTIFY_FROM_NAME: ${{ vars.NOTIFY_FROM_NAME }}
+          NOTIFY_TO: ${{ vars.NOTIFY_TO }}
+          NOTIFY_TOKEN: ${{ secrets.NOTIFY_TOKEN }}
+        run: |
+          TITLE="🟡 main 黄灯：push 级检查失败" \
+          MSG="🟡 **黄灯**：main 复验/并发预警/分层提示有 job 失败（${RUN_URL}）。全量回归（last-green）可能仍绿，但 push 级检查挂了，请尽快处理。" \
+            bash tools/notify-mail.sh

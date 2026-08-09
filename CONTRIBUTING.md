@@ -97,7 +97,9 @@ push 到 main
 1. 全量回归失败 → CI 自动在失败提交下留言标记 🔴；配置了邮件通知
    （仓库变量 `NOTIFY_URL` / `NOTIFY_FROM` / `NOTIFY_FROM_NAME` /
    `NOTIFY_TO` + secret `NOTIFY_TOKEN`，宝塔 webhook 格式）时同步发信；
-   `NOTIFY_TO` 支持逗号/分号/空格分隔的多个收件人，逐人各发一封；
+   `NOTIFY_TO` 支持逗号/分号/空格分隔的多个收件人，逐人各发一封。
+   push 级检查（main-checks）失败则发 🟡 黄灯邮件；**绿灯不发邮件**。
+   邮件发送统一走 `tools/notify-mail.sh`，发送失败只打 warning 不阻断；
 2. 红灯期间：只允许修复主线的提交，新功能开发本地继续但**不许 push**。
    这条由 pre-push 钩子的红灯闸门执行：推 main 前联网查最近一次全量回归
    的结论，红灯且新增提交不全是修复类（`fix(`/`fix:`/`revert` 开头）就
