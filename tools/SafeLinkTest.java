@@ -46,6 +46,10 @@ public class SafeLinkTest {
         ok("https://assets.example.test/version_js.json");
         ok("https://assets.example/cn_js_update.zip");
         ok("https://docs.example.test/client/bootstrap");
+        // 深层子域也必须放行：（已下线线路） 是公测包与热更的加速镜像，
+        // 强制更新/署名条目里的下载链接会落在它上面
+        ok("https://（已下线线路）/g/m/releases/download/latest/legacy-client.apk");
+        ok("https://（已下线线路）/version_js.json");
         ok("https://github.com/magirecocn-revival-project/legacy-client");
         // right_pill 的「支持我们」跳爱发电；两个域名是同一个站
         ok("https://afdian.com/a/magireco");
