@@ -148,6 +148,8 @@ adb shell "run-as io.kamihama.totentanz sh -c \
   该表随 **JS** 热更通道下发（2026-08-10 起由 scenario 通道迁入：
   detect 把它归入 `^(magica/|madomagi/engine_i18n\.tsv)`，JS 打包经
   `_pack_js` 暂存把 `madomagi/engine_i18n.tsv` 一并打进 `cn_js_update.zip`）。
+  scenario 包里仍带一份兜底副本，防「只发台词包、JS 包未重打」时全新安装
+  拿不到表；客户端解压顺序是 scenario 先、JS 后，JS 包内新副本永远最后落地。
 
 ---
 
