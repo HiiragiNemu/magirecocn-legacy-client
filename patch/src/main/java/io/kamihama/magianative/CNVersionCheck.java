@@ -236,6 +236,7 @@ public final class CNVersionCheck {
             c.setConnectTimeout(CONNECT_TIMEOUT_MS);
             c.setReadTimeout(READ_TIMEOUT_MS);
             c.setInstanceFollowRedirects(true);
+            CNUserAgent.apply(c);
             int code = c.getResponseCode();
             if (code / 100 != 2) throw new java.io.IOException("HTTP " + code);
             InputStream in = new BufferedInputStream(c.getInputStream(), 8192);

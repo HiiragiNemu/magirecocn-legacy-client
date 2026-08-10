@@ -933,6 +933,7 @@ public final class CNDownloaderFix {
         c.setConnectTimeout(CONNECT_TIMEOUT_MS);
         c.setReadTimeout(READ_TIMEOUT_MS);
         c.setUseCaches(false);
+        CNUserAgent.apply(c);
         c.setRequestProperty("Accept-Encoding", "identity");
         // 不写 Connection: close——保留 keep-alive 复用连接池，
         // 分片/重试接连不断时省掉每段一次的 TCP+TLS 握手
@@ -1242,6 +1243,7 @@ public final class CNDownloaderFix {
         c.setRequestMethod("POST");
         c.setDoOutput(true);
         c.setUseCaches(false);
+        CNUserAgent.apply(c);
         c.setRequestProperty("Content-Type", "application/json; charset=utf-8");
         c.setRequestProperty("Accept", "application/json");
         // 不写 Connection: close——保留 keep-alive 复用连接池，

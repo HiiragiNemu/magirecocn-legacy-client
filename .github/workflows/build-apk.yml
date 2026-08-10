@@ -204,6 +204,13 @@ jobs:
             magia-native/src/MagiaLegacy.cpp
           grep -q "CLIENT_VERSION = \"${VER}\"" magia-native/src/MagiaLegacy.cpp \
             || { echo "::error::版本号注入失败（CLIENT_VERSION 常量没匹配上）"; exit 1; }
+          # 同一版本号也注入 Java 侧统一 UA 常量（CNUserAgent.CLIENT_VERSION），
+          # CDN 日志里的 magireco-cn-legacy/<ver> 与强制更新通道的版本一致。
+          sed -i -E "s/CLIENT_VERSION = \"[^\"]+\"/CLIENT_VERSION = \"${VER}\"/" \
+            patch/src/main/java/io/kamihama/magianative/CNUserAgent.java
+          grep -q "CLIENT_VERSION = \"${VER}\"" \
+            patch/src/main/java/io/kamihama/magianative/CNUserAgent.java \
+            || { echo "::error::版本号注入失败（CNUserAgent.CLIENT_VERSION 常量没匹配上）"; exit 1; }
           echo "CLIENT_VERSION=${VER}" >> "$GITHUB_ENV"
 
       - name: 🛠 编译 libMagiaLegacy.so（magia-native）

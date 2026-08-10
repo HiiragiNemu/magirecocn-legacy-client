@@ -123,6 +123,7 @@ public final class CNChunkedDownload {
         c.setReadTimeout(READ_TIMEOUT_MS);
         c.setUseCaches(false);
         c.setInstanceFollowRedirects(true);
+        CNUserAgent.apply(c);
         c.setRequestProperty("Accept-Encoding", "identity");
         // 不写 Connection: close——保留 keep-alive 复用连接池，
         // 分片/重试接连不断时省掉每段一次的 TCP+TLS 握手

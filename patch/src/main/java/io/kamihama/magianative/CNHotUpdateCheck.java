@@ -701,6 +701,7 @@ public final class CNHotUpdateCheck {
             c.setConnectTimeout(VER_CONNECT_TIMEOUT_MS);
             c.setReadTimeout(VER_READ_TIMEOUT_MS);
             c.setInstanceFollowRedirects(true);
+            CNUserAgent.apply(c);
             int code = c.getResponseCode();
             if (code / 100 != 2) throw new java.io.IOException("HTTP " + code);
             InputStream in = new BufferedInputStream(c.getInputStream(), 8192);

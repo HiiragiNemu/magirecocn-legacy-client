@@ -971,6 +971,7 @@ public final class CNWebProxy {
             c.setConnectTimeout(PROXY_CONNECT_TIMEOUT_MS);
             c.setReadTimeout(PROXY_READ_TIMEOUT_MS);
             c.setRequestMethod("GET");
+            CNUserAgent.apply(c);
             c.setRequestProperty("Range", "bytes=0-" + (MEASURE_SAMPLE_BYTES - 1));
             int status = c.getResponseCode();
             if (status < 200 || status >= 400) return -1;

@@ -614,6 +614,7 @@ public final class CNMirrors {
             c.setConnectTimeout(4000);
             c.setReadTimeout(4000);
             c.setUseCaches(false);
+            CNUserAgent.apply(c);
             c.setRequestProperty("Accept-Encoding", "identity");
             int code = c.getResponseCode();
             if (code / 100 != 2) return -1L;
@@ -767,6 +768,7 @@ public final class CNMirrors {
         c.setReadTimeout(READ_TIMEOUT_MS);
         c.setUseCaches(false);
         c.setInstanceFollowRedirects(true);
+        CNUserAgent.apply(c);
         c.setRequestProperty("Accept", "application/json");
         c.setRequestProperty("Accept-Encoding", "identity");
         // 不写 Connection: close——保留 keep-alive 复用连接池，
