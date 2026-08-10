@@ -252,8 +252,8 @@ public final class CNDownloaderFix {
                         // 装不上资源的玩家（下载器本身有 bug 的那批）——只在安装
                         // 完成后才查的话，他们永远收不到「去下修复包」的提示。
                         // 版本检查每条放行路径都会且只会执行一次接力动作。
-                        final Runnable afterPass;
-                        if (finalFlag.isFile()) {
+                        boolean installed = finalFlag.isFile();
+                        if (installed) {
                             CNLog.i(TAG, "triggerInstaller: flag 已存在，无需安装，版本检查后接力热更");
                             // 热更新页仍展示 15 个槽位，因此先按 marker 还原真实安装状态：
                             // 已装好的 13 个基础包必须是 100% / 完成，而不是 0% / 等待中。
@@ -263,26 +263,11 @@ public final class CNDownloaderFix {
                             // JNI 叫起 RestClient.checkAndApplyHotUpdate；那条路真机上
                             // 浮层建不出来（详见 CNHotUpdateCheck 的类注释），
                             // 现在改由 Java 侧自己跑，时机与等待条件都可控。
-                            afterPass = new Runnable() {
-                                @Override public void run() { CNHotUpdateCheck.start(); }
-                            };
                             // 玩家选过「序章」的话无需 Java 侧动作：标记由
                             // native 在引擎首个「进主页」命令上消费（MagiaLegacy
                             // 的 pushSceneTop 闸门），比前端导航可靠得多。
-                        } else {
-                            afterPass = new Runnable() {
-                                @Override public void run() {
-                                    if (CNDebugFlags.isOn(CNDebugFlags.SKIP_INSTALLER)) {
-                                        CNLog.w(TAG, "调试开关 skipInstaller 生效，不跑首次安装"
-                                                   + "（资源没装齐的话游戏会停在这里）");
-                                        return;
-                                    }
-                                    CNLog.i(TAG, "版本检查放行，flag 不存在，启动安装器");
-                                    runInstaller();
-                                }
-                            };
                         }
-                        CNVersionCheck.start(afterPass);
+                        CNVersionCheck.start(new AfterVersionCheck(installed));
                     } catch (Throwable t) {
                         CNLog.e(TAG, "triggerInstaller 异常: " + t, t);
                     }
@@ -293,6 +278,29 @@ public final class CNDownloaderFix {
         } catch (Throwable t) {
             try { android.util.Log.e(TAG, "triggerInstaller 启动失败", t); }
             catch (Throwable ignore) {}
+        }
+    }
+
+    /**
+     * 版本检查放行后的接力动作：资源已装齐走热更检查，否则启动安装器。
+     * 必须是 <b>static</b> 嵌套类——匿名/非静态内部类会带合成字段 this$0，
+     * d8 撞上直接 NPE（CLAUDE.md 铁律 4，CI 有静态检查拦截）。
+     */
+    private static final class AfterVersionCheck implements Runnable {
+        private final boolean installed;
+        AfterVersionCheck(boolean installed) { this.installed = installed; }
+        @Override public void run() {
+            if (installed) {
+                CNHotUpdateCheck.start();
+                return;
+            }
+            if (CNDebugFlags.isOn(CNDebugFlags.SKIP_INSTALLER)) {
+                CNLog.w(TAG, "调试开关 skipInstaller 生效，不跑首次安装"
+                           + "（资源没装齐的话游戏会停在这里）");
+                return;
+            }
+            CNLog.i(TAG, "版本检查放行，flag 不存在，启动安装器");
+            runInstaller();
         }
     }
 
