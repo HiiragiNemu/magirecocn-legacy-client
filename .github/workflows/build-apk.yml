@@ -26,6 +26,7 @@ name: 🏗️ 构建 APK
 # ║   4. apktool b 重组                                                 ║
 # ║   5. zipalign + apksigner（AOSP testkey）                           ║
 # ║   6. 上传为 workflow artifact                                       ║
+# ║   7. 发布 APK（公测直链，仅手动触发时）            ║
 # ║                                                                    ║
 # ║ 触发方式：仅手动（workflow_dispatch）。                             ║
 # ║ 与 （旧客户端） 一样不做自动发版——本仓库是既有产物的存档与再构建，     ║
@@ -461,6 +462,42 @@ jobs:
           path: .build/legacy-client.apk
           retention-days: 30
           compression-level: 0
+
+      # 公测直链：https://（已下线线路）/g/m/releases/download/
+      # latest/magireco-latest-legacy-client.apk 指向的是【下游 fork】的
+      # latest Release，而 fork 的 latest 是上游 latest 的严格全量镜像
+      # （不在上游的资产会被下次同步删掉）。所以资产必须传到【上游】
+      # HiiragiNemu 的 latest，再显式 dispatch 让下游立即镜像——资产上传
+      # 本身不触发上游 call-downstream 的 release 事件。
+      # 注意：gh release upload 的 <file>#<name> 语法里 '#' 只改显示标签，
+      # 资产真实 name 仍按本地文件名走，必须先改名再传（与 sync-and-upload
+      # 头注的虚空链接 bug 同源）。
+      - name: 🚀 发布 APK
+        if: ${{ inputs.verify_only != true }}
+        env:
+          : ${{ secrets. }}
+        run: |
+          set -euo pipefail
+          SRC=.build/legacy-client.apk
+          NAME=magireco-latest-legacy-client.apk
+          UP_REPO=（外部发布渠道）
+          DOWN_REPO=（外部发布渠道）
+
+          # preflight：token 必须能对发布仓库 release 读写（ 需为本仓库
+          # 可用的 secret，且有 （外部发布渠道） 的 contents 权限），
+          # 否则公测站留下的是 404 死链——宁可构建红掉也不发死链
+          gh api "repos/$UP_REPO/releases/tags/latest" --jq '.tag_name' >/dev/null \
+            || { echo "::error:: 缺失或无上游 $UP_REPO 权限，无法发布公测直链"; exit 1; }
+
+          cp "$SRC" "$NAME"
+          gh release upload latest "$NAME" --repo "$UP_REPO" --clobber
+          echo "✅ 已上传 $NAME 到 $UP_REPO latest Release"
+
+          # 让下游 fork 立即镜像（同步 workflow 会把新资产带进 fork 的
+          # latest，（已下线线路） 直链随即生效）。dispatch 失败不阻断——下次上游
+          # push 触发同步时也会补上，只是直链生效晚一点。
+          gh api "repos/$DOWN_REPO/dispatches" -f event_type=upstream-update \
+            || echo "::warning::下游 dispatch 失败，镜像将等下次同步自动补齐"
 
       - name: 📊 构建报告
         if: always()
