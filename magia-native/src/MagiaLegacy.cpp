@@ -1009,8 +1009,32 @@ static void nativeTutorialRestartFailed(JNIEnv*, jclass) {
     replaySavedTop();
 }
 
-// 序章图层的构造/析构。析构是「序章真的结束了」最可靠的信号——比 notifyJs
-// 可靠，后者在序章过程中可能发多次。
+// 序章结束的统一收尾。前端此刻状态不可知（主页加载到一半、被我们藏了整场、
+// 还收了一堆段通知），就地收拾不如干脆重启——与「安装完成」同一套
+// Toast + 3 秒 + 重启，回来是干净的主页。标记在触发时已删，
+// 重启后不会再进序章。
+//
+// 前端界面**保持隐藏**直到进程退出：恢复出来也只会把加载到一半的
+// 主页亮给玩家看 3 秒，不如不亮。Toast 是系统级窗口，不受影响。
+//
+// 用 exchange 保证只有第一个到达的结束信号（dtor 或最终 notifyJs）真正收尾。
+static bool finishPrologueOnce(const char* source) {
+    bool wasActive = g_tutorialActive.exchange(false);
+    bool forced = g_tutorialForced.load();
+    if (!wasActive || !forced) return false;
+    if (requestPrologueRestart()) {
+        LOGI("[Tutorial] 序章结束（%s），已叫起 Toast + 3 秒 + 重启", source);
+    } else {
+        // JNI 不通时的兜底：恢复前端界面 + 补放吞掉的 pushSceneTop，
+        // 至少别把玩家留在黑屏上。
+        LOGE("[Tutorial] 重启通道不通（%s），退兜底：恢复界面 + 补放 pushSceneTop", source);
+        setGameUiVisible(true);
+        replaySavedTop();
+    }
+    return true;
+}
+
+// 序章图层的构造/析构。
 static void prologueCtorNew(void* _this, void* info) {
     prologueCtorOld(_this, info);
     bool forced = g_tutorialForced.load();
@@ -1019,28 +1043,9 @@ static void prologueCtorNew(void* _this, void* info) {
 }
 
 static void prologueDtorNew(void* _this) {
-    bool wasActive = g_tutorialActive.exchange(false);
-    bool forced = g_tutorialForced.load();
     LOGI("[Tutorial] PrologueSceneLayer 析构 _this=%p（active=%d forced=%d）",
-         _this, (int)wasActive, (int)forced);
-    if (wasActive && forced) {
-        // 序章放完了。前端此刻状态不可知（主页加载到一半、被我们藏了整场、
-        // 还收了一堆段通知），就地收拾不如干脆重启——与「安装完成」同一套
-        // Toast + 3 秒 + 重启，回来是干净的主页。标记在触发时已删，
-        // 重启后不会再进序章。
-        //
-        // 前端界面**保持隐藏**直到进程退出：恢复出来也只会把加载到一半的
-        // 主页亮给玩家看 3 秒，不如不亮。Toast 是系统级窗口，不受影响。
-        if (requestPrologueRestart()) {
-            LOGI("[Tutorial] 序章结束，已叫起 Toast + 3 秒 + 重启");
-        } else {
-            // JNI 不通时的兜底：恢复前端界面 + 补放吞掉的 pushSceneTop，
-            // 至少别把玩家留在黑屏上。
-            LOGE("[Tutorial] 重启通道不通，退兜底：恢复界面 + 补放 pushSceneTop");
-            setGameUiVisible(true);
-            replaySavedTop();
-        }
-    }
+         _this, (int)g_tutorialActive.load(), (int)g_tutorialForced.load());
+    finishPrologueOnce("dtor");
     {
         std::lock_guard<std::mutex> lk(g_savedTopMutex);
         g_tutorialHomeTopArg.clear();
@@ -1057,6 +1062,11 @@ static void notifyJsNew(void* _this, const std::string& arg) {
     if (g_tutorialActive.load()) grantTutorialWebGrace("notifyJs", 2500);
     notifyJsOld(_this, arg);
     LOGI("[Tutorial::notifyJs] after callback arg=%s", arg.c_str());
+    // 「prologue」是 OP020…OP080 全部播完后的最终完成信号。实测引擎此刻
+    // 并不析构 PrologueSceneLayer（它等前端驱动下一步，而前端被我们压了
+    // 整场、状态不可知），dtor 闸门可能永远等不到——把完成信号也作为
+    // 结束触发点；finishPrologueOnce 保证两个信号只收尾一次。
+    if (arg == "prologue") finishPrologueOnce("notifyJs");
 }
 
 // 解析 pushScenePrologue 的地址。它在两个 ABI 的 .dynsym 里都是
