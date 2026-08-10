@@ -37,9 +37,9 @@ import java.io.File;
  *
  * <h3>为什么放在 app 私有目录</h3>
  *
- * 这里在非 root 的正式包上<b>玩家碰不到</b>（{@code run-as} 只对 debuggable 包
- * 有效），所以不构成面向普通玩家的风险面；而有能力自查的人拿 root 或 debuggable
- * 包就能用。这正是想要的分界。
+ * 公测包开了 {@code android:debuggable}（公测期方便抓日志，{@code run-as}
+ * 免 root 可用），能碰到这个目录的人变多了——所以安全边界不靠目录的
+ * 隐蔽性，而靠下面这条：开关只退功能，绝不退防线。正式发布时收回 debuggable。
  *
  * <h3>🔴 边界：只关我们自己加的东西，只注入我们自己处理的故障</h3>
  *
