@@ -8,7 +8,7 @@ hero:
   actions:
     - theme: brand
       text: 下载公测包
-      link: https://gh-proxy.org/https://（外部发布渠道）/releases/download/latest/magireco-latest-legacy-client.apk
+      link: https://assets.example/magireco-latest-legacy-client.apk
     - theme: alt
       text: 参与反馈
       link: /feedback/

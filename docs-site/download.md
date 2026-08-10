@@ -11,10 +11,10 @@ APK 文件名形如 `legacy-client-1.0.<构建号>.apk`，构建号单调递增�
 数字越大越新。
 
 ::: tip 国内下载慢？
-公测包直链走 gh-proxy 加速：
-`https://gh-proxy.org/https://（外部发布渠道）/releases/download/latest/magireco-latest-legacy-client.apk`
-我们自己的加速镜像也行：把链接里的 `https://（外部发布渠道）/releases/download/`
-换成 `https://（已下线线路）/g/m/releases/download/`。
+公测包直链走我们自己的 edge 加速：
+`https://assets.example/magireco-latest-legacy-client.apk`
+备选：gh-proxy 加速链
+`https://gh-proxy.org/https://（外部发布渠道）/releases/download/latest/magireco-latest-legacy-client.apk`。
 :::
 
 ## 安装
