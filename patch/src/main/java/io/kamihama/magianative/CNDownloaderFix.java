@@ -805,7 +805,9 @@ public final class CNDownloaderFix {
                         + " reason=" + e.getMessage());
             } catch (ZipException e) {
                 CNLog.e(TAG, "corrupt-zip file=" + name + " attempt=" + attempt, e);
-                CNMirrors.reportFailure(mirror, "corrupt-zip");
+                // 损坏通常来自本地跨镜像混装/断点残留，不是线路的错——
+                // 不再 reportFailure（否则健康线路会被误判进冷却，白白浪费重试窗口）。
+                // 只清理本地断点，让下一次尝试整份重下。
                 deleteQuietly(archive);
                 deleteQuietly(new File(archive.getPath() + ".part"));
                 deleteQuietly(new File(archive.getPath() + ".part.meta"));

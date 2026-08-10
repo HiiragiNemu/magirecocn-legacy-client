@@ -16,6 +16,7 @@ import java.net.HttpURLConnection;
 import java.net.Proxy;
 import java.net.URL;
 import java.util.Locale;
+import java.util.zip.ZipFile;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -282,8 +283,17 @@ public final class CNChunkedDownload {
         }
 
         // 元数据显示已全部完成：此时 .cpart 的存在与长度已在 resumeRejectReason
-        // 里验过，可以直接提交
+        // 里验过，但「长度对」不代表「内容对」——断点可能是上一轮跨镜像混装的
+        // 残片凑满，必须先做完工 zip 结构预检，坏则整份作废重下。
         if (totalDone.get() >= total) {
+            if (!isZipStructurallyValid(part)) {
+                CNLog.w(TAG, "完工校验失败 file=" + target.getName()
+                        + " 拼装文件非法，重置断点重下");
+                deleteQuietly(part);
+                deleteQuietly(meta);
+                throw new CNDownloaderFix.ResetRequired(
+                        "完工校验失败: 拼装 zip 结构非法（可能混入异源分片）");
+            }
             promote(part, target);
             deleteQuietly(meta);
             if (sink != null) sink.onProgress(total, total);
@@ -479,6 +489,16 @@ public final class CNChunkedDownload {
         if (actual != total) {
             throw new IOException("临时文件大小异常: " + actual + " / " + total);
         }
+        // 完工内容校验：分片跨镜像/断点续传可能把异源字节混进同一文件，凑满即坏
+        // （invalid CEN header）。zip 结构预检不通过 → 整份作废重下，绝不 promote。
+        if (!isZipStructurallyValid(part)) {
+            CNLog.w(TAG, "完工校验失败 file=" + target.getName()
+                    + " 拼装文件非法，重置断点重下");
+            deleteQuietly(part);
+            deleteQuietly(meta);
+            throw new CNDownloaderFix.ResetRequired(
+                    "完工校验失败: 拼装 zip 结构非法（可能混入异源分片）");
+        }
 
         promote(part, target);
         deleteQuietly(meta);
@@ -619,9 +639,17 @@ public final class CNChunkedDownload {
             throw new IOException("分片 " + idx + " 期望 206，实得 HTTP " + code);
         }
         // 回验服务端给的确实是我们要的区间，避免中间设备返回错位数据后
-        // 被按偏移写进文件
-        long got = rangeStart(c.getHeaderField("Content-Range"));
-        if (got >= 0 && got != startByte) {
+        // 被按偏移写进文件。
+        String contentRange = c.getHeaderField("Content-Range");
+        if (contentRange == null) {
+            // 合规的 206 必须带 Content-Range；缺失说明中间设备/缓存篡改了
+            // 响应，此时无法回验区间，绝不按偏移写入（历史上「缺头即放行」
+            // 会放错位数据进文件，拼出 invalid CEN header）。
+            try { c.disconnect(); } catch (Throwable ignore) {}
+            throw new IOException("分片 " + idx + " 的 206 响应缺少 Content-Range 头，拒绝写入");
+        }
+        long got = rangeStart(contentRange);
+        if (got != startByte) {
             try { c.disconnect(); } catch (Throwable ignore) {}
             throw new IOException("分片 " + idx + " Content-Range 起点不符: "
                     + got + " != " + startByte);
@@ -632,8 +660,8 @@ public final class CNChunkedDownload {
         // 旧版字节写进新版文件，拼出来的 zip 必坏（invalid CEN header），而且
         // 缓存是确定性的，换多少次线路重下都坏在同一个位置。验死总长度后，
         // 这种响应直接抛错、记线路失败、换线，污染不了本地文件。
-        long crTotal = totalFromContentRange(c.getHeaderField("Content-Range"));
-        if (crTotal >= 0 && crTotal != total) {
+        long crTotal = totalFromContentRange(contentRange);
+        if (crTotal != total) {
             try { c.disconnect(); } catch (Throwable ignore) {}
             throw new IOException("分片 " + idx + " Content-Range 总长不符: "
                     + crTotal + " != " + total + "（对端疑似缓存了旧版本）");
@@ -779,6 +807,21 @@ public final class CNChunkedDownload {
     private static String sanitize(String s) {
         if (s == null) return "";
         return s.replace('\r', ' ').replace('\n', ' ').trim();
+    }
+
+    /**
+     * 完工内容校验：.cpart 是预分配的，长度永远等于 total，所以「长度对」不能
+     * 证明「内容对」。分片跨镜像/断点续传可能把异源字节混进同一文件，凑满即坏
+     * （invalid CEN header）。这里在 promote 前用 ZipFile 打开做一次廉价预检
+     * ——ZipFile 构造只读 EOCD+中央目录、不做解压，对 1.4GB 也是毫秒级；
+     * CEN 损坏时它抛的正是玩家日志里见过的 ZipException: invalid CEN header。
+     */
+    private static boolean isZipStructurallyValid(File f) {
+        try (ZipFile zf = new ZipFile(f)) {
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     private static void promote(File part, File target) throws IOException {
