@@ -6,6 +6,8 @@
   ?etag=XXX    用指定的 ETag 覆盖默认值（模拟服务端换了文件）
   ?norange=1   忽略 Range 头，整份重发（模拟不支持 Range 的服务端）
   ?over=N      比请求的区间多发 N 字节（模拟越界响应）
+  ?oldtotal=N  206 的 Content-Range 里总长度谎报为 N（模拟缓存代理拿着
+               旧版本：起点对、总长与 body 都是旧版的）
 """
 import hashlib
 import http.server
@@ -53,6 +55,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         etag = q.get("etag", [ETAG])[0]
         truncate = int(q.get("truncate", [TRUNCATE])[0])
         over = int(q.get("over", [0])[0])
+        oldtotal = int(q.get("oldtotal", [0])[0])
         norange = q.get("norange", ["0"])[0] == "1"
         total = len(PAYLOAD)
         rng = self.headers.get("Range")
@@ -72,7 +75,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             end = min(end + over, total - 1)
             body = PAYLOAD[start:end + 1]
             self.send_response(206)
-            self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, total))
+            self.send_header("Content-Range", "bytes %d-%d/%d"
+                             % (start, end, oldtotal or total))
             self.send_header("Content-Length", str(len(body)))
             self.send_header("ETag", etag)
             self.send_header("Accept-Ranges", "bytes")

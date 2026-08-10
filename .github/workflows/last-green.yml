@@ -84,12 +84,17 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/proxy-test-server.py 8791 &
+          python3 tools/server.py 8388608 8779 > /tmp/resume-server.log 2>&1 &
           sleep 1
           for t in HotUpdateTxTest SafeLinkTest WebProxyTest ConfigGuardTest \
                    LogTest BgmLoopTest ThrottleTest FlushTest; do
             java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar $t
           done
           java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar ProxyFetchTest 8791
+          # 分片下载/断点续传套件：打真实 HTTP 服务器（含故障注入）
+          RESUME_SHA=$(awk '/payload sha256/{print $3}' /tmp/resume-server.log)
+          java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar \
+            ResumeTest "http://127.0.0.1:8779/file.bin" "$RESUME_SHA" 8388608
 
       - name: 🛡 跑全部守卫
         run: |

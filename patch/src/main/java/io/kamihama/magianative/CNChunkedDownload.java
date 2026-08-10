@@ -294,6 +294,8 @@ public final class CNChunkedDownload {
         final AtomicBoolean abort        = new AtomicBoolean(false);
         /** 任一分片收到 HTTP 200（Range 被忽略）时置位。 */
         final AtomicBoolean rangeIgnored = new AtomicBoolean(false);
+        /** 本轮尝试存活标记：封口后掉队线程的 finally 不再允许写元数据。 */
+        final AtomicBoolean live         = new AtomicBoolean(true);
         final AtomicLong    lastMoveNs  = new AtomicLong(System.nanoTime());
         final AtomicLong    windowStart = new AtomicLong(System.nanoTime());
         final AtomicLong    windowBytes = new AtomicLong(0L);
@@ -336,6 +338,7 @@ public final class CNChunkedDownload {
             task.windowStart = windowStart; task.windowBytes = windowBytes;
             task.lastMoveNs = lastMoveNs;   task.abort = abort;
             task.rangeIgnored = rangeIgnored;
+            task.live = live;
             task.sink = sink;       task.firstErr = firstErr;
             task.latch = latch;
             pool.submit(task);
@@ -446,6 +449,11 @@ public final class CNChunkedDownload {
         try { pool.awaitTermination(5, TimeUnit.SECONDS); } catch (InterruptedException ignore) {}
         // 无论成败都落盘：保住这一轮已经下到的进度
         saveMeta(meta, total, probe.etag, url, done);
+        // 本轮尝试到此封口：之后醒来的掉队线程（阻塞在 read 里、30 秒读超时
+        // 才返回的那种）不得再写元数据。它的 finally 里那份 done 快照对应的是
+        // 旧一轮，而下一轮可能已经把断点/临时文件清掉重来——迟到的写会把
+        // 「旧进度」盖到「新文件」头上，等于伪造已完成的分片。
+        live.set(false);
 
         IOException err = firstErr.get();
         if (err != null) {
@@ -550,6 +558,7 @@ public final class CNChunkedDownload {
         AtomicLong lastMoveNs;
         AtomicBoolean abort;
         AtomicBoolean rangeIgnored;
+        AtomicBoolean live;
         Sink   sink;
         AtomicReference<IOException> firstErr;
         CountDownLatch latch;
@@ -558,7 +567,7 @@ public final class CNChunkedDownload {
             try {
                 oneChunk(url, part, start, end, done, idx, direct, meta, total, etag,
                          totalDone, windowStart, windowBytes, lastMoveNs, abort,
-                         rangeIgnored, sink);
+                         rangeIgnored, live, sink);
             } catch (Throwable t) {
                 firstErr.compareAndSet(null,
                         t instanceof IOException ? (IOException) t
@@ -578,6 +587,7 @@ public final class CNChunkedDownload {
                                  AtomicLong windowStart, AtomicLong windowBytes,
                                  AtomicLong lastMoveNs,
                                  AtomicBoolean abort, AtomicBoolean rangeIgnored,
+                                 AtomicBoolean live,
                                  Sink sink) throws IOException {
 
         final long chunkLen = chunkEnd - chunkStart + 1;
@@ -614,6 +624,18 @@ public final class CNChunkedDownload {
             try { c.disconnect(); } catch (Throwable ignore) {}
             throw new IOException("分片 " + idx + " Content-Range 起点不符: "
                     + got + " != " + startByte);
+        }
+        // 总长度也要回验。2026-08-10 公测事故：gh-proxy 类缓存代理可能还拿着
+        // 上一版的文件（同名 URL、旧内容、旧大小），它回 206、Content-Range
+        // 起点完全正确，但总长度是旧版的、body 也是旧版的字节——只验起点会把
+        // 旧版字节写进新版文件，拼出来的 zip 必坏（invalid CEN header），而且
+        // 缓存是确定性的，换多少次线路重下都坏在同一个位置。验死总长度后，
+        // 这种响应直接抛错、记线路失败、换线，污染不了本地文件。
+        long crTotal = totalFromContentRange(c.getHeaderField("Content-Range"));
+        if (crTotal >= 0 && crTotal != total) {
+            try { c.disconnect(); } catch (Throwable ignore) {}
+            throw new IOException("分片 " + idx + " Content-Range 总长不符: "
+                    + crTotal + " != " + total + "（对端疑似缓存了旧版本）");
         }
 
         InputStream is = null;
@@ -665,7 +687,12 @@ public final class CNChunkedDownload {
                 throw new IOException("分片 " + idx + " 短读: " + finished + " / " + chunkLen);
             }
         } finally {
-            saveMeta(meta, total, etag, url, done);
+            // 只在本轮尝试存活期间落盘。尝试封口（live=false）后才醒来的
+            // 掉队线程拿着的是旧快照，此时写元数据可能把已清理/已翻篇的
+            // 进度盖回去——主线程在封口前已做过权威落盘，这里跳过不丢进度。
+            if (live.get()) {
+                saveMeta(meta, total, etag, url, done);
+            }
             if (raf != null) { try { raf.close(); } catch (Throwable ignore) {} }
             if (is  != null) { try { is.close();  } catch (Throwable ignore) {} }
             try { c.disconnect(); } catch (Throwable ignore) {}

@@ -87,6 +87,7 @@ public class ResumeTest {
         test6_overSend(dir);
         test7_crossMirrorResume(dir);
         test8_rangeIgnored(dir);
+        test9_staleTotal(dir);
 
         System.out.println();
         System.out.println("通过 " + passed + " / 失败 " + failed);
@@ -250,8 +251,24 @@ public class ResumeTest {
         check("恢复后下载成功", sha256(t).equals(expectSha), "sha=" + sha256(t).substring(0,12));
     }
 
-    /** 调服务端控制端点（保持请求 URL 不变，只改服务端行为）。 */
-    static void ctl(String path) throws Exception {
+    // 9. 缓存代理拿着旧版本：206 起点正确但 Content-Range 总长度是旧版的——
+    //    必须报错并记线路失败，而不是把旧版字节写进新文件。
+    //    （2026-08-10 公测 corrupt-zip 事故的修复合同）
+    static void test9_staleTotal(File dir) throws Exception {
+        System.out.println("\n[9] Content-Range 总长谎报（缓存代理拿着旧版本）");
+        File t = new File(dir, "h.bin");
+        clean(t);
+        String url = base + "?oldtotal=" + (totalSize + 4096);
+        CNChunkedDownload.Probe p = CNChunkedDownload.probe(base, false);
+        boolean threw = false; String msg = "";
+        try {
+            CNChunkedDownload.download(url, t, 4, false, p, new Sink());
+        } catch (IOException e) { threw = true; msg = String.valueOf(e.getMessage()); }
+        check("报错而非静默写坏文件", threw && msg.contains("总长不符"), msg);
+        check("没有提交目标文件", !t.exists(), "");
+    }
+
+    /** 调服务端控制端点（保持请求 URL 不变，只改服务端行为）。 */    static void ctl(String path) throws Exception {
         java.net.HttpURLConnection c = (java.net.HttpURLConnection)
                 new java.net.URL(baseRoot() + path).openConnection();
         c.getResponseCode(); c.disconnect();
