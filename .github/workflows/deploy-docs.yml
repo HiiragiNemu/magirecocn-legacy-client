@@ -1,0 +1,68 @@
+name: 📖 部署公测站到 GitHub Pages
+
+# ╔════════════════════════════════════════════════════════════════════════╗
+# ║  公测站（docs-site/，VitePress）自动部署                                ║
+# ╠════════════════════════════════════════════════════════════════════════╣
+# ║  线上地址 https://beta.example.test —— Pages 绑定自定义域名，           ║
+# ║  域名由 docs-site/public/CNAME 声明。                                   ║
+# ║                                                                        ║
+# ║  首次启用前需在 Settings → Pages 把 Source 设为 "GitHub Actions"，      ║
+# ║  并在 Custom domain 填 beta.example.test（DNS 指向 GitHub Pages）。     ║
+# ║  只动 docs-site/ 以外路径的 push 不会触发部署。                         ║
+# ╚════════════════════════════════════════════════════════════════════════╝
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs-site/**'
+      - '.github/workflows/deploy-docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只允许一个部署；不取消进行中的生产部署
+concurrency:
+  group: pages-legacy-beta
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs-site
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # lastUpdated 需要完整历史才能取到每页的最后提交时间
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建
+        run: npm run docs:build
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs-site/.vitepress/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

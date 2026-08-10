@@ -1,0 +1,63 @@
+name: 🐞 报 Bug
+description: 闪退、卡死、黑屏、下载失败、功能异常
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢参与公测！带 * 的是必填。**一句话提示：能复现的反馈才是能修的反馈。**
+        如果方便，附上下载浮层截图（左上角 LOG 胶囊）或 `log/` 目录会非常有帮助。
+  - type: input
+    id: version
+    attributes:
+      label: 客户端构建号
+      description: 形如 1.0.84，见下载页「版本号说明」
+      placeholder: 1.0.xx
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: 设备与系统
+      description: 手机型号 + Android 版本；32 位（armeabi-v7a）设备请务必注明
+      placeholder: 例：红米 K60 / Android 14 / arm64
+    validations:
+      required: true
+  - type: textarea
+    id: phenomenon
+    attributes:
+      label: 发生了什么
+      description: 看到了什么？卡在哪一步？
+      placeholder: 例：进第二部主线第 2 章第 3 话，播完 OP 后卡在黑屏
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: 从启动游戏开始，一步步怎么走到问题
+      placeholder: |
+        1. 启动游戏
+        2. ……
+        3. 卡住
+    validations:
+      required: true
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: 出现频率
+      options:
+        - 必现（每次都这样）
+        - 偶发（几次一遇）
+        - 只遇到过一次
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / 截图
+      description: logcat、log/ 目录打包、下载浮层截图等；没有可留空
+      placeholder: 把文件拖到输入框，或粘贴关键日志
+    validations:
+      required: false

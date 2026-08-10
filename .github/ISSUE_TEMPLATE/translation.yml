@@ -1,0 +1,47 @@
+name: 🔤 报误译 / 漏翻
+description: 日文残留、错别字、语义不通、字体不对
+title: "[翻译] "
+labels: ["translation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        翻译修正走**热更新**下发，不用重装游戏。名词以中文 Wiki 为准，译文以通顺优先。
+  - type: dropdown
+    id: kind
+    attributes:
+      label: 问题类型
+      options:
+        - 日文残留（整句还是日文）
+        - 中文但日文字形（字体问题）
+        - 错别字 / 语义不通
+        - 名词与 Wiki 不一致
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: location
+    attributes:
+      label: 出现位置
+      description: 尽量具体——哪章哪话、哪个界面、哪个按钮；整句截图附在下面
+      placeholder: 例：战斗结束结算界面，角色 Livia 的台词
+    validations:
+      required: true
+  - type: textarea
+    id: text
+    attributes:
+      label: 原文与建议译文
+      description: 看到的原文（日文或不通顺的中文），以及你认为应该怎么写；不知道原文可留空
+      placeholder: |
+        看到：フォロー数: 
+        建议：关注数：
+    validations:
+      required: false
+  - type: textarea
+    id: attachment
+    attributes:
+      label: 截图
+      description: 把整句截全（上下文决定归哪一层修）；会抓日志的可附 logI18nMiss 清单
+      placeholder: 把图片拖到输入框
+    validations:
+      required: false

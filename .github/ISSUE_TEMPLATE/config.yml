@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 公测站（下载 / FAQ / 反馈指南）
+    url: https://beta.example.test
+    about: 提 issue 前建议先翻一遍 FAQ，高频问题已有答案
+  - name: 📦 下载公测包（Releases）
+    url: https://github.com/MagirecoCN-Revival-Project/legacy-client/releases
+    about: 装错版本请先确认你装的是最新构建

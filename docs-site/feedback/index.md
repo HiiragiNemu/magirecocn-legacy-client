@@ -1,0 +1,34 @@
+# 参与反馈：总览
+
+公测的价值全在反馈上。不同背景的人能给出的信息不一样，我们把反馈通道分成
+三个层次——**不需要全都懂，选一个适合你的**：
+
+| 层次 | 适合谁 | 要做什么 | 通道 |
+|---|---|---|---|
+| [普通玩家](./player) | 所有人 | 说清楚**看到了什么、在哪一步、什么手机** | GitHub Issue（有模板，照填即可） |
+| [进阶排查](./advanced) | 会 adb / 愿意抓日志 | 在上一层的基础上附**游戏日志或 logcat** | GitHub Issue + 日志附件 |
+| [开发者](./developer) | 能读代码 | 定位到代码层、提 PR | Issue / Pull Request |
+
+## 反馈去哪提
+
+统一走 GitHub Issues，按类型选模板：
+
+- 🐞 [报 Bug](https://github.com/MagirecoCN-Revival-Project/legacy-client/issues/new?template=bug_report.yml)——闪退、卡死、黑屏、下载失败、功能异常
+- 🔤 [报误译 / 漏翻](https://github.com/MagirecoCN-Revival-Project/legacy-client/issues/new?template=translation.yml)——日文残留、错别字、语义不通、字体不对
+- 💬 [体验与建议](https://github.com/MagirecoCN-Revival-Project/legacy-client/issues/new?template=feedback.yml)——手感、速度、建议
+
+没有 GitHub 账号的，可以让有账号的朋友代发；内容与模板一致即可。
+
+## 提之前先查一下
+
+- [常见问题 FAQ](/faq)——下载慢、日文字体、闪退等高频问题已有答案。
+- [Issues 列表](https://github.com/MagirecoCN-Revival-Project/legacy-client/issues)——搜一下关键词，可能已经有人报过了，在原有 issue 下补充即可。
+
+## 什么样的反馈最有用
+
+一句话：**能复现的反馈才是能修的反馈。**
+
+- ✅「红米 K60，Android 14，构建号 84。进第二部主线第 2 章第 3 话，播完 OP 后卡在黑屏，必现。日志已附。」
+- ❌「游戏会卡。」
+
+后一种我们只能干瞪眼。前一种通常当天就能定位。

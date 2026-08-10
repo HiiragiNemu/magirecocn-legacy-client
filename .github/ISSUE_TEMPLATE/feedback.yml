@@ -1,0 +1,26 @@
+name: 💬 体验与建议
+description: 下载速度、发热、流畅度、功能建议——不是 bug 也不是翻译的，都走这里
+title: "[反馈] "
+labels: ["feedback"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: 客户端构建号
+      placeholder: 1.0.xx
+    validations:
+      required: false
+  - type: input
+    id: device
+    attributes:
+      label: 设备与系统
+      placeholder: 例：红米 K60 / Android 14
+    validations:
+      required: false
+  - type: textarea
+    id: content
+    attributes:
+      label: 想说什么
+      description: 越具体越好——「下载慢」不如说「晚 8 点下 cn_base_02 只有 0.3MB/s，（已下线线路） 线路」
+    validations:
+      required: true
