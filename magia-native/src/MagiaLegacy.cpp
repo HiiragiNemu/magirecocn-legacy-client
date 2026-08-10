@@ -98,6 +98,7 @@
 
 #include <dirent.h>
 #include <errno.h>    // loadDebugFlags 报「目录读不进去」时带上 errno
+#include <sys/types.h>
 #include <sys/stat.h>
 #include <pthread.h>
 #include <dlfcn.h>
@@ -1764,7 +1765,7 @@ static void removeLegacyProxyCache() {
 //   <files>/madomagi/engine_i18n.tsv（files 目录经 resolvePrivDir() 解析）
 // 格式：每行 ja<TAB>zhCN，换行/制表/反斜杠写作 \n \t \\；`^` 开头是前缀规则；
 // `#` 开头是注释；zhCN 为空表示**删除**该串（拼接式文案的语序调整用）。
-// 表在启动时加载，之后每 3 秒节流行检查一次 mtime，热更替换后免重启生效。
+// 表在启动时加载，之后每 3 秒节流检查一次文件身份指纹，热更替换后免重启生效。
 //
 // ⚠ 上面那个路径是**运行时副本，不是源**。源在补丁仓库：
 //     （外部发布渠道）  →  madomagi/engine_i18n.tsv
@@ -1788,7 +1789,7 @@ static const std::string ENGINE_I18N_PATH =
 //       用（fakeNdkStr → old()、initLabelOld()）。swap 一发生，旧表连同这些
 //       字符串一起析构，手里的指针立刻悬空 —— 典型 use-after-free。
 //
-// 触发条件是 mtime 变化，而 engine_i18n.tsv 随台词包下发，也就是**每次热更之后
+// 旧实现的触发条件是 mtime 变化，而 engine_i18n.tsv 随台词包下发，也就是**每次热更之后
 // 都会打开一次窗口**。2026-08-09 那次「进战斗就崩、隔天自己好了」正卡在这个形状
 // 上（相关性确凿：唯一崩过的那场也是唯一重载过的那场；因果未证——27 次重载 +
 // 6 场战斗的复现实验没崩，内容不变时释放的块多半又被同样的字符串填回去了）。
@@ -1804,8 +1805,52 @@ struct EngineI18nTable {
 };
 using EngineI18nPtr = std::shared_ptr<const EngineI18nTable>;
 
-static std::mutex    g_engineI18nMutex;      // 只保护下面这个指针的读写
+static std::mutex    g_engineI18nMutex;      // 保护下面的快照指针与文件指纹
 static EngineI18nPtr g_engineI18nTable;      // 可能为空（表还没加载）
+
+// 不能只盯秒级 st_mtime：热更是「临时文件 + 原子换名」，同一秒内替换时秒值
+// 可以完全相同。更隐蔽的竞态是 fopen 取得旧 inode 后，热更换入新 inode，旧实现
+// 却在读完后 stat(path) 并把**新文件 mtime**记在旧内容上；此后就永久看不见新表。
+//
+// 指纹绑定到真正被读的 fd：设备/inode 识别原子换名，size 与纳秒 mtime 覆盖原地
+// 更新。加载前后各 fstat 一次；若读取期间 fd 自身发生变化，就保留上一份好快照，
+// 等下一轮重试。
+struct EngineI18nFileStamp {
+    dev_t  device = 0;
+    ino_t  inode = 0;
+    off_t  size = 0;
+    time_t mtimeSeconds = 0;
+    long   mtimeNanoseconds = 0;
+    bool   valid = false;
+};
+
+static EngineI18nFileStamp engineI18nStampFromStat(const struct stat& st) {
+    EngineI18nFileStamp stamp;
+    stamp.device = st.st_dev;
+    stamp.inode = st.st_ino;
+    stamp.size = st.st_size;
+    stamp.mtimeSeconds = st.st_mtime;
+#if defined(__APPLE__)
+    stamp.mtimeNanoseconds = st.st_mtimespec.tv_nsec;
+#else
+    // Android/Bionic 与 Linux 均提供 POSIX.1-2008 的 st_mtim。
+    stamp.mtimeNanoseconds = st.st_mtim.tv_nsec;
+#endif
+    stamp.valid = true;
+    return stamp;
+}
+
+static bool engineI18nSameStamp(const EngineI18nFileStamp& a,
+                                const EngineI18nFileStamp& b) {
+    return a.valid == b.valid
+        && (!a.valid || (a.device == b.device
+                      && a.inode == b.inode
+                      && a.size == b.size
+                      && a.mtimeSeconds == b.mtimeSeconds
+                      && a.mtimeNanoseconds == b.mtimeNanoseconds));
+}
+
+static EngineI18nFileStamp g_engineI18nStamp;
 
 /** 取一份当前快照。返回的对象在调用方手里一直有效，与重载完全解耦。 */
 static EngineI18nPtr engineI18nSnapshot() {
@@ -1813,9 +1858,13 @@ static EngineI18nPtr engineI18nSnapshot() {
     return g_engineI18nTable;
 }
 
+static EngineI18nFileStamp engineI18nLoadedStamp() {
+    std::lock_guard<std::mutex> lk(g_engineI18nMutex);
+    return g_engineI18nStamp;
+}
+
 static std::atomic<bool>     g_engineI18nReady{false};
 static std::atomic<time_t>   g_engineI18nLastCheck{0};
-static std::atomic<time_t>   g_engineI18nMtime{0};
 static std::atomic<uint64_t> g_engineI18nHits{0};
 
 static std::string i18nUnescape(const std::string& s) {
@@ -1837,8 +1886,14 @@ static std::string i18nUnescape(const std::string& s) {
 static void loadEngineI18n() {
     FILE* f = fopen(ENGINE_I18N_PATH.c_str(), "rb");
     if (!f) {
-        if (g_engineI18nReady || g_engineI18nMtime != 0)
+        if (g_engineI18nReady.load() || engineI18nLoadedStamp().valid)
             LOGI("[i18n] 表文件暂缺，保持现状: %s", ENGINE_I18N_PATH.c_str());
+        return;
+    }
+    struct stat openedBefore;
+    if (::fstat(::fileno(f), &openedBefore) != 0) {
+        LOGE("[i18n] 无法读取已打开表的文件指纹，保持现状: errno=%d", errno);
+        fclose(f);
         return;
     }
     std::shared_ptr<EngineI18nTable> fresh = std::make_shared<EngineI18nTable>();
@@ -1863,18 +1918,33 @@ static void loadEngineI18n() {
         std::string zh = i18nUnescape(line.substr(tab + 1));
         if (!ja.empty()) fresh->exact[ja] = zh;
     }
+    bool readFailed = ferror(f) != 0;
+    int readErrno = readFailed ? errno : 0;
+    struct stat openedAfter;
+    bool statFailed = ::fstat(::fileno(f), &openedAfter) != 0;
+    int statErrno = statFailed ? errno : 0;
     fclose(f);
-    struct stat st;
-    if (::stat(ENGINE_I18N_PATH.c_str(), &st) == 0)
-        g_engineI18nMtime.store(st.st_mtime);
+    if (readFailed || statFailed) {
+        LOGE("[i18n] 读取表或复核文件指纹失败，保持现状: read=%d(errno=%d) "
+             "stat=%d(errno=%d)",
+             (int)readFailed, readErrno, (int)statFailed, statErrno);
+        return;
+    }
+    EngineI18nFileStamp beforeStamp = engineI18nStampFromStat(openedBefore);
+    EngineI18nFileStamp afterStamp = engineI18nStampFromStat(openedAfter);
+    if (!engineI18nSameStamp(beforeStamp, afterStamp)) {
+        LOGI("[i18n] 表在读取期间发生变化，保持现状并等待下一轮重载");
+        return;
+    }
     size_t nExact = fresh->exact.size(), nPrefix = fresh->prefix.size();
     {
-        // 只在这把锁里换指针。旧快照的析构发生在锁外、且要等最后一个读者撒手
-        // ——绝不会在别人正拿着它查表时被拆掉。
+        // 指针与它对应的 fd 指纹必须在同一临界区发布。旧快照的析构发生在锁外、
+        // 且要等最后一个读者撒手——绝不会在别人正拿着它查表时被拆掉。
         std::lock_guard<std::mutex> lk(g_engineI18nMutex);
         g_engineI18nTable = fresh;
+        g_engineI18nStamp = afterStamp;
+        g_engineI18nReady.store(nExact != 0 || nPrefix != 0);
     }
-    g_engineI18nReady.store(nExact != 0 || nPrefix != 0);
     LOGI("[i18n] 已加载 %zu 条 + %zu 前缀规则（第 %zu 行止，坏行 %zu）",
          nExact, nPrefix, lineno, bad);
 }
@@ -1887,7 +1957,9 @@ static void maybeReloadEngineI18n() {
     if (!g_engineI18nLastCheck.compare_exchange_strong(last, now)) return;
     struct stat st;
     if (::stat(ENGINE_I18N_PATH.c_str(), &st) != 0) return;
-    if (st.st_mtime != g_engineI18nMtime) {
+    EngineI18nFileStamp pathStamp = engineI18nStampFromStat(st);
+    EngineI18nFileStamp loadedStamp = engineI18nLoadedStamp();
+    if (!engineI18nSameStamp(pathStamp, loadedStamp)) {
         LOGI("[i18n] 检测到表变更，重新加载");
         loadEngineI18n();
     }

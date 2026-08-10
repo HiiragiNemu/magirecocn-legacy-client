@@ -73,7 +73,7 @@ adb logcat -d -s MagiaCN_Legacy | sed -n 's/.*\[i18n-miss\]\[[^]]*\] //p' | sort
 
 # 2. 填译文。每行形如  #原文<TAB>   —— 翻一条，去掉行首的 #，把译文补在 TAB 后
 
-# 3. 推回设备验证（表每 3 秒查一次 mtime，不用重启游戏）
+# 3. 推回设备验证（表每 3 秒查一次文件身份指纹，不用重启游戏）
 adb push /tmp/miss.tsv /sdcard/miss.tsv
 adb shell "run-as io.kamihama.totentanz sh -c \
   'cat /sdcard/miss.tsv >> files/madomagi/engine_i18n.tsv'"
@@ -143,12 +143,9 @@ adb shell "run-as io.kamihama.totentanz sh -c \
   `ENGINE_I18N_PATH`。
 - 它**不会被孤儿清理误删**：`CNHotUpdateTx.cleanupPrefixes("scenario")` 只清
   `madomagi/resource/scenario/json/`，`cleanupPrefixes("js")` 只清 `magica/` 下四个
-  白名单前缀；该表在两者之外。`HotUpdateTxTest` 第 15 组覆盖了 scenario → JS
-  迁移、清单归属、覆盖和漏表保留。
-- 上一条只是**客户端消费合同**：测试用人工构造的 ZIP 证明客户端能正确
-  重建，不能代替补丁仓库的生产者验证。发布前还必须在补丁仓库检查：
-  改表只触发 JS 版本、scenario 成品不含该表、JS 成品的精确入包路径是
-  `madomagi/engine_i18n.tsv`。三项任一缺失，客户端测试依然可能全绿。
+  白名单前缀；该表（`madomagi/engine_i18n.tsv`）在两者之外。
+  当前该表随 **scenario** 热更通道下发（scenario → JS 迁移是分支上的工作，
+  尚未合入 main，线上清单以 scenario 通道为准）。
 
 ---
 
@@ -166,7 +163,9 @@ adb shell "run-as io.kamihama.totentanz sh -c \
 
 行为要点：
 
-- **热重载**：启动时加载一次，之后每 3 秒节流检查一次 mtime，改完免重启。
+- **热重载**：启动时加载一次，之后每 3 秒节流检查一次文件身份指纹
+  （device/inode/size/mtime 纳秒）。同一秒内原子换名或原地更新也会被识别，改完免重启；
+  读取期间文件若变化，会保留上一份完整快照并在下一轮重试。
 - **没有 TAB 的行**算坏行，会计入启动日志的「坏行 N」，但不影响其余条目。
 - **前缀命中不限字符集**：表里显式声明的日文、纯英文或纯汉字前缀都必须
   扫描。只有「默认缺译日志」会用假名减少噪音；该日志筛选不得进入替换路径。

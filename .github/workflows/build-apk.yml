@@ -170,6 +170,13 @@ jobs:
           python3 tools/check-engine-i18n-prefix.py
           python3 tools/test-check-engine-i18n-prefix.py
 
+      # JS 热更以临时文件 + 原子换名安装 engine_i18n.tsv。秒级 mtime 会漏掉
+      # 同秒替换，且 fopen(旧 inode) 后 stat(新路径) 会把旧内容错绑到新时间戳。
+      - name: 🔄 校验 engine i18n 热重载文件身份合同
+        run: |
+          python3 tools/check-engine-i18n-reload.py
+          python3 tools/test-check-engine-i18n-reload.py
+
       # 兜底线路(DEFAULT_BASE)与规范前缀(CANONICAL_BASE)是两个概念，早先耦合在
       # 同一个常量上。换兜底线路时若把规范前缀一起动了，热更会**静默停摆**——
       # 版本查询每条线路都失败，被当成「已是最新」，没有任何报错。
