@@ -8,7 +8,7 @@ hero:
   actions:
     - theme: brand
       text: 下载公测包
-      link: https://（已下线线路）/g/m/releases/download/latest/magireco-lastest-legacy-client.apk
+      link: https://（已下线线路）/g/m/releases/download/latest/magireco-latest-legacy-client.apk
     - theme: alt
       text: 参与反馈
       link: /feedback/
