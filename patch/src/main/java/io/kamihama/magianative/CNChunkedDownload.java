@@ -222,6 +222,24 @@ public final class CNChunkedDownload {
                                   boolean direct, Probe probe, Sink sink,
                                   CNMirrors.Mirror mirror, String remoteName)
             throws IOException {
+        // 通用下载：不假定目标是 zip，完工内容校验由调用方按需开启。
+        return download(url, target, requestedChunks, direct, probe, sink,
+                mirror, remoteName, false);
+    }
+
+    /**
+     * 同上，再额外指定是否在完工时做 zip 结构预检。
+     *
+     * <p>{@code verifyZip=true} 用于**已知是 zip** 的下载（base 包 / 热更包）：
+     * 分片跨镜像/断点续传可能把异源字节混进同一文件，凑满即坏（invalid CEN
+     * header），promote 前用 ZipFile 预检 EOCD+CEN 能在源头截住，坏则清断点
+     * 整份重下。通用下载（任意二进制）传 false，不做 zip 假定。
+     */
+    public static Result download(String url, File target, int requestedChunks,
+                                  boolean direct, Probe probe, Sink sink,
+                                  CNMirrors.Mirror mirror, String remoteName,
+                                  boolean verifyZip)
+            throws IOException {
 
         final long total = probe.total;
         if (total <= 0) throw new IOException("未知的文件长度");
@@ -286,7 +304,7 @@ public final class CNChunkedDownload {
         // 里验过，但「长度对」不代表「内容对」——断点可能是上一轮跨镜像混装的
         // 残片凑满，必须先做完工 zip 结构预检，坏则整份作废重下。
         if (totalDone.get() >= total) {
-            if (!isZipStructurallyValid(part)) {
+            if (verifyZip && !isZipStructurallyValid(part)) {
                 CNLog.w(TAG, "完工校验失败 file=" + target.getName()
                         + " 拼装文件非法，重置断点重下");
                 deleteQuietly(part);
@@ -491,7 +509,8 @@ public final class CNChunkedDownload {
         }
         // 完工内容校验：分片跨镜像/断点续传可能把异源字节混进同一文件，凑满即坏
         // （invalid CEN header）。zip 结构预检不通过 → 整份作废重下，绝不 promote。
-        if (!isZipStructurallyValid(part)) {
+        // 仅在调用方声明目标是 zip（verifyZip=true）时启用。
+        if (verifyZip && !isZipStructurallyValid(part)) {
             CNLog.w(TAG, "完工校验失败 file=" + target.getName()
                     + " 拼装文件非法，重置断点重下");
             deleteQuietly(part);

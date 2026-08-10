@@ -882,7 +882,7 @@ public final class CNDownloaderFix {
                     updateProgress(index, 0L, probe.total);
                     CNChunkedDownload.Result r = CNChunkedDownload.download(
                             url, archive, chunks, direct, probe, new ArchiveSink(index),
-                            mirror, name);
+                            mirror, name, true);
                     return new DownloadMetadata(r.totalBytes, r.etag);
                 }
             }

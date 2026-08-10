@@ -156,7 +156,7 @@ public final class CNHotUpdate {
                             + " bytes=" + probe.total + " mirror=" + mirror.name);
                     CNCNDownloadUI.setFileSize(index, (float) (probe.total / 1000000.0d));
                     CNChunkedDownload.download(url, dest, chunks, direct, probe,
-                            new HotSink(index), mirror, remoteName);
+                            new HotSink(index), mirror, remoteName, true);
                     return;
                 }
             }
