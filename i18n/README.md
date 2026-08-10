@@ -5,12 +5,13 @@
 
 | 谁渲染 | 改哪里 | 怎么下发 | 源在哪 |
 |---|---|---|---|
-| WebView（前端一半） | `frontend-strings.tsv` 等四张表 → 回填进前端代码 | 热更包 `cn_js_update.zip` | **本目录** |
-| cocos2d 原生引擎 | `engine_i18n.tsv`（文本 hook 的翻译表） | 热更包 `cn_js_update.zip` 内的 `madomagi/engine_i18n.tsv` → `<files>/madomagi/` | **另一个仓库**，见下 |
+| WebView（前端一半） | `frontend-strings.tsv` 等四张表 → 回填进前端代码 | 热更包 `cn_js_update.zip` | 补丁仓库 `i18n/`，见下 |
+| cocos2d 原生引擎 | `engine_i18n.tsv`（文本 hook 的翻译表） | 热更包 `cn_js_update.zip` 内的 `madomagi/engine_i18n.tsv` → `<files>/madomagi/` | 补丁仓库，见下 |
 | 烘焙进 PNG／plist 图集的文字 | 只能改图片资源 | 资源包 | 无 |
 
-本目录只管第一条。第二条的源不在本仓库，但**判定方法和操作步骤记在这里**——
-客户端这边才有 hook 和调试开关，判据只能在这儿产生。
+两条链路的译文源都在补丁仓库（`（外部发布渠道）`）：前端四张表在
+`i18n/`，引擎表在 `madomagi/engine_i18n.tsv`。本目录不放任何对照表，只记
+**判定方法和操作步骤**——客户端这边才有 hook 和调试开关，判据只能在这儿产生。
 
 ---
 
@@ -144,8 +145,9 @@ adb shell "run-as io.kamihama.totentanz sh -c \
 - 它**不会被孤儿清理误删**：`CNHotUpdateTx.cleanupPrefixes("scenario")` 只清
   `madomagi/resource/scenario/json/`，`cleanupPrefixes("js")` 只清 `magica/` 下四个
   白名单前缀；该表（`madomagi/engine_i18n.tsv`）在两者之外。
-  当前该表随 **scenario** 热更通道下发（scenario → JS 迁移是分支上的工作，
-  尚未合入 main，线上清单以 scenario 通道为准）。
+  该表随 **JS** 热更通道下发（2026-08-10 起由 scenario 通道迁入：
+  detect 把它归入 `^(magica/|madomagi/engine_i18n\.tsv)`，JS 打包经
+  `_pack_js` 暂存把 `madomagi/engine_i18n.tsv` 一并打进 `cn_js_update.zip`）。
 
 ---
 
@@ -181,7 +183,8 @@ adb shell "run-as io.kamihama.totentanz sh -c \
 
 ## 前端四张表
 
-由 `tools/i18n-*.py` 消费，链路是
+**源已迁入补丁仓库** `（外部发布渠道）` 的 `i18n/`（2026-08-10，
+本仓库不再存放副本，避免双源分叉）。由 `tools/i18n-*.py` 消费，链路是
 `i18n-extract.py`（抽串）→ 人工／`i18n-glossary.py` 填译文 → `i18n-apply.py`
 （回填进前端代码）→ `i18n-fragments.py`（片段改写）→ `i18n-package.py`
 （打成 `cn_js_update.zip`）。

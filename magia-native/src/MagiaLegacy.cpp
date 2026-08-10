@@ -1769,10 +1769,10 @@ static void removeLegacyProxyCache() {
 //
 // ⚠ 上面那个路径是**运行时副本，不是源**。源在补丁仓库：
 //     （外部发布渠道）  →  madomagi/engine_i18n.tsv
-// 它由该仓库的 sync-and-upload.yml 打进 cn_scenario_update.zip（台词包），
-// 客户端热更下来解到 <files>/，正好落在上面这个路径。也就是说**直接改设备上
-// 那份只是就地验证，下一次台词包更新会把它整个盖掉**——译文要落地必须提到补丁
-// 仓库去。完整链路与操作步骤见本仓库 i18n/README.md。
+// 它由该仓库的 sync-and-upload.yml 打进 cn_js_update.zip（JS 包，与 magica/
+// 同包下发），客户端热更下来解到 <files>/，正好落在上面这个路径。也就是说
+// **直接改设备上那份只是就地验证，下一次 JS 包更新会把它整个盖掉**——译文要
+// 落地必须提到补丁仓库去。完整链路与操作步骤见本仓库 i18n/README.md。
 
 static const std::string ENGINE_I18N_PATH =
     filesDir() + "/madomagi/engine_i18n.tsv";
@@ -2058,7 +2058,7 @@ static bool enginePrefixLookup(const char* data, size_t size, std::string& out) 
 //
 // ⚠ 填好的译文**要提到补丁仓库**（（外部发布渠道） 的
 // madomagi/engine_i18n.tsv），不是留在设备上——设备上那份是热更下发的运行时副本，
-// 下一次台词包更新会把它整个盖掉。就地追加只用于验证。见 i18n/README.md。
+// 下一次 JS 包更新会把它整个盖掉。就地追加只用于验证。见 i18n/README.md。
 //
 // 为什么默认只记含**假名**的串：译文是简体中文，和日文汉字在字节上分不开，
 // 按「含 CJK」筛会把已经翻好的中文台词全量记一遍——去重集瞬间撑满，真正没翻的

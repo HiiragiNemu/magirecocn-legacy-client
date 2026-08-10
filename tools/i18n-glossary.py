@@ -111,7 +111,7 @@ def parse_switch(text):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('wiki', help='中文 Wiki 本地镜像 仓库路径')
-    ap.add_argument('-o', '--out', default='i18n/glossary.tsv')
+    ap.add_argument('-o', '--out', default='glossary.tsv')
     args = ap.parse_args()
 
     arch = os.path.join(args.wiki, 'data', 'archive', 'templates.jsonl.gz')
