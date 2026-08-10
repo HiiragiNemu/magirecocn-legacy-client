@@ -238,6 +238,20 @@ static bool g_dbgNoTtfHooks      = false;
 // 有了它，跑一局就能拿到「这一局所有本该翻却没翻的串」，一次抓全。
 static bool g_dbgLogI18nMiss     = false;
 static bool g_dbgLogI18nMissAll  = false;
+// 序章按战斗跳段（与其他开关一样的空文件开关）。战斗与 OP 段的对应关系
+// 出自引擎调试页 backdoorList.html：OP030=任务①、OP050=任务②、
+// OP070=任务③（CONNECT 教学战），每场战斗后紧跟一段 ADV（OP040/060/080）。
+// 全部不放时强制序章的一切行为与原来逐行等价（起始段 OP020）。
+static bool g_dbgTutSkipToB1   = false;
+static bool g_dbgTutAfterB1    = false;
+static bool g_dbgTutSkipToB2   = false;
+static bool g_dbgTutAfterB2    = false;
+static bool g_dbgTutSkipToB3   = false;
+static bool g_dbgTutAfterB3    = false;
+// 命中的跳段开关折成的起始段与拼好的 pushScenePrologue 入参 JSON；
+// 两个都为空 = 不跳转。在 loadDebugFlags 里一并填好，调用点零解析。
+static std::string g_dbgTutorialStartSection;
+static std::string g_dbgTutorialStartArg;
 
 struct DebugFlagDef { const char* name; bool* slot; const char* desc; };
 static const DebugFlagDef kDebugFlags[] = {
@@ -259,6 +273,25 @@ static const DebugFlagDef kDebugFlags[] = {
     // ── 只记录，不改行为：把「流经钩子但没翻到」的串打出来 ──
     { "logI18nMiss",     &g_dbgLogI18nMiss,     "记录未命中翻译表的**含假名**串（tsv 行格式，去重）" },
     { "logI18nMissAll",  &g_dbgLogI18nMissAll,  "同上但不筛内容（含英文/数字，噪音大，用于确认某串走没走 native 标签）" },
+    // ── 序章按战斗跳段（互斥；同时放多个以跳得最远的为准）──
+    { "tutorialSkipToBattle1",   &g_dbgTutSkipToB1,   "序章跳到第 1 场战斗前" },
+    { "tutorialSkipAfterBattle1",&g_dbgTutAfterB1,    "序章跳到第 1 场战斗后" },
+    { "tutorialSkipToBattle2",   &g_dbgTutSkipToB2,   "序章跳到第 2 场战斗前" },
+    { "tutorialSkipAfterBattle2",&g_dbgTutAfterB2,    "序章跳到第 2 场战斗后" },
+    { "tutorialSkipToBattle3",   &g_dbgTutSkipToB3,   "序章跳到 CONNECT 教学战前" },
+    { "tutorialSkipAfterBattle3",&g_dbgTutAfterB3,    "序章跳到结尾剧情（测序章收尾最快）" },
+};
+
+// 跳段开关 → 起始段的映射表。按段号升序排，loadDebugFlags 里后者覆盖前者，
+// 于是多个同时放时以跳得最远的为准。
+struct TutorialSkipDef { const bool* on; const char* section; };
+static const TutorialSkipDef kTutorialSkips[] = {
+    { &g_dbgTutSkipToB1,   "OP030" },
+    { &g_dbgTutAfterB1,    "OP040" },
+    { &g_dbgTutSkipToB2,   "OP050" },
+    { &g_dbgTutAfterB2,    "OP060" },
+    { &g_dbgTutSkipToB3,   "OP070" },
+    { &g_dbgTutAfterB3,    "OP080" },
 };
 
 static void loadDebugFlags() {
@@ -309,6 +342,30 @@ static void loadDebugFlags() {
             if (!known) LOGE("[DEBUG] ⚠ 目录里有不认识的文件 %s —— 名字打错了？", e->d_name);
         }
         ::closedir(d);
+    }
+    // 序章跳段：把命中的开关折成一个起始段。空文件开关没有参数可读，
+    // 同时放多个时以跳得最远（段号最大）的为准并警告——映射表按段号
+    // 升序，循环里后者覆盖前者即可。
+    g_dbgTutorialStartSection.clear();
+    g_dbgTutorialStartArg.clear();
+    {
+        int n = 0;
+        for (const auto& sk : kTutorialSkips) {
+            if (!*sk.on) continue;
+            n++;
+            g_dbgTutorialStartSection = sk.section;
+        }
+        if (n > 1) {
+            LOGE("[DEBUG] ⚠ 序章跳段开关同时放了 %d 个，以跳得最远的 %s 为准",
+                 n, g_dbgTutorialStartSection.c_str());
+        }
+        if (n > 0) {
+            g_dbgTutorialStartArg =
+                "{\"beginningId\":\"" + g_dbgTutorialStartSection +
+                "\",\"callback\":\"nativeCallback\"}";
+            LOGE("[DEBUG]   [ON ] 序章跳段 → 从 %s 开始",
+                 g_dbgTutorialStartSection.c_str());
+        }
     }
     if (on > 0) {
         LOGE("[DEBUG] ⚠ 共 %d 个开关生效——这是排查用的降级模式，不是正常配置", on);
@@ -897,8 +954,16 @@ static void pushSceneTopNew(void* self, const std::string& arg) {
         // JS 全是残的，前端收不到任何段通知（见本节开头的 bug 分析）。
         static const std::string kPrologueArg =
             "{\"beginningId\":\"OP020\",\"callback\":\"nativeCallback\"}";
-        LOGI("[Tutorial] 命中强制教程标记 → 改走 pushScenePrologue(OP020)"
-             "（原 pushSceneTop arg=%s）", arg.c_str());
+        // 按战斗跳段（debug/tutorialSkip{To,After}Battle{1,2,3}）：
+        // loadDebugFlags 已把命中的开关折成同样的 JSON 放在
+        // g_dbgTutorialStartArg；它为空（一个开关都没放）时 prologueArg
+        // 就是 kPrologueArg 本身，本分支的每条语句与没有这个功能时一致。
+        const std::string& prologueArg = g_dbgTutorialStartArg.empty()
+                                         ? kPrologueArg : g_dbgTutorialStartArg;
+        const char* startSection = g_dbgTutorialStartSection.empty()
+                                   ? "OP020" : g_dbgTutorialStartSection.c_str();
+        LOGI("[Tutorial] 命中强制教程标记 → 改走 pushScenePrologue(%s)"
+             "（原 pushSceneTop arg=%s）", startSection, arg.c_str());
         saveTop(self, arg);
         {
             std::lock_guard<std::mutex> lk(g_savedTopMutex);
@@ -919,7 +984,7 @@ static void pushSceneTopNew(void* self, const std::string& arg) {
                 LOGE("[Tutorial] WebView guard thread failed; ctor one-shot hide remains");
             }
         }
-        pushScenePrologueFn(self, kPrologueArg);
+        pushScenePrologueFn(self, prologueArg);
         return;
     }
     LOGI("[SceneCmd] pushSceneTop(arg=%s) 放行", arg.c_str());
