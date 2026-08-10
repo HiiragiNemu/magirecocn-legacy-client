@@ -8,7 +8,8 @@ name: ✅ main 复验 + 并发预警
 # ║      所以 CI 要独立复验一次。                                        ║
 # ║   2. 并发预警：本次 push 改动的文件，若 24 小时内有**别人**动过，      ║
 # ║      在该提交下留言提醒（不阻断）+ 🟡 黄灯邮件（无预警即绿灯，          ║
-# ║      不发邮件）——主干开发最容易踩的对撞，早知道早对齐。               ║
+# ║      不发邮件；黄灯只发本次 push 的 commit 作者、不含 Co-Author，      ║
+# ║      红灯才发全体收件人）——主干开发最容易踩的对撞，早知道早对齐。      ║
 # ║   3. 分层提示：按改动路径给出要求的验证级别（方案 §二.3）。           ║
 # ║      实机测试 CI 替代不了，只能提示，不能自动执行。                   ║
 # ╚════════════════════════════════════════════════════════════════════╝
@@ -46,7 +47,6 @@ jobs:
           NOTIFY_URL: ${{ vars.NOTIFY_URL }}
           NOTIFY_FROM: ${{ vars.NOTIFY_FROM }}
           NOTIFY_FROM_NAME: ${{ vars.NOTIFY_FROM_NAME }}
-          NOTIFY_TO: ${{ secrets.NOTIFY_TO }}
           NOTIFY_TOKEN: ${{ secrets.NOTIFY_TOKEN }}
         run: |
           set -euo pipefail
@@ -54,6 +54,10 @@ jobs:
           if [ -z "$FILES" ]; then echo "无文件改动"; exit 0; fi
           # 本次 push 自己的提交集合（这些不算「别人动的」）
           git rev-list "$BEFORE..$AFTER" > /tmp/own_commits
+          # 黄灯收件人 = 本次 push 全部 commit 的**作者**邮箱
+          # （%ae 只看 author 字段，不含 trailer 里的 Co-Author）；
+          # 红灯才发 NOTIFY_TO 全员
+          AUTHORS=$(git log --format='%ae' "$BEFORE..$AFTER" | sort -u | paste -sd, -)
 
           WARN_FILE=$(mktemp)
           while IFS= read -r f; do
@@ -78,10 +82,15 @@ jobs:
               -d @/tmp/comment.json > /dev/null
             echo "已留言预警："
             echo "$WARN"
-            # 🟡 黄灯邮件：预警内容同步发信（绿灯——无预警——不发）
-            TITLE="🟡 main 黄灯：24h 内有他人改动同文件" \
-            MSG="🟡 **黄灯（并发预警）**：本次 push 改动的文件中，有文件在 24 小时内被其他人/会话改过（${RUN_URL}）："$'\n\n'"${WARN}"$'\n\n'"建议开工前先 git pull --rebase，并在 ACTIVE.md 登记自己在动哪片。" \
-              bash tools/notify-mail.sh
+            # 🟡 黄灯邮件：只发本次 push 的 commit 作者（红灯才发 NOTIFY_TO 全员）
+            if [ -n "$AUTHORS" ]; then
+              TITLE="🟡 main 黄灯：24h 内有他人改动同文件" \
+              MSG="🟡 **黄灯（并发预警）**：本次 push 改动的文件中，有文件在 24 小时内被其他人/会话改过（${RUN_URL}）："$'\n\n'"${WARN}"$'\n\n'"建议开工前先 git pull --rebase，并在 ACTIVE.md 登记自己在动哪片。"$'\n\n'"（本邮件仅发送给本次 push 的 commit 作者）" \
+              NOTIFY_TO="$AUTHORS" \
+                bash tools/notify-mail.sh
+            else
+              echo "取不到本次 push 的作者邮箱，跳过黄灯邮件"
+            fi
           else
             echo "24h 内无同文件的他人改动"
           fi

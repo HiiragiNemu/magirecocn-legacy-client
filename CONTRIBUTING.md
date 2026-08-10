@@ -99,7 +99,9 @@ push 到 main
    secret `NOTIFY_TO` / `NOTIFY_TOKEN`，宝塔 webhook 格式）时同步发信；
    收件人走 secret 不明文示人；
    `NOTIFY_TO` 支持逗号/分号/空格分隔的多个收件人，逐人各发一封。
-   并发预警触发（24h 内同文件有他人改动）时另发 🟡 黄灯邮件；
+   并发预警触发（24h 内同文件有他人改动）时另发 🟡 黄灯邮件——
+   **黄灯只发本次 push 的 commit 作者**（取 author 邮箱，不含 Co-Author），
+   不惊动全员；**红灯才发 `NOTIFY_TO` 全体收件人**；
    **无预警、全绿都不发邮件**。
    邮件发送统一走 `tools/notify-mail.sh`，发送失败只打 warning 不阻断；
 2. 红灯期间：只允许修复主线的提交，新功能开发本地继续但**不许 push**。
