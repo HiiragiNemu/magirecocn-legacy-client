@@ -73,6 +73,10 @@ public final class CNSafeLink {
         "bilibili.com",     // 视频教程与作者主页
         "b23.tv",           // bilibili 短链，署名区几条都是这个
         "github.com",       // ui_credits 的 github_url
+        // 公测包直链走 gh-proxy 加速 GitHub Release（与 CNMirrors 内置镜像
+        // 同源信任：那里早已把 gh-proxy.org / v4.gh-proxy.org 列为内置线路）。
+        // 云端强制更新 / 署名区的下载链接会落在它上面，拦了就更新不动了。
+        "gh-proxy.org",
         // 爱发电 —— right_pill（右上角可变按钮）的「支持我们」跳这里。
         // 两个域名是同一个站：afdian.com 是现主域，ifdian.net 是备用域，
         // 首页标题都是「爱发电 · 连接创作者与粉丝的会员制平台」。

@@ -51,6 +51,9 @@ public class SafeLinkTest {
         ok("https://（已下线线路）/g/m/releases/download/latest/legacy-client.apk");
         ok("https://（已下线线路）/version_js.json");
         ok("https://github.com/magirecocn-revival-project/legacy-client");
+        // 公测包直链：gh-proxy 加速 fork 的 latest Release（强制更新链接会指向它）
+        ok("https://gh-proxy.org/https://（外部发布渠道）/releases/download/latest/magireco-latest-legacy-client.apk");
+        ok("https://v4.gh-proxy.org/https://（外部发布渠道）/releases/download/latest/magireco-latest-legacy-client.apk");
         // right_pill 的「支持我们」跳爱发电；两个域名是同一个站
         ok("https://afdian.com/a/magireco");
         ok("https://ifdian.net/a/magireco");
