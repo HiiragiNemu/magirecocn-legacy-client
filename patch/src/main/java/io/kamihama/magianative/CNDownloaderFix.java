@@ -210,8 +210,11 @@ public final class CNDownloaderFix {
      * 之前注释里写的「hook 拦下 DownloadSceneLayer::init 后转调
      * startCNDownload」是错的。）
      *
-     * <p>本方法检查 final flag 后启动安装器；内部调用 {@link #runInstaller()}，
-     * 后者内置哨兵保证只执行一次——所以即使 native 侧随后也触发了，也不会重复跑。
+     * <p>本方法先无条件启动客户端版本检查（{@link CNVersionCheck}），再放行到
+     * 分支动作：final flag 存在时接力热更检查，不存在时启动安装器
+     * （{@link #runInstaller()}，内置哨兵保证只执行一次——所以即使 native 侧
+     * 随后也触发了，也不会重复跑）。版本检查放在分支<b>之前</b>是因为最需要
+     * 强更的恰恰是装不上资源的玩家：只在安装完成后才查，他们永远收不到提示。
      */
     public static void triggerInstaller() {
         if (isRestartProcess()) {
@@ -245,8 +248,13 @@ public final class CNDownloaderFix {
                         CNWebProxy.install();
 
                         File finalFlag = new File(FINAL_FLAG);
+                        // 无论资源装没装完，都先查客户端版本：最需要强更的恰恰是
+                        // 装不上资源的玩家（下载器本身有 bug 的那批）——只在安装
+                        // 完成后才查的话，他们永远收不到「去下修复包」的提示。
+                        // 版本检查每条放行路径都会且只会执行一次接力动作。
+                        final Runnable afterPass;
                         if (finalFlag.isFile()) {
-                            CNLog.i(TAG, "triggerInstaller: flag 已存在，无需安装，转入版本与热更检查");
+                            CNLog.i(TAG, "triggerInstaller: flag 已存在，无需安装，版本检查后接力热更");
                             // 热更新页仍展示 15 个槽位，因此先按 marker 还原真实安装状态：
                             // 已装好的 13 个基础包必须是 100% / 完成，而不是 0% / 等待中。
                             syncInstalledUiState();
@@ -255,19 +263,26 @@ public final class CNDownloaderFix {
                             // JNI 叫起 RestClient.checkAndApplyHotUpdate；那条路真机上
                             // 浮层建不出来（详见 CNHotUpdateCheck 的类注释），
                             // 现在改由 Java 侧自己跑，时机与等待条件都可控。
-                            CNVersionCheck.startBeforeHotUpdate();
+                            afterPass = new Runnable() {
+                                @Override public void run() { CNHotUpdateCheck.start(); }
+                            };
                             // 玩家选过「序章」的话无需 Java 侧动作：标记由
                             // native 在引擎首个「进主页」命令上消费（MagiaLegacy
                             // 的 pushSceneTop 闸门），比前端导航可靠得多。
-                            return;
+                        } else {
+                            afterPass = new Runnable() {
+                                @Override public void run() {
+                                    if (CNDebugFlags.isOn(CNDebugFlags.SKIP_INSTALLER)) {
+                                        CNLog.w(TAG, "调试开关 skipInstaller 生效，不跑首次安装"
+                                                   + "（资源没装齐的话游戏会停在这里）");
+                                        return;
+                                    }
+                                    CNLog.i(TAG, "版本检查放行，flag 不存在，启动安装器");
+                                    runInstaller();
+                                }
+                            };
                         }
-                        if (CNDebugFlags.isOn(CNDebugFlags.SKIP_INSTALLER)) {
-                            CNLog.w(TAG, "调试开关 skipInstaller 生效，不跑首次安装"
-                                       + "（资源没装齐的话游戏会停在这里）");
-                            return;
-                        }
-                        CNLog.i(TAG, "triggerInstaller: flag 不存在，由 Java 侧启动安装器");
-                        runInstaller();
+                        CNVersionCheck.start(afterPass);
                     } catch (Throwable t) {
                         CNLog.e(TAG, "triggerInstaller 异常: " + t, t);
                     }

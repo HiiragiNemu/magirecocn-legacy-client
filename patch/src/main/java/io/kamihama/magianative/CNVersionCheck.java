@@ -36,6 +36,10 @@ import java.net.URL;
  * {@link CNDownloaderFix#triggerInstaller} 在确认安装完成标记存在后调用本类，
  * 原先那里直接调 {@code CNHotUpdateCheck.start()}；是否需要更新由本类判断，
  * 不需要时才接力 {@code CNHotUpdateCheck.start()}。
+ *
+ * <p><b>首次安装未完成时同样会先过本检查</b>（接力动作换成启动安装器）——
+ * 最需要强更的恰恰是装不上资源的玩家（下载器本身有 bug 的那批），
+ * 如果只在安装完成后才查版本，他们永远收不到「去下修复包」的提示。
  */
 public final class CNVersionCheck {
 
@@ -54,6 +58,11 @@ public final class CNVersionCheck {
     private static final java.util.concurrent.atomic.AtomicBoolean STARTED =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
+    /** 「不需要更新」时的接力动作；每条放行路径调一次且仅一次。 */
+    private static volatile Runnable afterPass;
+    private static final java.util.concurrent.atomic.AtomicBoolean PROCEEDED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
     private CNVersionCheck() {}
 
     /**
@@ -66,34 +75,48 @@ public final class CNVersionCheck {
     /**
      * 启动版本检查。不抛异常、不阻塞调用方：内部另起守护线程；
      * 重复调用只有第一次生效。
+     *
+     * @param cont 「不需要更新」时要接力的动作（热更检查，或首次安装的安装器）。
+     *             每条放行路径都会执行且只执行一次；唯有「确认云端更高、
+     *             弹出强制更新框」时不执行——那条路模态等玩家抉择。
      */
-    public static void startBeforeHotUpdate() {
+    public static void start(Runnable cont) {
+        afterPass = cont;
         try {
             if (!STARTED.compareAndSet(false, true)) {
                 CNLog.i(TAG, "版本检查已经在跑，忽略重复调用");
                 return;
             }
             if (CNDebugFlags.isOn(CNDebugFlags.SKIP_VERSION_CHECK)) {
-                CNLog.i(TAG, "调试开关 skipVersionCheck 生效，直接接力热更检查");
-                CNHotUpdateCheck.start();
+                CNLog.i(TAG, "调试开关 skipVersionCheck 生效，直接接力");
+                proceed();
                 return;
             }
             Thread t = new Thread("cnv-version-check") {
                 @Override public void run() {
                     try { runInner(); }
                     catch (Throwable th) {
-                        CNLog.e(TAG, "版本检查异常终止（放行，接力热更）: " + th, th);
-                        CNHotUpdateCheck.start();
+                        CNLog.e(TAG, "版本检查异常终止（放行，接力）: " + th, th);
+                        proceed();
                     }
                 }
             };
             t.setDaemon(true);
             t.start();
         } catch (Throwable t) {
-            try { android.util.Log.e(TAG, "版本检查线程起不来，直接接力热更", t); }
+            try { android.util.Log.e(TAG, "版本检查线程起不来，直接接力", t); }
             catch (Throwable ignore) {}
-            CNHotUpdateCheck.start();
+            proceed();
         }
+    }
+
+    /** 执行接力动作，全局最多一次；动作自身抛异常不外溢。 */
+    private static void proceed() {
+        if (!PROCEEDED.compareAndSet(false, true)) return;
+        Runnable r = afterPass;
+        if (r == null) return;
+        try { r.run(); }
+        catch (Throwable t) { CNLog.e(TAG, "接力动作执行异常: " + t, t); }
     }
 
     // ==================================================================
@@ -121,7 +144,7 @@ public final class CNVersionCheck {
         if (local == null) {
             // 读不到本端版本就没法比较——放行，别误伤。
             CNLog.w(TAG, "拿不到本端版本，跳过版本检查");
-            CNHotUpdateCheck.start();
+            proceed();
             return;
         }
 
@@ -130,13 +153,13 @@ public final class CNVersionCheck {
             client = fetchClientSection(CNMirrors.MIRRORS_URL);
         } catch (Throwable t) {
             CNLog.w(TAG, "config.json 拉取/解析失败，按不强制更新放行: " + t);
-            CNHotUpdateCheck.start();
+            proceed();
             return;
         }
         if (client == null) {
             // 线上 config.json 还没有 client 段：旧服务端配置，按不强制更新放行。
             CNLog.i(TAG, "config.json 无 client 段，跳过版本检查");
-            CNHotUpdateCheck.start();
+            proceed();
             return;
         }
 
@@ -145,12 +168,12 @@ public final class CNVersionCheck {
         String note    = client.optString("note", "");
         CNLog.i(TAG, "版本比对：本端 " + local + " / 云端 " + cloud);
         if (cloud.isEmpty() || compareVersion(local, cloud) >= 0) {
-            CNLog.i(TAG, "本端已是最新，接力热更检查");
-            CNHotUpdateCheck.start();
+            CNLog.i(TAG, "本端已是最新，接力后续流程");
+            proceed();
             return;
         }
 
-        // 云端明确更高：强制更新。弹窗模态挂在浮层上，不接력热更——玩家要么去
+        // 云端明确更高：强制更新。弹窗模态挂在浮层上，不接后续流程——玩家要么去
         // 更新，要么退出游戏；下次启动还会再查再拦。
         CNLog.w(TAG, "云端版本更高（" + local + " → " + cloud + "），弹强制更新框");
         if (act != null) {
