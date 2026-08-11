@@ -41,8 +41,8 @@ build_one() {
   export CXX=$TOOLCHAIN/bin/$CXXBIN$API-clang++
   export AR=$TOOLCHAIN/bin/llvm-ar
   export RANLIB=$TOOLCHAIN/bin/llvm-ranlib
-  export CFLAGS="-O2 -fPIC $EXTRA_FLAGS"
-  export CXXFLAGS="-O2 -fPIC $EXTRA_FLAGS"
+  export CFLAGS="-O2 -fPIC -DNDEBUG $EXTRA_FLAGS"
+  export CXXFLAGS="-O2 -fPIC -DNDEBUG $EXTRA_FLAGS"
   export PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig
   export PKG_CONFIG_LIBDIR=$PREFIX/lib/pkgconfig
 

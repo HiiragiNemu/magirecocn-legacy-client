@@ -48,11 +48,20 @@ public final class CNAria2 {
     private static final boolean loaded;
     static {
         boolean ok = false;
-        try {
-            System.loadLibrary("aria2");
-            ok = nativeAvailable();
-        } catch (Throwable t) {
-            CNLog.w(TAG, "libaria2 加载失败，备用引擎不可用: " + t);
+        // v7（32 位）库因 bionic 的 ftello 在 32 位下 API 24 才引入，按 API 24 编译；
+        // 老设备（API 21-23）加载它会崩（动态链接器处理不到符号 → SIGSEGV，且
+        // loadLibrary 的原生崩溃抓不住，不是 Java 异常）。统一门槛 SDK_INT>=24：
+        // 不满足就不加载，isAvailable() 返回 false，下载回退主引擎（已修直连+对齐）。
+        if (Build.VERSION.SDK_INT >= 24) {
+            try {
+                System.loadLibrary("aria2");
+                ok = nativeAvailable();
+            } catch (Throwable t) {
+                CNLog.w(TAG, "libaria2 加载失败，备用引擎不可用: " + t);
+            }
+        } else {
+            CNLog.w(TAG, "libaria2 跳过加载（设备 API " + Build.VERSION.SDK_INT
+                    + " < 24，v7 库需要 API 24），备用引擎不可用，走主引擎");
         }
         loaded = ok;
     }

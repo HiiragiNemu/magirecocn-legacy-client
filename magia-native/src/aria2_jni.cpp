@@ -42,6 +42,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <exception>
 #include <string>
 #include <vector>
 
@@ -95,6 +96,10 @@ Java_io_kamihama_magianative_CNAria2_download(
     static std::atomic<int> g_inUse(0);
     if (g_inUse.exchange(1) != 0) return -4;
 
+    // 整个下载体包 try/catch：C++ 异常（std::bad_alloc 等 OOM）若不拦会穿过
+    // JNI 边界把进程带崩（部分低内存设备闪退）。拦下后释放串行锁返回错误码，
+    // 上层回退主引擎。
+    try {
     // ---- 取参 ----
     std::string url, outDir, outName, ua, referer, proxy;
     if (jurl) {
@@ -168,6 +173,10 @@ Java_io_kamihama_magianative_CNAria2_download(
     }
     aria2::SessionConfig config;
     config.downloadEventCallback = downloadEventCallback;
+    // 不装 aria2 的信号处理器（useSignalHandler 默认 true）：它会把 SIGINT/
+    // SIGTERM/SIGPIPE 换成自己的，宿主 App 的崩溃捕获/线程行为会受干扰，
+    // 部分设备上表现为闪退。下载循环我们自己轮询取消，用不到它的信号处理。
+    config.useSignalHandler = false;
     aria2::Session* session = aria2::sessionNew(aria2::KeyVals(), config);
     if (session == nullptr) {
         aria2::libraryDeinit();
@@ -226,6 +235,15 @@ Java_io_kamihama_magianative_CNAria2_download(
     aria2::libraryDeinit();
     g_inUse.store(0);
     return result;
+    } catch (const std::exception& e) {
+        LOGW("download exception: %s", e.what());
+    } catch (...) {
+        LOGW("download unknown exception");
+    }
+    // 异常路径：session 可能分配了一半，这里不做不可靠的清理；关键是释放
+    // 串行锁 + 返回错误码，让上层回退主引擎，别让异常穿过 JNI 崩进程。
+    g_inUse.store(0);
+    return -3;
 }
 
 }  // extern "C"
