@@ -1714,9 +1714,13 @@ public class CNCNDownloadUI {
         LinearLayout panel = new LinearLayout(act);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(act, 22), dp(act, 20), dp(act, 22), dp(act, 18));
+        // 面板底色与其它弹窗（强更/日志）一致：COLOR_LOG_PANEL_BG（夜间深紫 /
+        // 白天白）。曾误用 COLOR_LOG_PILL——那是胶囊的小块强调色，整块糊上去
+        // 在夜间是亮粉、白天是暗粉，字都看不清（2026-08-11 反馈「颜色诡异」）。
         GradientDrawable panelBg = new GradientDrawable();
         panelBg.setCornerRadius(dp(act, 18));
-        panelBg.setColor(COLOR_LOG_PILL);
+        panelBg.setColor(COLOR_LOG_PANEL_BG);
+        panelBg.setStroke(dp(act, 1), COLOR_CARD_STK);
         panel.setBackground(panelBg);
 
         TextView title = new TextView(act);
