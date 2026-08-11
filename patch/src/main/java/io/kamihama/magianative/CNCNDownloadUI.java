@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.Intent;
+import android.net.Uri;
 import android.widget.Toast;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
@@ -965,6 +967,23 @@ public class CNCNDownloadUI {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        TextView shareBtn = new TextView(act);
+        shareBtn.setText("分享日志");
+        shareBtn.setTextColor(0xFFFFFFFF);
+        shareBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
+        shareBtn.setGravity(Gravity.CENTER);
+        shareBtn.setPadding(dp(act, 14), dp(act, 6), dp(act, 14), dp(act, 6));
+        GradientDrawable shareBg = new GradientDrawable();
+        shareBg.setColor(COLOR_ACCENT2);
+        shareBg.setCornerRadius(dp(act, 8));
+        shareBtn.setBackground(shareBg);
+        shareBtn.setOnClickListener(new ShareLogClick(act));
+        LinearLayout.LayoutParams shareLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        shareLp.leftMargin = dp(act, 8);
+        logHead.addView(shareBtn, shareLp);
+
         TextView closeBtn = new TextView(act);
         closeBtn.setText("关闭");
         closeBtn.setTextColor(0xFFFFFFFF);
@@ -1491,6 +1510,45 @@ public class CNCNDownloadUI {
                 toast(act, "日志已复制到剪贴板（" + CNLog.size() + " 条）");
             } catch (Throwable t) {
                 toast(act, "复制失败：" + t.getMessage());
+            }
+        }
+    }
+
+    /**
+     * 「分享日志」：把日志目录里的启动日志文件合并打成一个 txt，走系统分享。
+     *
+     * <p>复制文本会被 QQ 等截断，也不是人人会用 Termux/adb 取文件——走
+     * {@link Intent#ACTION_SEND} 把打包好的日志文件交出去，任何聊天工具都能转发。
+     * 文件落在 {@code cacheDir/share/}，由自带的只读 provider
+     * {@link CNLogShareProvider}（编译 classpath 没有 androidx，故不用 FileProvider）
+     * 以一次性读权限分享。
+     */
+    private static final class ShareLogClick implements View.OnClickListener {
+        private final Activity act;
+        ShareLogClick(Activity act) { this.act = act; }
+        @Override public void onClick(View v) {
+            try {
+                // 先落盘：剪贴板复制会 flush，分享走文件更要先把攒着的 logcat 行写进
+                // 日志文件，免得导出的包里比实际少一段。
+                CNLog.flushNow();
+                java.io.File out = CNLogBundle.write(act, CNLog.logDirPath());
+                if (out == null) {
+                    toast(act, "没有可分享的日志文件");
+                    return;
+                }
+                // 编译 classpath 没有 androidx，用自带的只读 provider 临时授权
+                // （只开 cacheDir/share/，见 CNLogShareProvider）。
+                Uri uri = Uri.parse("content://" + CNLogShareProvider.AUTHORITY
+                        + "/" + Uri.encode(out.getName()));
+                Intent send = new Intent(Intent.ACTION_SEND);
+                send.setType("text/plain");
+                send.putExtra(Intent.EXTRA_STREAM, uri);
+                send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                act.startActivity(Intent.createChooser(send, "分享日志"));
+                toast(act, "日志已打包：" + out.getName());
+            } catch (Throwable t) {
+                CNLog.w("界面", "分享日志失败", t);
+                toast(act, "分享失败：" + t.getMessage());
             }
         }
     }
@@ -2226,21 +2284,68 @@ public class CNCNDownloadUI {
         msg.setTextColor(COLOR_LOG_PANEL_TEXT);
         msg.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
         msg.setLineSpacing(dp(act, 2), 1f);
-        panel.addView(msg, lpRow(0, dp(act, 18)));
+        // 消息区包进 ScrollView，高度按屏幕物理像素封顶：系统字体调大时 SP 字号
+        // 等比放大、文本变高，不封顶会把面板撑出屏幕、把下方按钮挤出可视区。
+        // ScrollView 只滚动消息，标题与按钮始终留在面板内。
+        ScrollView msgScroll = new ScrollView(act);
+        msgScroll.setVerticalScrollBarEnabled(false);
+        msgScroll.setFillViewport(false);
+        LinearLayout.LayoutParams msgSvLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        msgSvLp.bottomMargin = dp(act, 18);
+        // 高度上限：屏幕物理高度的一半，最多 320dp。拿 StaticLayout 量出的自然高度
+        // 与上限取小——正常字号没有空隙，超大字体才触发滚动、按钮始终留在面板内。
+        android.util.DisplayMetrics dmm = act.getResources().getDisplayMetrics();
+        int screenCap = Math.max(dp(act, 120), Math.min(dp(act, 320),
+                (int) (dmm.heightPixels * 0.5f)));
+        int msgCap = screenCap;
+        if (Build.VERSION.SDK_INT >= 23) {
+            try {
+                android.text.TextPaint tp = new android.text.TextPaint(msg.getPaint());
+                tp.setTextSize(msg.getTextSize());
+                int naturalW = Math.max(1, dp(act, 330) - dp(act, 44));
+                android.text.StaticLayout sl = new android.text.StaticLayout(
+                        msg.getText(), tp, naturalW,
+                        android.text.Layout.Alignment.ALIGN_NORMAL, 1.0f,
+                        dp(act, 2), false);
+                int natural = sl.getHeight() + dp(act, 6);
+                if (natural < msgCap) msgCap = Math.max(natural, dp(act, 40));
+            } catch (Throwable ignore) {}
+        }
+        msgSvLp.height = msgCap;
+        msgScroll.setLayoutParams(msgSvLp);
+        msgScroll.addView(msg, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        panel.addView(msgScroll);
 
+        // 系统字体放大到 1.2x 以上时两个按钮并排会超出面板宽（各带 26dp 内边距、
+        // SP 字号放大），改成竖排避免被面板裁掉、点不到。
+        float fontScale = act.getResources().getConfiguration().fontScale;
         LinearLayout row = new LinearLayout(act);
-        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setOrientation(fontScale >= 1.2f
+                ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.END);
         panel.addView(row, lpRow(0, 0));
 
         TextView quit = dialogButton(act, "退出游戏", COLOR_LOG_PANEL_TEXT, 0x00000000, true);
         TextView go   = dialogButton(act, "前往更新", 0xFFFFFFFF, COLOR_ACCENT, false);
-        LinearLayout.LayoutParams goLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        goLp.leftMargin = dp(act, 10);
-        row.addView(quit, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        row.addView(go, goLp);
+        if (fontScale >= 1.2f) {
+            LinearLayout.LayoutParams qLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            q-hostMargin = dp(act, 10);
+            LinearLayout.LayoutParams gLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            gLp.topMargin = dp(act, 10);
+            row.addView(quit, qLp);
+            row.addView(go, gLp);
+        } else {
+            LinearLayout.LayoutParams goLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            goLp.leftMargin = dp(act, 10);
+            row.addView(quit, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            row.addView(go, goLp);
+        }
 
         quit.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
