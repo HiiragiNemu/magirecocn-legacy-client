@@ -101,9 +101,15 @@ public final class CNChunkedDownload {
     public static final class Result {
         public final long   totalBytes;
         public final String etag;
+        /** 是否已通过 16MB 分块校验（清单存在且全部块指纹匹配）。 */
+        public final boolean chunkVerified;
         Result(long totalBytes, String etag) {
-            this.totalBytes = totalBytes;
-            this.etag       = etag == null ? "" : etag;
+            this(totalBytes, etag, false);
+        }
+        Result(long totalBytes, String etag, boolean chunkVerified) {
+            this.totalBytes    = totalBytes;
+            this.etag          = etag == null ? "" : etag;
+            this.chunkVerified = chunkVerified;
         }
     }
 
@@ -597,7 +603,12 @@ public final class CNChunkedDownload {
         }
         CNLog.i(TAG, "分片下载完成 file=" + target.getName() + " bytes=" + total
                 + " chunks=" + chunks);
-        return new Result(total, probe.etag);
+        // 分块校验覆盖判定：清单存在且分片从文件头开始（offset 0）→ 每个完整块
+        // 都在下载中比对过 → 视为 chunkVerified。断点续传（首块在文件中间）时
+        // 首块可能未校验，此时不标 chunkVerified，让调用方保留整包校验兜底。
+        boolean full = chunkHashes != null && starts != null
+                && starts.length > 0 && starts[0] == 0L;
+        return new Result(total, probe.etag, full);
     }
 
     /**

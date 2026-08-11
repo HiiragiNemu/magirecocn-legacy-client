@@ -880,9 +880,10 @@ public final class CNDownloaderFix {
                             + " chunks=" + chunks + " bytes=" + probe.total + " direct=" + direct);
                     updateSize(index, probe.total);
                     updateProgress(index, 0L, probe.total);
+                    CNChunkedDownload.ChunkHashes hashes = ChunkManifest.forFile(name);
                     CNChunkedDownload.Result r = CNChunkedDownload.download(
                             url, archive, chunks, direct, probe, new ArchiveSink(index),
-                            mirror, name, true);
+                            mirror, name, true, hashes);
                     return new DownloadMetadata(r.totalBytes, r.etag);
                 }
             }

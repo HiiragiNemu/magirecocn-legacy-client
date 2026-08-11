@@ -160,8 +160,9 @@ public final class CNHotUpdate {
                     CNLog.i(TAG, "分片下载 " + dest.getName() + " chunks=" + chunks
                             + " bytes=" + probe.total + " mirror=" + mirror.name);
                     CNCNDownloadUI.setFileSize(index, (float) (probe.total / 1000000.0d));
+                    CNChunkedDownload.ChunkHashes hashes = ChunkManifest.forFile(remoteName);
                     CNChunkedDownload.download(url, dest, chunks, direct, probe,
-                            new HotSink(index), mirror, remoteName, true);
+                            new HotSink(index), mirror, remoteName, true, hashes);
                     return;
                 }
             }
