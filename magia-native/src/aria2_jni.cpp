@@ -11,7 +11,7 @@
 // 本文件**不在 CI 构建**：aria2 的静态库需要整套交叉编译环境（zlib/OpenSSL/
 // c-ares/libxml2 + aria2 本体），只有 hk 机器上有。产出的 libaria2.so 是
 // 预置二进制，提交在 lib/<abi>/libaria2.so，apktool 打包时随 lib/ 进 APK。
-// 构建步骤见 scripts/build-aria2.sh（hk 机器）。
+// 构建步骤见 tools/build-aria2.sh（hk 机器上跑，CI 不构建它）。
 //
 // ## 与 Java 的约定
 //
