@@ -798,9 +798,15 @@ public final class CNChunkedDownload {
         // 分片跳过不完整的首块，从下一个块边界起校验后续完整块——不能因为
         // startByte 未对齐就整片跳过（那等于分块校验失效，坏字节溜进拼装）。
         boolean hsActive = hsChunk > 0;
-        long hsNext = (startByte % hsChunk == 0)
-                ? startByte
-                : ((startByte / hsChunk) + 1) * hsChunk;   // 下一个待校验块起点
+        long hsNext = 0L;   // 下一个待校验块的绝对起点
+        if (hsActive) {
+            // 注意：hsChunk 可能为 0（无分块校验），取模前必须先判 hsActive，
+            // 否则 /0 除零。从块头开始就从本块头校验；从块中段续传的跳过不完整
+            // 首块、从下一个块边界起校验。
+            hsNext = (startByte % hsChunk == 0)
+                    ? startByte
+                    : ((startByte / hsChunk) + 1) * hsChunk;
+        }
         MessageDigest hsDig = null;
         if (hsActive) {
             try {
