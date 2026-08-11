@@ -45,11 +45,15 @@ public class ThrottleTest {
         setMirrors(new ArrayList<CNMirrors.Mirror>(Arrays.asList(fast)));
         check("留在原地", !CNMirrors.worthSwitching(fast, 100*1024), "无备选");
 
-        System.out.println("\n[5] 基准取最大值（不被限速后的低速拉低）");
+        System.out.println("\n[5] 基线用 EMA：不被单次低速拉低，也不锁死历史峰值");
         CNMirrors.Mirror m = mk("m",50);
         CNMirrors.reportBaseline(m, 8L*1024*1024);
+        check("首次取观测值", baseline(m)==8L*1024*1024, (baseline(m)/1024/1024)+"MB/s");
         CNMirrors.reportBaseline(m, 2L*1024*1024);
-        check("基准仍为 8MB/s", baseline(m)==8L*1024*1024, (baseline(m)/1024/1024)+"MB/s");
+        // EMA(α=0.5)：8 与 2 平均 → 5，既不瞬间掉到 2，也不卡死 8
+        check("EMA 收敛到 5MB/s", baseline(m)==5L*1024*1024, (baseline(m)/1024/1024)+"MB/s");
+        CNMirrors.reportBaseline(m, 5L*1024*1024);
+        check("持续观测收敛到 5MB/s", baseline(m)==5L*1024*1024, (baseline(m)/1024/1024)+"MB/s");
 
         System.out.println("\n[6] 被限速的线路降级到末尾但不被禁用");
         setBaseline(slow, 1*1024*1024);

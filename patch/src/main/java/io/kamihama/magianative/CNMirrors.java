@@ -1013,10 +1013,20 @@ public final class CNMirrors {
     /** 记录一次基准速度观测。 */
     public static void reportBaseline(Mirror m, long bps) {
         if (m == null || bps <= 0) return;
-        if (bps > m.baselineBps) {
+        if (m.baselineBps <= 0) {
             m.baselineBps = bps;
             CNLog.i(TAG, "线路基准速度 " + m.name + " = " + (bps / 1024) + " KB/s");
+            return;
         }
+        // 指数移动平均（EMA）：不用历史峰值永久锁死基线。峰值会让一条线
+        // 首轮突发测到的高速被永久记为基线，之后正常速度永远低于它、被
+        // 误判「限速」反复换线（2026-08-11 cn_base_03 事故：基线 113010
+        // kbps 来自瞬时峰值，稳定 2-3MB/s 被判低于 60% 阈值）。
+        // EMA 平滑系数取 0.5：单次偶发低速不瞬间拉低基线，但持续观测会
+        // 让基线收敛到该线真实可达速度，既防误伤也防永久虚高。
+        long ema = (m.baselineBps + bps) / 2;
+        m.baselineBps = ema > 0 ? ema : bps;
+        CNLog.i(TAG, "线路基准速度(EMA) " + m.name + " = " + (m.baselineBps / 1024) + " KB/s");
     }
 
     /** 判定为限速：降低其优先级一段时间，但不禁用（它仍然可用，只是不优先）。 */
