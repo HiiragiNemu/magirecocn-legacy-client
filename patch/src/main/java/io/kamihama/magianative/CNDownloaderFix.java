@@ -800,7 +800,11 @@ public final class CNDownloaderFix {
             }
 
             CNMirrors.Mirror mirror = CNMirrors.pick(attempt);
-            boolean direct = attempt % 2 == 0;
+            // 资源下载一律直连（Proxy.NO_PROXY）：系统代理会劫持 CDN 大文件传输，
+            // 损坏分片拼出的 zip 导致「完工校验失败」。曾按 attempt 奇偶交替走代理，
+            // 玩家开着 VPN/抓包工具时奇数尝试必被劫持（cn_base_03 连败四次的根因），
+            // 且只在 CNHotUpdate 修过、这里漏了。mirrors 与 proxy 是两套机制。
+            boolean direct = true;
 
             setActive(index, true);
             CNCNDownloadUI.setDownloadSpeed(index, 0.0f);

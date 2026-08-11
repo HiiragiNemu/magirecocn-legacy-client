@@ -69,7 +69,10 @@ public final class CNChunkedDownload {
     private static final int READ_TIMEOUT_MS    = 30000;
 
     /** 断点元数据的格式标识；不匹配一律视作不可用。 */
-    private static final String META_MAGIC = "CNVPROG3";
+    // v4：头部多记一列 chunkSize，供续传时核对分片布局是否与分块清单一致。
+    // 旧版（v3）未记录 chunkSize，其分片边界未必对齐清单块——直接作废重下，
+    // 避免旧断点把进度按错位边界映射过去写坏文件。
+    private static final String META_MAGIC = "CNVPROG4";
 
     private CNChunkedDownload() {}
 
@@ -153,6 +156,8 @@ public final class CNChunkedDownload {
     private static final class Resume {
         long   total;
         int    chunks;
+        /** 分片长。分块校验开启时必须是清单块长（16MB 对齐），否则分段哈希失效。 */
+        long   chunkSize;
         String etag = "";
         /** 写下这份断点时所用的完整 URL；用于判断本次是否换了线路。 */
         String url  = "";
@@ -313,8 +318,11 @@ public final class CNChunkedDownload {
 
         // ── 判定断点是否可信 ──
         // 分块校验开启时，分片数 = 块数（ceil(total/chunkSize)），分片边界严格
-        // 对齐 16MB 块。这样每个分片恰好覆盖整数个完整块，段内顺序哈希才能和
-        // 清单指纹对齐（分片从块头开始 → 下完一块立刻可校验）。
+        // 对齐清单的 16MB 块（chunkSize 直接用清单值，不能拿 ceil(total/chunks)
+        // 近似——近似值不等于块长，startByte % hsChunk 会非零，分块哈希整段跳过，
+        // 只剩 chunk 0 在真校验，异源/损坏字节静默溜进拼装。2026-08-11 三连败
+        // 的帮凶之一）。分片从块头开始 → 每片恰好覆盖整数个完整块，段内顺序
+        // 哈希才能和清单指纹对齐，下完一块立刻可校验。
         int    chunks = requestedChunks < 1 ? 1 : requestedChunks;
         if (chunkHashes != null && chunkHashes.chunkSize > 0 && total > 0) {
             long nBlk = (total + chunkHashes.chunkSize - 1) / chunkHashes.chunkSize;
@@ -333,6 +341,13 @@ public final class CNChunkedDownload {
         Resume st = readResume(meta);
         if (st != null) {
             String why = resumeRejectReason(st, total, probe.etag, url, part);
+            // 分块校验开启时，断点布局必须与清单块布局一致（块数与块长都要对上），
+            // 否则分段哈希对不上会整段静默失效。旧版（v3，未记 chunkSize 或分片
+            // 未对齐清单块）留下的断点一律作废重下。
+            if (why == null && chunkHashes != null
+                    && (st.chunks != chunks || st.chunkSize != chunkHashes.chunkSize)) {
+                why = "分块布局与清单不符";
+            }
             if (why == null) {
                 // 沿用元数据里的分片布局，保证换线也能接着下
                 chunks  = st.chunks;
@@ -347,7 +362,11 @@ public final class CNChunkedDownload {
             }
         }
 
-        final long chunkSize = (total + chunks - 1) / chunks;
+        // 分片长：有清单就用清单块长（保证边界对齐、哈希可用）；无清单退化为
+        // 把 total 均分到 requestedChunks 的近似切分（纯续传场景，不校验）。
+        final long chunkSize = chunkHashes != null
+                ? chunkHashes.chunkSize
+                : (total + chunks - 1) / chunks;
         final long[] starts  = new long[chunks];
         final long[] ends    = new long[chunks];
         final AtomicLongArray done = new AtomicLongArray(chunks);
@@ -365,7 +384,7 @@ public final class CNChunkedDownload {
         } finally {
             try { raf.close(); } catch (Throwable ignore) {}
         }
-        saveMeta(meta, total, probe.etag, url, done);
+        saveMeta(meta, total, probe.etag, url, done, chunkSize);
 
         final AtomicLong totalDone = new AtomicLong(0L);
         for (int i = 0; i < chunks; i++) totalDone.addAndGet(done.get(i));
@@ -553,7 +572,7 @@ public final class CNChunkedDownload {
         pool.shutdownNow();
         try { pool.awaitTermination(5, TimeUnit.SECONDS); } catch (InterruptedException ignore) {}
         // 无论成败都落盘：保住这一轮已经下到的进度
-        saveMeta(meta, total, probe.etag, url, done);
+        saveMeta(meta, total, probe.etag, url, done, chunkSize);
         // 本轮尝试到此封口：之后醒来的掉队线程（阻塞在 read 里、30 秒读超时
         // 才返回的那种）不得再写元数据。它的 finally 里那份 done 快照对应的是
         // 旧一轮，而下一轮可能已经把断点/临时文件清掉重来——迟到的写会把
@@ -775,10 +794,13 @@ public final class CNChunkedDownload {
         // MessageDigest，到块尾比对清单指纹。断点续传时分片从块内某处继续，
         // 首块不完整无法比对 → 跳过首块，只校验后续完整块。
         final long hsChunk = chunkHashes != null ? chunkHashes.chunkSize : 0L;
-        // 只有从块头开始的分片才启用逐块校验；从块中段续传的分片跳过首块
-        // （它不完整），但下一块起如果恰好整块对齐仍可校验。
-        boolean hsActive = hsChunk > 0 && (startByte % hsChunk == 0);
-        long hsNext = hsActive ? startByte : 0L;   // 下一个待校验块的绝对起点
+        // 逐块校验：从块头开始的分片（全新下载）从本块头校验；从块中段续传的
+        // 分片跳过不完整的首块，从下一个块边界起校验后续完整块——不能因为
+        // startByte 未对齐就整片跳过（那等于分块校验失效，坏字节溜进拼装）。
+        boolean hsActive = hsChunk > 0;
+        long hsNext = (startByte % hsChunk == 0)
+                ? startByte
+                : ((startByte / hsChunk) + 1) * hsChunk;   // 下一个待校验块起点
         MessageDigest hsDig = null;
         if (hsActive) {
             try {
@@ -866,7 +888,7 @@ public final class CNChunkedDownload {
                     }
                 }
                 if (now - lastSaveNs > 2_000_000_000L) {
-                    saveMeta(meta, total, etag, url, done);
+                    saveMeta(meta, total, etag, url, done, hsChunk);
                     lastSaveNs = now;
                 }
                 if (cur >= chunkLen) break;
@@ -902,7 +924,7 @@ public final class CNChunkedDownload {
             // 掉队线程拿着的是旧快照，此时写元数据可能把已清理/已翻篇的
             // 进度盖回去——主线程在封口前已做过权威落盘，这里跳过不丢进度。
             if (live.get()) {
-                saveMeta(meta, total, etag, url, done);
+                saveMeta(meta, total, etag, url, done, hsChunk);
             }
             if (raf != null) { try { raf.close(); } catch (Throwable ignore) {} }
             if (is  != null) { try { is.close();  } catch (Throwable ignore) {} }
@@ -921,14 +943,15 @@ public final class CNChunkedDownload {
 
     private static synchronized void saveMeta(File meta, long total,
                                               String etag, String url,
-                                              AtomicLongArray done) {
+                                              AtomicLongArray done, long chunkSize) {
         File tmp = new File(meta.getAbsolutePath() + ".tmp");
         Writer w = null;
         try {
             w = new OutputStreamWriter(new FileOutputStream(tmp, false), "UTF-8");
             StringBuilder sb = new StringBuilder();
             sb.append(META_MAGIC).append('\n');
-            sb.append(total).append(' ').append(done.length()).append('\n');
+            sb.append(total).append(' ').append(done.length())
+              .append(' ').append(chunkSize).append('\n');
             sb.append(sanitize(etag)).append('\n');
             sb.append(sanitize(url)).append('\n');
             for (int i = 0; i < done.length(); i++) sb.append(done.get(i)).append('\n');
@@ -963,7 +986,10 @@ public final class CNChunkedDownload {
             Resume st = new Resume();
             st.total  = Long.parseLong(tk[0]);
             st.chunks = Integer.parseInt(tk[1]);
-            if (st.total <= 0 || st.chunks < 1 || st.chunks > 64) return null;
+            // 分片数上限对齐 download() 的分块校验上限（1024）。旧版 64 会让
+            // 16MB 对齐布局下的大文件（如 cn_base_03=85 块）永远无法续传。
+            if (st.total <= 0 || st.chunks < 1 || st.chunks > 1024) return null;
+            st.chunkSize = tk.length >= 3 ? Long.parseLong(tk[2]) : 0L;
 
             String e = br.readLine();
             st.etag = e == null ? "" : e.trim();
