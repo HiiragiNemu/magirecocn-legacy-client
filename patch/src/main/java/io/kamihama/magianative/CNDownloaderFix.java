@@ -508,6 +508,17 @@ public final class CNDownloaderFix {
         }
         int lineCount = CNMirrors.healthy().size();
         CNLog.i(TAG, "mirrors ready count=" + lineCount + " loaded=" + CNMirrors.isLoaded());
+        // 备用引擎状态一目了然：可用性 / 云端强制 / 本地开关 / 最终是否启用。
+        // 之前只在失败/成功时打一行，看不出「到底开没开」。
+        boolean a2Avail = CNAria2.isAvailable();
+        boolean a2Cloud = CNMirrors.forceAria2();
+        boolean a2Local = CNDebugFlags.isOn(CNDebugFlags.USE_ARIA2);
+        CNLog.i(TAG, "备用引擎 aria2: 可用=" + a2Avail
+                + " 云端强制=" + a2Cloud + " 本地开关=" + a2Local
+                + " → " + ((a2Cloud || a2Local)
+                        ? (a2Avail ? "启用（下载优先走 aria2，失败回退主引擎）"
+                                   : "已要求但 libaria2 加载失败，只能走主引擎")
+                        : "未启用（走主引擎）"));
         CNCNDownloadUI.updateSimple("开始下载",
                 "可用线路 " + lineCount + " 条，单文件分片 " + CNMirrors.chunks() + " 线程", 0);
 
@@ -928,6 +939,8 @@ public final class CNDownloaderFix {
             };
 
             String url = mirror.urlFor(name);
+            CNLog.i(TAG, "aria2 备用引擎下载 file=" + name + " url=" + url
+                    + " 连接数=16");
             int rv = CNAria2.download(url, FILE_ROOT, name,
                     CNUserAgent.get(), null, null, 16, null, progress, cancel);
             if (rv != CNAria2.OK || !archive.isFile() || archive.length() <= 0) {
