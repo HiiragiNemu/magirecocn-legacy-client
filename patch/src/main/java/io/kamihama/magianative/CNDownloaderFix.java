@@ -769,6 +769,30 @@ public final class CNDownloaderFix {
             return true;
         }
 
+        // 离线包注入兜底：玩家手动导入的官方 zip（分块清单已校验）优先，
+        // 跳过网络下载，直接解压 + 写标记。
+        if (CNOfflineImport.hasOffline(name)) {
+            File offline = new File(CNOfflineImport.offlineDir(), name);
+            try {
+                synchronized (EXTRACT_LOCK) {
+                    extractChecked(offline, new File(INSTALL_ROOT));
+                }
+                writeMarker(marker, name, canonicalUrl,
+                        new DownloadMetadata(offline.length(), "offline"));
+                if (!offline.delete() && offline.exists()) {
+                    CNLog.w(TAG, "Offline archive retained: " + offline);
+                }
+                markDone(index);
+                CNLog.i(TAG, "offline-installed file=" + name
+                        + " bytes=" + offline.length());
+                return true;
+            } catch (Throwable t) {
+                CNLog.e(TAG, "offline-extract-failed file=" + name + ": " + t, t);
+                // 解压失败：删掉离线包，回退网络下载
+                deleteQuietly(offline);
+            }
+        }
+
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             if (Thread.currentThread().isInterrupted()) {
                 markFailed(index);

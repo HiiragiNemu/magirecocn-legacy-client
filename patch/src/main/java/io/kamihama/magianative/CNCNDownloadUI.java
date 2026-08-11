@@ -440,6 +440,7 @@ public class CNCNDownloadUI {
     private static GradientDrawable logPillBg;
     private static TextView vBgmPill;
     private static TextView vTutorialPill;
+    private static TextView vOfflinePill;
     /** 教程询问的模态框。非空即表示正在显示，用于防重入。 */
     private static FrameLayout tutorialModal;
     /** 「网络慢，要不要继续等」询问框。非空即表示正在显示，用于防重入。 */
@@ -818,6 +819,21 @@ public class CNCNDownloadUI {
         tutLp.leftMargin = dp(act, 8);
         topLeft.addView(vTutorialPill, tutLp);
         styleTutorialPill(act);
+
+        // 离线包胶囊：玩家从网盘下载好官方 zip 后导入，跳过网络下载（兜底）。
+        vOfflinePill = new TextView(act);
+        vOfflinePill.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
+        vOfflinePill.setTypeface(vOfflinePill.getTypeface(), Typeface.BOLD);
+        vOfflinePill.setGravity(Gravity.CENTER);
+        vOfflinePill.setPadding(dp(act, 12), dp(act, 6), dp(act, 12), dp(act, 6));
+        vOfflinePill.setText("📦  导入离线包");
+        vOfflinePill.setOnClickListener(new OfflinePillClick(act));
+        LinearLayout.LayoutParams offLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        offLp.leftMargin = dp(act, 8);
+        topLeft.addView(vOfflinePill, offLp);
+        styleOfflinePill(act);
 
         // ── 第 3 层：右上角主题切换胶囊 ──
         themeChipBg = new GradientDrawable();
@@ -1539,6 +1555,24 @@ public class CNCNDownloadUI {
         @Override public void onClick(View v) { showTutorialDialog(act, null); }
     }
 
+    /** 「导入离线包」胶囊点击：弹文件选择对话框。 */
+    private static final class OfflinePillClick implements View.OnClickListener {
+        private final Activity act;
+        OfflinePillClick(Activity act) { this.act = act; }
+        @Override public void onClick(View v) { showOfflineDialog(act); }
+    }
+
+    /** 离线包胶囊样式（常驻，实心强调色）。 */
+    private static void styleOfflinePill(Activity act) {
+        TextView p = vOfflinePill;
+        if (p == null) return;
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(act, 20));
+        bg.setColor(COLOR_ACCENT2);
+        p.setBackground(bg);
+        p.setTextColor(0xFFFFFFFF);
+    }
+
     /** 按标记状态刷新教程胶囊。已就位＝实心强调色，未就位＝空心。与 BGM 胶囊同语义。 */
     private static void styleTutorialPill(Activity act) {
         TextView p = vTutorialPill;
@@ -1588,6 +1622,123 @@ public class CNCNDownloadUI {
                 try { onDone.run(); } catch (Throwable ignore) {}
             }
         }
+    }
+
+    /**
+     * 弹出离线包导入对话框：列出全部 15 个可导入文件，玩家选一个触发文件选择器。
+     * 与教程框同一套自绘模态框样式（系统 AlertDialog 在引擎 Activity 上格格不入）。
+     */
+    private static void showOfflineDialog(final Activity act) {
+        final FrameLayout host = overlayView;
+        if (act == null || host == null) {
+            CNLog.w(TAG, "浮层不在，无法显示离线导入");
+            toast(act, "下载界面未就绪");
+            return;
+        }
+        act.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                try { buildOfflineDialog(act, host); }
+                catch (Throwable t) {
+                    CNLog.e(TAG, "构建离线导入框失败", t);
+                    toast(act, "无法打开离线导入");
+                }
+            }
+        });
+    }
+
+    /** 在 UI 线程上构建离线导入对话框。 */
+    private static void buildOfflineDialog(final Activity act, FrameLayout host) {
+        final FrameLayout modal = new FrameLayout(act);
+        modal.setBackgroundColor(COLOR_DIM);
+        modal.setClickable(true);
+        modal.setFocusable(true);
+
+        LinearLayout panel = new LinearLayout(act);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(act, 22), dp(act, 20), dp(act, 22), dp(act, 18));
+        GradientDrawable panelBg = new GradientDrawable();
+        panelBg.setCornerRadius(dp(act, 18));
+        panelBg.setColor(COLOR_LOG_PILL);
+        panel.setBackground(panelBg);
+
+        TextView title = new TextView(act);
+        title.setText("导入离线包");
+        title.setTextColor(COLOR_TEXT);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f);
+        title.setTypeface(title.getTypeface(), Typeface.BOLD);
+        panel.addView(title, lpWrap());
+
+        TextView hint = new TextView(act);
+        hint.setText("从网盘下载好的官方 zip（文件名匹配下方列表）。导入后该文件跳过网络下载。");
+        hint.setTextColor(COLOR_SUB);
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
+        LinearLayout.LayoutParams hintLp = lpWrap();
+        hintLp.topMargin = dp(act, 8);
+        panel.addView(hint, hintLp);
+
+        // 15 个文件按钮
+        String[] names = CNCNDownloadUI.FILE_NAMES;
+        for (int i = 0; i < names.length; i++) {
+            final String name = names[i];
+            TextView row = new TextView(act);
+            String state = CNOfflineImport.hasOffline(name) ? " ✓已导入" : "";
+            row.setText(name + state);
+            row.setTextColor(COLOR_LINK);
+            row.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
+            row.setPadding(dp(act, 4), dp(act, 6), dp(act, 4), dp(act, 6));
+            row.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) { importOne(act, host, modal, name); }
+            });
+            panel.addView(row, lpWrap());
+        }
+
+        TextView close = new TextView(act);
+        close.setText("关闭");
+        close.setTextColor(COLOR_SUB);
+        close.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
+        close.setPadding(dp(act, 4), dp(act, 6), dp(act, 4), dp(act, 6));
+        close.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                try { host.removeView(modal); } catch (Throwable ignore) {}
+            }
+        });
+        LinearLayout.LayoutParams closeLp = lpWrap();
+        closeLp.topMargin = dp(act, 8);
+        close.setGravity(Gravity.END);
+        panel.addView(close, closeLp);
+
+        FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        panelLp.gravity = Gravity.CENTER;
+        modal.addView(panel, panelLp);
+        host.addView(modal, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    /** 触发导入某文件；成功后关闭对话框。 */
+    private static void importOne(final Activity act, final FrameLayout host,
+                                  final FrameLayout modal, final String name) {
+        boolean started = CNOfflineImportActivity.requestImport(act, name,
+                new CNOfflineImportActivity.Callback() {
+                    @Override public void onResult(boolean ok, String fn, String err) {
+                        if (ok) {
+                            toast(act, "已导入 " + fn);
+                            // 关闭对话框
+                            try { host.removeView(modal); } catch (Throwable ignore) {}
+                            if (vOfflinePill != null) {
+                                vOfflinePill.setText("📦  导入离线包 ✓");
+                            }
+                        } else {
+                            toast(act, (err == null ? "导入失败" : err));
+                        }
+                    }
+                });
+        if (!started) toast(act, "无法启动文件选择");
+    }
+
+    private static LinearLayout.LayoutParams lpWrap() {
+        return new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
     }
 
     /**
