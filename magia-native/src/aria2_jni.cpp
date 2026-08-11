@@ -148,12 +148,12 @@ Java_io_kamihama_magianative_CNAria2_download(
     }
 
     // ---- 取消与进度的方法 id（每次查找，成本可忽略） ----
-    jclass atomicCls   = env->FindClass("java/util/concurrent/atomic/AtomicBoolean");
-    jmethodID atomicGet = atomicCls ? env->GetMethodID(atomicCls, "get", "()Z") : nullptr;
+    jclass cancelCls   = env->FindClass("io/kamihama/magianative/CNAria2$Cancel");
+    jmethodID cancelIs = cancelCls ? env->GetMethodID(cancelCls, "isCancelled", "()Z") : nullptr;
     jclass progressCls = env->FindClass("io/kamihama/magianative/CNAria2$Progress");
     jmethodID progressOn = progressCls
             ? env->GetMethodID(progressCls, "onProgress", "(JJ)V") : nullptr;
-    if (atomicCls)   env->DeleteLocalRef(atomicCls);
+    if (cancelCls)   env->DeleteLocalRef(cancelCls);
     if (progressCls) env->DeleteLocalRef(progressCls);
 
     std::vector<std::string> uris;
@@ -191,9 +191,9 @@ Java_io_kamihama_magianative_CNAria2_download(
         int r = aria2::run(session, aria2::RUN_ONCE);
         if (r != 1) { runResult = r; break; }
 
-        // 取消：轮询 AtomicBoolean
-        if (jcancel && atomicGet
-                && env->CallBooleanMethod(jcancel, atomicGet)) {
+        // 取消：轮询 Cancel.isCancelled()
+        if (jcancel && cancelIs
+                && env->CallBooleanMethod(jcancel, cancelIs)) {
             aria2::removeDownload(session, gid, true);
             result = -1;
             break;

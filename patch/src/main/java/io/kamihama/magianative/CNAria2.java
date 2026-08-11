@@ -1,7 +1,5 @@
 package io.kamihama.magianative;
 
-import java.util.concurrent.atomic.AtomicBoolean;
-
 /**
  * libaria2（aria2 库）的 JNI 包装——备用下载引擎。
  *
@@ -21,6 +19,11 @@ public final class CNAria2 {
     /** 下载进度回调（下载线程上触发；total=0 表示未知）。 */
     public interface Progress {
         void onProgress(long done, long total);
+    }
+
+    /** 取消回调：原生 run 循环轮询，返回 true 即取消下载。 */
+    public interface Cancel {
+        boolean isCancelled();
     }
 
     /** 成功。 */
@@ -77,10 +80,10 @@ public final class CNAria2 {
      * @param maxConns 每服务器连接数（1-16；越界自动忽略）
      * @param proxy    代理 URL（可为 null 表示直连）
      * @param progress 进度回调（可为 null）
-     * @param cancel   置 true 即取消（可为 null）
+     * @param cancel   取消回调（可为 null；isCancelled() 返回 true 即取消）
      * @return {@link #OK} 或错误码
      */
     public static native int download(String url, String outDir, String outName,
             String ua, String referer, String[] headers, int maxConns,
-            String proxy, Progress progress, AtomicBoolean cancel);
+            String proxy, Progress progress, Cancel cancel);
 }

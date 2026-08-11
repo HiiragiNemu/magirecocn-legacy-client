@@ -918,10 +918,11 @@ public final class CNDownloaderFix {
                     }
                 }
             };
-            // 取消：原生 run 循环轮询 AtomicBoolean.get()。这里把 get() 绑到线程
-            // 中断——下载被外部 interrupt 即触发 aria2 取消。
-            AtomicBoolean cancel = new AtomicBoolean(false) {
-                @Override public boolean get() {
+            // 取消：原生 run 循环轮询 Cancel.isCancelled()。这里绑到线程中断——
+            // 下载被外部 interrupt 即触发 aria2 取消（AtomicBoolean.get() 是
+            // final 不能覆写，所以用接口而非子类）。
+            CNAria2.Cancel cancel = new CNAria2.Cancel() {
+                @Override public boolean isCancelled() {
                     return Thread.currentThread().isInterrupted();
                 }
             };
