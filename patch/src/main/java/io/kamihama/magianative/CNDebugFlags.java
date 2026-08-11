@@ -117,6 +117,10 @@ public final class CNDebugFlags {
     /** 热更事务应用到一半失败。验 `CNHotUpdateTx` 的整体回滚与 journal 恢复。 */
     public static final String FAIL_HOTUPDATE_APPLY= "failHotUpdateApply";
 
+    // ── useXxx：可选引擎 ──────────────────────────────────────────────
+    /** 资源下载改用 libaria2 备用引擎（默认关）。开=先走 aria2，失败回退主引擎。 */
+    public static final String USE_ARIA2 = "useAria2";
+
     /** 注入延迟的时长。比 6 秒总闸长一截，保证一定触发询问框。 */
     public static final long SLOW_INJECT_MS = 9000L;
 
@@ -135,6 +139,7 @@ public final class CNDebugFlags {
         { SLOW_VERSION_QUERY,   "【注入】版本查询拖慢 " + SLOW_INJECT_MS + "ms（验慢网询问框）" },
         { FAIL_DOWNLOAD,        "【注入】资源/热更下载一律失败" },
         { FAIL_HOTUPDATE_APPLY, "【注入】热更事务应用到一半失败（验回滚）" },
+        { USE_ARIA2,            "资源下载改用 libaria2 备用引擎（默认关）" },
     };
 
     /** 只在首次查询时扫一遍目录：这些开关会在热路径上被问到，不能每次都碰磁盘。 */

@@ -498,6 +498,14 @@ public final class CNDownloaderFix {
         // 后台拿到新表后 pick() 会自然切到新配置。
         CNCNDownloadUI.updateSimple("准备中", "正在准备下载线路…", 0);
         CNMirrors.ensureLoadedAsync();
+        // 云端 settings.force_aria2 要 config.json 到位才生效：给加载最多 3 秒。
+        // 有界 + fail-open——服务器挂了就按「未强制」用内置引擎开跑，不阻塞安装。
+        for (int i = 0; i < 30 && !CNMirrors.isLoaded(); i++) {
+            try { Thread.sleep(100L); } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
         int lineCount = CNMirrors.healthy().size();
         CNLog.i(TAG, "mirrors ready count=" + lineCount + " loaded=" + CNMirrors.isLoaded());
         CNCNDownloadUI.updateSimple("开始下载",
@@ -793,6 +801,20 @@ public final class CNDownloaderFix {
             }
         }
 
+        // 备用引擎（默认关）：cloud=config.json 的 settings.force_aria2 强制启用；
+        // 本地=debug 开关 CNDebugFlags.useAria2。任一打开就先用首选线路的 aria2
+        // 拉一把，装好即返回；失败清掉 aria2 的半截产物（目标文件 + .aria2
+        // 控制文件），走下面的主引擎整份重下。
+        boolean aria2Forced = CNMirrors.forceAria2()
+                || CNDebugFlags.isOn(CNDebugFlags.USE_ARIA2);
+        if (aria2Forced && CNAria2.isAvailable()
+                && tryAria2Download(CNMirrors.pick(1), name, archive, index,
+                                    marker, canonicalUrl)) {
+            return true;
+        }
+        deleteQuietly(archive);
+        deleteQuietly(new File(archive.getPath() + ".aria2"));
+
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             if (Thread.currentThread().isInterrupted()) {
                 markFailed(index);
@@ -873,6 +895,66 @@ public final class CNDownloaderFix {
         markFailed(index);
         CNLog.e(TAG, "retry-exhausted file=" + name);
         return false;
+    }
+
+    /**
+     * 用 libaria2 备用引擎下载并安装单个文件（debug 开关 useAria2 打开时才走）。
+     *
+     * <p>单文件同步下载：首选线路直连，aria2 多连接 + 断点续传。装好即解压 +
+     * 写标记 + 返回 true；任何失败（下载错、结构校验不过、异常）返回 false，
+     * 调用方清掉半截产物后回退主引擎。进度接到既有 UI，取消绑线程中断。
+     */
+    private static boolean tryAria2Download(CNMirrors.Mirror mirror, String name,
+                                            File archive, int index, File marker,
+                                            String canonicalUrl) {
+        try {
+            final int idx = index;
+            CNAria2.Progress progress = new CNAria2.Progress() {
+                @Override public void onProgress(long done, long total) {
+                    LAST_PROGRESS_NS.set(idx, System.nanoTime());
+                    if (total > 0) {
+                        updateSize(idx, total);
+                        updateProgress(idx, done, total);
+                    }
+                }
+            };
+            // 取消：原生 run 循环轮询 AtomicBoolean.get()。这里把 get() 绑到线程
+            // 中断——下载被外部 interrupt 即触发 aria2 取消。
+            AtomicBoolean cancel = new AtomicBoolean(false) {
+                @Override public boolean get() {
+                    return Thread.currentThread().isInterrupted();
+                }
+            };
+
+            String url = mirror.urlFor(name);
+            int rv = CNAria2.download(url, FILE_ROOT, name,
+                    CNUserAgent.get(), null, null, 16, null, progress, cancel);
+            if (rv != CNAria2.OK || !archive.isFile() || archive.length() <= 0) {
+                CNLog.w(TAG, "aria2 备用引擎失败 code=" + rv + "，回退主引擎: " + name);
+                return false;
+            }
+            // zip 结构预检：aria2 下到 100% 不代表拼装合法
+            try (ZipFile zf = new ZipFile(archive)) {
+                if (!zf.entries().hasMoreElements()) throw new ZipException("empty zip");
+            } catch (Throwable t) {
+                CNLog.w(TAG, "aria2 下载的包结构非法，回退主引擎: " + name + " : " + t);
+                return false;
+            }
+            synchronized (EXTRACT_LOCK) {
+                extractChecked(archive, new File(INSTALL_ROOT));
+            }
+            writeMarker(marker, name, canonicalUrl,
+                    new DownloadMetadata(archive.length(), "aria2"));
+            if (!archive.delete() && archive.exists()) {
+                CNLog.w(TAG, "Installed archive retained: " + archive);
+            }
+            markDone(index);
+            CNLog.i(TAG, "aria2 备用引擎装好 file=" + name + " bytes=" + archive.length());
+            return true;
+        } catch (Throwable t) {
+            CNLog.w(TAG, "aria2 备用引擎异常，回退主引擎: " + name + " : " + t);
+            return false;
+        }
     }
 
     // ==================================================================

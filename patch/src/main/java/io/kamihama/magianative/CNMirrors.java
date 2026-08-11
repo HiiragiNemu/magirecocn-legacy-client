@@ -130,6 +130,9 @@ public final class CNMirrors {
     // 分片跨镜像并发：开（true）时同一文件的分片按轮转分给多条健康镜像，
     // 吞吐随线路数叠加；关（false）保持旧的「一次尝试只用一条线路」行为
     private static volatile boolean cfgChunksAcrossMirrors = false;
+    // 强制启用 aria2 备用引擎（settings.force_aria2，默认关）：云端控制——
+    // 自带引擎修不动时服务器一键切备用引擎，不用等客户端发版。
+    private static volatile boolean cfgForceAria2 = false;
     // 首选镜像竞速：加载线路表后让前两条已启用镜像并发拉取同一探测文件的前
     // 若干字节，按**实际吞吐**定胜负（首字节延迟低≠下载快）。
     // 配置顺序写死的首选不一定是用户网络下最快的那条
@@ -159,6 +162,9 @@ public final class CNMirrors {
     public static int  minSpeedKbps()    { return cfgMinSpeedKbps; }
     /** 分片是否跨镜像并发（settings.chunks_across_mirrors，默认关）。 */
     public static boolean chunksAcrossMirrors() { return cfgChunksAcrossMirrors; }
+
+    /** 是否强制启用 aria2 备用引擎（settings.force_aria2，默认关）。 */
+    public static boolean forceAria2() { return cfgForceAria2; }
 
     /** 一条线路。 */
     public static final class Mirror {
@@ -907,6 +913,7 @@ public final class CNMirrors {
             cfgSwitchGainPct    = clampInt(st.optInt("switch_gain_pct",      cfgSwitchGainPct),   100, 1000);
             cfgThrottleDemoteMs = Math.max(1000L, st.optLong("throttle_demote_ms", cfgThrottleDemoteMs));
             cfgChunksAcrossMirrors = st.optBoolean("chunks_across_mirrors", cfgChunksAcrossMirrors);
+            cfgForceAria2 = st.optBoolean("force_aria2", cfgForceAria2);
             cfgMirrorRace = st.optBoolean("mirror_race", cfgMirrorRace);
         }
 
