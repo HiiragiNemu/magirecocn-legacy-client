@@ -1,5 +1,7 @@
 package io.kamihama.magianative;
 
+import android.os.Build;
+
 /**
  * libaria2（aria2 库）的 JNI 包装——备用下载引擎。
  *
