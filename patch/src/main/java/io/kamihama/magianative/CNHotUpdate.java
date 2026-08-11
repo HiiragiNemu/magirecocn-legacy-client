@@ -104,7 +104,12 @@ public final class CNHotUpdate {
                 return false;
             }
             CNMirrors.Mirror mirror = CNMirrors.pick(attempt);
-            boolean direct = attempt % 2 == 0;
+            // 资源下载一律直连（Proxy.NO_PROXY）：不再按 attempt 奇偶交替走系统代理。
+            // 玩家开着 VPN/抓包工具时，系统代理会劫持 CDN 大文件传输、损坏分片
+            // 拼出的 zip（2026-08-11 cn_base_03 事故：attempt 走代理的下载全部
+            // 完工校验失败）。镜像与游戏 API 代理是两套东西——WebView 游戏 API
+            // 仍走 proxy/web_mode 那层，与这里的下载无关。
+            boolean direct = true;
             String  tryUrl = mirror.urlFor(remoteName);
             CNCNDownloadUI.setDownloadSpeed(index, 0.0f);
 
