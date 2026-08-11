@@ -15,6 +15,7 @@ import java.io.Writer;
 import java.net.HttpURLConnection;
 import java.net.Proxy;
 import java.net.URL;
+import java.security.MessageDigest;
 import java.util.Locale;
 import java.util.zip.ZipFile;
 import java.util.concurrent.CountDownLatch;
@@ -103,6 +104,42 @@ public final class CNChunkedDownload {
         Result(long totalBytes, String etag) {
             this.totalBytes = totalBytes;
             this.etag       = etag == null ? "" : etag;
+        }
+    }
+
+    /**
+     * 16MB 分块哈希清单（下载中逐块校验用）。
+     *
+     * <p>由发布侧 {@code scripts/build_chunk_manifest.py} 生成、随 manifest.json
+     * 分发。每个文件切成固定 {@code chunkSize} 的块，最后一块不足 {@code chunkSize}。
+     * 客户端分片线程在下载中段内顺序喂 MessageDigest，每到块边界比对清单指纹，
+     * 坏块只重下那 16MB（不再整包重来）。
+     *
+     * <p>{@code chunks[i]} 是第 i 块（offset {@code i*chunkSize} 起）的 md5。
+     * 块边界严格按文件 offset 对齐（16MB 整数倍），与分片数/分片边界无关——
+     * 断点续传时从任意 offset 继续，子块哈希也能对齐。
+     */
+    public static final class ChunkHashes {
+        public final long    chunkSize;
+        public final long    total;        // 清单声明的文件总长，供一致性校验
+        public final String[] chunks;      // 每块 md5（小写 hex）
+        public final int      count;
+
+        public ChunkHashes(long chunkSize, long total, java.util.List<String> chunks) {
+            this.chunkSize = chunkSize;
+            this.total     = total;
+            this.chunks    = chunks == null ? new String[0]
+                                           : chunks.toArray(new String[0]);
+            this.count     = this.chunks.length;
+        }
+
+        /** 返回覆盖 {@code [start,end)} 的子块哈希；无清单时返回 null。 */
+        public String hashFor(long start, long end) {
+            if (count == 0 || chunkSize <= 0) return null;
+            int b0 = (int) (start / chunkSize);
+            int b1 = (int) ((end - 1) / chunkSize);
+            if (b0 < 0 || b1 >= count || b0 != b1) return null;  // 跨块区间无法用单指纹
+            return chunks[b0];
         }
     }
 
@@ -240,6 +277,22 @@ public final class CNChunkedDownload {
                                   CNMirrors.Mirror mirror, String remoteName,
                                   boolean verifyZip)
             throws IOException {
+        return download(url, target, requestedChunks, direct, probe, sink,
+                mirror, remoteName, verifyZip, null);
+    }
+
+    /**
+     * 同上，再额外传入 16MB 分块哈希清单（可为 null 表示不启用分块校验）。
+     *
+     * <p>{@code chunkHashes} 启用后，分片线程下载中段内顺序喂 MessageDigest，
+     * 每到块边界比对清单指纹，坏块只重下那 16MB。段内天然有序，不需要调度员；
+     * 块边界按文件 offset（16MB 整数倍）对齐，断点续传也能对齐。
+     */
+    public static Result download(String url, File target, int requestedChunks,
+                                  boolean direct, Probe probe, Sink sink,
+                                  CNMirrors.Mirror mirror, String remoteName,
+                                  boolean verifyZip, ChunkHashes chunkHashes)
+            throws IOException {
 
         final long total = probe.total;
         if (total <= 0) throw new IOException("未知的文件长度");
@@ -253,7 +306,23 @@ public final class CNChunkedDownload {
         }
 
         // ── 判定断点是否可信 ──
-        int    chunks   = requestedChunks < 1 ? 1 : requestedChunks;
+        // 分块校验开启时，分片数 = 块数（ceil(total/chunkSize)），分片边界严格
+        // 对齐 16MB 块。这样每个分片恰好覆盖整数个完整块，段内顺序哈希才能和
+        // 清单指纹对齐（分片从块头开始 → 下完一块立刻可校验）。
+        int    chunks = requestedChunks < 1 ? 1 : requestedChunks;
+        if (chunkHashes != null && chunkHashes.chunkSize > 0 && total > 0) {
+            long nBlk = (total + chunkHashes.chunkSize - 1) / chunkHashes.chunkSize;
+            chunks = (int) Math.min(nBlk, 1024L);   // 上限保护，防止超大文件碎片化
+            if (chunks < 1) chunks = 1;
+            if (chunkHashes.count != chunks) {
+                // 清单块数与文件大小不匹配（发布侧/客户端版本不一致），
+                // 视为清单不可信，退回无分块校验路径。
+                CNLog.w(TAG, "分块清单块数不符 " + chunkHashes.count
+                        + " != " + chunks + "，跳过分块校验");
+                chunkHashes = null;
+                chunks = requestedChunks < 1 ? 1 : requestedChunks;
+            }
+        }
         long[] resumed  = null;
         Resume st = readResume(meta);
         if (st != null) {
@@ -368,6 +437,7 @@ public final class CNChunkedDownload {
             task.lastMoveNs = lastMoveNs;   task.abort = abort;
             task.rangeIgnored = rangeIgnored;
             task.live = live;
+            task.chunkHashes = chunkHashes;
             task.sink = sink;       task.firstErr = firstErr;
             task.latch = latch;
             pool.submit(task);
@@ -600,6 +670,7 @@ public final class CNChunkedDownload {
         AtomicBoolean rangeIgnored;
         AtomicBoolean live;
         Sink   sink;
+        ChunkHashes chunkHashes;
         AtomicReference<IOException> firstErr;
         CountDownLatch latch;
 
@@ -607,7 +678,7 @@ public final class CNChunkedDownload {
             try {
                 oneChunk(url, part, start, end, done, idx, direct, meta, total, etag,
                          totalDone, windowStart, windowBytes, lastMoveNs, abort,
-                         rangeIgnored, live, sink);
+                         rangeIgnored, live, sink, chunkHashes);
             } catch (Throwable t) {
                 firstErr.compareAndSet(null,
                         t instanceof IOException ? (IOException) t
@@ -628,7 +699,7 @@ public final class CNChunkedDownload {
                                  AtomicLong lastMoveNs,
                                  AtomicBoolean abort, AtomicBoolean rangeIgnored,
                                  AtomicBoolean live,
-                                 Sink sink) throws IOException {
+                                 Sink sink, ChunkHashes chunkHashes) throws IOException {
 
         final long chunkLen = chunkEnd - chunkStart + 1;
         long already = done.get(idx);
@@ -688,6 +759,25 @@ public final class CNChunkedDownload {
 
         InputStream is = null;
         RandomAccessFile raf = null;
+        // 16MB 分块校验：分片边界已对齐 16MB 块（download 里按块数定分片数），
+        // 全新下载时每个分片从块头开始、覆盖整数个完整块 → 段内顺序喂
+        // MessageDigest，到块尾比对清单指纹。断点续传时分片从块内某处继续，
+        // 首块不完整无法比对 → 跳过首块，只校验后续完整块。
+        final long hsChunk = chunkHashes != null ? chunkHashes.chunkSize : 0L;
+        // 只有从块头开始的分片才启用逐块校验；从块中段续传的分片跳过首块
+        // （它不完整），但下一块起如果恰好整块对齐仍可校验。
+        boolean hsActive = hsChunk > 0 && (startByte % hsChunk == 0);
+        long hsNext = hsActive ? startByte : 0L;   // 下一个待校验块的绝对起点
+        MessageDigest hsDig = null;
+        if (hsActive) {
+            try {
+                hsDig = MessageDigest.getInstance("MD5");
+            } catch (java.security.NoSuchAlgorithmException e) {
+                CNLog.w(TAG, "MD5 不可用，跳过分块校验: " + e);
+                hsDig = null;
+                hsActive = false;
+            }
+        }
         try {
             is  = new BufferedInputStream(c.getInputStream(), 1 << 16);
             raf = new RandomAccessFile(part, "rw");
@@ -711,6 +801,48 @@ public final class CNChunkedDownload {
                 long now = System.nanoTime();
                 lastMoveNs.set(now);
 
+                // 分块哈希累积：从 hsNext（当前待校验块起点）起喂，到块尾比对。
+                // hsNext 初始=startByte（分片起点），startByte 对齐块头时即块头。
+                if (hsActive && hsDig != null) {
+                    long wOff = startByte + cur - wr;   // 本次写入前绝对位置
+                    int  fed = 0;
+                    while (fed < wr) {
+                        long absPos = wOff + fed;
+                        if (absPos < hsNext) {
+                            // 落在当前块之外（不应发生：分片对齐块边界），丢弃
+                            long skip = Math.min((long) (wr - fed), hsNext - absPos);
+                            fed += (int) skip;
+                            continue;
+                        }
+                        long blkEnd = hsNext + hsChunk;           // 当前块绝对终点
+                        long want   = blkEnd - absPos;
+                        int  take   = (int) Math.min((long) (wr - fed), want);
+                        if (take <= 0) break;
+                        hsDig.update(buf, fed, take);
+                        fed += take;
+                        long nowAbs = absPos + take;
+                        if (nowAbs >= blkEnd) {
+                            // 完整块结束 → 校验。若块跨分片尾（nowAbs==chunkEnd），
+                            // 该块已整块下载完，可校验。
+                            String gotBlk = hexMd5(hsDig);
+                            String expBlk = chunkHashes.hashFor(hsNext, blkEnd);
+                            if (expBlk == null || !expBlk.equalsIgnoreCase(gotBlk)) {
+                                throw new CNDownloaderFix.ResetRequired(
+                                        "分块校验失败 offset=" + hsNext
+                                        + " 期望=" + (expBlk == null ? "?" : expBlk)
+                                        + " 实得=" + gotBlk);
+                            }
+                            hsNext = blkEnd;
+                            try {
+                                hsDig = MessageDigest.getInstance("MD5");
+                            } catch (java.security.NoSuchAlgorithmException e) {
+                                hsActive = false;
+                                hsDig = null;
+                            }
+                        }
+                    }
+                }
+
                 long wb = windowBytes.addAndGet(wr);
                 long ws = windowStart.get();
                 long elapsedMs = (now - ws) / 1_000_000L;
@@ -733,6 +865,26 @@ public final class CNChunkedDownload {
             long finished = done.get(idx);
             if (finished < chunkLen) {
                 throw new IOException("分片 " + idx + " 短读: " + finished + " / " + chunkLen);
+            }
+            // 分片结束：校验最后一个不完整块（最后一块不足 chunkSize，或分片在
+            // 块内结束）。仅当分片起点对齐块头（hsActive）才可能凑出完整块；
+            // 若 hsNext 仍指向一个块头且本分片覆盖了它到分片尾（可能是文件尾的
+            // 最后一块），校验它。
+            if (hsActive && hsDig != null && hsNext < total) {
+                long blkEnd = Math.min(hsNext + hsChunk, total);
+                // 只有当前块被本分片完整覆盖到 blkEnd 时才校验；否则（分片在
+                // 块内结束，块剩余部分由其他分片/下次续传补）不校验。
+                long partEnd = startByte + chunkLen;
+                if (partEnd >= blkEnd && blkEnd > hsNext) {
+                    String gotTail = hexMd5(hsDig);
+                    String expTail = chunkHashes.hashFor(hsNext, blkEnd);
+                    if (expTail == null || !expTail.equalsIgnoreCase(gotTail)) {
+                        throw new CNDownloaderFix.ResetRequired(
+                                "分块校验失败 offset=" + hsNext
+                                + " 期望=" + (expTail == null ? "?" : expTail)
+                                + " 实得=" + gotTail);
+                    }
+                }
             }
         } finally {
             // 只在本轮尝试存活期间落盘。尝试封口（live=false）后才醒来的
@@ -841,6 +993,13 @@ public final class CNChunkedDownload {
         } catch (Throwable t) {
             return false;
         }
+    }
+
+    /** MessageDigest 摘要 → 小写 hex。 */
+    private static String hexMd5(MessageDigest md) {
+        StringBuilder sb = new StringBuilder(32);
+        for (byte b : md.digest()) sb.append(String.format(Locale.US, "%02x", b & 0xff));
+        return sb.toString();
     }
 
     private static void promote(File part, File target) throws IOException {
