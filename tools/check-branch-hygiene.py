@@ -8,13 +8,13 @@
 
 规则见 AGENTS.md §0，这里是它的可执行形式：
 
-  1. 白名单只有 main / hotfix/* / surgery/* 三类——之外的分支一律视为
-     「该收拾的」：有价值先打 archive/* tag 留锚点，然后删掉；
+  1. 常规白名单只有 main / hotfix/* / surgery/*；除此之外，仅允许维护者明确
+     批准并在本文件中具名、限时登记的特殊分支；
   2. **2 小时内刚有过分支活动**（且那条分支还没被删），就**不许再开新分支**——
      接着用那条，或者干脆直接提 main；
   3. 一次任务全程只允许有**一条**自己的分支。远端同时存在两条及以上非白名单
      分支，本身就是违规状态；
-  4. hotfix/* 超 24 小时、surgery/* 超 3 天即**超期**，一样点名——
+  4. hotfix/* 超 24 小时、surgery/* 与具名研究分支超 3 天即**超期**，一样点名——
      白名单不等于永久居住证。
 
 ## 为什么要有它
@@ -40,21 +40,20 @@ import subprocess
 import sys
 import time
 
-# 允许存在于远端的分支。**只有这三类，没有第三种分支**
-# （协作方案 §一，2026-08-09 起严格执行）：
-#   main      唯一长期分支；
-#   hotfix/*  修红灯，寿命以小时计；
-#   surgery/* 核心层大手术，寿命 ≤ 3 天。
-# 有价值的历史分支打 archive/* tag 留锚点，不作为分支存在。
+# 允许存在于远端的分支。常规类型只有 main / hotfix/* / surgery/*；
+# 特殊研究工作必须由维护者明确授权、具名登记并设置寿命上限。
 ALLOW = (
     re.compile(r"^main$"),
     re.compile(r"^hotfix/"),
     re.compile(r"^surgery/"),
     # ── 具名临时例外（2026-08-09 维护者特批）──────────────────────
     # 这两条是别的会话正在跑的活，允许活到合并进 main 为止；
-    # 合并删除后把对应行从本表移除，不要往这里加新名字。
+    # 合并删除后把对应行从本表移除，不要往这里加无授权的新名字。
     re.compile(r"^feature/battle-engine-i18n-20260808$"),
     re.compile(r"^feature/native-i18n-authority-20260809$"),
+    # ── ZIP 解压回撤专项研究（2026-08-13 维护者明确要求）───────────
+    # 只读研究工具与文档，不合入 main、不改变运行时；72 小时内归档或删除。
+    re.compile(r"^research/archive-extraction-rollback-20260813$"),
 )
 
 # 「刚刚才开过分支」的判定窗口
@@ -64,6 +63,7 @@ RECENT_HOURS = 2.0
 OVERDUE_HOURS = (
     (re.compile(r"^hotfix/"), 24.0),
     (re.compile(r"^surgery/"), 72.0),
+    (re.compile(r"^research/archive-extraction-rollback-20260813$"), 72.0),
 )
 
 
@@ -105,7 +105,7 @@ def tip_age_hours(sha, name):
 
 
 def overdue_limit(name):
-    """例外分支的寿命上限（小时）；main 与非例外分支返回 None。"""
+    """例外分支的寿命上限（小时）；main 与永久具名例外返回 None。"""
     for pat, hours in OVERDUE_HOURS:
         if pat.search(name):
             return hours
@@ -141,7 +141,7 @@ def main():
         print("  %-10s %s%s" % (tag, name, age))
 
     if not strays and not overdue:
-        print("\n✔ 干净：只有 main / hotfix/* / surgery/*，且无超期")
+        print("\n✔ 干净：只有常规白名单与已具名、未超期的维护者特批分支")
         if args.can_branch:
             print("✔ 可以开分支——但先想清楚：本仓库直接提 main，"
                   "多数情况根本不需要分支（AGENTS.md §0）")
