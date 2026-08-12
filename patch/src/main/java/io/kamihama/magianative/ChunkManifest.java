@@ -35,40 +35,18 @@ public final class ChunkManifest {
     /** 清单文件名，放在镜像根目录（与资源文件同前缀）。 */
     public static final String MANIFEST_NAME = "manifest.json";
 
-    private static volatile Map<String, CNChunkedDownload.ChunkHashes> cached;
-    private static volatile boolean attempted = false;
-
     private ChunkManifest() {}
 
     /**
      * 取某文件的分块清单；拉取失败/未找到返回 null（调用方退化为无分块校验）。
-     * 结果缓存：一次启动内只拉一次。
-     */
-    public static CNChunkedDownload.ChunkHashes forFile(String fileName) {
-        Map<String, CNChunkedDownload.ChunkHashes> m = cached;
-        if (m == null && !attempted) {
-            m = fetchOnce();
-        }
-        return m == null ? null : m.get(fileName);
-    }
-
-    /**
-     * 作废缓存：分块校验失败时调用，下次 {@link #forFile} 重新拉取。
      *
-     * <p>热更文件重新发布后，本进程里缓存的旧块哈希会和新文件对不上（manifest
-     * 是「一次启动只拉一次」）。校验失败说明要么传输损坏、要么清单过期——前者
-     * 重拉无妨，后者重拉即治（2026-08-12 真机日志：cn_scenario_update.zip 重发后
-     * 客户端旧清单反复 ResetRequired）。
+     * <p><b>时效性第一，不做会话缓存</b>：每次调用都重新拉取 manifest——热更文件
+     * 重新发布后清单会跟着换，拿旧哈希验新文件必然失败（2026-08-12 真机日志：
+     * cn_scenario_update.zip 重发后旧清单反复 ResetRequired 导致进度回退）。
+     * synchronized 只为避免并行开下时同一瞬间打十几条镜像，串行拉取；拉完即弃，
+     * 下一次调用重新拉。
      */
-    public static synchronized void invalidate() {
-        cached = null;
-        attempted = false;
-    }
-
-    /** 多线路重试拉取并解析一次（全失败静默，退化为无清单）。 */
-    private static synchronized Map<String, CNChunkedDownload.ChunkHashes> fetchOnce() {
-        if (cached != null || attempted) return cached;
-        attempted = true;
+    public static synchronized CNChunkedDownload.ChunkHashes forFile(String fileName) {
         if (!CNMirrors.isLoaded()) CNMirrors.ensureLoadedAsync();
         Throwable last = null;
         for (CNMirrors.Mirror m : CNMirrors.healthy()) {
@@ -77,8 +55,7 @@ public final class ChunkManifest {
                         fetchDirect(m.urlFor(MANIFEST_NAME));
                 if (map != null) {
                     CNLog.i(TAG, "manifest 已加载: " + map.size() + " 个文件, 线路=" + m.name);
-                    cached = map;
-                    return map;
+                    return map.get(fileName);
                 }
             } catch (Throwable t) {
                 CNLog.w(TAG, "manifest 线路失败（只换线，不计冷却） mirror=" + m.name + ": " + t);

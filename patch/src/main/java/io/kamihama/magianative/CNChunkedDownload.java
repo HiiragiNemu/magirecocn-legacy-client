@@ -865,8 +865,6 @@ public final class CNChunkedDownload {
                             String gotBlk = hexMd5(hsDig);
                             String expBlk = chunkHashes.hashFor(hsNext, blkEnd);
                             if (expBlk == null || !expBlk.equalsIgnoreCase(gotBlk)) {
-                                // 清单可能已随热更重发过期：作废缓存，重试时重新拉
-                                ChunkManifest.invalidate();
                                 throw new CNDownloaderFix.ResetRequired(
                                         "分块校验失败 offset=" + hsNext
                                         + " 期望=" + (expBlk == null ? "?" : expBlk)
@@ -919,8 +917,6 @@ public final class CNChunkedDownload {
                     String gotTail = hexMd5(hsDig);
                     String expTail = chunkHashes.hashFor(hsNext, blkEnd);
                     if (expTail == null || !expTail.equalsIgnoreCase(gotTail)) {
-                        // 清单可能已随热更重发过期：作废缓存，重试时重新拉
-                        ChunkManifest.invalidate();
                         throw new CNDownloaderFix.ResetRequired(
                                 "分块校验失败 offset=" + hsNext
                                 + " 期望=" + (expTail == null ? "?" : expTail)
