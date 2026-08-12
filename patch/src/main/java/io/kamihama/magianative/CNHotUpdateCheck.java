@@ -7,7 +7,6 @@ import android.content.SharedPreferences;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -302,13 +301,13 @@ public final class CNHotUpdateCheck {
             // 版本号并行查：串行时首条线路的慢/挂会在两个包上各吃一轮超时
             final java.util.concurrent.ExecutorService pool =
                     java.util.concurrent.Executors.newFixedThreadPool(2);
-            java.util.concurrent.Future<VerMeta> fScenario =
-                    pool.submit(new java.util.concurrent.Callable<VerMeta>() {
-                        @Override public VerMeta call() { return fetchMetaSafe(PACKAGES[0]); }});
-            java.util.concurrent.Future<VerMeta> fJs =
-                    pool.submit(new java.util.concurrent.Callable<VerMeta>() {
-                        @Override public VerMeta call() { return fetchMetaSafe(PACKAGES[1]); }});
-            final VerMeta[] metas = new VerMeta[2];
+            java.util.concurrent.Future<CNHotUpdateValidate.VerMeta> fScenario =
+                    pool.submit(new java.util.concurrent.Callable<CNHotUpdateValidate.VerMeta>() {
+                        @Override public CNHotUpdateValidate.VerMeta call() { return fetchMetaSafe(PACKAGES[0]); }});
+            java.util.concurrent.Future<CNHotUpdateValidate.VerMeta> fJs =
+                    pool.submit(new java.util.concurrent.Callable<CNHotUpdateValidate.VerMeta>() {
+                        @Override public CNHotUpdateValidate.VerMeta call() { return fetchMetaSafe(PACKAGES[1]); }});
+            final CNHotUpdateValidate.VerMeta[] metas = new CNHotUpdateValidate.VerMeta[2];
             // 预算用完不再替玩家决定，而是问他（见 askVersionSlow 的说明）。
             final long startedMs = android.os.SystemClock.uptimeMillis();
             long budgetMs = VERSION_QUERY_DEADLINE_MS;
@@ -359,7 +358,7 @@ public final class CNHotUpdateCheck {
             boolean anyNeed = false;
             for (int i = 0; i < PACKAGES.length; i++) {
                 Pkg pkg = PACKAGES[i];
-                VerMeta meta = metas[i];
+                CNHotUpdateValidate.VerMeta meta = metas[i];
                 if (meta == null) {
                     anyFailure = true;
                     // 版本查不到 ≠ 已是最新。原先这里直接 continue，槽位就沿用
@@ -408,7 +407,7 @@ public final class CNHotUpdateCheck {
                     if (!needs[i]) continue;
                     final Pkg pkg = PACKAGES[i];
                     final File tmp = tmpFiles[i];
-                    final VerMeta meta = metas[i];
+                    final CNHotUpdateValidate.VerMeta meta = metas[i];
                     final int idx = i;
                     dls.put(idx, dlPool.submit(new java.util.concurrent.Callable<Boolean>() {
                         @Override public Boolean call() {
@@ -426,7 +425,7 @@ public final class CNHotUpdateCheck {
                 int i = e.getKey();
                 Pkg pkg = PACKAGES[i];
                 File tmp = tmpFiles[i];
-                VerMeta meta = metas[i];
+                CNHotUpdateValidate.VerMeta meta = metas[i];
                 int local = locals[i];
                 boolean ok;
                 try {
@@ -442,7 +441,7 @@ public final class CNHotUpdateCheck {
                             pkg.label + "：下载失败，已跳过（" + processedCount + "/" + needCount + "）", 0);
                     continue;
                 }
-                String bad = verifyZip(tmp, meta);
+                String bad = CNHotUpdateValidate.verifyZip(tmp, meta);
                 if (bad != null) {
                     anyFailure = true;
                     CNLog.e(TAG, "[" + pkg.label + "] 校验失败（" + bad + "），丢弃本项");
@@ -513,7 +512,7 @@ public final class CNHotUpdateCheck {
      */
 
     /** 供并行预取版本号用：失败返回 null 并提示，调用方按「跳过本包」处理。 */
-    private static VerMeta fetchMetaSafe(Pkg pkg) {
+    private static CNHotUpdateValidate.VerMeta fetchMetaSafe(Pkg pkg) {
         try {
             // 注入点放在真正发请求之前：拖慢的是「查询这件事」，
             // 不是某一条线路——这样总闸与询问框的行为才和真实慢网一致。
@@ -529,32 +528,6 @@ public final class CNHotUpdateCheck {
                     pkg.label + "：版本查询失败，跳过本项", 0);
             return null;
         }
-    }
-
-    /** 下载完工校验：size 对得上、md5 对得上才放行；返回 null 表示通过。 */
-    private static String verifyZip(File f, VerMeta meta) {
-        if (meta == null || f == null || !f.isFile()) return "文件缺失";
-        if (meta.size > 0 && f.length() != meta.size) {
-            return "大小不符 " + f.length() + " != " + meta.size;
-        }
-        if (meta.md5 != null && meta.md5.length() > 0) {
-            try {
-                java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
-                InputStream in = new BufferedInputStream(new FileInputStream(f), 65536);
-                byte[] buf = new byte[65536];
-                int n;
-                while ((n = in.read(buf)) >= 0) md.update(buf, 0, n);
-                in.close();
-                StringBuilder sb = new StringBuilder(32);
-                for (byte b : md.digest()) sb.append(String.format("%02x", b & 0xff));
-                if (!meta.md5.equalsIgnoreCase(sb.toString())) {
-                    return "md5 不符";
-                }
-            } catch (Throwable t) {
-                return "md5 计算失败: " + t;
-            }
-        }
-        return null;
     }
 
     // ==================================================================
@@ -646,20 +619,14 @@ public final class CNHotUpdateCheck {
      * 文件名后逐条线路试，失败记冷却；全部失败才抛出（调用方按「跳过本次
      * 热更」处理，不会卡住启动）。
      */
-    /** 版本 json 的三元组：version 用来比对，size/md5 用于下载后的完工校验。 */
-    private static final class VerMeta {
-        final int    version;
-        final long   size;
-        final String md5;
-        VerMeta(int v, long s, String m) { version = v; size = s; md5 = m; }
-    }
+    /** 版本 json 的三元组（见 {@link CNHotUpdateValidate.VerMeta}）。 */
 
     /**
      * 取版本 json（含 size/md5）。<b>走换线</b>：与资源文件同一套线路。
      * 从规范地址取出文件名后逐条线路试，失败记冷却；全部失败才抛出
      * （调用方按「跳过本次热更」处理，不会卡住启动）。
      */
-    private static VerMeta fetchMeta(String url) throws Exception {
+    private static CNHotUpdateValidate.VerMeta fetchMeta(String url) throws Exception {
         // 规范前缀，不是兜底线路——换兜底线路时这里必须岿然不动，
         // 否则剥不出文件名，拼出来的地址每条线路都会 404。
         String base = CNMirrors.CANONICAL_BASE;
@@ -693,7 +660,7 @@ public final class CNHotUpdateCheck {
     }
 
     /** 从单条线路直取版本 json 并解析 version/size/md5。 */
-    private static VerMeta fetchMetaDirect(String url) throws Exception {
+    private static CNHotUpdateValidate.VerMeta fetchMetaDirect(String url) throws Exception {
         // 尊重 Android 系统代理。未配置系统代理时 openConnection() 本身就是直连；
         // 显式 Proxy.NO_PROXY 会绕开 MuMu/Clash/mitm 链，正是本次真机长超时的来源。
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
@@ -712,7 +679,7 @@ public final class CNHotUpdateCheck {
             while ((n = in.read(buf)) >= 0 && bos.size() < 65536) bos.write(buf, 0, n);
             in.close();
             JSONObject o = new JSONObject(bos.toString("UTF-8"));
-            return new VerMeta(o.getInt("version"),
+            return new CNHotUpdateValidate.VerMeta(o.getInt("version"),
                              o.optLong("size", -1L),
                              o.optString("md5", ""));
         } finally {

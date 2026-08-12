@@ -1,4 +1,5 @@
 import io.kamihama.magianative.CNChunkedDownload;
+import io.kamihama.magianative.CNArchiveValidate;
 import io.kamihama.magianative.CNOfflineImport;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -10,7 +11,7 @@ import java.util.List;
 /**
  * 离线包注入的核心校验逻辑测试（不涉及 Android Context）。
  *
- * 验证 CNOfflineImport.verifyChunks：
+ * 验证 CNArchiveValidate.verifyChunks：
  *  - 正确文件（按 16MB 块算的指纹与清单一致）→ 通过
  *  - 内容被篡改 → 拒收
  *  - 大小不符 → 拒收
@@ -57,25 +58,25 @@ public class OfflineImportTest {
 
         System.out.println("\n[1] 正确文件 → 校验通过");
         File f1 = writeTmp("offline_ok", data);
-        check("verifyChunks 通过", CNOfflineImport.verifyChunks(f1, good), "40MB 3块");
+        check("verifyChunks 通过", CNArchiveValidate.verifyChunks(f1, good), "40MB 3块");
 
         System.out.println("\n[2] 内容篡改（改中间一块）→ 拒收");
         byte[] badData = data.clone();
         badData[20 * 1024 * 1024] ^= 0x5A;   // 翻转中间块一个字节
         File f2 = writeTmp("offline_bad", badData);
-        check("verifyChunks 拒收", !CNOfflineImport.verifyChunks(f2, good), "篡改中间块");
+        check("verifyChunks 拒收", !CNArchiveValidate.verifyChunks(f2, good), "篡改中间块");
 
         System.out.println("\n[3] 大小不符 → 拒收");
         byte[] shortData = Arrays.copyOf(data, data.length - 100);
         File f3 = writeTmp("offline_short", shortData);
         // 清单 total 与文件长度不一致：importZip 会在 verifyChunks 前拦下
         // （这里直接测 verifyChunks 对长度不匹配的行为：循环结束 off != total）
-        check("长度不符拒收", !CNOfflineImport.verifyChunks(f3, good), "短 100 字节");
+        check("长度不符拒收", !CNArchiveValidate.verifyChunks(f3, good), "短 100 字节");
 
         System.out.println("\n[4] 空清单 → 拒收");
         CNChunkedDownload.ChunkHashes none =
                 new CNChunkedDownload.ChunkHashes(chunk, data.length, null);
-        check("空清单拒收", !CNOfflineImport.verifyChunks(f1, none), "count=0");
+        check("空清单拒收", !CNArchiveValidate.verifyChunks(f1, none), "count=0");
 
         System.out.println("\n通过 " + pass + " / 失败 " + fail);
         if (fail > 0) System.exit(1);

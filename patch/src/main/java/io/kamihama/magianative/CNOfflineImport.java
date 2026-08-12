@@ -4,12 +4,9 @@ import android.content.Context;
 import android.net.Uri;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.security.MessageDigest;
-import java.util.Locale;
 
 /**
  * 离线包注入：把玩家手动选择的官方 zip 拷到私有离线区，用 16MB 分块清单
@@ -48,11 +45,29 @@ public final class CNOfflineImport {
     }
 
     /**
+     * 是否为热更包文件名（cn_scenario_update.zip / cn_js_update.zip）。
+     *
+     * <p>热更走版本 json（version_*.json 的 size/md5）通道，不该离线导入；
+     * 离线导入只管 13 个基础资源包。列表/导入入口用这个方法把热更两包排除。
+     */
+    public static boolean isHotUpdateFile(String name) {
+        if (name == null) return false;
+        return "cn_scenario_update.zip".equals(name)
+                || "cn_js_update.zip".equals(name);
+    }
+
+    /**
      * 拷贝玩家选中的 URI 到离线区并做分块校验。成功返回导入后的文件（已校验），
      * 失败返回 null 并清理临时文件。
      */
     public static File importZip(Context ctx, Uri uri, String fileName) throws Exception {
         if (ctx == null || uri == null || fileName == null) return null;
+        // 热更包（cn_scenario_update.zip / cn_js_update.zip）走版本 json 通道，
+        // 不该离线导入——直接拒收（见 isHotUpdateFile）。
+        if (isHotUpdateFile(fileName)) {
+            CNLog.w(TAG, "热更包不支持离线导入: " + fileName);
+            return null;
+        }
         File dir = offlineDir();
         File target = new File(dir, fileName);
 
@@ -80,7 +95,7 @@ public final class CNOfflineImport {
             deleteQuietly(tmp);
             return null;
         }
-        if (!verifyChunks(tmp, hashes)) {
+        if (!CNArchiveValidate.verifyChunks(tmp, hashes)) {
             CNLog.w(TAG, "离线包分块校验失败: " + fileName);
             deleteQuietly(tmp);
             return null;
@@ -97,40 +112,6 @@ public final class CNOfflineImport {
         }
         CNLog.i(TAG, "离线包导入成功: " + fileName + " (" + target.length() + " 字节)");
         return target;
-    }
-
-    /** 按 16MB 块逐块算 md5，与清单比对。公开供测试复用。 */
-    public static boolean verifyChunks(File f, CNChunkedDownload.ChunkHashes h) throws Exception {
-        MessageDigest md = MessageDigest.getInstance("MD5");
-        long off = 0L;
-        try (InputStream in = new FileInputStream(f)) {
-            byte[] buf = new byte[(int) h.chunkSize];
-            int n;
-            while ((n = in.read(buf)) >= 0 && off < h.total) {
-                if (n == 0) continue;
-                int want = (int) Math.min((long) n, h.chunkSize);
-                md.update(buf, 0, want);
-                long blkEnd = off + want;
-                if (blkEnd == off + h.chunkSize || blkEnd == h.total) {
-                    String got = hex(md.digest());
-                    String exp = h.hashFor(off, blkEnd);
-                    if (exp == null || !exp.equalsIgnoreCase(got)) {
-                        CNLog.w(TAG, "块校验失败 offset=" + off
-                                + " 期望=" + (exp == null ? "?" : exp) + " 实得=" + got);
-                        return false;
-                    }
-                    off = blkEnd;
-                    md = MessageDigest.getInstance("MD5");
-                }
-            }
-        }
-        return off == h.total;
-    }
-
-    private static String hex(byte[] b) {
-        StringBuilder sb = new StringBuilder(32);
-        for (byte x : b) sb.append(String.format(Locale.US, "%02x", x & 0xff));
-        return sb.toString();
     }
 
     private static void deleteQuietly(File f) {

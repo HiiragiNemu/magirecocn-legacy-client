@@ -789,8 +789,10 @@ public final class CNDownloaderFix {
         }
 
         // 离线包注入兜底：玩家手动导入的官方 zip（分块清单已校验）优先，
-        // 跳过网络下载，直接解压 + 写标记。
-        if (CNOfflineImport.hasOffline(name)) {
+        // 跳过网络下载，直接解压 + 写标记。只对基础资源包生效——热更两包
+        // （cn_scenario_update.zip / cn_js_update.zip）走版本 json 通道，不纳入。
+        if (!CNOfflineImport.isHotUpdateFile(name)
+                && CNOfflineImport.hasOffline(name)) {
             File offline = new File(CNOfflineImport.offlineDir(), name);
             try {
                 synchronized (EXTRACT_LOCK) {
@@ -948,8 +950,15 @@ public final class CNDownloaderFix {
                 return false;
             }
             // zip 结构预检：aria2 下到 100% 不代表拼装合法
+            if (!CNArchiveValidate.isZipStructurallyValid(archive)) {
+                CNLog.w(TAG, "aria2 下载的包结构非法，回退主引擎: " + name);
+                return false;
+            }
             try (ZipFile zf = new ZipFile(archive)) {
-                if (!zf.entries().hasMoreElements()) throw new ZipException("empty zip");
+                if (!zf.entries().hasMoreElements()) {
+                    CNLog.w(TAG, "aria2 下载的包为空，回退主引擎: " + name);
+                    return false;
+                }
             } catch (Throwable t) {
                 CNLog.w(TAG, "aria2 下载的包结构非法，回退主引擎: " + name + " : " + t);
                 return false;

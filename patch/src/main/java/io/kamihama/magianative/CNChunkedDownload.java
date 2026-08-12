@@ -17,7 +17,6 @@ import java.net.Proxy;
 import java.net.URL;
 import java.security.MessageDigest;
 import java.util.Locale;
-import java.util.zip.ZipFile;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -398,7 +397,7 @@ public final class CNChunkedDownload {
         // 里验过，但「长度对」不代表「内容对」——断点可能是上一轮跨镜像混装的
         // 残片凑满，必须先做完工 zip 结构预检，坏则整份作废重下。
         if (totalDone.get() >= total) {
-            if (verifyZip && !isZipStructurallyValid(part)) {
+            if (verifyZip && !CNArchiveValidate.isZipStructurallyValid(part)) {
                 CNLog.w(TAG, "完工校验失败 file=" + target.getName()
                         + " 拼装文件非法，重置断点重下");
                 deleteQuietly(part);
@@ -605,7 +604,7 @@ public final class CNChunkedDownload {
         // 完工内容校验：分片跨镜像/断点续传可能把异源字节混进同一文件，凑满即坏
         // （invalid CEN header）。zip 结构预检不通过 → 整份作废重下，绝不 promote。
         // 仅在调用方声明目标是 zip（verifyZip=true）时启用。
-        if (verifyZip && !isZipStructurallyValid(part)) {
+        if (verifyZip && !CNArchiveValidate.isZipStructurallyValid(part)) {
             CNLog.w(TAG, "完工校验失败 file=" + target.getName()
                     + " 拼装文件非法，重置断点重下");
             deleteQuietly(part);
@@ -1021,21 +1020,6 @@ public final class CNChunkedDownload {
     private static String sanitize(String s) {
         if (s == null) return "";
         return s.replace('\r', ' ').replace('\n', ' ').trim();
-    }
-
-    /**
-     * 完工内容校验：.cpart 是预分配的，长度永远等于 total，所以「长度对」不能
-     * 证明「内容对」。分片跨镜像/断点续传可能把异源字节混进同一文件，凑满即坏
-     * （invalid CEN header）。这里在 promote 前用 ZipFile 打开做一次廉价预检
-     * ——ZipFile 构造只读 EOCD+中央目录、不做解压，对 1.4GB 也是毫秒级；
-     * CEN 损坏时它抛的正是玩家日志里见过的 ZipException: invalid CEN header。
-     */
-    private static boolean isZipStructurallyValid(File f) {
-        try (ZipFile zf = new ZipFile(f)) {
-            return true;
-        } catch (Throwable t) {
-            return false;
-        }
     }
 
     /** MessageDigest 摘要 → 小写 hex。 */
