@@ -26,7 +26,7 @@ jobs:
           test "$(git hash-object tools/ResumeTest.java)" = "bb72f649cf4b145fdd5e76a8eec616ced6201c72"
           test "$(git hash-object tools/ChunkHashIntegrationTest.java)" = "f78fead2034f43b3fae624143ac1db911730a358"
           test "$(git hash-object tools/server.py)" = "a449d9e17c53383bd7e2e662781af078d06d993c"
-          test "$(git hash-object .github/workflows/last-green.yml)" = "f6ad9288d000124b84e6f2f7d91645f2682bdb91"
+          test "$(git hash-object .github/workflows/last-green.yml)" = "04e30dbf9f7effb752b76faff0289198ae213a50"
           test "$(git hash-object docs/DOWNLOAD_TRANSACTIONAL_CHUNKS.md)" = "342f1afea8eb165596fe7e37cd66a1218e8608f0"
 
           cat .github/patch-payload/03-followup-*.b64 | base64 -d > /tmp/03-followup.patch.gz
