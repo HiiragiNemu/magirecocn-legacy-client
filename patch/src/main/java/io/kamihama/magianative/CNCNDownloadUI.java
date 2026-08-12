@@ -1723,25 +1723,58 @@ public class CNCNDownloadUI {
         panelBg.setStroke(dp(act, 1), COLOR_CARD_STK);
         panel.setBackground(panelBg);
 
+        // 标题行：左侧标题（weight 1f 把按钮推到右），右侧「去下载」跳离线包静态站。
+        // 静态站地址由 config.json 的 settings.offline_url 下发；未配置就不显示按钮。
+        LinearLayout titleRow = new LinearLayout(act);
+        titleRow.setOrientation(LinearLayout.HORIZONTAL);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+        panel.addView(titleRow, lpWrap());
+
         TextView title = new TextView(act);
         title.setText("导入离线包");
         title.setTextColor(COLOR_TEXT);
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f);
         title.setTypeface(title.getTypeface(), Typeface.BOLD);
-        panel.addView(title, lpWrap());
+        titleRow.addView(title, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        final String offlineUrl = CNMirrors.offlineUrl();
+        if (offlineUrl != null && offlineUrl.length() > 0) {
+            TextView dl = new TextView(act);
+            dl.setText("去下载");
+            dl.setTextColor(0xFFFFFFFF);
+            dl.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
+            dl.setGravity(Gravity.CENTER);
+            dl.setPadding(dp(act, 14), dp(act, 6), dp(act, 14), dp(act, 6));
+            GradientDrawable dlBg = new GradientDrawable();
+            dlBg.setColor(COLOR_ACCENT2);
+            dlBg.setCornerRadius(dp(act, 8));
+            dl.setBackground(dlBg);
+            dl.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) {
+                    CNSafeLink.open(act, offlineUrl, "离线包下载");
+                }
+            });
+            LinearLayout.LayoutParams dlLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            dlLp.leftMargin = dp(act, 8);
+            titleRow.addView(dl, dlLp);
+        }
 
         TextView hint = new TextView(act);
-        hint.setText("从网盘下载好的官方 zip（文件名匹配下方列表）。导入后该文件跳过网络下载。");
+        hint.setText("下载引擎不可靠时，点右上角「去下载」手动取包；再从网盘选官方 zip（文件名匹配下方列表）导入，该文件即跳过网络下载。");
         hint.setTextColor(COLOR_SUB);
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
         LinearLayout.LayoutParams hintLp = lpWrap();
         hintLp.topMargin = dp(act, 8);
         panel.addView(hint, hintLp);
 
-        // 15 个文件按钮
+        // 13 个基础资源包；热更两包（cn_scenario_update.zip / cn_js_update.zip）走
+        // 版本 json 通道，不提供离线导入。
         String[] names = CNCNDownloadUI.FILE_NAMES;
         for (int i = 0; i < names.length; i++) {
             final String name = names[i];
+            if (CNOfflineImport.isHotUpdateFile(name)) continue;
             TextView row = new TextView(act);
             String state = CNOfflineImport.hasOffline(name) ? " ✓已导入" : "";
             row.setText(name + state);

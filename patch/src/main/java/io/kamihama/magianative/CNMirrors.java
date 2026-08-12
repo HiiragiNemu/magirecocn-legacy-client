@@ -133,6 +133,8 @@ public final class CNMirrors {
     // 强制启用 aria2 备用引擎（settings.force_aria2，默认关）：云端控制——
     // 自带引擎修不动时服务器一键切备用引擎，不用等客户端发版。
     private static volatile boolean cfgForceAria2 = false;
+    // 离线包静态站地址（settings.offline_url）：下载引擎不可靠时引导玩家手动取包。
+    private static volatile String cfgOfflineUrl = "";
     // 首选镜像竞速：加载线路表后让前两条已启用镜像并发拉取同一探测文件的前
     // 若干字节，按**实际吞吐**定胜负（首字节延迟低≠下载快）。
     // 配置顺序写死的首选不一定是用户网络下最快的那条
@@ -165,6 +167,9 @@ public final class CNMirrors {
 
     /** 是否强制启用 aria2 备用引擎（settings.force_aria2，默认关）。 */
     public static boolean forceAria2() { return cfgForceAria2; }
+
+    /** 离线包静态站地址（settings.offline_url，空串=未配置）。 */
+    public static String offlineUrl() { return cfgOfflineUrl; }
 
     /** 一条线路。 */
     public static final class Mirror {
@@ -914,6 +919,7 @@ public final class CNMirrors {
             cfgThrottleDemoteMs = Math.max(1000L, st.optLong("throttle_demote_ms", cfgThrottleDemoteMs));
             cfgChunksAcrossMirrors = st.optBoolean("chunks_across_mirrors", cfgChunksAcrossMirrors);
             cfgForceAria2 = st.optBoolean("force_aria2", cfgForceAria2);
+            cfgOfflineUrl = st.optString("offline_url", cfgOfflineUrl).trim();
             cfgMirrorRace = st.optBoolean("mirror_race", cfgMirrorRace);
         }
 
