@@ -1,3 +1,4 @@
+# payload encoding repaired: exact 8 x 3704-byte shards
 name: one-shot-apply-concurrent-redownload-fix
 
 on:
