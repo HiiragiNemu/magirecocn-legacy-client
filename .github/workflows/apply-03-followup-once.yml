@@ -16,12 +16,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply audited downloader follow-up and self-delete
+      - name: Apply audited downloader source follow-up
         shell: bash
         run: |
           set -euo pipefail
 
-          # Fail closed if another writer changed any audited base file.
           test "$(git hash-object patch/src/main/java/io/kamihama/magianative/CNChunkedDownload.java)" = "d2152f0f4d4f1a6f244ae8f5b96b15f68ff48c1f"
           test "$(git hash-object tools/ResumeTest.java)" = "bb72f649cf4b145fdd5e76a8eec616ced6201c72"
           test "$(git hash-object tools/ChunkHashIntegrationTest.java)" = "f78fead2034f43b3fae624143ac1db911730a358"
@@ -35,13 +34,16 @@ jobs:
           python3 -m py_compile tools/server.py
           git diff --check
 
-          git rm .github/workflows/apply-03-followup-once.yml
+          #  cannot update workflow files. Keep last-green and this
+          # one-shot workflow unchanged here; the authenticated GitHub connector
+          # performs their final update/deletion after this source commit lands.
+          git restore .github/workflows/last-green.yml
           git rm -r .github/patch-payload
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add patch/src/main/java/io/kamihama/magianative/CNChunkedDownload.java \
                   tools/ResumeTest.java tools/ChunkHashIntegrationTest.java tools/server.py \
-                  .github/workflows/last-green.yml docs/DOWNLOAD_TRANSACTIONAL_CHUNKS.md
+                  docs/DOWNLOAD_TRANSACTIONAL_CHUNKS.md
           git commit -m "fix(download): 稳定事务块身份与真实故障回归" \
             -m "已验证块只绑定完整 manifest 指纹，不再被 CDN URL/ETag 波动清零；事务块移除 If-Range，内容变化交给块 MD5 在提交前判定。无清单断点只允许同一完整 URL 复用，避免未经认证的跨镜像拼装。" \
             -m "回归改为真实 85 个非整除块，实测并发上限、同清单网络坏块只重取单块、跨重启续传与无清单换 URL 清零；Content-Range 诊断细分。" \
