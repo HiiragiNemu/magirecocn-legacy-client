@@ -1,4 +1,4 @@
-# downloadOnce method-slice repair v2
+# downloadOnce + PID contract repair v3
 name: one-shot-apply-concurrent-redownload-fix
 
 on:

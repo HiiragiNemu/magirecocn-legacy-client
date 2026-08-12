@@ -39,3 +39,12 @@ method = method.replace(old, new, 1)
 s = head + method + tail
 """
 p.write_text(s[:start] + replacement + s[end:], encoding='utf-8')
+
+contract = Path('.github/patch-payload/check-download-ui-contract.py.txt')
+if contract.is_file():
+    c = contract.read_text(encoding='utf-8')
+    old = '"日志只回收当前进程": \'"--pid"\' in log and "android.os.Process.myPid()" in log,'
+    new = '"日志只回收当前进程": \'"--pid="\' in log and "android.os.Process.myPid()" in log,'
+    if c.count(old) != 1:
+        raise SystemExit(f'current-PID contract baseline changed: {c.count(old)}')
+    contract.write_text(c.replace(old, new, 1), encoding='utf-8')
