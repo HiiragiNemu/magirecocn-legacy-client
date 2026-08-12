@@ -1,0 +1,22 @@
+name: one-shot-dispatch-final-apk
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/dispatch-final-apk-once.yml
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch final APK build and release
+        env:
+          : ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run build-apk.yml --repo "${GITHUB_REPOSITORY}" --ref main
