@@ -384,6 +384,8 @@ public final class CNHotUpdateCheck {
                 File tmp = new File(FILES_DIR, pkg.tmpName);
                 // 上一次跑到一半留下的残骸会让 download() 直接判定「目标已存在」而跳过
                 if (tmp.exists() && !tmp.delete()) {
+                    anyFailure = true;
+                    markHotFailed(pkg.slot);
                     CNLog.w(TAG, "[" + pkg.label + "] 删不掉旧的临时包 " + tmp + "，放弃本项");
                     continue;
                 }
@@ -412,7 +414,7 @@ public final class CNHotUpdateCheck {
                     dls.put(idx, dlPool.submit(new java.util.concurrent.Callable<Boolean>() {
                         @Override public Boolean call() {
                             return CNHotUpdate.download(pkg.zipUrl, tmp.getAbsolutePath(),
-                                                        pkg.tmpName, pkg.slot);
+                                                        pkg.tmpName, pkg.slot, meta);
                         }}));
                 }
                 dlPool.shutdown();
@@ -444,6 +446,7 @@ public final class CNHotUpdateCheck {
                 String bad = CNHotUpdateValidate.verifyZip(tmp, meta);
                 if (bad != null) {
                     anyFailure = true;
+                    markHotFailed(pkg.slot);
                     CNLog.e(TAG, "[" + pkg.label + "] 校验失败（" + bad + "），丢弃本项");
                     CNCNDownloadUI.updateSimple("下载热更新",
                             pkg.label + "：校验失败，已跳过（" + processedCount + "/" + needCount + "）", 0);
@@ -455,10 +458,13 @@ public final class CNHotUpdateCheck {
                 try {
                     // 事务化应用：先解压到暂存区，再整体换入；中途失败整体回滚，
                     // 绝不把「一半新一半旧」的树留给引擎（见 CNHotUpdateTx）
-                    CNHotUpdateTx.apply(tmp, new File(FILES_DIR), pkg.txTag);
+                    synchronized (CNDownloaderFix.extractCommitLock()) {
+                        CNHotUpdateTx.apply(tmp, new File(FILES_DIR), pkg.txTag);
+                    }
                 } catch (Throwable t) {
                     // 应用失败时**不能**写新版本号，否则下次启动会以为已经更新过。
                     anyFailure = true;
+                    markHotFailed(pkg.slot);
                     CNLog.e(TAG, "[" + pkg.label + "] 应用失败（已回滚），版本号保持 " + local, t);
                     CNCNDownloadUI.updateSimple("应用热更新",
                             pkg.label + "：应用失败已回滚，已跳过（" + processedCount + "/" + needCount + "）", 0);
@@ -474,18 +480,25 @@ public final class CNHotUpdateCheck {
             stopWatchdog(watchdog);
         }
 
-        // 无论有没有更新都把结论留在屏幕上——否则和「压根没跑」看起来一模一样。
-        if (applied) {
-            CNLog.i(TAG, "热更检查完毕：已应用更新");
-            CNCNDownloadUI.updateSimple("更新完成", "热更新已应用，即将进入游戏", 0);
-        } else if (anyFailure) {
-            // 有包处理失败时不能谎报「已是最新」——版本号没更新，下次还会重试
-            CNLog.w(TAG, "热更检查完毕：部分更新包处理失败，已跳过");
-            CNCNDownloadUI.updateSimple("更新未完成",
-                    "部分更新包处理失败已跳过，将保持旧版本进入游戏", 0);
+        // 无论有没有更新都把结论留在屏幕上。失败优先于“有一个成功”：
+        // JS 成功而 scenario 失败时只能叫“部分更新完成”，绝不能谎报“更新完成”。
+        String summaryPhase = summaryPhaseForTest(applied, anyFailure);
+        if (anyFailure) {
+            if (applied) {
+                CNLog.w(TAG, "热更检查完毕：部分成功、部分失败");
+                CNCNDownloadUI.updateSimple(summaryPhase,
+                        "成功项已应用；失败项可点红色“重试”或紫色“重下”", 0);
+            } else {
+                CNLog.w(TAG, "热更检查完毕：更新失败");
+                CNCNDownloadUI.updateSimple(summaryPhase,
+                        "更新包未能应用；失败项可直接重试，当前旧版本保持可用", 0);
+            }
+        } else if (applied) {
+            CNLog.i(TAG, "热更检查完毕：已应用全部需要的更新");
+            CNCNDownloadUI.updateSimple(summaryPhase, "热更新已校验并事务应用", 100);
         } else {
             CNLog.i(TAG, "热更检查完毕：无需更新");
-            CNCNDownloadUI.updateSimple("已是最新",
+            CNCNDownloadUI.updateSimple(summaryPhase,
                     "检查已完成。可查看日志或管理资源；需要停留请使用“停留本页”。", 0);
         }
         awaitPlayerWindow();
@@ -507,6 +520,74 @@ public final class CNHotUpdateCheck {
             CNLog.i(TAG, "检查已收工，执行教程胶囊请求的重启");
             CNDownloaderFix.noticeAndRestart(msg);
         }
+    }
+
+
+
+    private static void markHotFailed(int slot) {
+        if (CNCNDownloadUI.fileStatus != null
+                && slot >= 0 && slot < CNCNDownloadUI.fileStatus.length) {
+            CNCNDownloadUI.fileStatus[slot] = CNCNDownloadUI.ST_ERROR;
+        }
+        CNCNDownloadUI.setDownloadSpeed(slot, 0.0f);
+        CNCNDownloadUI.throttledUpdate();
+    }
+
+    /**
+     * 手动强制重下 scenario/js 的当前服务端版本。它不依赖其它 14 个 marker，
+     * 不读取基础包 manifest；下载通过 version JSON 的 size/MD5 后才事务应用。
+     */
+    static boolean redownloadPackage(int slot) {
+        Pkg pkg = null;
+        for (int i = 0; i < PACKAGES.length; i++) {
+            if (PACKAGES[i].slot == slot) { pkg = PACKAGES[i]; break; }
+        }
+        if (pkg == null) {
+            CNLog.e(TAG, "手动热更新槽位无效: " + slot);
+            return false;
+        }
+        File tmp = new File(FILES_DIR, pkg.tmpName + ".manual.zip");
+        try {
+            CNMirrors.ensureLoadedAsync();
+            CNCNDownloadUI.markFilePending(slot);
+            CNCNDownloadUI.updateSimple("重新下载热更新",
+                    pkg.label + "：正在取得当前版本身份…", 0);
+            CNHotUpdateValidate.VerMeta meta = fetchMeta(pkg.versionUrl);
+            if (meta == null || meta.size <= 0) throw new java.io.IOException("版本 JSON 缺少有效 size");
+            CNCNDownloadUI.setFileSize(slot, (float) (meta.size / 1000000.0d));
+            CNHotUpdate.cleanupDownloadArtifacts(tmp);
+            boolean ok = CNHotUpdate.download(pkg.zipUrl, tmp.getAbsolutePath(),
+                    pkg.tmpName, pkg.slot, meta);
+            if (!ok) throw new java.io.IOException("所有镜像均未取得匹配 version JSON 的 ZIP");
+            String bad = CNHotUpdateValidate.verifyZip(tmp, meta);
+            if (bad != null) throw new java.io.IOException("完工校验失败: " + bad);
+            CNCNDownloadUI.updateSimple("应用热更新", pkg.label + "：事务提交中…", 0);
+            synchronized (CNDownloaderFix.extractCommitLock()) {
+                CNHotUpdateTx.apply(tmp, new File(FILES_DIR), pkg.txTag);
+            }
+            saveLocalVersion(pkg.versionKey, meta.version);
+            CNDownloaderFix.commitManualMarker(slot, meta.size, "hot-v" + meta.version);
+            deleteQuietly(tmp);
+            CNCNDownloadUI.markFileDone(slot);
+            CNLog.i(TAG, "手动热更新完成 slot=" + slot + " version=" + meta.version);
+            return true;
+        } catch (Throwable t) {
+            CNHotUpdate.cleanupDownloadArtifacts(tmp);
+            if (CNCNDownloadUI.fileStatus != null
+                    && slot >= 0 && slot < CNCNDownloadUI.fileStatus.length) {
+                CNCNDownloadUI.fileStatus[slot] = CNCNDownloadUI.ST_ERROR;
+            }
+            CNCNDownloadUI.setDownloadSpeed(slot, 0.0f);
+            CNCNDownloadUI.throttledUpdate();
+            CNLog.e(TAG, "手动热更新失败 slot=" + slot, t);
+            return false;
+        }
+    }
+
+    /** 供回归测试与真实汇总共用，避免“一个成功 + 一个失败”显示成全成功。 */
+    public static String summaryPhaseForTest(boolean applied, boolean failed) {
+        if (failed) return applied ? "部分更新完成" : "更新未完成";
+        return applied ? "更新完成" : "已是最新";
     }
 
     /**
@@ -640,7 +721,11 @@ public final class CNHotUpdateCheck {
         Exception last = null;
         for (CNMirrors.Mirror m : CNMirrors.healthy()) {
             try {
-                return fetchMetaDirect(m.urlFor(name));
+                String metaUrl = m.urlFor(name);
+                String sep = metaUrl.indexOf('?') >= 0 ? "&" : "?";
+                metaUrl = metaUrl + sep + "cnv_version="
+                        + System.currentTimeMillis() + "-" + Math.abs(name.hashCode());
+                return fetchMetaDirect(metaUrl);
             } catch (Exception t) {
                 // 只换下一条线路，**不调 reportFailure**。
                 //
@@ -671,6 +756,10 @@ public final class CNHotUpdateCheck {
             c.setConnectTimeout(VER_CONNECT_TIMEOUT_MS);
             c.setReadTimeout(VER_READ_TIMEOUT_MS);
             c.setInstanceFollowRedirects(true);
+            c.setUseCaches(false);
+            c.setRequestProperty("Cache-Control", "no-cache, no-store, max-age=0");
+            c.setRequestProperty("Pragma", "no-cache");
+            c.setRequestProperty("Accept-Encoding", "identity");
             CNUserAgent.apply(c);
             int code = c.getResponseCode();
             if (code / 100 != 2) throw new java.io.IOException("HTTP " + code);

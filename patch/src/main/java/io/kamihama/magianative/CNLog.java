@@ -633,12 +633,19 @@ public final class CNLog {
                 // 用 -T 1 的话这些行早就过去了，永远抓不到。
                 //
                 // 1000 行相对 BUFFER_MAX=3000 是可接受的开销，且文件里本来就全都有。
-                ProcessBuilder pb = new ProcessBuilder(
-                        "logcat", "-v", "time", "-T", "1000");
+                ProcessBuilder pb;
+                if (android.os.Build.VERSION.SDK_INT >= 24) {
+                    pb = new ProcessBuilder("logcat",
+                            "--pid=" + android.os.Process.myPid(),
+                            "-v", "time", "-T", "1000");
+                } else {
+                    pb = new ProcessBuilder("logcat", "-v", "time", "-T", "1");
+                }
                 pb.redirectErrorStream(true);
                 Process p = pb.start();
                 logcatProc = p;
-                write("日志", "INFO", "logcat 回收已启动", null);
+                write("日志", "INFO", "logcat 回收已启动（仅当前 PID="
+                        + android.os.Process.myPid() + "）", null);
                 br = new java.io.BufferedReader(
                         new java.io.InputStreamReader(p.getInputStream(), "UTF-8"));
                 String line;

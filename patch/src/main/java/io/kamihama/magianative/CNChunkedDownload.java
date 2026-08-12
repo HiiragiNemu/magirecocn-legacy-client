@@ -452,6 +452,7 @@ public final class CNChunkedDownload {
         HttpURLConnection c = null;
         InputStream in = null;
         FileOutputStream out = null;
+        CNDownloadConcurrency.Lease lease = null;
         MessageDigest md;
         try {
             md = MessageDigest.getInstance("MD5");
@@ -459,6 +460,8 @@ public final class CNChunkedDownload {
             throw new IOException("MD5 不可用", e);
         }
         try {
+            lease = CNDownloadConcurrency.acquire(
+                    "verified-range:" + temp.getName(), lastMoveNs);
             c = open(url, direct);
             c.setRequestMethod("GET");
             c.setRequestProperty("Range", "bytes=" + start + "-" + end);
@@ -508,6 +511,7 @@ public final class CNChunkedDownload {
             closeQuietly(out);
             closeQuietly(in);
             disconnect(c);
+            if (lease != null) lease.close();
         }
     }
 
@@ -707,8 +711,11 @@ public final class CNChunkedDownload {
         HttpURLConnection c = null;
         InputStream in = null;
         RandomAccessFile raf = null;
+        CNDownloadConcurrency.Lease lease = null;
         long lastSave = System.nanoTime();
         try {
+            lease = CNDownloadConcurrency.acquire(
+                    "byte-range:" + ctx.part.getName(), ctx.lastMoveNs);
             c = open(ctx.url, ctx.direct);
             c.setRequestMethod("GET");
             c.setRequestProperty("Range", "bytes=" + start + "-" + segmentEnd);
@@ -787,6 +794,7 @@ public final class CNChunkedDownload {
             closeQuietly(raf);
             closeQuietly(in);
             disconnect(c);
+            if (lease != null) lease.close();
         }
     }
 
@@ -835,6 +843,13 @@ public final class CNChunkedDownload {
                 long lowDt = now - lowWindowNs;
                 if (minBps > 0 && lowDt >= TimeUnit.SECONDS.toNanos(10L)) {
                     long moved = networkBytes.get() - lowWindowBytes;
+                    // 其它 ZIP 占用全局连接时，本文件的 worker 会在公平信号量排队。
+                    // 排队不是线路低速，不能把它误判成镜像失败。
+                    if (moved == 0L && CNDownloadConcurrency.hasQueuedWaiters()) {
+                        lowWindowNs = now;
+                        lowWindowBytes = networkBytes.get();
+                        continue;
+                    }
                     long bps = (long) (moved / (lowDt / 1.0E9d));
                     if (bps < minBps) {
                         firstErr.compareAndSet(null, new IOException("线路过慢："

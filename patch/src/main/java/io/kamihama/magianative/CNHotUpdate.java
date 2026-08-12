@@ -8,125 +8,116 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.Proxy;
 import java.net.URL;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 /**
- * {@code RestClient.cnDownloadFileFull} 的下载实现。
+ * 热更新 ZIP 的镜像下载实现。
  *
- * <p>原方法在 {@code RestClient} 内部用 OkHttp 单线程续传，且 URL 是写死的主线地址。
- * 现在把方法体换成对本类的一次委托，让**热更新的文件下载也走支线**：
- * 与首次安装同一套 {@link CNMirrors} 选线 + {@link CNChunkedDownload} 分片下载 +
- * 失败自动换线。
- *
- * <h3>只对主线资源换线</h3>
- * 传入的 URL 只有在确实指向 {@link CNMirrors#CANONICAL_BASE}（主线资源的规范前缀）、且其后
- * 只剩一段文件名时，才会被替换成支线地址；其余任何地址一律原样使用。
- * 这样做是因为第三个参数 {@code displayName} 只是显示名，不保证等于远端文件名，
- * 拿它拼支线 URL 会拼错；而从 URL 自身推导则不会。也保证了将来若有别处调用这个
- * 方法去取非主线的东西，不会被意外重定向。
- *
- * <p>「配置直连主线」的约定不受影响：{@code config.json}、{@code version_js.json}、
- * {@code version_scenario.json} 都不经过这里，它们由各自的调用点直连主线。
- * 本类只负责「分发文件」。
+ * <p>动态热更新与静态基础包的身份模型不同：scenario/js 的权威身份来自本轮
+ * version JSON 的 version + size + whole-file MD5，不能再套用可能滞后的全局
+ * {@code manifest.json} 块哈希。下载仍可 Range 并发，但只做同 URL 字节续传；
+ * 每条镜像完工后必须通过整包 size/MD5/ZIP 校验，失败即清除该镜像断点并换线。
  */
 public final class CNHotUpdate {
-
     private static final String TAG = "MagiaCNHotUpdate";
-
-    private static final int MAX_ATTEMPTS      = 4;
+    private static final int MAX_ATTEMPTS = 4;
     private static final int CONNECT_TIMEOUT_MS = 15000;
-    private static final int READ_TIMEOUT_MS    = 30000;
-    // 低速看门狗：read timeout 管的是「完全没字节」，管不了「每秒几十 KB 的滴速」。
-    // 窗口速度持续低于 MIN_OK_BPS 超过 SLOW_FAIL_NS 就抛异常走换线。
-    private static final long MIN_OK_BPS  = 100L * 1024L;                       // 100 KB/s
+    private static final int READ_TIMEOUT_MS = 30000;
+    private static final long MIN_OK_BPS = 100L * 1024L;
     private static final long SLOW_FAIL_NS = TimeUnit.SECONDS.toNanos(15L);
 
     private CNHotUpdate() {}
 
-    /**
-     * 下载 {@code url} 指向的文件到 {@code destPath}。
-     *
-     * <p>签名与被替换掉的 {@code RestClient.cnDownloadFileFull} 完全一致，
-     * 返回值语义也一致：成功 true，失败 false（不抛异常）。
-     *
-     * @param url         原始下载地址（通常是主线）
-     * @param destPath    本地目标路径
-     * @param displayName 显示名，仅用于日志
-     * @param index       进度槽位下标（0..14）
-     */
+    /** 保留旧签名；没有 version meta 的调用仍走动态包的无 manifest 下载。 */
     public static boolean download(String url, String destPath,
                                    String displayName, int index) {
+        return download(url, destPath, displayName, index, null);
+    }
+
+    /**
+     * 下载并按 version JSON 的权威 size/MD5 校验。成功 true，失败 false。
+     */
+    public static boolean download(String url, String destPath,
+                                   String displayName, int index,
+                                   CNHotUpdateValidate.VerMeta expected) {
         if (url == null || destPath == null) {
             CNLog.e(TAG, "参数为空，放弃下载 url=" + url + " dest=" + destPath);
             return false;
         }
         if (CNDebugFlags.isOn(CNDebugFlags.FAIL_DOWNLOAD)) {
-            // 返回 false 而不是抛：调用方本来就按「这一项失败」处理，
-            // 走的是与真实下载失败完全相同的分支（换线、重试、上报）。
             CNLog.w(TAG, "[DEBUG] failDownload 注入：直接判本次下载失败 " + displayName);
+            markFailed(index);
             return false;
         }
-        File dest = new File(destPath);
 
-        // 与原实现一致：目标文件已经在了就直接算完成
+        File dest = new File(destPath);
         if (dest.isFile()) {
-            CNLog.i(TAG, "目标已存在，跳过下载: " + destPath);
-            CNCNDownloadUI.setFileSize(index, (float) (dest.length() / 1000000.0d));
-            markDone(index);
-            return true;
+            String bad = expected == null ? null : CNHotUpdateValidate.verifyZip(dest, expected);
+            if (bad == null) {
+                CNLog.i(TAG, "目标已存在且身份有效，跳过下载: " + destPath);
+                CNCNDownloadUI.setFileSize(index, (float) (dest.length() / 1000000.0d));
+                CNCNDownloadUI.setFileDownloaded(index, (float) (dest.length() / 1000000.0d));
+                markDone(index);
+                return true;
+            }
+            CNLog.w(TAG, "目标已存在但不符合本轮 version JSON，清理重下: " + bad);
+            cleanupDownloadArtifacts(dest);
         }
 
         String remoteName = mainLineFileName(url);
         if (remoteName == null) {
-            // 非主线资源地址：不换线，按原地址单线程续传
-            CNLog.i(TAG, "非主线地址，直连下载: " + url);
+            CNLog.i(TAG, "非主线地址，按原地址下载: " + url);
             try {
-                singleStream(url, dest, index, false);
+                singleStream(withIdentity(url, expected), dest, index, false, expected);
+                String bad = expected == null ? null : CNHotUpdateValidate.verifyZip(dest, expected);
+                if (bad != null) throw new IOException("热更新完工校验失败: " + bad);
                 markDone(index);
                 return true;
             } catch (Throwable t) {
+                cleanupDownloadArtifacts(dest);
+                markFailed(index);
                 CNLog.e(TAG, "直连下载失败: " + url, t);
                 return false;
             }
         }
 
-        // 内置 fallback 可立即使用；远程线路表只做后台优化，服务器故障
-        // 不能在真正下载更新包之前再同步卡两轮 15 秒。
         if (!CNMirrors.isLoaded()) CNMirrors.ensureLoadedAsync();
-
         CNLog.i(TAG, "开始下载 " + displayName + " file=" + remoteName
+                + " identity=" + hotIdentity(expected)
                 + " 可用线路=" + CNMirrors.healthy().size());
 
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             if (Thread.currentThread().isInterrupted()) {
-                CNLog.w(TAG, "线程被中断，放弃 " + remoteName);
+                Thread.currentThread().interrupt();
                 markFailed(index);
                 return false;
             }
             CNMirrors.Mirror mirror = CNMirrors.pick(attempt);
-            // 资源下载一律直连（Proxy.NO_PROXY）：不再按 attempt 奇偶交替走系统代理。
-            // 玩家开着 VPN/抓包工具时，系统代理会劫持 CDN 大文件传输、损坏分片
-            // 拼出的 zip（2026-08-11 cn_base_03 事故：attempt 走代理的下载全部
-            // 完工校验失败）。镜像与游戏 API 代理是两套东西——WebView 游戏 API
-            // 仍走 proxy/web_mode 那层，与这里的下载无关。
             boolean direct = true;
-            String  tryUrl = mirror.urlFor(remoteName);
+            String tryUrl = withIdentity(mirror.urlFor(remoteName), expected);
             CNCNDownloadUI.setDownloadSpeed(index, 0.0f);
-
             try {
-                fetch(tryUrl, dest, index, direct, mirror, remoteName);
+                fetch(tryUrl, dest, index, direct, mirror, remoteName, expected);
+                String bad = expected == null ? null : CNHotUpdateValidate.verifyZip(dest, expected);
+                if (bad != null) {
+                    cleanupDownloadArtifacts(dest);
+                    throw new IOException("镜像内容不符合 version JSON: " + bad);
+                }
                 CNMirrors.reportSuccess(mirror);
                 markDone(index);
                 CNLog.i(TAG, "下载完成 " + remoteName + " attempt=" + attempt
-                        + " mirror=" + mirror.name);
+                        + " mirror=" + mirror.name + " identity=" + hotIdentity(expected));
                 return true;
             } catch (Throwable t) {
                 CNMirrors.reportFailure(mirror, String.valueOf(t.getMessage()));
                 CNLog.w(TAG, "下载失败 " + remoteName + " attempt=" + attempt
                         + " mirror=" + mirror.name, t);
+                // 不同镜像的未认证字节绝不复用。无论成品是否已经 rename 出来，
+                // 都清掉该镜像留下的 .part/.cpart/meta，再换下一条线路。
+                cleanupDownloadArtifacts(dest);
                 if (attempt < MAX_ATTEMPTS) {
                     long delay = 2000L << (attempt - 1);
-                    CNLog.i(TAG, "等待 " + delay + "ms 后换线重试");
                     try {
                         Thread.sleep(delay);
                     } catch (InterruptedException ie) {
@@ -137,18 +128,24 @@ public final class CNHotUpdate {
                 }
             }
         }
-        CNLog.e(TAG, "全部线路均失败: " + remoteName);
+        cleanupDownloadArtifacts(dest);
         markFailed(index);
+        CNLog.e(TAG, "全部线路均失败: " + remoteName);
         return false;
     }
 
-    /** 优先分片，条件不满足时退回单线程续传。 */
+    /** Range 可用时走无 manifest 字节分段；进度按实际接收字节即时推进。 */
     private static void fetch(String url, File dest, int index,
                               boolean direct, CNMirrors.Mirror mirror,
-                              String remoteName) throws IOException {
+                              String remoteName,
+                              CNHotUpdateValidate.VerMeta expected) throws IOException {
         int wanted = mirror.effectiveChunks();
         if (wanted > 1) {
             CNChunkedDownload.Probe probe = CNChunkedDownload.probe(url, direct);
+            if (expected != null && expected.size > 0 && probe.total != expected.size) {
+                throw new IOException("镜像总长与 version JSON 不符: "
+                        + probe.total + " != " + expected.size);
+            }
             if (probe.rangeSupported && probe.total > 0) {
                 int chunks = wanted;
                 long minChunk = CNMirrors.minChunkBytes();
@@ -157,21 +154,21 @@ public final class CNHotUpdate {
                     if (fit < chunks) chunks = (int) Math.max(1L, fit);
                 }
                 if (chunks > 1) {
-                    CNLog.i(TAG, "分片下载 " + dest.getName() + " chunks=" + chunks
-                            + " bytes=" + probe.total + " mirror=" + mirror.name);
+                    CNLog.i(TAG, "动态热更字节分段 " + dest.getName() + " segments=" + chunks
+                            + " bytes=" + probe.total + " mirror=" + mirror.name
+                            + "（不读取基础包 manifest）");
                     CNCNDownloadUI.setFileSize(index, (float) (probe.total / 1000000.0d));
-                    CNChunkedDownload.ChunkHashes hashes = ChunkManifest.forFile(remoteName);
+                    // hashes 必须为 null：动态包由 version JSON 的 whole-file MD5 认证。
                     CNChunkedDownload.download(url, dest, chunks, direct, probe,
-                            new HotSink(index), mirror, remoteName, true, hashes);
+                            new HotSink(index), mirror, remoteName, true, null);
                     return;
                 }
             }
             CNLog.i(TAG, "不支持 Range 或文件过小，改用单线程: " + dest.getName());
         }
-        singleStream(url, dest, index, direct);
+        singleStream(url, dest, index, direct, expected);
     }
 
-    /** 进度回调桥接到既有的下载 UI 槽位。 */
     private static final class HotSink implements CNChunkedDownload.Sink {
         private final int index;
         HotSink(int index) { this.index = index; }
@@ -192,12 +189,9 @@ public final class CNHotUpdate {
         }
     }
 
-    /**
-     * 单线程断点续传：沿用原实现的 {@code <目标>.part} 约定，
-     * 已有残片时用 {@code Range} 接着下。
-     */
-    private static void singleStream(String url, File dest, int index, boolean direct)
-            throws IOException {
+    /** Range 不可用时的单连接续传，同样受全局 8 连接闸门约束。 */
+    private static void singleStream(String url, File dest, int index, boolean direct,
+                                     CNHotUpdateValidate.VerMeta expected) throws IOException {
         File part = new File(dest.getPath() + ".part");
         File parent = part.getParentFile();
         if (parent != null && !parent.isDirectory() && !parent.mkdirs()
@@ -205,23 +199,28 @@ public final class CNHotUpdate {
             throw new IOException("无法创建下载目录: " + parent);
         }
         long offset = part.isFile() ? part.length() : 0L;
+        if (expected != null && expected.size > 0 && offset > expected.size) {
+            if (!part.delete() && part.exists()) throw new IOException("无法清理超长残片");
+            offset = 0L;
+        }
 
-        URL u = new URL(url);
-        HttpURLConnection c = (HttpURLConnection)
-                (direct ? u.openConnection(Proxy.NO_PROXY) : u.openConnection());
-        c.setConnectTimeout(CONNECT_TIMEOUT_MS);
-        c.setReadTimeout(READ_TIMEOUT_MS);
-        c.setUseCaches(false);
-        c.setInstanceFollowRedirects(true);
-        CNUserAgent.apply(c);
-        c.setRequestProperty("Accept-Encoding", "identity");
-        // 不写 Connection: close——保留 keep-alive 复用连接池，
-        // 分片/重试接连不断时省掉每段一次的 TCP+TLS 握手
-        if (offset > 0) c.setRequestProperty("Range", "bytes=" + offset + "-");
-
-        InputStream  in  = null;
+        CNDownloadConcurrency.Lease lease = CNDownloadConcurrency.acquire(
+                "hot-single:" + dest.getName());
+        HttpURLConnection c = null;
+        InputStream in = null;
         FileOutputStream out = null;
         try {
+            URL u = new URL(url);
+            c = (HttpURLConnection)
+                    (direct ? u.openConnection(Proxy.NO_PROXY) : u.openConnection());
+            c.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            c.setReadTimeout(READ_TIMEOUT_MS);
+            c.setUseCaches(false);
+            c.setInstanceFollowRedirects(true);
+            CNUserAgent.apply(c);
+            c.setRequestProperty("Accept-Encoding", "identity");
+            if (offset > 0) c.setRequestProperty("Range", "bytes=" + offset + "-");
+
             int code = c.getResponseCode();
             boolean append;
             long total;
@@ -230,23 +229,25 @@ public final class CNHotUpdate {
                 long len = parseLong(c.getHeaderField("Content-Length"), -1L);
                 total = len >= 0 ? offset + len : -1L;
             } else if (code == 200) {
-                // 服务端忽略了 Range：残片作废，从头来
                 append = false;
                 offset = 0L;
-                total  = parseLong(c.getHeaderField("Content-Length"), -1L);
+                total = parseLong(c.getHeaderField("Content-Length"), -1L);
             } else {
                 throw new IOException("HTTP " + code + " offset=" + offset + " url=" + url);
             }
-            if (total > 0) {
-                CNCNDownloadUI.setFileSize(index, (float) (total / 1000000.0d));
+            if (expected != null && expected.size > 0 && total != expected.size) {
+                throw new IOException("响应总长与 version JSON 不符: "
+                        + total + " != " + expected.size);
             }
+            if (total > 0) CNCNDownloadUI.setFileSize(index, (float) (total / 1000000.0d));
 
-            in  = new BufferedInputStream(c.getInputStream(), 65536);
+            in = new BufferedInputStream(c.getInputStream(), 65536);
             out = new FileOutputStream(part, append);
             byte[] buf = new byte[65536];
-            long written = 0L, speedBase = 0L;
+            long written = 0L;
+            long speedBase = 0L;
             long windowStart = System.nanoTime();
-            long slowSinceNs = 0L;  // 低速看门狗：半死镜像滴速下载时主动换线
+            long slowSinceNs = 0L;
             int n;
             while ((n = in.read(buf)) != -1) {
                 if (n == 0) continue;
@@ -259,65 +260,81 @@ public final class CNHotUpdate {
                     CNCNDownloadUI.updateFileProgress(index, pct);
                 }
                 long now = System.nanoTime();
-                long dt  = now - windowStart;
+                long dt = now - windowStart;
                 if (dt >= TimeUnit.MILLISECONDS.toNanos(500L)) {
                     long windowBytes = written - speedBase;
                     CNCNDownloadUI.setDownloadSpeed(index,
                             (float) ((windowBytes * 1.0E9d / dt) / 1000000.0d));
-                    // 持续低速（<100KB/s 超过 15s）视为镜像半死：
-                    // read timeout 只在完全无字节时触发，滴速线路会永远卡在这里
                     if (windowBytes * 1000000000L / dt < MIN_OK_BPS) {
                         if (slowSinceNs == 0L) slowSinceNs = now;
                         else if (now - slowSinceNs >= SLOW_FAIL_NS) {
                             throw new IOException("镜像速度过慢（持续低于 "
                                     + (MIN_OK_BPS / 1024) + "KB/s），换线");
                         }
-                    } else {
-                        slowSinceNs = 0L;
-                    }
-                    speedBase   = written;
+                    } else slowSinceNs = 0L;
+                    speedBase = written;
                     windowStart = now;
                 }
             }
             out.flush();
             out.getFD().sync();
             closeQuietly(out); out = null;
-            closeQuietly(in);  in  = null;
-
-            // 声明了总长度就必须对得上，避免把短读当成功
+            closeQuietly(in); in = null;
             if (total > 0 && part.length() != total) {
                 throw new IOException("下载不完整: " + part.length() + " / " + total);
             }
-            if (dest.exists() && !dest.delete()) {
-                throw new IOException("无法替换目标文件 " + dest);
-            }
-            if (!part.renameTo(dest)) {
-                throw new IOException("无法重命名 " + part + " -> " + dest);
-            }
+            if (dest.exists() && !dest.delete()) throw new IOException("无法替换目标文件 " + dest);
+            if (!part.renameTo(dest)) throw new IOException("无法重命名 " + part + " -> " + dest);
         } finally {
             closeQuietly(out);
             closeQuietly(in);
-            try { c.disconnect(); } catch (Throwable ignore) {}
+            if (c != null) try { c.disconnect(); } catch (Throwable ignore) {}
+            lease.close();
         }
     }
 
-    // ---- 小工具 ----
+    /** 清理某一动态包的全部下载态，不触碰已经事务应用的活动资源。 */
+    static void cleanupDownloadArtifacts(File dest) {
+        if (dest == null) return;
+        deleteQuietly(dest);
+        deleteQuietly(new File(dest.getPath() + ".part"));
+        deleteQuietly(new File(dest.getPath() + ".part.meta"));
+        deleteQuietly(new File(dest.getPath() + ".part.meta.tmp"));
+        File cpart = CNChunkedDownload.partFileFor(dest);
+        File meta = CNChunkedDownload.metaFileFor(dest);
+        deleteQuietly(cpart);
+        deleteQuietly(meta);
+        deleteQuietly(new File(meta.getPath() + ".tmp"));
+        File parent = cpart.getParentFile();
+        File[] files = parent == null ? null : parent.listFiles();
+        String prefix = cpart.getName() + ".block.";
+        if (files != null) {
+            for (int i = 0; i < files.length; i++) {
+                File f = files[i];
+                if (f != null && f.getName().startsWith(prefix)) deleteQuietly(f);
+            }
+        }
+    }
 
-    /**
-     * 若 {@code url} 指向主线资源根下的单个文件，返回该文件名；否则返回 null
-     * （表示不适用换线）。
-     */
+    private static String withIdentity(String url, CNHotUpdateValidate.VerMeta meta) {
+        if (meta == null) return url;
+        String sep = url.indexOf('?') >= 0 ? "&" : "?";
+        return url + sep + "cnv_hot=" + hotIdentity(meta);
+    }
+
+    private static String hotIdentity(CNHotUpdateValidate.VerMeta meta) {
+        if (meta == null) return "legacy";
+        String md5 = meta.md5 == null ? "nomd5" : meta.md5.trim().toLowerCase(Locale.US);
+        if (md5.length() > 12) md5 = md5.substring(0, 12);
+        return meta.version + "-" + meta.size + "-" + md5;
+    }
+
     private static String mainLineFileName(String url) {
-        // 用规范前缀而不是兜底线路：兜底线路是「从哪里取字节」，可以随时换；
-        // 这里要判断的是「这条地址是不是主线资源」，属于身份问题。
         String base = CNMirrors.CANONICAL_BASE;
         if (!url.startsWith(base)) return null;
         String rest = url.substring(base.length());
         if (rest.length() == 0) return null;
-        // 只接受「根下单段文件名」，带子路径或查询串的一律不动
-        if (rest.indexOf('/') >= 0 || rest.indexOf('?') >= 0 || rest.indexOf('#') >= 0) {
-            return null;
-        }
+        if (rest.indexOf('/') >= 0 || rest.indexOf('?') >= 0 || rest.indexOf('#') >= 0) return null;
         return rest;
     }
 
@@ -330,7 +347,7 @@ public final class CNHotUpdate {
         CNCNDownloadUI.setDownloadSpeed(index, 0.0f);
         if (CNCNDownloadUI.fileStatus != null
                 && index >= 0 && index < CNCNDownloadUI.fileStatus.length) {
-            CNCNDownloadUI.fileStatus[index] = 3;
+            CNCNDownloadUI.fileStatus[index] = CNCNDownloadUI.ST_ERROR;
         }
         CNCNDownloadUI.throttledUpdate();
     }
@@ -345,9 +362,19 @@ public final class CNHotUpdate {
         }
     }
 
-    private static void closeQuietly(java.io.Closeable c) {
-        if (c != null) {
-            try { c.close(); } catch (Throwable ignore) {}
-        }
+    private static void deleteQuietly(File f) {
+        if (f == null || !f.exists()) return;
+        try { if (!f.delete() && f.exists()) CNLog.w(TAG, "无法删除 " + f); }
+        catch (Throwable ignore) {}
     }
+
+    private static void closeQuietly(java.io.Closeable c) {
+        if (c != null) try { c.close(); } catch (Throwable ignore) {}
+    }
+
+    // ---- JVM 合同测试入口 ----
+    public static String hotIdentityForTest(CNHotUpdateValidate.VerMeta meta) {
+        return hotIdentity(meta);
+    }
+    public static boolean usesChunkManifestForHotUpdateForTest() { return false; }
 }

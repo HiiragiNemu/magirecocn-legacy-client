@@ -1,8 +1,6 @@
 package io.kamihama.magianative;
 
 import android.app.Activity;
-import android.content.Context;
-import android.content.SharedPreferences;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -10,46 +8,217 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 
 /**
- * 玩家手动选择单个 ZIP 后，安全地安排一次“只重下这一包”的安装。
+ * 任意 ZIP 的手动强制重下载协调器。
  *
- * <p>不在正在运行的 WebView/引擎进程里直接覆盖资源。确认后先验证另外 14 个
- * 完成标记均有效，再原子备份所选标记、撤掉总完成标记并重启。下一进程沿用正式
- * 安装器：14 个有效 marker 直接跳过，只有所选包进入下载、分块校验、解压与写标记。
+ * <p>不要求另外 14 个 marker 齐全，不撤销总完成标记，也不为了开始下载而重启。
+ * 不同文件最多三个并行下载；同一文件去重。基础包下载可并行，真正解压仍由
+ * {@link CNDownloaderFix} 的全局提交锁串行；热更新走版本 JSON 的 size/MD5 与
+ * {@link CNHotUpdateTx} 事务。下载/校验失败不会触碰活动资源；基础包解压仍沿用
+ * 现有串行提交，旧 marker 只有在新包完整安装成功后才会覆盖。
  */
 public final class CNManualRedownload {
     private static final String TAG = "CNManualRedownload";
-    private static final String PREFS_NAME = "MagiaCN";
+    private static final int MAX_PARALLEL_FILES = 3;
     private static final String CANONICAL_BASE = "https://assets.example.test/";
     private static final String REQUEST_NAME = "manual-redownload.request";
     private static final String BACKUP_SUFFIX = ".manual-redownload.bak";
-    private static final AtomicBoolean PREPARING = new AtomicBoolean(false);
+
+    private static final AtomicIntegerArray RUNNING = new AtomicIntegerArray(15);
+    private static final AtomicInteger RUNNING_COUNT = new AtomicInteger(0);
+    private static final AtomicBoolean RESTART_REQUIRED = new AtomicBoolean(false);
+    private static final AtomicBoolean ANY_FAILURE = new AtomicBoolean(false);
+    private static final ExecutorService POOL = Executors.newFixedThreadPool(
+            MAX_PARALLEL_FILES, new ManualThreadFactory());
 
     private CNManualRedownload() {}
 
-    /** 由原下载列表每一行的“重下”按钮调用。 */
+    /** 紫色“重下”入口：任何 ZIP、任何 marker 状态都可安排。 */
     public static void request(Activity activity, int index) {
         Activity act = activity != null ? activity : RestClient.getCurrentActivity();
         if (!validIndex(index)) {
             CNCNDownloadUI.toast(act, "资源编号无效");
             return;
         }
-        if (!PREPARING.compareAndSet(false, true)) {
-            CNCNDownloadUI.toast(act, "已有手动重下载任务正在准备");
+        int[] status = CNCNDownloadUI.fileStatus;
+        if (status != null && index < status.length
+                && status[index] == CNCNDownloadUI.ST_RUNNING
+                && RUNNING.get(index) == 0) {
+            CNCNDownloadUI.toast(act, "该文件当前正在下载；不会重复启动同一文件");
             return;
         }
-        holdPage(true);
+        if (!RUNNING.compareAndSet(index, 0, 1)) {
+            CNCNDownloadUI.toast(act, "该文件已在重新下载");
+            return;
+        }
+
+        RUNNING_COUNT.incrementAndGet();
+        CNDownloadUiAssist.setStayOnPage(true);
         CNCNDownloadUI.markFilePending(index);
-        CNCNDownloadUI.updateSimple("准备重新下载",
-                CNCNDownloadUI.FILE_NAMES[index] + "：正在校验其余资源标记…", 0);
-        Thread t = new Thread(new PrepareTask(act, index), "cnv-manual-redownload");
-        t.setDaemon(true);
-        t.start();
+        refreshSummary("已加入重下载队列");
+        CNDownloadUiAssist.ensureInstalled();
+        try {
+            POOL.execute(new ManualTask(act, index));
+        } catch (Throwable t) {
+            RUNNING.set(index, 0);
+            RUNNING_COUNT.decrementAndGet();
+            markFailed(index);
+            ANY_FAILURE.set(true);
+            CNLog.e(TAG, "无法提交手动重下载任务 index=" + index, t);
+            CNCNDownloadUI.toast(act, "无法启动重新下载：" + safeMessage(t));
+            refreshSummary("任务启动失败");
+        }
     }
 
-    /** 新进程安装成功后清掉上一次留下的请求日志与 marker 备份。 */
+    /** 红色“重试”入口：首次安装器仍在跑时交还其队列，否则转为独立强制重下。 */
+    public static void retry(Activity activity, int index) {
+        Activity act = activity != null ? activity : RestClient.getCurrentActivity();
+        if (CNDownloaderFix.isInstalling()) {
+            CNLog.i(TAG, "安装器仍在运行，重试交还原安装队列 index=" + index);
+            CNDownloaderFix.requestRetry(index);
+            CNCNDownloadUI.toast(act, "已加入安装器重试队列");
+            return;
+        }
+        request(act, index);
+    }
+
+    public static boolean isRunning(int index) {
+        return validIndex(index) && RUNNING.get(index) != 0;
+    }
+
+    public static boolean hasRunningTasks() { return RUNNING_COUNT.get() > 0; }
+    public static int runningCount() { return Math.max(0, RUNNING_COUNT.get()); }
+    public static boolean restartRequired() { return RESTART_REQUIRED.get(); }
+
+    /**
+     * “进入游戏”按钮先问本协调器。返回 true 表示本次点击已经被消费：
+     * 仍有任务时保持页面；基础包成功过时安全重启；纯热更则返回 false 走普通离页。
+     */
+    public static boolean handleLeaveRequest(Activity act) {
+        int n = runningCount();
+        if (n > 0) {
+            CNDownloadUiAssist.setStayOnPage(true);
+            CNCNDownloadUI.toast(act, "还有 " + n + " 个资源正在处理，完成后才能进入游戏");
+            refreshSummary("仍在下载/校验/应用");
+            return true;
+        }
+        if (RESTART_REQUIRED.compareAndSet(true, false)) {
+            CNDownloadUiAssist.setStayOnPage(false);
+            Thread t = new Thread(new RestartTask(), "cnv-manual-restart");
+            t.setDaemon(true);
+            t.start();
+            return true;
+        }
+        return false;
+    }
+
+    private static final class ManualTask implements Runnable {
+        private final Activity act;
+        private final int index;
+        ManualTask(Activity act, int index) { this.act = act; this.index = index; }
+
+        @Override public void run() {
+            String name = CNCNDownloadUI.FILE_NAMES[index];
+            boolean ok = false;
+            try {
+                CNLog.initEarly();
+                recoverCompletedRequest();
+                CNCNDownloadUI.updateSimple("手动重新下载",
+                        name + "：正在下载（可同时处理其他文件）", 0);
+                if (index == CNDownloaderFix.HOT_SLOT_SCENARIO
+                        || index == CNDownloaderFix.HOT_SLOT_JS) {
+                    ok = CNHotUpdateCheck.redownloadPackage(index);
+                } else {
+                    ok = CNDownloaderFix.redownloadArchive(index);
+                }
+                if (ok) {
+                    CNCNDownloadUI.markFileDone(index);
+                    if (index >= 2) RESTART_REQUIRED.set(true);
+                    try { CNDownloaderFix.commitFinalFlagIfComplete(); }
+                    catch (Throwable t) { CNLog.w(TAG, "补齐总完成标记失败: " + t); }
+                    CNLog.i(TAG, "手动重下载成功 index=" + index + " file=" + name);
+                } else {
+                    ANY_FAILURE.set(true);
+                    markFailed(index);
+                    CNLog.w(TAG, "手动重下载失败 index=" + index + " file=" + name);
+                }
+            } catch (Throwable t) {
+                ANY_FAILURE.set(true);
+                markFailed(index);
+                CNLog.e(TAG, "手动重下载异常 index=" + index + " file=" + name, t);
+                CNCNDownloadUI.toast(act, name + " 重下载失败：" + safeMessage(t));
+            } finally {
+                RUNNING.set(index, 0);
+                int left = RUNNING_COUNT.decrementAndGet();
+                if (left < 0) {
+                    RUNNING_COUNT.set(0);
+                    left = 0;
+                }
+                if (left == 0) finishSummary();
+                else refreshSummary("已有任务完成，剩余 " + left + " 个");
+                CNDownloadUiAssist.ensureInstalled();
+            }
+        }
+    }
+
+    private static final class RestartTask implements Runnable {
+        @Override public void run() {
+            CNDownloaderFix.noticeAndRestart("资源重新下载已完成，3 秒后重启使基础资源完全生效");
+        }
+    }
+
+    private static final class ManualThreadFactory implements ThreadFactory {
+        private final AtomicInteger seq = new AtomicInteger(0);
+        @Override public Thread newThread(Runnable r) {
+            Thread t = new Thread(r, "cnv-manual-download-" + seq.incrementAndGet());
+            t.setDaemon(true);
+            return t;
+        }
+    }
+
+    private static void refreshSummary(String detail) {
+        int n = runningCount();
+        CNCNDownloadUI.updateSimple("手动重新下载",
+                detail + (n > 0 ? "（进行中 " + n + " 个）" : ""), 0);
+        CNCNDownloadUI.throttledUpdate();
+    }
+
+    private static void finishSummary() {
+        boolean failed = ANY_FAILURE.getAndSet(false);
+        if (failed) {
+            CNCNDownloadUI.updateSimple("部分重新下载失败",
+                    "失败项可直接点红色“重试”或紫色“重下”；其他成功项已保留", 0);
+        } else if (RESTART_REQUIRED.get()) {
+            CNCNDownloadUI.updateSimple("重新下载完成",
+                    "基础资源已更新；点击“进入游戏”执行一次安全重启", 100);
+        } else {
+            CNCNDownloadUI.updateSimple("重新下载完成",
+                    "热更新已校验并事务应用；点击“进入游戏”继续", 100);
+        }
+        CNDownloadUiAssist.setStayOnPage(true);
+        CNCNDownloadUI.throttledUpdate();
+    }
+
+    private static void markFailed(int index) {
+        int[] status = CNCNDownloadUI.fileStatus;
+        if (status != null && index >= 0 && index < status.length) {
+            status[index] = CNCNDownloadUI.ST_ERROR;
+        }
+        CNCNDownloadUI.setDownloadSpeed(index, 0.0f);
+        CNCNDownloadUI.throttledUpdate();
+    }
+
+    /**
+     * 兼容上一版“撤 marker + 撤总 flag + 重启”的遗留状态。升级后优先恢复旧 marker，
+     * 所有 marker 均有效时补回总完成标记，再删除旧请求；不会继续旧事务。
+     */
     public static void recoverCompletedRequest() {
         File state = stateRoot();
         File request = new File(state, REQUEST_NAME);
@@ -57,228 +226,29 @@ public final class CNManualRedownload {
         try {
             String name = readRequestName(request);
             int index = indexOf(name);
-            if (!validIndex(index)) return;
-            File marker = markerFor(state, name);
-            if (finalFlag().isFile() && markerValid(marker, name)) {
-                deleteQuietly(new File(marker.getPath() + BACKUP_SUFFIX));
-                deleteQuietly(request);
-                CNLog.i(TAG, "手动重下载已完成并清理请求: " + name);
+            if (validIndex(index)) {
+                File marker = markerFor(state, name);
+                File backup = new File(marker.getPath() + BACKUP_SUFFIX);
+                if (!marker.isFile() && backup.isFile()) moveFile(backup, marker);
+                else deleteQuietly(backup);
             }
+            if (!finalFlag().isFile() && allMarkersValid(state)) {
+                writeAtomic(finalFlag(), "schema=2\narchives=15\n");
+                CNLog.i(TAG, "已从旧式手动重下载遗留状态补回总完成标记");
+            }
+            deleteQuietly(request);
         } catch (Throwable t) {
-            CNLog.w(TAG, "检查手动重下载请求失败: " + t);
+            CNLog.w(TAG, "恢复旧式手动重下载状态失败: " + t);
         }
     }
 
-    private static final class PrepareTask implements Runnable {
-        private final Activity act;
-        private final int index;
-        PrepareTask(Activity act, int index) { this.act = act; this.index = index; }
-
-        @Override public void run() {
-            Mutation mutation = null;
-            boolean handedOff = false;
-            try {
-                CNLog.initEarly();
-                recoverCompletedRequest();
-                if (CNDownloaderFix.isInstalling()) {
-                    throw new IOException("正式安装器正在运行，不能同时安排手动重下载");
-                }
-                mutation = prepare(index);
-                String name = CNCNDownloadUI.FILE_NAMES[index];
-                CNCNDownloadUI.updateSimple("重新下载已安排",
-                        name + "：即将重启到下载页；其他资源保持不变", 0);
-                boolean restarted = CNRestart.restartWithNotice(
-                        "将只重新下载 " + name + "，3 秒后重启进入下载页", 3000L);
-                if (!restarted) {
-                    throw new IOException("重启握手失败，已取消本次重下载安排");
-                }
-                handedOff = true;
-                CNLog.i(TAG, "手动重下载已交给下一进程: index=" + index + " file=" + name);
-            } catch (Throwable t) {
-                CNLog.e(TAG, "安排手动重下载失败", t);
-                rollback(mutation);
-                holdPage(true);
-                CNCNDownloadUI.updateSimple("无法重新下载", safeMessage(t), 0);
-                CNCNDownloadUI.toast(act, "重新下载未开始：" + safeMessage(t));
-            } finally {
-                if (!handedOff) PREPARING.set(false);
-            }
-        }
-    }
-
-    /** 所有破坏性动作都在验证另外 14 个 marker 后执行。 */
-    private static Mutation prepare(int selected) throws IOException {
-        if (!validIndex(selected)) throw new IOException("资源编号无效");
-        File state = stateRoot();
-        if (!state.isDirectory() && !state.mkdirs() && !state.isDirectory()) {
-            throw new IOException("无法创建安装状态目录");
-        }
-        File finalFlag = finalFlag();
-        if (!finalFlag.isFile()) {
-            throw new IOException("当前安装尚未完整结束，不能进入单文件重下载模式");
-        }
-        String otherBad = firstInvalidOther(state, selected);
-        if (otherBad != null) {
-            throw new IOException("无法保证只下载一个文件：" + otherBad + " 的安装标记也不完整");
-        }
-
-        String name = CNCNDownloadUI.FILE_NAMES[selected];
-        File marker = markerFor(state, name);
-        File backup = new File(marker.getPath() + BACKUP_SUFFIX);
-        File request = new File(state, REQUEST_NAME);
-        String finalContent = readSmall(finalFlag);
-        Mutation m = new Mutation(finalFlag, finalContent, marker, backup, request);
-
-        writeAtomic(request, "schema=1\nindex=" + selected + "\nfile=" + name
-                + "\ntime=" + System.currentTimeMillis() + "\n");
-        try {
-            if (backup.exists() && !backup.delete() && backup.exists()) {
-                throw new IOException("无法清理旧 marker 备份");
-            }
-            if (marker.isFile()) {
-                moveFile(marker, backup);
-                m.markerBackedUp = true;
-            }
-            if (!finalFlag.delete() && finalFlag.exists()) {
-                throw new IOException("无法撤销总完成标记");
-            }
-            m.finalFlagRemoved = true;
-            resetHotUpdateVersion(m, selected);
-            cleanupArtifacts(fileRoot(), state, selected);
-            return m;
-        } catch (Throwable t) {
-            rollback(m);
-            if (t instanceof IOException) throw (IOException) t;
-            throw new IOException("准备重下载失败: " + t, t);
-        }
-    }
-
-    private static final class Mutation {
-        final File finalFlag;
-        final String finalContent;
-        final File marker;
-        final File backup;
-        final File request;
-        boolean markerBackedUp;
-        boolean finalFlagRemoved;
-        String versionKey;
-        int versionBefore;
-        boolean versionReset;
-        Mutation(File finalFlag, String finalContent, File marker, File backup, File request) {
-            this.finalFlag = finalFlag;
-            this.finalContent = finalContent;
-            this.marker = marker;
-            this.backup = backup;
-            this.request = request;
-        }
-    }
-
-    private static void rollback(Mutation m) {
-        if (m == null) return;
-        try {
-            if (m.markerBackedUp && m.backup.isFile() && !m.marker.exists()) {
-                moveFile(m.backup, m.marker);
-            }
-        } catch (Throwable t) {
-            CNLog.e(TAG, "恢复所选 marker 失败", t);
-        }
-        try {
-            if (m.finalFlagRemoved && !m.finalFlag.isFile()) {
-                writeAtomic(m.finalFlag, m.finalContent.length() == 0
-                        ? "schema=2\narchives=15\n" : m.finalContent);
-            }
-        } catch (Throwable t) {
-            CNLog.e(TAG, "恢复总完成标记失败", t);
-        }
-        try {
-            if (m.versionReset && m.versionKey != null) {
-                SharedPreferences p = prefs();
-                if (p == null || !p.edit().putInt(m.versionKey, m.versionBefore).commit()) {
-                    throw new IOException("无法恢复热更新版本号 " + m.versionKey);
-                }
-            }
-        } catch (Throwable t) {
-            CNLog.e(TAG, "恢复热更新版本号失败", t);
-        }
-        deleteQuietly(m.request);
-    }
-
-    private static void resetHotUpdateVersion(Mutation m, int index) throws IOException {
-        String key = hotVersionKey(index);
-        if (key == null) return;
-        SharedPreferences p = prefs();
-        if (p == null) throw new IOException("无法读取热更新版本状态");
-        m.versionKey = key;
-        m.versionBefore = p.getInt(key, 0);
-        if (!p.edit().putInt(key, 0).commit()) {
-            throw new IOException("无法重置热更新版本号 " + key);
-        }
-        m.versionReset = true;
-        CNLog.i(TAG, "已重置热更新版本号，下载完成后将按版本清单补更: " + key);
-    }
-
-    private static String hotVersionKey(int index) {
-        if (index == 0) return "scenario_version";
-        if (index == 1) return "js_version";
-        return null;
-    }
-
-    private static SharedPreferences prefs() {
-        Context c = appContext();
-        return c == null ? null : c.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-    }
-
-    private static Context appContext() {
-        try {
-            Class<?> cls = Class.forName("android.app.ActivityThread");
-            Object thread = cls.getMethod("currentActivityThread").invoke(null);
-            return (Context) cls.getMethod("getApplication").invoke(thread);
-        } catch (Throwable t) {
-            return null;
-        }
-    }
-
-    /** 删除的范围严格限定为所选 ZIP 的下载产物，不碰解压后的活动资源树。 */
-    private static void cleanupArtifacts(File root, File state, int index) {
-        if (!validIndex(index)) return;
-        String name = CNCNDownloadUI.FILE_NAMES[index];
-        File archive = new File(root, name);
-        deleteQuietly(archive);
-        deleteQuietly(new File(archive.getPath() + ".aria2"));
-        deleteQuietly(new File(archive.getPath() + ".part"));
-        deleteQuietly(new File(archive.getPath() + ".part.meta"));
-        deleteQuietly(new File(archive.getPath() + ".part.meta.tmp"));
-        deleteQuietly(new File(archive.getPath() + ".tmp"));
-
-        File cpart = CNChunkedDownload.partFileFor(archive);
-        File cmeta = CNChunkedDownload.metaFileFor(archive);
-        deleteQuietly(cpart);
-        deleteQuietly(cmeta);
-        deleteQuietly(new File(cmeta.getPath() + ".tmp"));
-
-        File[] siblings = root.listFiles();
-        String blockPrefix = cpart.getName() + ".block.";
-        if (siblings != null) {
-            for (int i = 0; i < siblings.length; i++) {
-                File f = siblings[i];
-                if (f != null && f.getName().startsWith(blockPrefix)) deleteQuietly(f);
-            }
-        }
-
-        File offline = new File(new File(state, CNOfflineImport.OFFLINE_DIR), name);
-        deleteQuietly(offline);
-        deleteQuietly(new File(offline.getPath() + ".importing"));
-        CNLog.i(TAG, "已清理所选 ZIP 的下载产物: " + name);
-    }
-
-    private static String firstInvalidOther(File state, int selected) {
+    private static boolean allMarkersValid(File state) {
         String[] names = CNCNDownloadUI.FILE_NAMES;
-        if (names == null) return "资源列表不可用";
+        if (names == null || names.length != 15) return false;
         for (int i = 0; i < names.length; i++) {
-            if (i == selected) continue;
-            if (!markerValid(markerFor(state, names[i]), names[i])) return names[i];
+            if (!markerValid(markerFor(state, names[i]), names[i])) return false;
         }
-        return null;
+        return true;
     }
 
     private static boolean markerValid(File marker, String name) {
@@ -289,31 +259,24 @@ public final class CNManualRedownload {
             String text = readSmall(marker);
             if (!text.contains("schema=1\n")
                     || !text.contains("file=" + name + "\n")
-                    || !text.contains("url=" + CANONICAL_BASE + name + "\n")) {
-                return false;
-            }
+                    || !text.contains("url=" + CANONICAL_BASE + name + "\n")) return false;
             String[] lines = text.split("\\n");
             for (int i = 0; i < lines.length; i++) {
-                if (!lines[i].startsWith("bytes=")) continue;
-                long n = Long.parseLong(lines[i].substring(6).trim());
-                return n > 0;
+                if (lines[i].startsWith("bytes=")) {
+                    return Long.parseLong(lines[i].substring(6).trim()) > 0L;
+                }
             }
         } catch (Throwable ignore) {}
         return false;
     }
 
-    private static File fileRoot() {
-        return new File(CNPaths.filesDir());
-    }
-
+    private static File fileRoot() { return new File(CNPaths.filesDir()); }
     private static File stateRoot() {
         return new File(fileRoot(), "madomagi/magica/.cn_installer/r128-downloader-v1");
     }
-
     private static File finalFlag() {
         return new File(fileRoot(), "madomagi/magica/cn_base_done.flag");
     }
-
     private static File markerFor(File state, String name) {
         return new File(state, name + ".done");
     }
@@ -376,7 +339,7 @@ public final class CNManualRedownload {
             if (!tmp.renameTo(target)) throw new IOException("原子改名失败: " + target);
         } finally {
             if (out != null) try { out.close(); } catch (Throwable ignore) {}
-            if (tmp.exists() && !tmp.equals(target)) deleteQuietly(tmp);
+            if (tmp.exists()) deleteQuietly(tmp);
         }
     }
 
@@ -407,38 +370,27 @@ public final class CNManualRedownload {
         } catch (Throwable ignore) {}
     }
 
-    /** 与 UI 辅助类松耦合：升级过程里两份 class 可能短暂不是同一提交。 */
-    private static void holdPage(boolean stay) {
-        try {
-            java.lang.reflect.Method m = CNDownloadUiAssist.class.getDeclaredMethod(
-                    "setStayOnPage", boolean.class);
-            m.setAccessible(true);
-            m.invoke(null, Boolean.valueOf(stay));
-        } catch (Throwable t) {
-            try { CNCNDownloadUI.noteInteraction(); } catch (Throwable ignore) {}
-        }
-    }
-
     private static String safeMessage(Throwable t) {
         if (t == null) return "未知错误";
         String s = t.getMessage();
         return s == null || s.length() == 0 ? t.toString() : s;
     }
 
-    // ---- JVM 回归测试入口（不触碰 Android 框架） ----
-    public static String firstInvalidOtherForTest(File state, int selected) {
-        return firstInvalidOther(state, selected);
+    // ---- JVM 回归测试入口 ----
+    public static int maxParallelForTest() { return MAX_PARALLEL_FILES; }
+    public static boolean requiresOtherMarkersForTest() { return false; }
+    public static boolean claimForTest(int index) {
+        if (!validIndex(index)) return false;
+        boolean ok = RUNNING.compareAndSet(index, 0, 1);
+        if (ok) RUNNING_COUNT.incrementAndGet();
+        return ok;
     }
-
+    public static void releaseForTest(int index) {
+        if (validIndex(index) && RUNNING.compareAndSet(index, 1, 0)) {
+            RUNNING_COUNT.decrementAndGet();
+        }
+    }
     public static boolean markerValidForTest(File marker, String name) {
         return markerValid(marker, name);
-    }
-
-    public static void cleanupArtifactsForTest(File root, File state, int index) {
-        cleanupArtifacts(root, state, index);
-    }
-
-    public static String hotVersionKeyForTest(int index) {
-        return hotVersionKey(index);
     }
 }

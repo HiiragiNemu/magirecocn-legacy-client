@@ -165,6 +165,7 @@ public final class CNDownloadUiAssist {
                     && CNCNDownloadUI.isShowing) {
                 applyScale();
                 styleScrollbars();
+                refreshReloadStates();
             }
         }
     }
@@ -200,6 +201,7 @@ public final class CNDownloadUiAssist {
         installStay(overlay);
         installDisplay(overlay);
         installReloads(overlay);
+        refreshReloadStates();
         styleStay();
         styleDisplay();
         styleScrollbars();
@@ -341,10 +343,11 @@ public final class CNDownloadUiAssist {
 
     private static final class StayClick implements View.OnClickListener {
         @Override public void onClick(View v) {
+            Activity act = RestClient.getCurrentActivity();
+            if (stayRequested && CNManualRedownload.handleLeaveRequest(act)) return;
             boolean next = !stayRequested;
             setStayOnPage(next);
             CNCNDownloadUI.noteInteraction();
-            Activity act = RestClient.getCurrentActivity();
             if (next) {
                 CNCNDownloadUI.toast(act, "已停留；点“进入游戏”再离开资源页");
             } else if (CNHotUpdateCheck.isRunning() || CNDownloaderFix.isInstalling()) {
@@ -425,6 +428,25 @@ public final class CNDownloadUiAssist {
         }
     }
 
+
+
+    private static void refreshReloadStates() {
+        View root = attachedOverlay;
+        if (root == null) return;
+        String[] names = CNCNDownloadUI.FILE_NAMES;
+        for (int i = 0; names != null && i < names.length; i++) {
+            View found = root.findViewWithTag(TAG_RELOAD + i);
+            if (!(found instanceof TextView)) continue;
+            TextView b = (TextView) found;
+            boolean manual = CNManualRedownload.isRunning(i);
+            boolean active = CNCNDownloadUI.fileStatus != null
+                    && i < CNCNDownloadUI.fileStatus.length
+                    && CNCNDownloadUI.fileStatus[i] == CNCNDownloadUI.ST_RUNNING;
+            b.setText(manual ? "进行中" : (active ? "下载中" : "重下"));
+            b.setAlpha((manual || active) ? 0.55f : 1.0f);
+        }
+    }
+
     private static final class ReloadClick implements View.OnClickListener {
         private final int index;
         ReloadClick(int index) { this.index = index; }
@@ -456,7 +478,7 @@ public final class CNDownloadUiAssist {
         LinearLayout panel = dialogPanel(act);
         panel.setOnClickListener(new ConsumeClick());
         FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
-                dp(panel, 380), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+                adaptiveDialogWidth(panel), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
         panelLp.leftMargin = panelLp.rightMargin = dp(panel, 20);
         modal.addView(panel, panelLp);
 
@@ -470,8 +492,8 @@ public final class CNDownloadUiAssist {
                 : "";
         TextView msg = text(act,
                 "只重新下载：\n" + names[index]
-                + "\n\n其他已验证资源和已解压内容不会删除。确认后游戏会重启到下载页，"
-                + "完成该文件的下载、校验和解压后再自动重启一次。" + extra,
+                + "\n\n不要求其它资源已经下载齐全；不同 ZIP 可以同时下载。"
+                + "旧 marker 与当前可用内容会保留到新包校验并提交成功。" + extra,
                 13f, color("COLOR_LOG_PANEL_TEXT", 0xFF2A1A3B));
         msg.setLineSpacing(dp(msg, 2), 1f);
         panel.addView(msg, rowLp(msg, 0, 18));
@@ -519,7 +541,7 @@ public final class CNDownloadUiAssist {
         LinearLayout panel = dialogPanel(act);
         panel.setOnClickListener(new ConsumeClick());
         FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
-                dp(panel, 380), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+                adaptiveDialogWidth(panel), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
         panelLp.leftMargin = panelLp.rightMargin = dp(panel, 20);
         modal.addView(panel, panelLp);
 
@@ -699,6 +721,14 @@ public final class CNDownloadUiAssist {
         d.setCornerRadius(dp(v, 6));
         d.setSize(dp(v, 5), dp(v, 5));
         return d;
+    }
+
+
+
+    /** 弹窗宽度永远不超过当前逻辑屏幕减 40dp，覆盖窄屏、分屏和高 DPI。 */
+    private static int adaptiveDialogWidth(View v) {
+        int available = v.getResources().getDisplayMetrics().widthPixels - dp(v, 40);
+        return Math.max(1, Math.min(dp(v, 380), available));
     }
 
     private static LinearLayout dialogPanel(Activity act) {

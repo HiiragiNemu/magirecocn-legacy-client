@@ -806,13 +806,14 @@ public class CNCNDownloadUI {
         LinearLayout topLeft = new LinearLayout(act);
         topLeft.setOrientation(LinearLayout.HORIZONTAL);
         topLeft.setGravity(Gravity.CENTER_VERTICAL);
-        FrameLayout.LayoutParams topLeftLp = new FrameLayout.LayoutParams(
+        // 左侧胶囊放进自己的横向视口；窄屏/高 DPI 时滚动，不再与右侧主题栏重叠。
+        HorizontalScrollView topLeftScroll = new HorizontalScrollView(act);
+        topLeftScroll.setHorizontalScrollBarEnabled(false);
+        topLeftScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+        topLeftScroll.setFillViewport(false);
+        topLeftScroll.addView(topLeft, new HorizontalScrollView.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        topLeftLp.gravity    = Gravity.TOP | Gravity.START;
-        topLeftLp.topMargin  = dp(act, 10);
-        topLeftLp.leftMargin = dp(act, 14);
-        root.addView(topLeft, topLeftLp);
+                ViewGroup.LayoutParams.WRAP_CONTENT));
         topLeft.addView(vLogPill, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -912,13 +913,24 @@ public class CNCNDownloadUI {
         // 替换为配置值(弹窗+跳转); 未配置时保持默认 GitHub 跳转(见 applyRightPill)。
         applyRightPill(act);
 
-        FrameLayout.LayoutParams themeLp = new FrameLayout.LayoutParams(
+        LinearLayout topBar = new LinearLayout(act);
+        topBar.setOrientation(LinearLayout.HORIZONTAL);
+        topBar.setGravity(Gravity.CENTER_VERTICAL);
+        topBar.addView(topLeftScroll, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        LinearLayout.LayoutParams headRightLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
-        themeLp.gravity     = Gravity.TOP | Gravity.END;
-        theme-hostMargin   = dp(act, 10);
-        themeLp.rightMargin = dp(act, 14);
-        root.addView(headRight, themeLp);
+        headRightLp.leftMargin = dp(act, 8);
+        topBar.addView(headRight, headRightLp);
+        FrameLayout.LayoutParams topBarLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        topBarLp.gravity = Gravity.TOP | Gravity.START;
+        topBarLp.topMargin = dp(act, 10);
+        topBarLp.leftMargin = dp(act, 14);
+        topBarLp.rightMargin = dp(act, 14);
+        root.addView(topBar, topBarLp);
 
         // ── 第 4 层：底部常驻署名条 ──
         // marquee 可经 ui_credits.footer_marquee=false 远程关闭：
@@ -1325,8 +1337,8 @@ public class CNCNDownloadUI {
             try {
                 v.setVisibility(View.GONE);
                 CNLog.i("界面", "玩家点击重试: index=" + index);
-                toast(act, "已加入重试队列");
-                CNDownloaderFix.requestRetry(index);
+                toast(act, "正在重新安排该文件");
+                CNManualRedownload.retry(act, index);
             } catch (Throwable t) {
                 CNLog.e("界面", "重试请求失败: " + t, t);
             }

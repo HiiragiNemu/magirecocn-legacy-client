@@ -168,6 +168,11 @@ public final class CNDownloaderFix {
 
     private static final AtomicLongArray    LAST_PROGRESS_NS = new AtomicLongArray(ARCHIVE_COUNT);
     private static final AtomicIntegerArray ACTIVE           = new AtomicIntegerArray(ARCHIVE_COUNT);
+    /** 手动重下只绕过所选 marker；旧 marker 一直保留到新包成功提交。 */
+    private static final AtomicIntegerArray FORCE_REDOWNLOAD =
+            new AtomicIntegerArray(ARCHIVE_COUNT);
+    /** 同一 ZIP 的自动安装与手动重下串行，不同 ZIP 仍可并行。 */
+    private static final Object[] ARCHIVE_LOCKS = createArchiveLocks();
 
     private CNDownloaderFix() {
     }
@@ -781,7 +786,9 @@ public final class CNDownloaderFix {
         private final int index;
         ArchiveTask(int index) { this.index = index; }
         @Override public Boolean call() {
-            return Boolean.valueOf(installArchive(index));
+            synchronized (ARCHIVE_LOCKS[index]) {
+                return Boolean.valueOf(installArchive(index));
+            }
         }
     }
 
@@ -791,16 +798,22 @@ public final class CNDownloaderFix {
         File   archive      = new File(FILE_ROOT, name);
         File   marker       = markerFor(name);
 
-        if (isMarkerValid(marker, name, canonicalUrl)) {
+        if (FORCE_REDOWNLOAD.get(index) == 0
+                && isMarkerValid(marker, name, canonicalUrl)) {
             markDone(index);
             CNLog.i(TAG, "marker-hit file=" + name);
             return true;
+        }
+        if (FORCE_REDOWNLOAD.get(index) != 0) {
+            CNLog.i(TAG, "manual-force-redownload file=" + name
+                    + "（旧 marker 保留到新包成功）");
         }
 
         // 离线包注入兜底：玩家手动导入的官方 zip（分块清单已校验）优先，
         // 跳过网络下载，直接解压 + 写标记。只对基础资源包生效——热更两包
         // （cn_scenario_update.zip / cn_js_update.zip）走版本 json 通道，不纳入。
-        if (!CNOfflineImport.isHotUpdateFile(name)
+        if (FORCE_REDOWNLOAD.get(index) == 0
+                && !CNOfflineImport.isHotUpdateFile(name)
                 && CNOfflineImport.hasOffline(name)) {
             File offline = new File(CNOfflineImport.offlineDir(), name);
             try {
@@ -829,7 +842,8 @@ public final class CNDownloaderFix {
         // 控制文件），走下面的主引擎整份重下。
         boolean aria2Forced = CNMirrors.forceAria2()
                 || CNDebugFlags.isOn(CNDebugFlags.USE_ARIA2);
-        if (aria2Forced && CNAria2.isAvailable()) {
+        if (aria2Forced && FORCE_REDOWNLOAD.get(index) == 0
+                && CNAria2.isAvailable()) {
             int a2 = tryAria2Download(CNMirrors.pick(1), name, archive, index,
                                       marker, canonicalUrl);
             if (a2 == A2_INSTALLED) return true;
@@ -1156,6 +1170,8 @@ public final class CNDownloaderFix {
         CNLog.i(TAG, "download-open file=" + archive.getName() + " offset=" + offset
                 + " direct=" + direct);
 
+        CNDownloadConcurrency.Lease networkLease =
+                CNDownloadConcurrency.acquire("base-single:" + archive.getName());
         URL u = new URL(url);
         HttpURLConnection c = (HttpURLConnection)
                 (direct ? u.openConnection(Proxy.NO_PROXY) : u.openConnection());
@@ -1301,6 +1317,7 @@ public final class CNDownloaderFix {
             closeQuietly(out);
             closeQuietly(in);
             c.disconnect();
+            networkLease.close();
         }
     }
 
@@ -1893,4 +1910,87 @@ public final class CNDownloaderFix {
             super(message);
         }
     }
+
+    /** 基础包与热更新事务共用的提交锁：下载可并行，活动资源树修改必须串行。 */
+    static Object extractCommitLock() { return EXTRACT_LOCK; }
+
+    /**
+     * 强制重新下载一个基础 ZIP。任何其它 marker / 总完成标记状态都不构成前置条件。
+     * 旧 marker 在整个下载过程中保持原样；只有新包通过下载、ZIP 校验和解压后，
+     * installArchive 才原子覆盖 marker。失败因此不会破坏当前可用版本。
+     */
+    static boolean redownloadArchive(int index) {
+        if (index < 0 || index >= ARCHIVE_COUNT) return false;
+        if (index == HOT_SLOT_SCENARIO || index == HOT_SLOT_JS) {
+            return CNHotUpdateCheck.redownloadPackage(index);
+        }
+        synchronized (ARCHIVE_LOCKS[index]) {
+            if (!FORCE_REDOWNLOAD.compareAndSet(index, 0, 1)) {
+                CNLog.w(TAG, "同一文件已有强制重下载任务 index=" + index);
+                return false;
+            }
+            try {
+                cleanupArchiveDownloadState(index);
+                CNCNDownloadUI.markFilePending(index);
+                return installArchive(index);
+            } finally {
+                FORCE_REDOWNLOAD.set(index, 0);
+            }
+        }
+    }
+
+    /** 热更新事务成功后补齐 0/1 号 ZIP marker；不触碰总完成标记。 */
+    static void commitManualMarker(int index, long bytes, String etag) throws IOException {
+        if (index < 0 || index >= ARCHIVE_COUNT || bytes <= 0) {
+            throw new IOException("无法提交手动 marker index=" + index + " bytes=" + bytes);
+        }
+        String name = FILE_NAMES[index];
+        writeMarker(markerFor(name), name, RESOURCE_BASE_URL + name,
+                new DownloadMetadata(bytes, etag == null ? "manual" : etag));
+    }
+
+    /** 手动逐项补齐到 15 个 marker 时补回总完成标记；缺项时只返回 false。 */
+    static boolean commitFinalFlagIfComplete() throws IOException {
+        if (!allMarkersValid()) return false;
+        File flag = new File(FINAL_FLAG);
+        if (!flag.isFile()) {
+            writeAtomic(flag, "schema=2\narchives=15\n");
+            CNLog.i(TAG, "手动任务已补齐全部 marker，提交总完成标记");
+        }
+        return true;
+    }
+
+    private static Object[] createArchiveLocks() {
+        Object[] out = new Object[ARCHIVE_COUNT];
+        for (int i = 0; i < out.length; i++) out[i] = new Object();
+        return out;
+    }
+
+    private static void cleanupArchiveDownloadState(int index) {
+        String name = FILE_NAMES[index];
+        File archive = new File(FILE_ROOT, name);
+        deleteQuietly(archive);
+        deleteQuietly(new File(archive.getPath() + ".aria2"));
+        deleteQuietly(new File(archive.getPath() + ".part"));
+        deleteQuietly(new File(archive.getPath() + ".part.meta"));
+        deleteQuietly(new File(archive.getPath() + ".part.meta.tmp"));
+        File cpart = CNChunkedDownload.partFileFor(archive);
+        File cmeta = CNChunkedDownload.metaFileFor(archive);
+        deleteQuietly(cpart);
+        deleteQuietly(cmeta);
+        deleteQuietly(new File(cmeta.getPath() + ".tmp"));
+        File[] siblings = new File(FILE_ROOT).listFiles();
+        String prefix = cpart.getName() + ".block.";
+        if (siblings != null) {
+            for (int i = 0; i < siblings.length; i++) {
+                File f = siblings[i];
+                if (f != null && f.getName().startsWith(prefix)) deleteQuietly(f);
+            }
+        }
+        // “重下”必须走网络；同名离线候选会让安装器绕过下载，因此只清所选项。
+        File offline = new File(CNOfflineImport.offlineDir(), name);
+        deleteQuietly(offline);
+        deleteQuietly(new File(offline.getPath() + ".importing"));
+    }
+
 }
