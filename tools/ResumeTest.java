@@ -47,9 +47,9 @@ public class ResumeTest {
         CNChunkedDownload.metaFileFor(target).delete();
     }
 
-    // 7. 换线续传：ETag 变了但确实是同一份文件时，必须复用断点而不是从零重下
+    // 7. 无清单换线路：未认证字节不能跨 URL 复用，否则可能混进另一版本的内容
     static void test7_crossMirrorResume(File dir) throws Exception {
-        System.out.println("\n[7] 换线续传（不同线路 ETag 不同）");
+        System.out.println("\n[7] 无清单换线路必须丢弃未认证断点");
         File t = new File(dir, "f.bin");
         clean(t);
         // 线路 A：ETag = v1，只发一部分制造残局
@@ -62,14 +62,15 @@ public class ResumeTest {
         ctl("/settruncate?v=0");
         File part = CNChunkedDownload.partFileFor(t);
         check("残局已产生", part.exists() && CNChunkedDownload.metaFileFor(t).exists(), "");
-        // 线路 B：同一份文件，但 ETag 完全不同（模拟 CDN 与源站 ETag 格式不一致）
+        // 线路 B：即使测试服务器恰好提供同一份内容，客户端在没有 manifest 时也
+        // 无法证明这一点，因此必须从零重下，不能跨 URL 拼装未经认证的字节。
         String urlB = base + "?etag=" + java.net.URLEncoder.encode("\"0xDEADBEEF\"", "UTF-8");
         CNChunkedDownload.Probe p = CNChunkedDownload.probe(urlB, false);
         Sink s = new Sink();
-        CNChunkedDownload.Result r = CNChunkedDownload.download(urlB, t, 4, false, p, s);
+        CNChunkedDownload.download(urlB, t, 4, false, p, s);
         check("换线后内容正确", sha256(t).equals(expectSha), "sha=" + sha256(t).substring(0,12));
-        check("复用了断点而非从零重下", s.first > 0,
-              "换线后首次回调=" + s.first + "（0 表示进度被作废）");
+        check("未认证断点被丢弃，从零重下", s.first == 0,
+              "换线后首次回调=" + s.first + "（应为 0）");
     }
 
     public static void main(String[] args) throws Exception {

@@ -256,13 +256,16 @@ public final class CNChunkedDownload {
         final String manifestId = manifestFingerprint(hashes);
         HashResume resume = readHashResume(meta);
         AtomicIntegerArray verified = new AtomicIntegerArray(hashes.count);
+        // 已验证块的文件身份只由完整 manifest 指纹决定。ETag 是 CDN/缓存节点的
+        // 响应元数据，同一内容在同一 URL 上也可能因节点、回源或重签而变化；继续
+        // 把它当身份会让 03 已验证的几十个块无故归零。块内容已由 manifest MD5
+        // 认证，因此 URL/ETag 变化不影响这些 verified 位的可信度。
         boolean accepted = resume != null
                 && resume.total == probe.total
                 && resume.blockSize == hashes.chunkSize
                 && resume.count == hashes.count
                 && manifestId.equals(resume.manifestId)
-                && part.isFile() && part.length() == probe.total
-                && etagCompatible(resume.url, resume.etag, url, probe.etag);
+                && part.isFile() && part.length() == probe.total;
         if (accepted) {
             for (int i = 0; i < hashes.count; i++) verified.set(i, resume.verified[i]);
             CNLog.i(TAG, "verified-resume-accept file=" + target.getName()
@@ -408,7 +411,7 @@ public final class CNChunkedDownload {
             File temp = blockTemp(ctx.part, block);
             deleteQuietly(temp);
             try {
-                String got = fetchRangeToTemp(u, ctx.primaryUrl, ctx.etag, ctx.direct,
+                String got = fetchRangeToTemp(u, ctx.direct,
                         start, end, ctx.total, temp, ctx.abort, ctx.open, ctx.sink,
                         ctx.networkBytes, ctx.lastMoveNs);
                 if (!expected.equalsIgnoreCase(got)) {
@@ -441,8 +444,8 @@ public final class CNChunkedDownload {
         throw last == null ? new IOException("块 " + block + " 下载失败") : last;
     }
 
-    private static String fetchRangeToTemp(String url, String primaryUrl, String primaryEtag,
-                                           boolean direct, long start, long end, long total,
+    private static String fetchRangeToTemp(String url, boolean direct,
+                                           long start, long end, long total,
                                            File temp, AtomicBoolean abort, AtomicBoolean open,
                                            Sink sink, AtomicLong networkBytes,
                                            AtomicLong lastMoveNs) throws IOException {
@@ -459,9 +462,9 @@ public final class CNChunkedDownload {
             c = open(url, direct);
             c.setRequestMethod("GET");
             c.setRequestProperty("Range", "bytes=" + start + "-" + end);
-            if (url.equals(primaryUrl) && primaryEtag != null && primaryEtag.length() > 0) {
-                c.setRequestProperty("If-Range", primaryEtag);
-            }
+            // 事务块始终从块头完整请求，并由 manifest MD5 验证，不是字节级续传。
+            // 不发送 If-Range：CDN 的 ETag 变化会把本来合法的 Range 降成 HTTP 200，
+            // 造成频繁“分块失败”；内容若真的变了，MD5 会在提交前将其拒绝。
             int code = c.getResponseCode();
             if (code != 206) {
                 throw new IOException("Range 请求期望 206，实得 HTTP " + code + " url=" + url);
@@ -549,11 +552,15 @@ public final class CNChunkedDownload {
         int segments = Math.max(1, Math.min(MAX_BYTE_SEGMENTS, requestedSegments));
         if (probe.total < segments) segments = (int) Math.max(1L, probe.total);
         long segmentSize = ceilDiv(probe.total, segments);
+        // 无 manifest 时没有内容指纹，断点只能在**同一完整 URL**上复用。
+        // 旧逻辑只在同 URL 比 ETag、换 URL 时无条件接受，等于允许把不同镜像的
+        // 未认证字节继续拼进同一文件，正是 03 历史 corrupt-zip 的入口。
         boolean accepted = resume != null
                 && resume.total == probe.total
                 && resume.segments >= 1 && resume.segments <= MAX_BYTE_SEGMENTS
                 && resume.segmentSize > 0
                 && part.isFile() && part.length() == probe.total
+                && url.equals(resume.url)
                 && etagCompatible(resume.url, resume.etag, url, probe.etag)
                 && byteResumeBoundsValid(resume);
         long[] resumed = null;
@@ -712,13 +719,29 @@ public final class CNChunkedDownload {
                 throw new IOException("分段 " + index + " 期望 206，实得 HTTP " + code);
             }
             RangeInfo r = parseContentRange(c.getHeaderField("Content-Range"));
-            if (r == null || r.start != start || r.end != segmentEnd || r.total != ctx.total) {
-                throw new IOException("分段 " + index + " Content-Range 不符: "
+            // 无清单兼容路径仍严格校验响应头身份；只有在头部准确声明请求区间、
+            // 中间设备却额外多写正文时，下面的读取循环才会安全裁掉尾部。
+            if (r == null) {
+                throw new IOException("分段 " + index + " Content-Range 格式非法: "
                         + c.getHeaderField("Content-Range"));
+            }
+            if (r.start != start) {
+                throw new IOException("分段 " + index + " Content-Range 起点不符: "
+                        + r.start + " != " + start);
+            }
+            if (r.total != ctx.total) {
+                throw new IOException("分段 " + index + " Content-Range 总长不符: "
+                        + r.total + " != " + ctx.total);
+            }
+            if (r.end != segmentEnd) {
+                throw new IOException("分段 " + index + " Content-Range 终点不符: "
+                        + r.end + " != " + segmentEnd);
             }
             long expected = segmentEnd - start + 1L;
             long cl = parseLong(c.getHeaderField("Content-Length"), -1L);
-            if (cl >= 0 && cl != expected) throw new IOException("分段 Content-Length 不符");
+            if (cl >= 0 && cl != expected) {
+                throw new IOException("分段 Content-Length 不符: " + cl + " != " + expected);
+            }
 
             in = new BufferedInputStream(c.getInputStream(), 1 << 16);
             raf = new RandomAccessFile(ctx.part, "rw");
@@ -845,6 +868,11 @@ public final class CNChunkedDownload {
         for (int i = 0; i < h.count; i++) {
             String s = h.chunks[i];
             if (s == null || s.trim().length() != 32) return null;
+            s = s.trim();
+            for (int j = 0; j < s.length(); j++) {
+                char c = Character.toLowerCase(s.charAt(j));
+                if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return null;
+            }
         }
         return h;
     }
