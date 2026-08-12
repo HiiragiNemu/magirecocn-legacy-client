@@ -1,4 +1,4 @@
-name: one-shot-dispatch-final-apk
+name: one-shot-dispatch-manual-redownload-apk
 
 on:
   push:
@@ -14,9 +14,15 @@ jobs:
   dispatch:
     runs-on: ubuntu-latest
     steps:
-      - name: Dispatch final APK build and release
+      - name: Wait for dispatcher cleanup, then publish official APK
         env:
           : ${{ github.token }}
         run: |
           set -euo pipefail
-          gh workflow run build-apk.yml --repo "${GITHUB_REPOSITORY}" --ref main
+          # 本运行一旦启动，外部 GitHub 接口会删除本临时文件；稍候再以干净 main
+          # 显式触发正式 build-apk.yml，使发布源码树不携带一次性调度器。
+          sleep 30
+          gh workflow run build-apk.yml \
+            --repo "${GITHUB_REPOSITORY}" \
+            --ref main \
+            -f verify_only=false
