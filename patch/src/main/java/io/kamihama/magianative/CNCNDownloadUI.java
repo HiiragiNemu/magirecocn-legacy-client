@@ -1720,6 +1720,15 @@ public class CNCNDownloadUI {
         modal.setClickable(true);
         modal.setFocusable(true);
 
+        // 面板高度封顶：内容（标题+提示+13 行文件列表+关闭）在大字体下会超出屏幕，
+        // 列表区放进 ScrollView 可滚动，关闭钮固定在底部永远够得着（2026-08-12）。
+        int panelMaxH;
+        try {
+            panelMaxH = Math.round(act.getResources().getDisplayMetrics().heightPixels * 0.80f);
+        } catch (Throwable t) {
+            panelMaxH = dp(act, 640);
+        }
+
         LinearLayout panel = new LinearLayout(act);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(act, 22), dp(act, 20), dp(act, 22), dp(act, 18));
@@ -1737,7 +1746,8 @@ public class CNCNDownloadUI {
         LinearLayout titleRow = new LinearLayout(act);
         titleRow.setOrientation(LinearLayout.HORIZONTAL);
         titleRow.setGravity(Gravity.CENTER_VERTICAL);
-        panel.addView(titleRow, lpWrap());
+        panel.addView(titleRow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView title = new TextView(act);
         title.setText("导入离线包");
@@ -1770,16 +1780,34 @@ public class CNCNDownloadUI {
             titleRow.addView(dl, dlLp);
         }
 
+        // 右上角 ✕ 关闭（大字体下也够得着）
+        TextView x = new TextView(act);
+        x.setText("✕");
+        x.setTextColor(COLOR_SUB);
+        x.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f);
+        x.setGravity(Gravity.CENTER);
+        x.setPadding(dp(act, 10), dp(act, 2), dp(act, 2), dp(act, 2));
+        x.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { closeOfflineDialog(host, modal); }
+        });
+        titleRow.addView(x, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         TextView hint = new TextView(act);
         hint.setText("下载引擎不可靠时，点右上角「去下载」手动取包；再从网盘选官方 zip（文件名匹配下方列表）导入，该文件即跳过网络下载。");
         hint.setTextColor(COLOR_SUB);
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
-        LinearLayout.LayoutParams hintLp = lpWrap();
+        LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         hintLp.topMargin = dp(act, 8);
         panel.addView(hint, hintLp);
 
-        // 13 个基础资源包；热更两包（cn_scenario_update.zip / cn_js_update.zip）走
-        // 版本 json 通道，不提供离线导入。
+        // 文件列表区放进 ScrollView：13 个基础资源包（热更两包 cn_scenario_update.zip /
+        // cn_js_update.zip 走版本 json 通道，不提供离线导入）大字体下能滚动；行宽
+        // MATCH_PARENT 让长文件名在面板内换行。
+        ScrollView sv = new ScrollView(act);
+        LinearLayout list = new LinearLayout(act);
+        list.setOrientation(LinearLayout.VERTICAL);
         String[] names = CNCNDownloadUI.FILE_NAMES;
         for (int i = 0; i < names.length; i++) {
             final String name = names[i];
@@ -1793,28 +1821,28 @@ public class CNCNDownloadUI {
             row.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View v) { importOne(act, host, modal, name); }
             });
-            panel.addView(row, lpWrap());
+            list.addView(row, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         }
+        sv.addView(list, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        panel.addView(sv, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        TextView close = new TextView(act);
-        close.setText("关闭");
-        close.setTextColor(COLOR_SUB);
-        close.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
-        close.setPadding(dp(act, 4), dp(act, 6), dp(act, 4), dp(act, 6));
+        // 关闭按钮固定在 ScrollView 之外、面板底部，始终可见
+        TextView close = dialogButton(act, "关闭", COLOR_LOG_PANEL_TEXT, 0x00000000, true);
         close.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                offlineModal = null;
-                try { host.removeView(modal); } catch (Throwable ignore) {}
-            }
+            @Override public void onClick(View v) { closeOfflineDialog(host, modal); }
         });
-        LinearLayout.LayoutParams closeLp = lpWrap();
-        closeLp.topMargin = dp(act, 8);
-        close.setGravity(Gravity.END);
+        LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        closeLp.topMargin = dp(act, 10);
         panel.addView(close, closeLp);
 
         FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        panelLp.gravity = Gravity.CENTER;
+                dp(act, 360), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        panelLp.height = panelMaxH;
+        panelLp.leftMargin = panelLp.rightMargin = dp(act, 20);
         modal.addView(panel, panelLp);
         host.addView(modal, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -1921,6 +1949,12 @@ public class CNCNDownloadUI {
             ((ViewGroup) m.getParent()).removeView(m);
         }
         noteInteraction();
+    }
+
+    /** 关闭离线导入框（右上 ✕ 与底部「关闭」共用）。 */
+    private static void closeOfflineDialog(FrameLayout host, FrameLayout modal) {
+        offlineModal = null;
+        try { host.removeView(modal); } catch (Throwable ignore) {}
     }
 
     /** 触发导入某文件；成功后关闭对话框。 */
