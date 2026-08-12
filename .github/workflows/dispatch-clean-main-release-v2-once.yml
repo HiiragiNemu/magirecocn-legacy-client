@@ -1,0 +1,31 @@
+name: one-shot-dispatch-clean-main-release-v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/dispatch-clean-main-release-v2-once.yml
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Wait for cleanup and dispatch final public APK
+        env:
+          : ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 300
+          if gh api "repos/${GITHUB_REPOSITORY}/contents/.github/workflows/dispatch-clean-main-release-v2-once.yml?ref=main" >/dev/null 2>&1; then
+            echo "::error::temporary dispatcher remains on main"
+            exit 1
+          fi
+          CLEAN_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
+          gh workflow run build-apk.yml --repo "${GITHUB_REPOSITORY}" --ref main -f verify_only=false
+          echo "release_source_sha=${CLEAN_SHA}" >> "$GITHUB_STEP_SUMMARY"
