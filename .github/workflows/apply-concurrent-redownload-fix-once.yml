@@ -1,0 +1,107 @@
+name: one-shot-apply-concurrent-redownload-fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-concurrent-redownload-fix-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify audited baselines
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object patch/src/main/java/io/kamihama/magianative/CNChunkedDownload.java)" = "0c8e94e9b2018410eeef49cef0ac669fdd5b0471"
+          test "$(git hash-object patch/src/main/java/io/kamihama/magianative/CNDownloaderFix.java)" = "3caa1c6c7099fd6a823a1cc132715f5b5fde0d4c"
+          test "$(git hash-object patch/src/main/java/io/kamihama/magianative/CNHotUpdateCheck.java)" = "01e1ea0c84ed0ecbc48426fbaa8a695a4bd4833b"
+          test "$(git hash-object patch/src/main/java/io/kamihama/magianative/CNDownloadUiAssist.java)" = "61799832d411b960758c37e982a6952f4701dc20"
+          test "$(git hash-object patch/src/main/java/io/kamihama/magianative/CNCNDownloadUI.java)" = "3d4e310a080b0386e3c869528e2cb7e592e91a27"
+          test "$(git hash-object patch/src/main/java/io/kamihama/magianative/CNLog.java)" = "63cae51bbf33b4bfd834adb62c760ba18852721c"
+          test "$(git hash-object patch/src/main/java/io/kamihama/magianative/CNManualRedownload.java)" = "776fe6f9b9a3932cfa817e262129d016a601dc94"
+          test "$(git hash-object patch/src/main/java/io/kamihama/magianative/CNHotUpdate.java)" = "e6bad844a0b23d956b9066991825055a7993c5cd"
+          test "$(git hash-object tools/ManualRedownloadTest.java)" = "c7d1b1f97e19f0c8c085de3f05d07ebd794346b7"
+          test "$(git hash-object tools/check-download-ui-contract.py)" = "7872e3d87e821c23869b3ba127de77bdb835cc9e"
+          test "$(git hash-object docs/DOWNLOAD_TRANSACTIONAL_CHUNKS.md)" = "78a0042033d1489957ca9f3055ff049eaf7d2fb8"
+
+      - name: Unpack and verify audited fix payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/patch-payload/concurrent-fix.tar.gz.b64.* \
+            | base64 -d > /tmp/concurrent-fix.tar.gz
+          echo "9567b12cec6d9dde2feead0b4cbccd0b940fe6ade9d3304b4712dc97715ccd2c  /tmp/concurrent-fix.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/concurrent-fix.tar.gz
+          python3 -m py_compile tools/apply-concurrent-redownload-fix.py
+
+      - name: Apply complete fix set
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/apply-concurrent-redownload-fix.py
+          python3 -m py_compile tools/check-download-ui-contract.py
+          python3 tools/check-download-ui-contract.py
+          git diff --check
+
+      - name: Prepare Java test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .cache/deps
+          curl -sSL -o .cache/deps/platform.zip \
+            "https://dl.google.com/android/repository/platform-33_r02.zip"
+          unzip -o -q -j .cache/deps/platform.zip "*/android.jar" -d .cache/deps
+          rm -f .cache/deps/platform.zip
+          curl -sSL -o .cache/deps/orgjson.jar \
+            "https://repo1.maven.org/maven2/org/json/json/20231013/json-20231013.jar"
+
+      - name: Compile all patch Java and focused regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .build/stubs/io/kamihama/magianative .build-test
+          cat > .build/stubs/io/kamihama/magianative/RestClient.java <<'STUB'
+          package io.kamihama.magianative;
+          import android.app.Activity;
+          public class RestClient {
+              public static Activity getCurrentActivity() { return null; }
+          }
+          STUB
+          javac -nowarn -source 8 -target 8 -encoding UTF-8 \
+                -cp .cache/deps/android.jar \
+                -d .build-test $(find patch/src/main/java -name '*.java') \
+                tools/teststubs/android/webkit/WebResourceResponse.java tools/*Test.java \
+                .build/stubs/io/kamihama/magianative/RestClient.java
+          for t in ManualRedownloadTest DownloadConcurrencyTest HotUpdateRoutingTest UiAssistStateTest; do
+            java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar "$t"
+          done
+
+      - name: Commit source fix and remove temporary payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/patch-payload/concurrent-fix.tar.gz.b64.*
+          rm -rf .github/patch-payload tools/apply-concurrent-redownload-fix.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add patch/src/main/java/io/kamihama/magianative \
+                  tools/ManualRedownloadTest.java tools/DownloadConcurrencyTest.java \
+                  tools/HotUpdateRoutingTest.java tools/check-download-ui-contract.py \
+                  docs/DOWNLOAD_TRANSACTIONAL_CHUNKS.md
+          git commit -m "fix(download): 任意 ZIP 并发重下并修复动态热更新" \
+            -m "任何 ZIP 不再依赖其它 marker 或总完成标记；不同文件最多三个并行，同文件去重。静态包保留旧 marker 到新包成功，下载并行而资源树提交串行。" \
+            -m "scenario/js 改用 version JSON 的 version-size-MD5 身份，不再套基础包 manifest；同尺寸旧 CDN 内容会在整包校验后换线。红色重试按实际通道路由，部分成功不再显示全成功。" \
+            -m "所有长数据连接共享公平的全局 8 连接闸门；日志只回收当前 PID；顶部胶囊与弹窗补齐窄屏、高 DPI、分屏适配。" \
+            -m "文档: 更新 DOWNLOAD_TRANSACTIONAL_CHUNKS.md" \
+            -m "Co-authored-by: Codex <noreply@openai.com>"
+          git push origin HEAD:main
