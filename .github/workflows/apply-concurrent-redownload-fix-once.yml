@@ -1,4 +1,3 @@
-# payload encoding repaired: exact 8 x 3704-byte shards
 name: one-shot-apply-concurrent-redownload-fix
 
 on:
@@ -43,6 +42,7 @@ jobs:
             | base64 -d > /tmp/concurrent-fix.tar.gz
           echo "9567b12cec6d9dde2feead0b4cbccd0b940fe6ade9d3304b4712dc97715ccd2c  /tmp/concurrent-fix.tar.gz" | sha256sum -c -
           tar -xzf /tmp/concurrent-fix.tar.gz
+          python3 tools/repair-concurrent-fix-script.py
           python3 -m py_compile tools/apply-concurrent-redownload-fix.py
 
       - name: Apply complete fix set
@@ -92,6 +92,7 @@ jobs:
         run: |
           set -euo pipefail
           git rm .github/patch-payload/concurrent-fix.tar.gz.b64.*
+          git rm tools/repair-concurrent-fix-script.py
           rm -rf .github/patch-payload tools/apply-concurrent-redownload-fix.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
