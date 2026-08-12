@@ -5,7 +5,7 @@
   ?truncate=N  只发 N 字节就断流（模拟服务端提前关连接）
   ?etag=XXX    用指定的 ETag 覆盖默认值（模拟服务端换了文件）
   ?norange=1   忽略 Range 头，整份重发（模拟不支持 Range 的服务端）
-  ?over=N      比请求的区间多发 N 字节（模拟越界响应）
+  ?over=N      响应头仍声明请求区间，但正文额外多写 N 字节（模拟越界 body）
   ?oldtotal=N  206 的 Content-Range 里总长度谎报为 N（模拟缓存代理拿着
                旧版本：起点对、总长与 body 都是旧版的）
 """
@@ -72,12 +72,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
-            end = min(end + over, total - 1)
-            body = PAYLOAD[start:end + 1]
+            requested_end = min(end, total - 1)
+            wire_end = min(requested_end + over, total - 1)
+            body = PAYLOAD[start:wire_end + 1]
             self.send_response(206)
+            # over 只模拟正文越界；资源身份与声明区间仍保持请求值。若把 end 也
+            # 改大，严格客户端理应拒绝，那测试的是「头部造假」而不是越界 body。
             self.send_header("Content-Range", "bytes %d-%d/%d"
-                             % (start, end, oldtotal or total))
-            self.send_header("Content-Length", str(len(body)))
+                             % (start, requested_end, oldtotal or total))
+            self.send_header("Content-Length", str(requested_end - start + 1))
+            if over > 0:
+                self.send_header("Connection", "close")
             self.send_header("ETag", etag)
             self.send_header("Accept-Ranges", "bytes")
             self.end_headers()
@@ -104,6 +109,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         try:
             self.wfile.write(body)
+            if over > 0:
+                self.wfile.flush()
+                self.close_connection = True
         except Exception:
             pass
 
