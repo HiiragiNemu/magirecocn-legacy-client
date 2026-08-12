@@ -34,7 +34,7 @@ jobs:
           once('                    decorView = dv;\n                    CNLog.w("界面", "浮层曾脱离视图树，已重新挂上");', '                    decorView = dv;\n                    CNDownloadUiAssist.ensureInstalled();\n                    CNLog.w("界面", "浮层曾脱离视图树，已重新挂上");', 'reattach')
           once('                isShowing   = true;\n                renderAll();', '                isShowing   = true;\n                CNDownloadUiAssist.ensureInstalled();\n                renderAll();', 'rebuild')
           once('            overlayView = fresh;\n            // 立即把当前进度重新渲染到新视图上', '            overlayView = fresh;\n            CNDownloadUiAssist.ensureInstalled();\n            // 立即把当前进度重新渲染到新视图上', 'theme')
-          once('                CNCNDownloadUI.isShowing = true;', '                CNCNDownloadUI.isShowing = true;\n                CNDownloadUiAssist.ensureInstalled();', 'initial-create')
+          once('                CNCNDownloadUI.overlayView = root;\n                renderAll();', '                CNCNDownloadUI.overlayView = root;\n                CNDownloadUiAssist.ensureInstalled();\n                renderAll();', 'initial-create')
           p.write_text(s, encoding='utf-8')
           PY
 
