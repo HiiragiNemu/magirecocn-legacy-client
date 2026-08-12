@@ -1,0 +1,51 @@
+name: one-shot-transactional-download-followup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-03-followup-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply audited downloader follow-up and self-delete
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Fail closed if another writer changed any audited base file.
+          test "$(git hash-object patch/src/main/java/io/kamihama/magianative/CNChunkedDownload.java)" = "d2152f0f4d4f1a6f244ae8f5b96b15f68ff48c1f"
+          test "$(git hash-object tools/ResumeTest.java)" = "bb72f649cf4b145fdd5e76a8eec616ced6201c72"
+          test "$(git hash-object tools/ChunkHashIntegrationTest.java)" = "f78fead2034f43b3fae624143ac1db911730a358"
+          test "$(git hash-object tools/server.py)" = "a449d9e17c53383bd7e2e662781af078d06d993c"
+          test "$(git hash-object .github/workflows/last-green.yml)" = "f6ad9288d000124b84e6f2f7d91645f2682bdb91"
+          test "$(git hash-object docs/DOWNLOAD_TRANSACTIONAL_CHUNKS.md)" = "342f1afea8eb165596fe7e37cd66a1218e8608f0"
+
+          cat .github/patch-payload/03-followup-*.b64 | base64 -d > /tmp/03-followup.patch.gz
+          echo "fe2aa476c867a73da3234c2ffa1cfe27e3812403b51a72d31f416aa0bb06c3a9  /tmp/03-followup.patch.gz" | sha256sum -c -
+          gzip -dc /tmp/03-followup.patch.gz | patch -p1 --batch --forward
+          python3 -m py_compile tools/server.py
+          git diff --check
+
+          git rm .github/workflows/apply-03-followup-once.yml
+          git rm -r .github/patch-payload
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add patch/src/main/java/io/kamihama/magianative/CNChunkedDownload.java \
+                  tools/ResumeTest.java tools/ChunkHashIntegrationTest.java tools/server.py \
+                  .github/workflows/last-green.yml docs/DOWNLOAD_TRANSACTIONAL_CHUNKS.md
+          git commit -m "fix(download): 稳定事务块身份与真实故障回归" \
+            -m "已验证块只绑定完整 manifest 指纹，不再被 CDN URL/ETag 波动清零；事务块移除 If-Range，内容变化交给块 MD5 在提交前判定。无清单断点只允许同一完整 URL 复用，避免未经认证的跨镜像拼装。" \
+            -m "回归改为真实 85 个非整除块，实测并发上限、同清单网络坏块只重取单块、跨重启续传与无清单换 URL 清零；Content-Range 诊断细分。" \
+            -m "文档: 更新 docs/DOWNLOAD_TRANSACTIONAL_CHUNKS.md" \
+            -m "Co-authored-by: Codex <noreply@openai.com>"
+          git push origin HEAD:main
+          git push origin --delete _unused _unused2 _unused3 _unused4 2>/dev/null || true
