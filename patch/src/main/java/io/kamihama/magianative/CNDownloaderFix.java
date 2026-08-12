@@ -73,6 +73,14 @@ public final class CNDownloaderFix {
     private static final String FINAL_FLAG = FILE_ROOT + "/madomagi/magica/cn_base_done.flag";
     private static final String INSTALL_ROOT = FILE_ROOT + "/";
     private static final int    MAX_ATTEMPTS = 4;
+    /** {@link #tryAria2Download} 的返回：装好了。 */
+    private static final int A2_INSTALLED = 1;
+    /** {@link #tryAria2Download} 的返回：玩家选继续主引擎（或询问兜底），走主引擎重试。 */
+    private static final int A2_MAIN      = 0;
+    /** {@link #tryAria2Download} 的返回：玩家选改用离线包，跳过主引擎重试。 */
+    private static final int A2_OFFLINE   = -1;
+    /** aria2 备用引擎单文件最多尝试次数（初次 + 至多 2 次玩家点的「重试备用」）。 */
+    private static final int A2_MAX_ATTEMPTS = 3;
     private static final int    MAX_DOWNLOADS = 4;
     private static final int    MIN_SNAA_VERSION = 128;
     private static final String NO_RESTART_FLAG = FILE_ROOT + "/madomagi/magica/.cn_installer/r128-downloader-v1/no_restart";
@@ -820,10 +828,20 @@ public final class CNDownloaderFix {
         // 控制文件），走下面的主引擎整份重下。
         boolean aria2Forced = CNMirrors.forceAria2()
                 || CNDebugFlags.isOn(CNDebugFlags.USE_ARIA2);
-        if (aria2Forced && CNAria2.isAvailable()
-                && tryAria2Download(CNMirrors.pick(1), name, archive, index,
-                                    marker, canonicalUrl)) {
-            return true;
+        if (aria2Forced && CNAria2.isAvailable()) {
+            int a2 = tryAria2Download(CNMirrors.pick(1), name, archive, index,
+                                      marker, canonicalUrl);
+            if (a2 == A2_INSTALLED) return true;
+            if (a2 == A2_OFFLINE) {
+                // 玩家选改用离线包：清掉 aria2 半截产物，跳过主引擎重试，交给
+                // 玩家手动导入（导入写 marker 后，全局重试那一轮自然转正）。
+                deleteQuietly(archive);
+                deleteQuietly(new File(archive.getPath() + ".aria2"));
+                markFailed(index);
+                CNLog.w(TAG, "玩家选择改用离线包，跳过主引擎重试: " + name);
+                return false;
+            }
+            // a2 == A2_MAIN → 回退主引擎重试
         }
         deleteQuietly(archive);
         deleteQuietly(new File(archive.getPath() + ".aria2"));
@@ -911,72 +929,123 @@ public final class CNDownloaderFix {
     }
 
     /**
-     * 用 libaria2 备用引擎下载并安装单个文件（debug 开关 useAria2 打开时才走）。
+     * 用 aria2 备用引擎下载并安装单个文件。失败时（下载错/结构非法/异常）不再
+     * 闷头回退，而是弹浮层询问框让玩家在「重试备用 / 继续主引擎 / 改用离线包」
+     * 里选——玩家是唯一知道「现在该不该继续等网络」的人。
      *
      * <p>单文件同步下载：首选线路直连，aria2 多连接 + 断点续传。装好即解压 +
-     * 写标记 + 返回 true；任何失败（下载错、结构校验不过、异常）返回 false，
-     * 调用方清掉半截产物后回退主引擎。进度接到既有 UI，取消绑线程中断。
+     * 写标记；任何失败先问玩家。重试有上限（{@link #A2_MAX_ATTEMPTS}），用尽后
+     * 询问框不再给「重试备用」这一项。进度接到既有 UI，取消绑线程中断。
+     *
+     * @return {@link #A2_INSTALLED} 装好了；{@link #A2_MAIN} 走主引擎重试；
+     *         {@link #A2_OFFLINE} 玩家选改用离线包（跳过主引擎，走手动导入）。
      */
-    private static boolean tryAria2Download(CNMirrors.Mirror mirror, String name,
-                                            File archive, int index, File marker,
-                                            String canonicalUrl) {
-        try {
-            final int idx = index;
-            CNAria2.Progress progress = new CNAria2.Progress() {
-                @Override public void onProgress(long done, long total) {
-                    LAST_PROGRESS_NS.set(idx, System.nanoTime());
-                    if (total > 0) {
-                        updateSize(idx, total);
-                        updateProgress(idx, done, total);
+    private static int tryAria2Download(CNMirrors.Mirror mirror, String name,
+                                        File archive, int index, File marker,
+                                        String canonicalUrl) {
+        for (int attempt = 1; attempt <= A2_MAX_ATTEMPTS; attempt++) {
+            try {
+                final int idx = index;
+                CNAria2.Progress progress = new CNAria2.Progress() {
+                    @Override public void onProgress(long done, long total) {
+                        LAST_PROGRESS_NS.set(idx, System.nanoTime());
+                        if (total > 0) {
+                            updateSize(idx, total);
+                            updateProgress(idx, done, total);
+                        }
                     }
-                }
-            };
-            // 取消：原生 run 循环轮询 Cancel.isCancelled()。这里绑到线程中断——
-            // 下载被外部 interrupt 即触发 aria2 取消（AtomicBoolean.get() 是
-            // final 不能覆写，所以用接口而非子类）。
-            CNAria2.Cancel cancel = new CNAria2.Cancel() {
-                @Override public boolean isCancelled() {
-                    return Thread.currentThread().isInterrupted();
-                }
-            };
+                };
+                // 取消：下载轮询 Cancel.isCancelled()。这里绑到线程中断——
+                // 下载被外部 interrupt 即触发 aria2 取消。
+                CNAria2.Cancel cancel = new CNAria2.Cancel() {
+                    @Override public boolean isCancelled() {
+                        return Thread.currentThread().isInterrupted();
+                    }
+                };
 
-            String url = mirror.urlFor(name);
-            CNLog.i(TAG, "aria2 备用引擎下载 file=" + name + " url=" + url
-                    + " 连接数=16");
-            int rv = CNAria2.download(url, FILE_ROOT, name,
-                    CNUserAgent.get(), null, null, 16, null, progress, cancel);
-            if (rv != CNAria2.OK || !archive.isFile() || archive.length() <= 0) {
-                CNLog.w(TAG, "aria2 备用引擎失败 code=" + rv + "，回退主引擎: " + name);
-                return false;
+                String url = mirror.urlFor(name);
+                CNLog.i(TAG, "aria2 备用引擎下载 file=" + name + " url=" + url
+                        + " 连接数=16 attempt=" + attempt + "/" + A2_MAX_ATTEMPTS);
+                int rv = CNAria2.download(url, FILE_ROOT, name,
+                        CNUserAgent.get(), null, null, 16, null, progress, cancel);
+                if (rv == CNAria2.OK && archive.isFile() && archive.length() > 0
+                        && isAria2ArchiveUsable(archive, name)) {
+                    synchronized (EXTRACT_LOCK) {
+                        extractChecked(archive, new File(INSTALL_ROOT));
+                    }
+                    writeMarker(marker, name, canonicalUrl,
+                            new DownloadMetadata(archive.length(), "aria2"));
+                    if (!archive.delete() && archive.exists()) {
+                        CNLog.w(TAG, "Installed archive retained: " + archive);
+                    }
+                    markDone(index);
+                    CNLog.i(TAG, "aria2 备用引擎装好 file=" + name + " bytes=" + archive.length());
+                    return A2_INSTALLED;
+                }
+                CNLog.w(TAG, "aria2 备用引擎失败 code=" + rv + " attempt=" + attempt
+                        + "，询问玩家: " + name);
+                deleteQuietly(archive);
+                deleteQuietly(new File(archive.getPath() + ".aria2"));
+                int choice = awaitAria2FallbackChoice(name, attempt < A2_MAX_ATTEMPTS);
+                if (choice == CNCNDownloadUI.ARIA2_RETRY) continue;
+                if (choice == CNCNDownloadUI.ARIA2_OFFLINE) {
+                    CNCNDownloadUI.showOfflineImportDialog(RestClient.getCurrentActivity());
+                    return A2_OFFLINE;
+                }
+                return A2_MAIN;
+            } catch (Throwable t) {
+                CNLog.w(TAG, "aria2 备用引擎异常: " + name + " : " + t);
+                deleteQuietly(archive);
+                deleteQuietly(new File(archive.getPath() + ".aria2"));
+                int choice = awaitAria2FallbackChoice(name, attempt < A2_MAX_ATTEMPTS);
+                if (choice == CNCNDownloadUI.ARIA2_RETRY) continue;
+                if (choice == CNCNDownloadUI.ARIA2_OFFLINE) {
+                    CNCNDownloadUI.showOfflineImportDialog(RestClient.getCurrentActivity());
+                    return A2_OFFLINE;
+                }
+                return A2_MAIN;
             }
-            // zip 结构预检：aria2 下到 100% 不代表拼装合法
+        }
+        CNLog.w(TAG, "aria2 备用引擎重试次数用尽 file=" + name + "，回退主引擎");
+        return A2_MAIN;
+    }
+
+    /** aria2 下到 100% 不代表拼装合法：结构可解析 + 非空才算可用。 */
+    private static boolean isAria2ArchiveUsable(File archive, String name) {
+        try {
             if (!CNArchiveValidate.isZipStructurallyValid(archive)) {
-                CNLog.w(TAG, "aria2 下载的包结构非法，回退主引擎: " + name);
+                CNLog.w(TAG, "aria2 下载的包结构非法: " + name);
                 return false;
             }
             try (ZipFile zf = new ZipFile(archive)) {
-                if (!zf.entries().hasMoreElements()) {
-                    CNLog.w(TAG, "aria2 下载的包为空，回退主引擎: " + name);
-                    return false;
-                }
-            } catch (Throwable t) {
-                CNLog.w(TAG, "aria2 下载的包结构非法，回退主引擎: " + name + " : " + t);
-                return false;
+                return zf.entries().hasMoreElements();
             }
-            synchronized (EXTRACT_LOCK) {
-                extractChecked(archive, new File(INSTALL_ROOT));
-            }
-            writeMarker(marker, name, canonicalUrl,
-                    new DownloadMetadata(archive.length(), "aria2"));
-            if (!archive.delete() && archive.exists()) {
-                CNLog.w(TAG, "Installed archive retained: " + archive);
-            }
-            markDone(index);
-            CNLog.i(TAG, "aria2 备用引擎装好 file=" + name + " bytes=" + archive.length());
-            return true;
         } catch (Throwable t) {
-            CNLog.w(TAG, "aria2 备用引擎异常，回退主引擎: " + name + " : " + t);
+            CNLog.w(TAG, "aria2 下载的包不可用: " + name + " : " + t);
             return false;
+        }
+    }
+
+    /**
+     * 弹 aria2 失败询问框并<b>等玩家选完</b>。本方法跑在安装线程上，询问框在
+     * UI 线程，阻塞 + 60 秒兜底由 {@link CNCNDownloadUI#askAria2Fallback} 内部
+     * 处理；这里只处理「没 Activity / 询问出错」两种没条件问的情况。
+     *
+     * @param name     失败的资源包名
+     * @param canRetry 是否还能给「重试备用引擎」这一项
+     * @return CNCNDownloadUI.ARIA2_RETRY / CONTINUE / OFFLINE
+     */
+    private static int awaitAria2FallbackChoice(String name, boolean canRetry) {
+        try {
+            Activity act = RestClient.getCurrentActivity();
+            if (act == null) {
+                CNLog.w(TAG, "取不到 Activity，aria2 失败询问按「继续主引擎」: " + name);
+                return CNCNDownloadUI.ARIA2_CONTINUE;
+            }
+            return CNCNDownloadUI.askAria2Fallback(act, name, canRetry);
+        } catch (Throwable t) {
+            CNLog.e(TAG, "aria2 失败询问出错，按「继续主引擎」: " + name, t);
+            return CNCNDownloadUI.ARIA2_CONTINUE;
         }
     }
 

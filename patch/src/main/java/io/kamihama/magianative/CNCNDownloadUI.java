@@ -447,6 +447,10 @@ public class CNCNDownloadUI {
     private static FrameLayout tutorialModal;
     /** 「网络慢，要不要继续等」询问框。非空即表示正在显示，用于防重入。 */
     private static FrameLayout slowModal;
+    /** aria2 备用引擎失败时的「你来定」询问框。非空即表示正在显示，用于防重入。 */
+    private static FrameLayout aria2AskModal;
+    /** 离线包导入框。非空即表示正在显示，用于防重入（2026-08-12 补，原版会叠框）。 */
+    private static FrameLayout offlineModal;
 
     /**
      * 浮层上最后一次用户交互（任意按下）的时间（uptimeMillis）。
@@ -1706,6 +1710,9 @@ public class CNCNDownloadUI {
 
     /** 在 UI 线程上构建离线导入对话框。 */
     private static void buildOfflineDialog(final Activity act, FrameLayout host) {
+        if (host == null || offlineModal != null) {   // 已开着一个，别叠第二层
+            return;
+        }
         final FrameLayout modal = new FrameLayout(act);
         modal.setBackgroundColor(COLOR_DIM);
         modal.setClickable(true);
@@ -1794,6 +1801,7 @@ public class CNCNDownloadUI {
         close.setPadding(dp(act, 4), dp(act, 6), dp(act, 4), dp(act, 6));
         close.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
+                offlineModal = null;
                 try { host.removeView(modal); } catch (Throwable ignore) {}
             }
         });
@@ -1808,6 +1816,12 @@ public class CNCNDownloadUI {
         modal.addView(panel, panelLp);
         host.addView(modal, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        offlineModal = modal;
+    }
+
+    /** 供 CNDownloaderFix 打开离线导入框（aria2 失败选「改用离线包」时）。 */
+    public static void showOfflineImportDialog(Activity act) {
+        showOfflineDialog(act);
     }
 
     /** 触发导入某文件；成功后关闭对话框。 */
@@ -1819,6 +1833,7 @@ public class CNCNDownloadUI {
                         if (ok) {
                             toast(act, "已导入 " + fn);
                             // 关闭对话框
+                            offlineModal = null;
                             try { host.removeView(modal); } catch (Throwable ignore) {}
                             if (vOfflinePill != null) {
                                 vOfflinePill.setText("📦  导入离线包 ✓");
@@ -2235,6 +2250,190 @@ public class CNCNDownloadUI {
     private static void closeSlowDialog() {
         FrameLayout m = slowModal;
         slowModal = null;
+        if (m != null && m.getParent() instanceof ViewGroup) {
+            ((ViewGroup) m.getParent()).removeView(m);
+        }
+        noteInteraction();
+    }
+
+    // ==================================================================
+    // aria2 备用引擎失败时的「你来定」询问框
+    // ==================================================================
+
+    /** {@link #askAria2Fallback} 的返回值：玩家选了「重试备用引擎」。 */
+    public static final int ARIA2_RETRY    = 1;
+    /** 返回值：玩家选了「继续用主引擎下载」，或询问没条件进行（默认）。 */
+    public static final int ARIA2_CONTINUE = 2;
+    /** 返回值：玩家选了「改用离线包」。 */
+    public static final int ARIA2_OFFLINE  = 3;
+
+    /** 询问结果的信箱。用数组是为了让具名内部类能写回去（不能捕获非 final 局部量）。 */
+    private static final class Aria2Answer {
+        final int[] choice = new int[]{ ARIA2_CONTINUE };
+        final java.util.concurrent.CountDownLatch latch =
+                new java.util.concurrent.CountDownLatch(1);
+    }
+
+    /**
+     * aria2 备用引擎下载失败时<b>问玩家</b>接下来怎么办，而不是闷头回退主引擎。
+     *
+     * <p>三选一：重试备用引擎（临时故障可救）、继续用主引擎下载（旧行为）、改用
+     * 离线包（打开离线导入框，玩家手动下载导入）。备用引擎已经过真机崩溃（JNI 版
+     * 曾直接杀掉游戏进程），现在虽然改成了崩溃隔离的子进程，但失败时把取舍摆到
+     * 台面上仍是对的——玩家是唯一知道「现在该不该继续等网络」的人。
+     *
+     * <p><b>阻塞调用，只能在后台线程上用。</b>内部切到 UI 线程建框，然后在调用线程
+     * 上等玩家点；超时 60 秒按「继续用主引擎」兜底，免得询问框出问题时安装线程
+     * 永远卡住。在 UI 线程上调会死锁，直接返回 {@link #ARIA2_CONTINUE}。
+     *
+     * @param act      宿主 Activity
+     * @param fileName 失败的资源包名（展示给玩家看）
+     * @param canRetry 是否还能给「重试备用引擎」这一项（重试次数用尽时传 false）
+     * @return {@link #ARIA2_RETRY} / {@link #ARIA2_CONTINUE} / {@link #ARIA2_OFFLINE}
+     */
+    public static int askAria2Fallback(final Activity act, final String fileName,
+                                       final boolean canRetry) {
+        if (act == null || overlayView == null) {
+            CNLog.w(TAG, "[aria2询问] 浮层不在，按「继续用主引擎」处理：" + fileName);
+            return ARIA2_CONTINUE;
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            CNLog.e(TAG, "[aria2询问] 被在 UI 线程上调用，会死锁；按「继续用主引擎」处理");
+            return ARIA2_CONTINUE;
+        }
+        final Aria2Answer ans = new Aria2Answer();
+        try {
+            act.runOnUiThread(new Aria2Build(act, fileName, canRetry, ans));
+            if (!ans.latch.await(60, java.util.concurrent.TimeUnit.SECONDS)) {
+                CNLog.w(TAG, "[aria2询问] 60 秒未选择，按「继续用主引擎」处理：" + fileName);
+            }
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            return ARIA2_CONTINUE;
+        } catch (Throwable t) {
+            CNLog.e(TAG, "[aria2询问] 建框失败，按「继续用主引擎」处理", t);
+            return ARIA2_CONTINUE;
+        }
+        return ans.choice[0];
+    }
+
+    /** 在 UI 线程上把询问框建出来。建不出来就立刻放行调用线程，别把它吊死。 */
+    private static final class Aria2Build implements Runnable {
+        private final Activity act;
+        private final String fileName;
+        private final boolean canRetry;
+        private final Aria2Answer ans;
+        Aria2Build(Activity act, String fileName, boolean canRetry, Aria2Answer ans) {
+            this.act = act; this.fileName = fileName; this.canRetry = canRetry; this.ans = ans;
+        }
+        @Override public void run() {
+            try { buildAria2Dialog(act, fileName, canRetry, ans); }
+            catch (Throwable t) {
+                CNLog.e(TAG, "[aria2询问] 构建失败，按「继续用主引擎」处理", t);
+                ans.latch.countDown();
+            }
+        }
+    }
+
+    /** 与慢网/教程询问框同一套样式：同样的调色板、圆角、按钮，宿主是引擎 Activity。 */
+    private static void buildAria2Dialog(final Activity act, String fileName,
+                                         boolean canRetry, Aria2Answer ans) {
+        FrameLayout host = overlayView;
+        if (host == null || aria2AskModal != null) {   // 浮层没了 / 已开着一个询问
+            ans.latch.countDown();
+            return;
+        }
+        final FrameLayout modal = new FrameLayout(act);
+        modal.setBackgroundColor(COLOR_DIM);
+        modal.setClickable(true);        // 吃掉点击：这是必须做出的选择，
+        modal.setFocusable(true);        // 不许点框外糊弄过去
+
+        LinearLayout panel = new LinearLayout(act);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(act, 22), dp(act, 20), dp(act, 22), dp(act, 18));
+        GradientDrawable panelBg = new GradientDrawable();
+        panelBg.setColor(COLOR_LOG_PANEL_BG);
+        panelBg.setCornerRadius(dp(act, 16));
+        panelBg.setStroke(dp(act, 1), COLOR_CARD_STK);
+        panel.setBackground(panelBg);
+        FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
+                dp(act, 330), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        panelLp.leftMargin = panelLp.rightMargin = dp(act, 20);
+        modal.addView(panel, panelLp);
+
+        TextView title = new TextView(act);
+        title.setText("备用引擎下载失败");
+        title.setTextColor(COLOR_ACCENT);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f);
+        title.setTypeface(title.getTypeface(), Typeface.BOLD);
+        panel.addView(title, lpRow(0, dp(act, 10)));
+
+        TextView msg = new TextView(act);
+        msg.setText("备用下载引擎（aria2）下载「" + fileName + "」失败。\n\n"
+                  + "接下来怎么办：\n"
+                  + "· 「继续用主引擎下载」：改用分块下载引擎重新下载。\n"
+                  + "· 「重试备用引擎」：可能只是临时故障，再试一次。\n"
+                  + "· 「改用离线包」：打开离线包页面，手动下载后导入。\n\n"
+                  + "都不会损坏存档，也不影响账号。");
+        msg.setTextColor(COLOR_LOG_PANEL_TEXT);
+        msg.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
+        msg.setLineSpacing(dp(act, 2), 1f);
+        panel.addView(msg, lpRow(0, dp(act, 18)));
+
+        // 三选一（重试用尽时只有两项），纵向全宽排布，主引擎为实心主钮
+        TextView cont = dialogButton(act, "继续用主引擎下载", 0xFFFFFFFF, COLOR_ACCENT, false);
+        LinearLayout.LayoutParams contLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        contLp.topMargin = dp(act, 18);
+        panel.addView(cont, contLp);
+        cont.setOnClickListener(new Aria2Choice(ARIA2_CONTINUE, ans));
+
+        if (canRetry) {
+            TextView retry = dialogButton(act, "重试备用引擎",
+                    COLOR_LOG_PANEL_TEXT, 0x00000000, true);
+            LinearLayout.LayoutParams retryLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            retryLp.topMargin = dp(act, 10);
+            panel.addView(retry, retryLp);
+            retry.setOnClickListener(new Aria2Choice(ARIA2_RETRY, ans));
+        }
+
+        TextView offline = dialogButton(act, "改用离线包",
+                COLOR_LOG_PANEL_TEXT, 0x00000000, true);
+        LinearLayout.LayoutParams offLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        offLp.topMargin = dp(act, 10);
+        panel.addView(offline, offLp);
+        offline.setOnClickListener(new Aria2Choice(ARIA2_OFFLINE, ans));
+
+        host.addView(modal, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        aria2AskModal = modal;
+    }
+
+    /** 记下选择 → 关框 → 放行等在后台线程上的调用方。 */
+    private static final class Aria2Choice implements View.OnClickListener {
+        private final int choice; private final Aria2Answer ans;
+        Aria2Choice(int choice, Aria2Answer ans) { this.choice = choice; this.ans = ans; }
+        @Override public void onClick(View v) {
+            try {
+                ans.choice[0] = choice;
+                CNLog.i(TAG, "[aria2询问] 玩家选择："
+                        + (choice == ARIA2_RETRY ? "重试备用引擎"
+                           : choice == ARIA2_OFFLINE ? "改用离线包" : "继续用主引擎"));
+                closeAria2AskDialog();
+            } catch (Throwable t) {
+                CNLog.e(TAG, "[aria2询问] 处理选择失败", t);
+            } finally {
+                ans.latch.countDown();   // 无论如何都要放行，否则后台线程永远卡在这
+            }
+        }
+    }
+
+    private static void closeAria2AskDialog() {
+        FrameLayout m = aria2AskModal;
+        aria2AskModal = null;
         if (m != null && m.getParent() instanceof ViewGroup) {
             ((ViewGroup) m.getParent()).removeView(m);
         }
