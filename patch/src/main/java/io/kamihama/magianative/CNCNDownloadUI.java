@@ -3039,6 +3039,7 @@ public class CNCNDownloadUI {
                     overlayView = existing;
                     decorView   = dv;
                     isShowing   = true;
+                    CNDownloadUiAssist.ensureInstalled();
                     CNLog.w("界面", "认领已在视图树上的浮层，跳过重建");
                     return;
                 }
@@ -3049,6 +3050,7 @@ public class CNCNDownloadUI {
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT)); } catch (Throwable ignore) {}
                     decorView = dv;
+                    CNDownloadUiAssist.ensureInstalled();
                     CNLog.w("界面", "浮层曾脱离视图树，已重新挂上");
                     return;
                 }
@@ -3062,6 +3064,7 @@ public class CNCNDownloadUI {
                 decorView   = dv;
                 overlayView = fresh;
                 isShowing   = true;
+                CNDownloadUiAssist.ensureInstalled();
                 renderAll();
                 CNLog.w("界面", "浮层缺失，已重建并挂上");
             } catch (Throwable t) {
@@ -3088,6 +3091,7 @@ public class CNCNDownloadUI {
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT));
             overlayView = fresh;
+            CNDownloadUiAssist.ensureInstalled();
             // 立即把当前进度重新渲染到新视图上
             renderAll();
         } catch (Throwable t) {
@@ -3334,6 +3338,7 @@ public class CNCNDownloadUI {
                                 ViewGroup.LayoutParams.MATCH_PARENT,
                                 ViewGroup.LayoutParams.MATCH_PARENT));
                 CNCNDownloadUI.overlayView = root;
+                CNDownloadUiAssist.ensureInstalled();
                 renderAll();
             } catch (Throwable e) {
                 // 捕获 Throwable 而非 Exception：构建视图时的 Error（如 OOM）
