@@ -1,5 +1,5 @@
 name: one-shot-apply-final-download-ui
-# retry-2: corrected payload chunks 00/01
+# retry-3: explicit split chunk 01
 
 on:
   push:
@@ -31,7 +31,14 @@ jobs:
           test "$(git hash-object tools/ManualRedownloadTest.java)" = "42a8807688e89217632cfc494a74877348123b79"
           test "$(git hash-object docs/DOWNLOAD_TRANSACTIONAL_CHUNKS.md)" = "ef607122d7c79831f1bc52cfef58a0089b4faa9b"
 
-          cat .github/patch-payload/ui-final-payload-* > /tmp/ui-final-payload.b64
+          cat \
+            .github/patch-payload/ui-final-payload-00 \
+            .github/patch-payload/ui-final-payload-01a \
+            .github/patch-payload/ui-final-payload-01b \
+            .github/patch-payload/ui-final-payload-01c \
+            .github/patch-payload/ui-final-payload-02 \
+            .github/patch-payload/ui-final-payload-03 \
+            > /tmp/ui-final-payload.b64
           echo "dd50d627939781737760f1b0d9e217119a23a7128b9ff68685c12adb2428ad08  /tmp/ui-final-payload.b64" | sha256sum -c -
           base64 -d /tmp/ui-final-payload.b64 > /tmp/ui-final-payload.tar.gz
           echo "4869950ee103d9a1640b0a450649021710ce6ed4de9d23af5e477b602ea4ef8a  /tmp/ui-final-payload.tar.gz" | sha256sum -c -
