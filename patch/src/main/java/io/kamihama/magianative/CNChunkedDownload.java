@@ -1,6 +1,5 @@
 package io.kamihama.magianative;
 
-
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.File;
@@ -16,6 +15,8 @@ import java.net.HttpURLConnection;
 import java.net.Proxy;
 import java.net.URL;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -23,144 +24,93 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * 多线程分片下载（带断点续传）。
+ * 多连接 Range 下载器。
  *
- * <p>做法与复兴计划客户端的 {@code Net.downloadChunked} 一致：先探测服务端是否
- * 支持 {@code Range}，支持则把文件切成 N 段并行下载，段内进度写入
- * {@code .cpart.prog} 元数据，中断后可从断点继续。
+ * <p>存在分块清单时，清单块是完整性事务的最小单位：每块先下载到独立临时文件，
+ * MD5 通过后才写入主临时文件并持久化“已验证”状态。哈希块数量与网络并发度完全
+ * 分离；例如 cn_base_03 有 85 个 16MiB 校验块，但同时只运行有限数量的连接。
+ * 坏块不会污染主文件，也不会让已验证的其他块倒退或整包重下。
  *
- * <p>分片下载使用**独立的临时文件名** {@code <目标>.cpart}，与单线程续传路径的
- * {@code <目标>.part} 完全隔离。这是刻意的：分片路径会把临时文件**预分配**到
- * 完整长度，而单线程路径是用「临时文件当前长度」当续传偏移的——两者共用同一个
- * 文件时，一个中断的分片下载会让单线程路径把偏移当成「已下完」，进而把一个中间
- * 全是空洞的文件当作完整文件提交。分开命名从根上避免这种误判。
- *
- * <h3>断点续传的可信前提</h3>
- * 元数据只有在**同时**满足下面所有条件时才被采信，任何一条不满足都退回从头下载
- * （宁可多下一遍，也不能把两份不同的内容拼在一起）：
- * <ul>
- *   <li>{@code .cpart} 存在，且长度恰好等于本次探测到的总长度——防止元数据还在、
- *       临时文件已被清掉时，把预分配出来的<b>全零文件</b>当成已下完直接提交；</li>
- *   <li>元数据记录的总长度与本次探测一致；</li>
- *   <li>元数据记录的 ETag 与本次探测一致——<b>仅当本次与上次是同一条线路时才比对</b>。
- *       各线路对同一文件给出的 ETag 格式互不相同（nginx 的 inode-mtime、CDN 的
- *       MD5、对象存储的版本号），跨线路照比必然不等，会让换线把续传成果全部作废；
- *       换线时改为只依赖总长度一致；</li>
- *   <li>各分片的已完成字节数都在 {@code [0, 分片长度]} 区间内。</li>
- * </ul>
- *
- * <p>分片布局（分片数）一旦写进元数据就**固定不变**，后续即使换到 {@code chunks}
- * 配置不同的线路也沿用原布局，这样换线不会让已下好的部分作废。
- *
- * <p>下载过程中若出现「长时间没有任何字节」或「持续低于最低速度」，会主动中断
- * 并抛出 {@link IOException}，由调用方换到下一条线路（见 {@link CNMirrors}）。
+ * <p>没有清单时保留传统的分段断点续传，但禁止跨镜像拼装未经内容认证的文件。
  */
 public final class CNChunkedDownload {
-
     private static final String TAG = "MagiaCNChunk";
 
     private static final int CONNECT_TIMEOUT_MS = 15000;
-    private static final int READ_TIMEOUT_MS    = 30000;
+    private static final int READ_TIMEOUT_MS = 30000;
+    /** 大包的校验块可以很多，网络连接数不能随块数膨胀。 */
+    private static final int MAX_NETWORK_WORKERS = 8;
+    private static final int MAX_BYTE_SEGMENTS = 16;
+    private static final int MAX_MIRROR_CANDIDATES = 6;
+    private static final long META_SAVE_INTERVAL_NS = 2_000_000_000L;
 
-    /** 断点元数据的格式标识；不匹配一律视作不可用。 */
-    // v4：头部多记一列 chunkSize，供续传时核对分片布局是否与分块清单一致。
-    // 旧版（v3）未记录 chunkSize，其分片边界未必对齐清单块——直接作废重下，
-    // 避免旧断点把进度按错位边界映射过去写坏文件。
-    private static final String META_MAGIC = "CNVPROG4";
+    private static final String META_HASH = "CNVTX5-HASH";
+    private static final String META_BYTE = "CNVTX5-BYTE";
 
     private CNChunkedDownload() {}
 
-    /** 进度回调。 */
     public interface Sink {
-        /** 探测到文件总长度时回调一次。 */
         void onTotal(long total);
-        /** 已下载字节数发生变化（绝对值，含断点续传的已有部分）。 */
         void onProgress(long soFar, long total);
-        /** 瞬时速度，单位 MB/s。 */
         void onSpeed(float mbps);
-        /** 返回 true 表示外部要求取消。 */
         boolean isCancelled();
     }
 
-    /** 探测结果。 */
     public static final class Probe {
-        public final long    total;
-        public final String  etag;
+        public final long total;
+        public final String etag;
         public final boolean rangeSupported;
+
         Probe(long total, String etag, boolean rangeSupported) {
-            this.total          = total;
-            this.etag           = etag == null ? "" : etag.trim();
+            this.total = total;
+            this.etag = etag == null ? "" : etag.trim();
             this.rangeSupported = rangeSupported;
         }
     }
 
-    /** 下载结果。 */
     public static final class Result {
-        public final long   totalBytes;
+        public final long totalBytes;
         public final String etag;
-        /** 是否已通过 16MB 分块校验（清单存在且全部块指纹匹配）。 */
         public final boolean chunkVerified;
+
         Result(long totalBytes, String etag) {
             this(totalBytes, etag, false);
         }
+
         Result(long totalBytes, String etag, boolean chunkVerified) {
-            this.totalBytes    = totalBytes;
-            this.etag          = etag == null ? "" : etag;
+            this.totalBytes = totalBytes;
+            this.etag = etag == null ? "" : etag;
             this.chunkVerified = chunkVerified;
         }
     }
 
-    /**
-     * 16MB 分块哈希清单（下载中逐块校验用）。
-     *
-     * <p>由发布侧 {@code scripts/build_chunk_manifest.py} 生成、随 manifest.json
-     * 分发。每个文件切成固定 {@code chunkSize} 的块，最后一块不足 {@code chunkSize}。
-     * 客户端分片线程在下载中段内顺序喂 MessageDigest，每到块边界比对清单指纹，
-     * 坏块只重下那 16MB（不再整包重来）。
-     *
-     * <p>{@code chunks[i]} 是第 i 块（offset {@code i*chunkSize} 起）的 md5。
-     * 块边界严格按文件 offset 对齐（16MB 整数倍），与分片数/分片边界无关——
-     * 断点续传时从任意 offset 继续，子块哈希也能对齐。
-     */
     public static final class ChunkHashes {
-        public final long    chunkSize;
-        public final long    total;        // 清单声明的文件总长，供一致性校验
-        public final String[] chunks;      // 每块 md5（小写 hex）
-        public final int      count;
+        public final long chunkSize;
+        public final long total;
+        public final String[] chunks;
+        public final int count;
 
-        public ChunkHashes(long chunkSize, long total, java.util.List<String> chunks) {
+        public ChunkHashes(long chunkSize, long total, List<String> chunks) {
             this.chunkSize = chunkSize;
-            this.total     = total;
-            this.chunks    = chunks == null ? new String[0]
-                                           : chunks.toArray(new String[0]);
-            this.count     = this.chunks.length;
+            this.total = total;
+            this.chunks = chunks == null ? new String[0] : chunks.toArray(new String[0]);
+            this.count = this.chunks.length;
         }
 
-        /** 返回覆盖 {@code [start,end)} 的子块哈希；无清单时返回 null。 */
         public String hashFor(long start, long end) {
-            if (count == 0 || chunkSize <= 0) return null;
+            if (count == 0 || chunkSize <= 0 || start < 0 || end <= start) return null;
             int b0 = (int) (start / chunkSize);
             int b1 = (int) ((end - 1) / chunkSize);
-            if (b0 < 0 || b1 >= count || b0 != b1) return null;  // 跨块区间无法用单指纹
+            if (b0 < 0 || b1 >= count || b0 != b1) return null;
             return chunks[b0];
         }
-    }
-
-    /** 从元数据文件读出的断点状态。 */
-    private static final class Resume {
-        long   total;
-        int    chunks;
-        /** 分片长。分块校验开启时必须是清单块长（16MB 对齐），否则分段哈希失效。 */
-        long   chunkSize;
-        String etag = "";
-        /** 写下这份断点时所用的完整 URL；用于判断本次是否换了线路。 */
-        String url  = "";
-        long[] done;
     }
 
     private static HttpURLConnection open(String url, boolean direct) throws IOException {
@@ -173,33 +123,33 @@ public final class CNChunkedDownload {
         c.setInstanceFollowRedirects(true);
         CNUserAgent.apply(c);
         c.setRequestProperty("Accept-Encoding", "identity");
-        // 不写 Connection: close——保留 keep-alive 复用连接池，
-        // 分片/重试接连不断时省掉每段一次的 TCP+TLS 握手
         return c;
     }
 
     /**
-     * 探测总长度与 Range 支持情况。先试 HEAD；某些 CDN 对 HEAD 不返回
-     * {@code Accept-Ranges}，因此 HEAD 结果不可用时再用一次
-     * {@code Range: bytes=0-0} 的 GET 兜底。任何异常都当作「不支持」。
+     * 先 HEAD，再用 bytes=0-0 实测 Range。HEAD 有长度但没 Accept-Ranges 时也不能
+     * 直接判死：不少 CDN 的 HEAD 不声明该头，而 GET Range 实际可用。
      */
     public static Probe probe(String url, boolean direct) {
+        long headTotal = -1L;
+        String headEtag = "";
         HttpURLConnection c = null;
         try {
             c = open(url, direct);
             c.setRequestMethod("HEAD");
             int code = c.getResponseCode();
             if (code >= 200 && code < 300) {
-                long total  = parseLong(c.getHeaderField("Content-Length"), -1L);
-                String ar   = c.getHeaderField("Accept-Ranges");
-                String etag = c.getHeaderField("ETag");
-                boolean ok  = ar != null && ar.toLowerCase(Locale.US).contains("bytes");
-                if (total > 0 && ok) return new Probe(total, etag, true);
-                if (total > 0)       return new Probe(total, etag, false);
+                headTotal = parseLong(c.getHeaderField("Content-Length"), -1L);
+                headEtag = trim(c.getHeaderField("ETag"));
+                String ar = c.getHeaderField("Accept-Ranges");
+                if (headTotal > 0 && ar != null
+                        && ar.toLowerCase(Locale.US).contains("bytes")) {
+                    return new Probe(headTotal, headEtag, true);
+                }
             }
         } catch (Throwable ignore) {
         } finally {
-            if (c != null) { try { c.disconnect(); } catch (Throwable ignore) {} }
+            disconnect(c);
         }
 
         c = null;
@@ -208,868 +158,1063 @@ public final class CNChunkedDownload {
             c.setRequestMethod("GET");
             c.setRequestProperty("Range", "bytes=0-0");
             int code = c.getResponseCode();
-            String etag = c.getHeaderField("ETag");
+            String etag = trim(c.getHeaderField("ETag"));
             if (code == 206) {
-                long total = totalFromContentRange(c.getHeaderField("Content-Range"));
-                if (total > 0) return new Probe(total, etag, true);
+                RangeInfo r = parseContentRange(c.getHeaderField("Content-Range"));
+                if (r != null && r.start == 0L && r.end == 0L && r.total > 0L) {
+                    return new Probe(r.total, etag.length() > 0 ? etag : headEtag, true);
+                }
             } else if (code >= 200 && code < 300) {
-                long total = parseLong(c.getHeaderField("Content-Length"), -1L);
+                long total = parseLong(c.getHeaderField("Content-Length"), headTotal);
                 if (total > 0) return new Probe(total, etag, false);
             }
         } catch (Throwable ignore) {
         } finally {
-            if (c != null) { try { c.disconnect(); } catch (Throwable ignore) {} }
+            disconnect(c);
         }
-        return new Probe(-1L, "", false);
+        return new Probe(headTotal, headEtag, false);
     }
 
-    /** 分片下载使用的临时文件。 */
     public static File partFileFor(File target) {
         return new File(target.getPath() + ".cpart");
     }
 
-    /** 分片进度元数据文件。 */
     public static File metaFileFor(File target) {
         return new File(target.getPath() + ".cpart.prog");
     }
 
-    /**
-     * 分片下载 {@code url} 到 {@code target}（成功后 target 即为完整文件）。
-     *
-     * @param requestedChunks 本线路建议的分片数；若已有可用断点，则沿用断点里的
-     *                        分片布局，忽略此值
-     * @throws IOException 网络错误、停滞、过慢、短读或校验失败
-     */
     public static Result download(String url, File target, int requestedChunks,
-                                  boolean direct, Probe probe, Sink sink)
-            throws IOException {
+                                  boolean direct, Probe probe, Sink sink) throws IOException {
         return download(url, target, requestedChunks, direct, probe, sink, null);
     }
 
-    /**
-     * 同上，额外传入本次使用的线路，用于反限速判定（可为 null 表示不判定）。
-     */
     public static Result download(String url, File target, int requestedChunks,
                                   boolean direct, Probe probe, Sink sink,
-                                  CNMirrors.Mirror mirror)
-            throws IOException {
+                                  CNMirrors.Mirror mirror) throws IOException {
         return download(url, target, requestedChunks, direct, probe, sink, mirror, null);
     }
 
-    /**
-     * 同上，再额外传入文件名（主线资源根下的单段文件名，可为 null）。
-     *
-     * <p>当 {@code settings.chunks_across_mirrors=true} 且健康镜像 ≥2 时，
-     * 各分片按轮转派给多条镜像同时下载，吞吐随线路数叠加。
-     * 跨镜像时 {@code If-Range} 只在主线路那条分片上带——各家 ETag 格式
-     * 互不相同，跨线带校验必然 200 整份重发。文件级一致性由调用方的
-     * size/md5 完工校验兜住（ETag 从来都不是完整性的依据）。
-     */
     public static Result download(String url, File target, int requestedChunks,
                                   boolean direct, Probe probe, Sink sink,
-                                  CNMirrors.Mirror mirror, String remoteName)
-            throws IOException {
-        // 通用下载：不假定目标是 zip，完工内容校验由调用方按需开启。
+                                  CNMirrors.Mirror mirror, String remoteName) throws IOException {
         return download(url, target, requestedChunks, direct, probe, sink,
                 mirror, remoteName, false);
     }
 
-    /**
-     * 同上，再额外指定是否在完工时做 zip 结构预检。
-     *
-     * <p>{@code verifyZip=true} 用于**已知是 zip** 的下载（base 包 / 热更包）：
-     * 分片跨镜像/断点续传可能把异源字节混进同一文件，凑满即坏（invalid CEN
-     * header），promote 前用 ZipFile 预检 EOCD+CEN 能在源头截住，坏则清断点
-     * 整份重下。通用下载（任意二进制）传 false，不做 zip 假定。
-     */
     public static Result download(String url, File target, int requestedChunks,
                                   boolean direct, Probe probe, Sink sink,
                                   CNMirrors.Mirror mirror, String remoteName,
-                                  boolean verifyZip)
-            throws IOException {
+                                  boolean verifyZip) throws IOException {
         return download(url, target, requestedChunks, direct, probe, sink,
                 mirror, remoteName, verifyZip, null);
     }
 
-    /**
-     * 同上，再额外传入 16MB 分块哈希清单（可为 null 表示不启用分块校验）。
-     *
-     * <p>{@code chunkHashes} 启用后，分片线程下载中段内顺序喂 MessageDigest，
-     * 每到块边界比对清单指纹，坏块只重下那 16MB。段内天然有序，不需要调度员；
-     * 块边界按文件 offset（16MB 整数倍）对齐，断点续传也能对齐。
-     */
     public static Result download(String url, File target, int requestedChunks,
                                   boolean direct, Probe probe, Sink sink,
                                   CNMirrors.Mirror mirror, String remoteName,
-                                  boolean verifyZip, ChunkHashes chunkHashes)
-            throws IOException {
+                                  boolean verifyZip, ChunkHashes hashes) throws IOException {
+        try {
+            CNDownloadUiAssist.ensureInstalled();
+        } catch (Throwable t) {
+            try { CNLog.w(TAG, "下载界面辅助控件初始化失败（不影响下载）: " + t); }
+            catch (Throwable ignore) {}
+        }
 
-        final long total = probe.total;
-        if (total <= 0) throw new IOException("未知的文件长度");
+        if (url == null || target == null || probe == null) {
+            throw new IOException("下载参数为空");
+        }
+        if (probe.total <= 0) throw new IOException("未知的文件长度");
+        ensureParent(target);
 
+        ChunkHashes valid = validateManifest(hashes, probe.total);
+        if (hashes != null && valid == null) {
+            // 已经拿到清单却与本次文件身份不符，说明镜像/清单传播不同步。此时
+            // 绝不能悄悄关掉完整性校验继续拼装；交给上层换线并重新拉清单。
+            throw new IOException("分块清单与文件不一致 file=" + target.getName()
+                    + " manifestTotal=" + hashes.total + " probeTotal=" + probe.total);
+        }
+        if (valid != null) {
+            return downloadVerified(url, target, requestedChunks, direct, probe,
+                    sink, remoteName, verifyZip, valid);
+        }
+        return downloadByteSegments(url, target, requestedChunks, direct, probe,
+                sink, verifyZip);
+    }
+
+    // -----------------------------------------------------------------
+    // 有清单：块级事务下载
+    // -----------------------------------------------------------------
+
+    private static Result downloadVerified(String url, File target, int requestedWorkers,
+                                           boolean direct, Probe probe, Sink sink,
+                                           String remoteName, boolean verifyZip,
+                                           ChunkHashes hashes) throws IOException {
         final File part = partFileFor(target);
         final File meta = metaFileFor(target);
+        cleanBlockTemps(part);
 
-        File parent = part.getParentFile();
-        if (parent != null && !parent.isDirectory() && !parent.mkdirs() && !parent.isDirectory()) {
-            throw new IOException("无法创建下载目录: " + parent);
-        }
-
-        // ── 判定断点是否可信 ──
-        // 分块校验开启时，分片数 = 块数（ceil(total/chunkSize)），分片边界严格
-        // 对齐清单的 16MB 块（chunkSize 直接用清单值，不能拿 ceil(total/chunks)
-        // 近似——近似值不等于块长，startByte % hsChunk 会非零，分块哈希整段跳过，
-        // 只剩 chunk 0 在真校验，异源/损坏字节静默溜进拼装。2026-08-11 三连败
-        // 的帮凶之一）。分片从块头开始 → 每片恰好覆盖整数个完整块，段内顺序
-        // 哈希才能和清单指纹对齐，下完一块立刻可校验。
-        int    chunks = requestedChunks < 1 ? 1 : requestedChunks;
-        if (chunkHashes != null && chunkHashes.chunkSize > 0 && total > 0) {
-            long nBlk = (total + chunkHashes.chunkSize - 1) / chunkHashes.chunkSize;
-            chunks = (int) Math.min(nBlk, 1024L);   // 上限保护，防止超大文件碎片化
-            if (chunks < 1) chunks = 1;
-            if (chunkHashes.count != chunks) {
-                // 清单块数与文件大小不匹配（发布侧/客户端版本不一致），
-                // 视为清单不可信，退回无分块校验路径。
-                CNLog.w(TAG, "分块清单块数不符 " + chunkHashes.count
-                        + " != " + chunks + "，跳过分块校验");
-                chunkHashes = null;
-                chunks = requestedChunks < 1 ? 1 : requestedChunks;
-            }
-        }
-        long[] resumed  = null;
-        Resume st = readResume(meta);
-        if (st != null) {
-            String why = resumeRejectReason(st, total, probe.etag, url, part);
-            // 分块校验开启时，断点布局必须与清单块布局一致（块数与块长都要对上），
-            // 否则分段哈希对不上会整段静默失效。旧版（v3，未记 chunkSize 或分片
-            // 未对齐清单块）留下的断点一律作废重下。
-            if (why == null && chunkHashes != null
-                    && (st.chunks != chunks || st.chunkSize != chunkHashes.chunkSize)) {
-                why = "分块布局与清单不符";
-            }
-            if (why == null) {
-                // 沿用元数据里的分片布局，保证换线也能接着下
-                chunks  = st.chunks;
-                resumed = st.done;
-                long have = 0L;
-                for (int i = 0; i < resumed.length; i++) have += resumed[i];
-                CNLog.i(TAG, "resume-accept file=" + target.getName()
-                        + " chunks=" + chunks + " have=" + have + "/" + total);
-            } else {
-                CNLog.w(TAG, "resume-reject file=" + target.getName() + " reason=" + why);
-                deleteQuietly(meta);
-            }
-        }
-
-        // 分片长：有清单就用清单块长（保证边界对齐、哈希可用）；无清单退化为
-        // 把 total 均分到 requestedChunks 的近似切分（纯续传场景，不校验）。
-        final long chunkSize = chunkHashes != null
-                ? chunkHashes.chunkSize
-                : (total + chunks - 1) / chunks;
-        final long[] starts  = new long[chunks];
-        final long[] ends    = new long[chunks];
-        final AtomicLongArray done = new AtomicLongArray(chunks);
-        for (int i = 0; i < chunks; i++) {
-            starts[i] = i * chunkSize;
-            ends[i]   = Math.min(starts[i] + chunkSize - 1, total - 1);
-            done.set(i, resumed != null ? resumed[i] : 0L);
-        }
-
-        // 预分配到完整长度（分片要按偏移随机写入）。
-        // 注意顺序：断点可信度已在上面判完，这里再拉长文件就不会影响判定。
-        RandomAccessFile raf = new RandomAccessFile(part, "rw");
-        try {
-            if (raf.length() != total) raf.setLength(total);
-        } finally {
-            try { raf.close(); } catch (Throwable ignore) {}
-        }
-        saveMeta(meta, total, probe.etag, url, done, chunkSize);
-
-        final AtomicLong totalDone = new AtomicLong(0L);
-        for (int i = 0; i < chunks; i++) totalDone.addAndGet(done.get(i));
-
-        if (sink != null) {
-            sink.onTotal(total);
-            sink.onProgress(totalDone.get(), total);
-        }
-
-        // 元数据显示已全部完成：此时 .cpart 的存在与长度已在 resumeRejectReason
-        // 里验过，但「长度对」不代表「内容对」——断点可能是上一轮跨镜像混装的
-        // 残片凑满，必须先做完工 zip 结构预检，坏则整份作废重下。
-        if (totalDone.get() >= total) {
-            if (verifyZip && !CNArchiveValidate.isZipStructurallyValid(part)) {
-                CNLog.w(TAG, "完工校验失败 file=" + target.getName()
-                        + " 拼装文件非法，重置断点重下");
-                deleteQuietly(part);
-                deleteQuietly(meta);
-                throw new CNDownloaderFix.ResetRequired(
-                        "完工校验失败: 拼装 zip 结构非法（可能混入异源分片）");
-            }
-            promote(part, target);
-            deleteQuietly(meta);
-            if (sink != null) sink.onProgress(total, total);
-            CNLog.i(TAG, "resume-complete file=" + target.getName() + " 无需再下载");
-            return new Result(total, probe.etag);
-        }
-
-        final AtomicReference<IOException> firstErr = new AtomicReference<IOException>(null);
-        final AtomicBoolean abort        = new AtomicBoolean(false);
-        /** 任一分片收到 HTTP 200（Range 被忽略）时置位。 */
-        final AtomicBoolean rangeIgnored = new AtomicBoolean(false);
-        /** 本轮尝试存活标记：封口后掉队线程的 finally 不再允许写元数据。 */
-        final AtomicBoolean live         = new AtomicBoolean(true);
-        final AtomicLong    lastMoveNs  = new AtomicLong(System.nanoTime());
-        final AtomicLong    windowStart = new AtomicLong(System.nanoTime());
-        final AtomicLong    windowBytes = new AtomicLong(0L);
-
-        // 分片跨镜像并发：开关打开且有多条健康镜像时，分片轮转派到各线路
-        final String[] chunkUrls;
-        java.util.List<CNMirrors.Mirror> spread = null;
-        if (remoteName != null && CNMirrors.chunksAcrossMirrors()) {
-            java.util.List<CNMirrors.Mirror> h = CNMirrors.healthy();
-            if (h.size() >= 2) spread = h;
-        }
-        if (spread != null) {
-            chunkUrls = new String[chunks];
-            for (int i = 0; i < chunks; i++) {
-                chunkUrls[i] = spread.get(i % spread.size()).urlFor(remoteName);
-            }
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < Math.min(chunks, spread.size()); i++)
-                sb.append(' ').append(spread.get(i).name);
-            CNLog.i(TAG, "分片跨镜像并发 file=" + target.getName()
-                    + " chunks=" + chunks + " 线路:" + sb);
+        final String manifestId = manifestFingerprint(hashes);
+        HashResume resume = readHashResume(meta);
+        AtomicIntegerArray verified = new AtomicIntegerArray(hashes.count);
+        boolean accepted = resume != null
+                && resume.total == probe.total
+                && resume.blockSize == hashes.chunkSize
+                && resume.count == hashes.count
+                && manifestId.equals(resume.manifestId)
+                && part.isFile() && part.length() == probe.total
+                && etagCompatible(resume.url, resume.etag, url, probe.etag);
+        if (accepted) {
+            for (int i = 0; i < hashes.count; i++) verified.set(i, resume.verified[i]);
+            CNLog.i(TAG, "verified-resume-accept file=" + target.getName()
+                    + " blocks=" + countSet(verified) + "/" + hashes.count);
         } else {
-            chunkUrls = null;
-        }
-
-        ExecutorService pool = Executors.newFixedThreadPool(chunks, new ChunkThreadFactory());
-        final CountDownLatch latch = new CountDownLatch(chunks);
-
-        for (int i = 0; i < chunks; i++) {
-            ChunkTask task = new ChunkTask();
-            task.url = chunkUrls != null ? chunkUrls[i] : url;
-            task.part = part;
-            task.start = starts[i]; task.end = ends[i];
-            task.done = done;       task.idx = i;
-            task.direct = direct;   task.meta = meta;
-            task.total = total;
-            // If-Range 只在主线路的分片上带：跨镜像 ETag 格式互不相同
-            task.etag = (chunkUrls == null || chunkUrls[i].equals(url)) ? probe.etag : null;
-            task.totalDone = totalDone;
-            task.windowStart = windowStart; task.windowBytes = windowBytes;
-            task.lastMoveNs = lastMoveNs;   task.abort = abort;
-            task.rangeIgnored = rangeIgnored;
-            task.live = live;
-            task.chunkHashes = chunkHashes;
-            task.sink = sink;       task.firstErr = firstErr;
-            task.latch = latch;
-            pool.submit(task);
-        }
-
-        // 监控：停滞 / 过慢 / 外部取消 —— 命中即中断本次尝试，交给上层换线
-        final long stallNs = TimeUnit.SECONDS.toNanos(CNMirrors.stallSeconds());
-        // 字段名是 min_speed_kbps —— kbps 按惯例是「千比特每秒」，所以要
-        // 除以 8 换成字节。之前按 KiB/s 解释，线上配置的 800 会变成
-        // 800 KiB/s ≈ 6.5 Mbit/s 的下限，任何慢于此的用户每条线都会在 10 秒
-        // 后被判「过慢」，4 次尝试耗尽后整包安装失败。
-        final long minBps  = (long) CNMirrors.minSpeedKbps() * 1000L / 8L;
-        long checkStartNs  = System.nanoTime();
-        long bytesAtCheck  = totalDone.get();
-        // 反限速（相对自身基线）：仅在传入 mirror 且非跨镜像并发时启用
-        // （跨镜像时 totalDone 是各分线聚合，无法归因单线）。建立期用
-        // [baseline_from_s, baseline_to_s] 窗口的**平均**速度定基线——不用历史
-        // 峰值，避免首窗突发被永久记为基线、误伤稳定线路。此后逐 3 秒窗口实测
-        // 吞吐，持续低于基线 × throttle_ratio_pct% 达到 throttle_grace_s 秒
-        // 判为限速 → 降级该线 → 有更快线则中断本次尝试交给上层换线。
-        final long rateIntervalNs = TimeUnit.SECONDS.toNanos(3L);
-        final long rateStartNs    = System.nanoTime();
-        long rateWindowNs  = System.nanoTime();
-        long rateWindowBytes = totalDone.get();
-        int  slowTicks     = 0;
-        final long graceTicks = Math.max(1L,
-                (long) CNMirrors.throttleGraceS() * 1000L / 3000L);
-        final long baseFromNs = TimeUnit.SECONDS.toNanos(CNMirrors.baselineFromS());
-        final long baseToNs   = TimeUnit.SECONDS.toNanos(CNMirrors.baselineToS());
-        long baseBytes  = 0L;
-        long baseTimeNs = 0L;
-        boolean baseReady = false;
-        long baseBps    = 0L;
-        try {
-            while (!latch.await(1, TimeUnit.SECONDS)) {
-                long now = System.nanoTime();
-                if (sink != null && sink.isCancelled()) {
-                    abort.set(true);
-                    firstErr.compareAndSet(null, new IOException("已取消"));
-                    break;
-                }
-                if (now - lastMoveNs.get() > stallNs) {
-                    abort.set(true);
-                    firstErr.compareAndSet(null, new IOException(
-                            "线路停滞：" + CNMirrors.stallSeconds() + " 秒内没有任何数据"));
-                    break;
-                }
-                long elapsed = now - checkStartNs;
-                if (minBps > 0 && elapsed >= TimeUnit.SECONDS.toNanos(10)) {
-                    long moved = totalDone.get() - bytesAtCheck;
-                    long bps   = (long) (moved / (elapsed / 1_000_000_000.0));
-                    if (bps < minBps) {
-                        abort.set(true);
-                        firstErr.compareAndSet(null, new IOException(
-                                "线路过慢：" + (bps * 8 / 1000) + " kbps < "
-                                + CNMirrors.minSpeedKbps() + " kbps"));
-                        break;
-                    }
-                    checkStartNs = now;
-                    bytesAtCheck = totalDone.get();
-                }
-                // 相对基线反限速：窗口平均定基线（非跨镜像），持续走低则降级/换线
-                long winElapsed = now - rateWindowNs;
-                if (mirror != null && spread == null && winElapsed >= rateIntervalNs) {
-                    long winBytes = totalDone.get() - rateWindowBytes;
-                    long winBps   = (long) (winBytes / (winElapsed / 1_000_000_000.0));
-                    rateWindowNs = now;
-                    rateWindowBytes = totalDone.get();
-                    if (!baseReady) {
-                        long sinceStart = now - rateStartNs;
-                        if (sinceStart > baseFromNs && sinceStart <= baseToNs) {
-                            baseBytes  += winBytes;
-                            baseTimeNs += winElapsed;
-                        }
-                        if (sinceStart > baseToNs) {
-                            if (baseTimeNs > 0) {
-                                baseBps = (long)(baseBytes / (baseTimeNs / 1_000_000_000.0));
-                            }
-                            if (baseBps > 0) CNMirrors.reportBaseline(mirror, baseBps);
-                            baseReady = true;
-                        }
-                    } else if (baseBps > 0 && winBps > 0) {
-                        if (winBps < baseBps * CNMirrors.throttleRatioPct() / 100L) {
-                            if (++slowTicks >= graceTicks) {
-                                CNMirrors.reportThrottled(mirror);
-                                slowTicks = 0;
-                                if (CNMirrors.worthSwitching(mirror, winBps)) {
-                                    abort.set(true);
-                                    firstErr.compareAndSet(null, new IOException(
-                                            "线路疑似被限速，换线: " + (winBps * 8 / 1000)
-                                            + "kbps < 基线 " + (baseBps * 8 / 1000) + "kbps"));
-                                    break;
-                                }
-                            }
-                        } else {
-                            slowTicks = 0;
-                        }
-                    }
-                }
+            if (resume != null) {
+                CNLog.w(TAG, "verified-resume-reject file=" + target.getName()
+                        + "（文件身份/清单/布局已变化）");
             }
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-            abort.set(true);
-            firstErr.compareAndSet(null, new IOException("已取消"));
-        }
-
-        pool.shutdownNow();
-        try { pool.awaitTermination(5, TimeUnit.SECONDS); } catch (InterruptedException ignore) {}
-        // 无论成败都落盘：保住这一轮已经下到的进度
-        saveMeta(meta, total, probe.etag, url, done, chunkSize);
-        // 本轮尝试到此封口：之后醒来的掉队线程（阻塞在 read 里、30 秒读超时
-        // 才返回的那种）不得再写元数据。它的 finally 里那份 done 快照对应的是
-        // 旧一轮，而下一轮可能已经把断点/临时文件清掉重来——迟到的写会把
-        // 「旧进度」盖到「新文件」头上，等于伪造已完成的分片。
-        live.set(false);
-
-        IOException err = firstErr.get();
-        if (err != null) {
-            if (rangeIgnored.get()) {
-                // 断点在这条线路上用不了：清干净，下一次尝试整份重下。
-                // 不清的话每次尝试都会重复撞上同一个 200。
-                CNLog.w(TAG, "服务端忽略 Range，清除断点后整份重下: " + target.getName());
-                deleteQuietly(meta);
-                deleteQuietly(part);
-            }
-            throw err;   // 否则保留 .cpart 与元数据，下次可续
-        }
-
-        // 完工校验：.cpart 是预分配的，长度永远等于 total，所以**不能**拿长度当
-        // 完成依据——必须核对各分片累计的已写字节数。少了就是短读，绝不提交。
-        long written = 0L;
-        for (int i = 0; i < chunks; i++) written += done.get(i);
-        if (written != total) {
-            throw new IOException("下载不完整: 已写 " + written + " / " + total);
-        }
-        long actual = part.length();
-        if (actual != total) {
-            throw new IOException("临时文件大小异常: " + actual + " / " + total);
-        }
-        // 完工内容校验：分片跨镜像/断点续传可能把异源字节混进同一文件，凑满即坏
-        // （invalid CEN header）。zip 结构预检不通过 → 整份作废重下，绝不 promote。
-        // 仅在调用方声明目标是 zip（verifyZip=true）时启用。
-        if (verifyZip && !CNArchiveValidate.isZipStructurallyValid(part)) {
-            CNLog.w(TAG, "完工校验失败 file=" + target.getName()
-                    + " 拼装文件非法，重置断点重下");
-            deleteQuietly(part);
             deleteQuietly(meta);
-            throw new CNDownloaderFix.ResetRequired(
-                    "完工校验失败: 拼装 zip 结构非法（可能混入异源分片）");
+            deleteQuietly(part);
         }
 
-        promote(part, target);
-        deleteQuietly(meta);
+        preallocate(part, probe.total);
+        final Object commitLock = new Object();
+        final AtomicLong committed = new AtomicLong(verifiedBytes(verified, hashes));
+        final AtomicLong networkBytes = new AtomicLong(0L);
+        final AtomicLong lastMoveNs = new AtomicLong(System.nanoTime());
+        final AtomicReference<IOException> firstErr = new AtomicReference<IOException>();
+        final AtomicBoolean abort = new AtomicBoolean(false);
+        final AtomicBoolean open = new AtomicBoolean(true);
+        final int[] pending = pendingBlocks(verified);
+
         if (sink != null) {
-            sink.onProgress(total, total);
-            sink.onSpeed(0f);
+            sink.onTotal(probe.total);
+            sink.onProgress(committed.get(), probe.total);
         }
-        CNLog.i(TAG, "分片下载完成 file=" + target.getName() + " bytes=" + total
-                + " chunks=" + chunks);
-        // 分块校验覆盖判定：清单存在且分片从文件头开始（offset 0）→ 每个完整块
-        // 都在下载中比对过 → 视为 chunkVerified。断点续传（首块在文件中间）时
-        // 首块可能未校验，此时不标 chunkVerified，让调用方保留整包校验兜底。
-        boolean full = chunkHashes != null && starts != null
-                && starts.length > 0 && starts[0] == 0L;
-        return new Result(total, probe.etag, full);
-    }
 
-    /**
-     * 判断已有断点是否可用。返回 {@code null} 表示可用，否则返回不可用的原因。
-     */
-    private static String resumeRejectReason(Resume st, long total, String etag,
-                                             String url, File part) {
-        if (st.total != total) {
-            return "总长度不符 " + st.total + " != " + total;
-        }
-        if (st.chunks < 1 || st.done == null || st.done.length != st.chunks) {
-            return "分片信息损坏";
-        }
-        // 临时文件必须在、且长度正确。否则元数据可能对应一个已被删除的文件，
-        // 预分配会造出一个全零文件并被误判成「已下完」。
-        if (!part.isFile()) {
-            return "临时文件不存在";
-        }
-        if (part.length() != total) {
-            return "临时文件长度不符 " + part.length() + " != " + total;
-        }
-        // ETag 只在**同一条线路**上才有可比性。
-        // 实测三条线路对同一个文件给出的 ETag 格式互不相同（nginx 的
-        // inode-mtime、CDN 的 MD5、对象存储的版本号），跨线路比对必然不等，
-        // 若照比就会让「自动换线」把「断点续传」的成果全部作废——两个功能
-        // 互相抵消。换线时改为只依赖总长度一致（镜像提供的是同一份文件）。
-        boolean sameLine = st.url.length() > 0 && st.url.equals(url);
-        if (sameLine && st.etag.length() > 0 && etag != null && etag.length() > 0
-                && !st.etag.equals(etag)) {
-            return "ETag 已变化";
-        }
-        long chunkSize = (total + st.chunks - 1) / st.chunks;
-        for (int i = 0; i < st.chunks; i++) {
-            long start = i * chunkSize;
-            long end   = Math.min(start + chunkSize - 1, total - 1);
-            long len   = end - start + 1;
-            if (st.done[i] < 0 || st.done[i] > len) {
-                return "分片 " + i + " 进度越界 " + st.done[i] + " / " + len;
+        if (pending.length > 0) {
+            String[] candidates = candidateUrls(url, remoteName);
+            int workers = clampWorkers(requestedWorkers, pending.length);
+            CNLog.i(TAG, "事务分块下载 file=" + target.getName()
+                    + " blocks=" + hashes.count + " pending=" + pending.length
+                    + " workers=" + workers + " mirrors=" + candidates.length);
+
+            HashContext ctx = new HashContext();
+            ctx.target = target;
+            ctx.part = part;
+            ctx.meta = meta;
+            ctx.total = probe.total;
+            ctx.etag = probe.etag;
+            ctx.primaryUrl = url;
+            ctx.direct = direct;
+            ctx.hashes = hashes;
+            ctx.manifestId = manifestId;
+            ctx.verified = verified;
+            ctx.pending = pending;
+            ctx.next = new AtomicInteger(0);
+            ctx.committed = committed;
+            ctx.networkBytes = networkBytes;
+            ctx.lastMoveNs = lastMoveNs;
+            ctx.firstErr = firstErr;
+            ctx.abort = abort;
+            ctx.open = open;
+            ctx.commitLock = commitLock;
+            ctx.sink = sink;
+            ctx.candidates = candidates;
+
+            ExecutorService pool = Executors.newFixedThreadPool(workers, new DownloadThreadFactory());
+            CountDownLatch latch = new CountDownLatch(workers);
+            for (int i = 0; i < workers; i++) {
+                pool.submit(new HashWorker(ctx, latch));
             }
+            monitor(latch, pool, abort, open, firstErr, lastMoveNs, networkBytes,
+                    probe.total, sink);
+            IOException err = firstErr.get();
+            if (err != null) throw err;
         }
-        return null;
+
+        if (countSet(verified) != hashes.count || committed.get() != probe.total) {
+            throw new IOException("分块下载未完成: verified=" + countSet(verified)
+                    + "/" + hashes.count + " bytes=" + committed.get() + "/" + probe.total);
+        }
+        finish(part, meta, target, verifyZip, sink, probe.total);
+        CNLog.i(TAG, "事务分块下载完成 file=" + target.getName()
+                + " bytes=" + probe.total + " blocks=" + hashes.count);
+        return new Result(probe.total, probe.etag, true);
     }
 
-    /** 分片线程工厂：守护线程，进程退出不被卡住。 */
-    private static final class ChunkThreadFactory implements ThreadFactory {
-        @Override public Thread newThread(Runnable r) {
-            Thread t = new Thread(r, "cnv-chunk");
-            t.setDaemon(true);
-            return t;
-        }
-    }
-
-    /** 单个分片的下载任务。 */
-    private static final class ChunkTask implements Runnable {
-        String url;
-        File   part;
-        long   start;
-        long   end;
-        AtomicLongArray done;
-        int    idx;
-        boolean direct;
-        File   meta;
-        long   total;
+    private static final class HashContext {
+        File target;
+        File part;
+        File meta;
+        long total;
         String etag;
-        AtomicLong totalDone;
-        AtomicLong windowStart;
-        AtomicLong windowBytes;
+        String primaryUrl;
+        boolean direct;
+        ChunkHashes hashes;
+        String manifestId;
+        AtomicIntegerArray verified;
+        int[] pending;
+        AtomicInteger next;
+        AtomicLong committed;
+        AtomicLong networkBytes;
         AtomicLong lastMoveNs;
-        AtomicBoolean abort;
-        AtomicBoolean rangeIgnored;
-        AtomicBoolean live;
-        Sink   sink;
-        ChunkHashes chunkHashes;
         AtomicReference<IOException> firstErr;
-        CountDownLatch latch;
+        AtomicBoolean abort;
+        AtomicBoolean open;
+        Object commitLock;
+        Sink sink;
+        String[] candidates;
+    }
+
+    private static final class HashWorker implements Runnable {
+        private final HashContext ctx;
+        private final CountDownLatch latch;
+
+        HashWorker(HashContext ctx, CountDownLatch latch) {
+            this.ctx = ctx;
+            this.latch = latch;
+        }
 
         @Override public void run() {
             try {
-                oneChunk(url, part, start, end, done, idx, direct, meta, total, etag,
-                         totalDone, windowStart, windowBytes, lastMoveNs, abort,
-                         rangeIgnored, live, sink, chunkHashes);
+                while (!ctx.abort.get() && ctx.open.get()) {
+                    int p = ctx.next.getAndIncrement();
+                    if (p >= ctx.pending.length) break;
+                    int block = ctx.pending[p];
+                    downloadVerifiedBlock(ctx, block);
+                }
+            } catch (IOException e) {
+                ctx.firstErr.compareAndSet(null, e);
+                ctx.abort.set(true);
             } catch (Throwable t) {
-                firstErr.compareAndSet(null,
-                        t instanceof IOException ? (IOException) t
-                                                 : new IOException(String.valueOf(t.getMessage()), t));
-                abort.set(true);
+                ctx.firstErr.compareAndSet(null,
+                        new IOException("分块工作线程异常: " + t, t));
+                ctx.abort.set(true);
             } finally {
                 latch.countDown();
             }
         }
     }
 
-    private static void oneChunk(String url, File part,
-                                 long chunkStart, long chunkEnd,
-                                 AtomicLongArray done, int idx, boolean direct,
-                                 File meta, long total, String etag,
-                                 AtomicLong totalDone,
-                                 AtomicLong windowStart, AtomicLong windowBytes,
-                                 AtomicLong lastMoveNs,
-                                 AtomicBoolean abort, AtomicBoolean rangeIgnored,
-                                 AtomicBoolean live,
-                                 Sink sink, ChunkHashes chunkHashes) throws IOException {
+    private static void downloadVerifiedBlock(HashContext ctx, int block) throws IOException {
+        long start = block * ctx.hashes.chunkSize;
+        long end = Math.min(start + ctx.hashes.chunkSize, ctx.total) - 1L;
+        String expected = ctx.hashes.hashFor(start, end + 1L);
+        if (expected == null) throw new IOException("清单缺少块 " + block + " 的指纹");
 
-        final long chunkLen = chunkEnd - chunkStart + 1;
-        long already = done.get(idx);
-        if (already >= chunkLen) return;
-
-        final long startByte = chunkStart + already;
-        HttpURLConnection c = open(url, direct);
-        c.setRequestMethod("GET");
-        c.setRequestProperty("Range", "bytes=" + startByte + "-" + chunkEnd);
-        if (etag != null && etag.length() > 0) {
-            // 续传途中服务端换了文件时，让它直接拒绝而不是给回另一版本的字节
-            c.setRequestProperty("If-Range", etag);
-        }
-        c.connect();
-        int code = c.getResponseCode();
-        if (code != 206) {
-            try { c.disconnect(); } catch (Throwable ignore) {}
-            if (code == 200) {
-                // 服务端忽略了 Range，或 If-Range 的校验值不匹配而整份重发。
-                // 这种响应对分片下载不可用，但**不是**线路故障：若只当普通失败
-                // 处理，四次尝试会全部撞在同一堵墙上，最终整个压缩包失败、
-                // 安装器提前返回——而安装器一返回，native hook 就会放行引擎
-                // 自带的下载场景。所以这里单独标记，让上层清掉断点后重来。
-                rangeIgnored.set(true);
-                throw new IOException("分片 " + idx + " 的 Range 被服务端忽略（HTTP 200）");
-            }
-            throw new IOException("分片 " + idx + " 期望 206，实得 HTTP " + code);
-        }
-        // 回验服务端给的确实是我们要的区间，避免中间设备返回错位数据后
-        // 被按偏移写进文件。
-        String contentRange = c.getHeaderField("Content-Range");
-        if (contentRange == null) {
-            // 合规的 206 必须带 Content-Range；缺失说明中间设备/缓存篡改了
-            // 响应，此时无法回验区间，绝不按偏移写入（历史上「缺头即放行」
-            // 会放错位数据进文件，拼出 invalid CEN header）。
-            try { c.disconnect(); } catch (Throwable ignore) {}
-            throw new IOException("分片 " + idx + " 的 206 响应缺少 Content-Range 头，拒绝写入");
-        }
-        long got = rangeStart(contentRange);
-        if (got != startByte) {
-            try { c.disconnect(); } catch (Throwable ignore) {}
-            throw new IOException("分片 " + idx + " Content-Range 起点不符: "
-                    + got + " != " + startByte);
-        }
-        // 总长度也要回验。2026-08-10 公测事故：gh-proxy 类缓存代理可能还拿着
-        // 上一版的文件（同名 URL、旧内容、旧大小），它回 206、Content-Range
-        // 起点完全正确，但总长度是旧版的、body 也是旧版的字节——只验起点会把
-        // 旧版字节写进新版文件，拼出来的 zip 必坏（invalid CEN header），而且
-        // 缓存是确定性的，换多少次线路重下都坏在同一个位置。验死总长度后，
-        // 这种响应直接抛错、记线路失败、换线，污染不了本地文件。
-        long crTotal = totalFromContentRange(contentRange);
-        if (crTotal != total) {
-            try { c.disconnect(); } catch (Throwable ignore) {}
-            throw new IOException("分片 " + idx + " Content-Range 总长不符: "
-                    + crTotal + " != " + total + "（对端疑似缓存了旧版本）");
-        }
-
-        InputStream is = null;
-        RandomAccessFile raf = null;
-        // 16MB 分块校验：分片边界已对齐 16MB 块（download 里按块数定分片数），
-        // 全新下载时每个分片从块头开始、覆盖整数个完整块 → 段内顺序喂
-        // MessageDigest，到块尾比对清单指纹。断点续传时分片从块内某处继续，
-        // 首块不完整无法比对 → 跳过首块，只校验后续完整块。
-        final long hsChunk = chunkHashes != null ? chunkHashes.chunkSize : 0L;
-        // 逐块校验：从块头开始的分片（全新下载）从本块头校验；从块中段续传的
-        // 分片跳过不完整的首块，从下一个块边界起校验后续完整块——不能因为
-        // startByte 未对齐就整片跳过（那等于分块校验失效，坏字节溜进拼装）。
-        boolean hsActive = hsChunk > 0;
-        long hsNext = 0L;   // 下一个待校验块的绝对起点
-        if (hsActive) {
-            // 注意：hsChunk 可能为 0（无分块校验），取模前必须先判 hsActive，
-            // 否则 /0 除零。从块头开始就从本块头校验；从块中段续传的跳过不完整
-            // 首块、从下一个块边界起校验。
-            hsNext = (startByte % hsChunk == 0)
-                    ? startByte
-                    : ((startByte / hsChunk) + 1) * hsChunk;
-        }
-        MessageDigest hsDig = null;
-        if (hsActive) {
+        IOException last = null;
+        for (int i = 0; i < ctx.candidates.length && !ctx.abort.get(); i++) {
+            String u = ctx.candidates[i];
+            File temp = blockTemp(ctx.part, block);
+            deleteQuietly(temp);
             try {
-                hsDig = MessageDigest.getInstance("MD5");
-            } catch (java.security.NoSuchAlgorithmException e) {
-                CNLog.w(TAG, "MD5 不可用，跳过分块校验: " + e);
-                hsDig = null;
-                hsActive = false;
+                String got = fetchRangeToTemp(u, ctx.primaryUrl, ctx.etag, ctx.direct,
+                        start, end, ctx.total, temp, ctx.abort, ctx.open, ctx.sink,
+                        ctx.networkBytes, ctx.lastMoveNs);
+                if (!expected.equalsIgnoreCase(got)) {
+                    throw new IOException("分块校验失败 block=" + block + " offset=" + start
+                            + " 期望=" + expected + " 实得=" + got + " url=" + u);
+                }
+                if (ctx.abort.get() || !ctx.open.get()) throw new IOException("已中断");
+                synchronized (ctx.commitLock) {
+                    if (ctx.abort.get() || !ctx.open.get()) throw new IOException("已中断");
+                    if (ctx.verified.get(block) == 0) {
+                        commitTempBlock(temp, ctx.part, start, end - start + 1L);
+                        ctx.verified.set(block, 1);
+                        long now = ctx.committed.addAndGet(end - start + 1L);
+                        saveHashMeta(ctx.meta, ctx.total, ctx.hashes.chunkSize,
+                                ctx.hashes.count, ctx.manifestId, ctx.etag,
+                                ctx.primaryUrl, ctx.verified);
+                        if (ctx.sink != null) ctx.sink.onProgress(now, ctx.total);
+                    }
+                }
+                deleteQuietly(temp);
+                return;
+            } catch (IOException e) {
+                last = e;
+                deleteQuietly(temp);
+                CNLog.w(TAG, "块重试 file=" + ctx.target.getName() + " block=" + block
+                        + " candidate=" + (i + 1) + "/" + ctx.candidates.length
+                        + " reason=" + e.getMessage());
             }
+        }
+        throw last == null ? new IOException("块 " + block + " 下载失败") : last;
+    }
+
+    private static String fetchRangeToTemp(String url, String primaryUrl, String primaryEtag,
+                                           boolean direct, long start, long end, long total,
+                                           File temp, AtomicBoolean abort, AtomicBoolean open,
+                                           Sink sink, AtomicLong networkBytes,
+                                           AtomicLong lastMoveNs) throws IOException {
+        HttpURLConnection c = null;
+        InputStream in = null;
+        FileOutputStream out = null;
+        MessageDigest md;
+        try {
+            md = MessageDigest.getInstance("MD5");
+        } catch (Exception e) {
+            throw new IOException("MD5 不可用", e);
         }
         try {
-            is  = new BufferedInputStream(c.getInputStream(), 1 << 16);
-            raf = new RandomAccessFile(part, "rw");
-            raf.seek(startByte);
-            byte[] buf = new byte[1 << 15];
-            long lastSaveNs = System.nanoTime();
-            int n;
-            while ((n = is.read(buf)) != -1) {
-                if (n == 0) continue;
-                if (abort.get()) throw new IOException("已中断");
+            c = open(url, direct);
+            c.setRequestMethod("GET");
+            c.setRequestProperty("Range", "bytes=" + start + "-" + end);
+            if (url.equals(primaryUrl) && primaryEtag != null && primaryEtag.length() > 0) {
+                c.setRequestProperty("If-Range", primaryEtag);
+            }
+            int code = c.getResponseCode();
+            if (code != 206) {
+                throw new IOException("Range 请求期望 206，实得 HTTP " + code + " url=" + url);
+            }
+            RangeInfo r = parseContentRange(c.getHeaderField("Content-Range"));
+            if (r == null || r.start != start || r.end != end || r.total != total) {
+                throw new IOException("Content-Range 不符: " + c.getHeaderField("Content-Range")
+                        + " 期望 bytes " + start + "-" + end + "/" + total);
+            }
+            long expected = end - start + 1L;
+            long contentLength = parseLong(c.getHeaderField("Content-Length"), -1L);
+            if (contentLength >= 0 && contentLength != expected) {
+                throw new IOException("Content-Length 不符: " + contentLength + " != " + expected);
+            }
+
+            in = new BufferedInputStream(c.getInputStream(), 1 << 16);
+            out = new FileOutputStream(temp, false);
+            byte[] buf = new byte[1 << 16];
+            long written = 0L;
+            while (true) {
+                if (abort.get() || !open.get()) throw new IOException("已中断");
                 if (sink != null && sink.isCancelled()) throw new IOException("已取消");
-
-                // 夹到分片边界：服务端多发的字节直接丢弃，否则会踩坏下一片的区域
-                long remain = chunkLen - done.get(idx);
-                int  wr     = (int) Math.min((long) n, remain);
-                if (wr <= 0) break;
-                raf.write(buf, 0, wr);
-
-                long cur      = done.addAndGet(idx, wr);
-                long sumSoFar = totalDone.addAndGet(wr);
-                long now = System.nanoTime();
-                lastMoveNs.set(now);
-
-                // 分块哈希累积：从 hsNext（当前待校验块起点）起喂，到块尾比对。
-                // hsNext 初始=startByte（分片起点），startByte 对齐块头时即块头。
-                if (hsActive && hsDig != null) {
-                    long wOff = startByte + cur - wr;   // 本次写入前绝对位置
-                    int  fed = 0;
-                    while (fed < wr) {
-                        long absPos = wOff + fed;
-                        if (absPos < hsNext) {
-                            // 落在当前块之外（不应发生：分片对齐块边界），丢弃
-                            long skip = Math.min((long) (wr - fed), hsNext - absPos);
-                            fed += (int) skip;
-                            continue;
-                        }
-                        long blkEnd = hsNext + hsChunk;           // 当前块绝对终点
-                        long want   = blkEnd - absPos;
-                        int  take   = (int) Math.min((long) (wr - fed), want);
-                        if (take <= 0) break;
-                        hsDig.update(buf, fed, take);
-                        fed += take;
-                        long nowAbs = absPos + take;
-                        if (nowAbs >= blkEnd) {
-                            // 完整块结束 → 校验。若块跨分片尾（nowAbs==chunkEnd），
-                            // 该块已整块下载完，可校验。
-                            String gotBlk = hexMd5(hsDig);
-                            String expBlk = chunkHashes.hashFor(hsNext, blkEnd);
-                            if (expBlk == null || !expBlk.equalsIgnoreCase(gotBlk)) {
-                                throw new CNDownloaderFix.ResetRequired(
-                                        "分块校验失败 offset=" + hsNext
-                                        + " 期望=" + (expBlk == null ? "?" : expBlk)
-                                        + " 实得=" + gotBlk);
-                            }
-                            hsNext = blkEnd;
-                            try {
-                                hsDig = MessageDigest.getInstance("MD5");
-                            } catch (java.security.NoSuchAlgorithmException e) {
-                                hsActive = false;
-                                hsDig = null;
-                            }
-                        }
-                    }
+                int n = in.read(buf);
+                if (n < 0) break;
+                if (n == 0) continue;
+                if (written + n > expected) {
+                    throw new IOException("Range 响应越界: " + (written + n) + " > " + expected);
                 }
-
-                long wb = windowBytes.addAndGet(wr);
-                long ws = windowStart.get();
-                long elapsedMs = (now - ws) / 1_000_000L;
-                if (elapsedMs >= 500 && windowStart.compareAndSet(ws, now)) {
-                    windowBytes.set(0L);
-                    if (sink != null) {
-                        sink.onProgress(sumSoFar, total);
-                        float mbps = (float) ((wb * 1000.0 / elapsedMs) / 1_000_000.0);
-                        sink.onSpeed(mbps);
-                    }
-                }
-                if (now - lastSaveNs > 2_000_000_000L) {
-                    saveMeta(meta, total, etag, url, done, hsChunk);
-                    lastSaveNs = now;
-                }
-                if (cur >= chunkLen) break;
+                out.write(buf, 0, n);
+                md.update(buf, 0, n);
+                written += n;
+                networkBytes.addAndGet(n);
+                lastMoveNs.set(System.nanoTime());
             }
-            // 服务端提前断流时 read() 会正常返回 -1，不抛异常。这里必须显式
-            // 检查，否则这一片会带着缺口被当成「下完了」。
-            long finished = done.get(idx);
-            if (finished < chunkLen) {
-                throw new IOException("分片 " + idx + " 短读: " + finished + " / " + chunkLen);
+            out.flush();
+            if (written != expected) {
+                throw new IOException("Range 短读: " + written + " / " + expected);
             }
-            // 分片结束：校验最后一个不完整块（最后一块不足 chunkSize，或分片在
-            // 块内结束）。仅当分片起点对齐块头（hsActive）才可能凑出完整块；
-            // 若 hsNext 仍指向一个块头且本分片覆盖了它到分片尾（可能是文件尾的
-            // 最后一块），校验它。
-            if (hsActive && hsDig != null && hsNext < total) {
-                long blkEnd = Math.min(hsNext + hsChunk, total);
-                // 只有当前块被本分片完整覆盖到 blkEnd 时才校验；否则（分片在
-                // 块内结束，块剩余部分由其他分片/下次续传补）不校验。
-                long partEnd = startByte + chunkLen;
-                if (partEnd >= blkEnd && blkEnd > hsNext) {
-                    String gotTail = hexMd5(hsDig);
-                    String expTail = chunkHashes.hashFor(hsNext, blkEnd);
-                    if (expTail == null || !expTail.equalsIgnoreCase(gotTail)) {
-                        throw new CNDownloaderFix.ResetRequired(
-                                "分块校验失败 offset=" + hsNext
-                                + " 期望=" + (expTail == null ? "?" : expTail)
-                                + " 实得=" + gotTail);
-                    }
-                }
-            }
+            return hex(md.digest());
         } finally {
-            // 只在本轮尝试存活期间落盘。尝试封口（live=false）后才醒来的
-            // 掉队线程拿着的是旧快照，此时写元数据可能把已清理/已翻篇的
-            // 进度盖回去——主线程在封口前已做过权威落盘，这里跳过不丢进度。
-            if (live.get()) {
-                saveMeta(meta, total, etag, url, done, hsChunk);
-            }
-            if (raf != null) { try { raf.close(); } catch (Throwable ignore) {} }
-            if (is  != null) { try { is.close();  } catch (Throwable ignore) {} }
-            try { c.disconnect(); } catch (Throwable ignore) {}
+            closeQuietly(out);
+            closeQuietly(in);
+            disconnect(c);
         }
     }
 
-    // ---- 断点元数据 ----
-    //
-    // 格式（UTF-8 文本）：
-    //   第 1 行 CNVPROG2
-    //   第 2 行 <总长度> <分片数>
-    //   第 3 行 <ETag>（可为空行）
-    //   第 4 行 <写下这份断点时所用的完整 URL>（可为空行）
-    //   其后每行一个分片的已完成字节数
+    private static void commitTempBlock(File temp, File part, long start, long length)
+            throws IOException {
+        if (!temp.isFile() || temp.length() != length) {
+            throw new IOException("待提交块大小异常: " + temp.length() + " / " + length);
+        }
+        FileInputStream in = null;
+        RandomAccessFile raf = null;
+        try {
+            in = new FileInputStream(temp);
+            raf = new RandomAccessFile(part, "rw");
+            raf.seek(start);
+            byte[] buf = new byte[1 << 16];
+            long copied = 0L;
+            int n;
+            while ((n = in.read(buf)) >= 0) {
+                if (n == 0) continue;
+                raf.write(buf, 0, n);
+                copied += n;
+            }
+            if (copied != length) throw new IOException("块提交短写: " + copied + " / " + length);
+            // 元数据只有在主文件数据落稳后才会标记该块已验证。
+            raf.getFD().sync();
+        } finally {
+            closeQuietly(in);
+            closeQuietly(raf);
+        }
+    }
 
-    private static synchronized void saveMeta(File meta, long total,
-                                              String etag, String url,
-                                              AtomicLongArray done, long chunkSize) {
-        File tmp = new File(meta.getAbsolutePath() + ".tmp");
+    // -----------------------------------------------------------------
+    // 无清单：传统分段断点续传（单镜像）
+    // -----------------------------------------------------------------
+
+    private static Result downloadByteSegments(String url, File target, int requestedSegments,
+                                               boolean direct, Probe probe, Sink sink,
+                                               boolean verifyZip) throws IOException {
+        final File part = partFileFor(target);
+        final File meta = metaFileFor(target);
+        ByteResume resume = readByteResume(meta);
+        int segments = Math.max(1, Math.min(MAX_BYTE_SEGMENTS, requestedSegments));
+        if (probe.total < segments) segments = (int) Math.max(1L, probe.total);
+        long segmentSize = ceilDiv(probe.total, segments);
+        boolean accepted = resume != null
+                && resume.total == probe.total
+                && resume.segments >= 1 && resume.segments <= MAX_BYTE_SEGMENTS
+                && resume.segmentSize > 0
+                && part.isFile() && part.length() == probe.total
+                && etagCompatible(resume.url, resume.etag, url, probe.etag)
+                && byteResumeBoundsValid(resume);
+        long[] resumed = null;
+        if (accepted) {
+            segments = resume.segments;
+            segmentSize = resume.segmentSize;
+            resumed = resume.done;
+            CNLog.i(TAG, "byte-resume-accept file=" + target.getName()
+                    + " bytes=" + sum(resumed) + "/" + probe.total);
+        } else {
+            deleteQuietly(meta);
+            deleteQuietly(part);
+        }
+        preallocate(part, probe.total);
+
+        final AtomicLongArray done = new AtomicLongArray(segments);
+        final long[] starts = new long[segments];
+        final long[] ends = new long[segments];
+        for (int i = 0; i < segments; i++) {
+            starts[i] = i * segmentSize;
+            ends[i] = Math.min(starts[i] + segmentSize, probe.total) - 1L;
+            if (resumed != null) done.set(i, resumed[i]);
+        }
+        final AtomicLong totalDone = new AtomicLong(sum(done));
+        final AtomicLong networkBytes = new AtomicLong(0L);
+        final AtomicLong lastMoveNs = new AtomicLong(System.nanoTime());
+        final AtomicReference<IOException> firstErr = new AtomicReference<IOException>();
+        final AtomicBoolean abort = new AtomicBoolean(false);
+        final AtomicBoolean open = new AtomicBoolean(true);
+        final AtomicBoolean rangeIgnored = new AtomicBoolean(false);
+
+        if (sink != null) {
+            sink.onTotal(probe.total);
+            sink.onProgress(totalDone.get(), probe.total);
+        }
+
+        int incomplete = 0;
+        for (int i = 0; i < segments; i++) {
+            if (done.get(i) < ends[i] - starts[i] + 1L) incomplete++;
+        }
+        if (incomplete > 0) {
+            ByteContext ctx = new ByteContext();
+            ctx.url = url;
+            ctx.part = part;
+            ctx.meta = meta;
+            ctx.total = probe.total;
+            ctx.etag = probe.etag;
+            ctx.direct = direct;
+            ctx.starts = starts;
+            ctx.ends = ends;
+            ctx.done = done;
+            ctx.totalDone = totalDone;
+            ctx.networkBytes = networkBytes;
+            ctx.lastMoveNs = lastMoveNs;
+            ctx.firstErr = firstErr;
+            ctx.abort = abort;
+            ctx.open = open;
+            ctx.rangeIgnored = rangeIgnored;
+            ctx.sink = sink;
+            ctx.segmentSize = segmentSize;
+            ctx.next = new AtomicInteger(0);
+
+            int workers = Math.min(MAX_NETWORK_WORKERS, Math.min(segments, incomplete));
+            ExecutorService pool = Executors.newFixedThreadPool(workers, new DownloadThreadFactory());
+            CountDownLatch latch = new CountDownLatch(workers);
+            for (int i = 0; i < workers; i++) pool.submit(new ByteWorker(ctx, latch));
+            monitor(latch, pool, abort, open, firstErr, lastMoveNs, networkBytes,
+                    probe.total, sink);
+            IOException err = firstErr.get();
+            if (err != null) {
+                if (rangeIgnored.get()) {
+                    deleteQuietly(meta);
+                    deleteQuietly(part);
+                }
+                throw err;
+            }
+        }
+
+        if (sum(done) != probe.total) {
+            throw new IOException("下载不完整: " + sum(done) + " / " + probe.total);
+        }
+        finish(part, meta, target, verifyZip, sink, probe.total);
+        CNLog.i(TAG, "分段下载完成 file=" + target.getName() + " bytes=" + probe.total
+                + " segments=" + segments);
+        return new Result(probe.total, probe.etag, false);
+    }
+
+    private static final class ByteContext {
+        String url;
+        File part;
+        File meta;
+        long total;
+        String etag;
+        boolean direct;
+        long[] starts;
+        long[] ends;
+        AtomicLongArray done;
+        AtomicLong totalDone;
+        AtomicLong networkBytes;
+        AtomicLong lastMoveNs;
+        AtomicReference<IOException> firstErr;
+        AtomicBoolean abort;
+        AtomicBoolean open;
+        AtomicBoolean rangeIgnored;
+        Sink sink;
+        long segmentSize;
+        AtomicInteger next;
+    }
+
+    private static final class ByteWorker implements Runnable {
+        private final ByteContext ctx;
+        private final CountDownLatch latch;
+
+        ByteWorker(ByteContext ctx, CountDownLatch latch) {
+            this.ctx = ctx;
+            this.latch = latch;
+        }
+
+        @Override public void run() {
+            try {
+                while (!ctx.abort.get() && ctx.open.get()) {
+                    int i = ctx.next.getAndIncrement();
+                    if (i >= ctx.starts.length) break;
+                    long len = ctx.ends[i] - ctx.starts[i] + 1L;
+                    if (ctx.done.get(i) >= len) continue;
+                    downloadByteSegment(ctx, i);
+                }
+            } catch (IOException e) {
+                ctx.firstErr.compareAndSet(null, e);
+                ctx.abort.set(true);
+            } catch (Throwable t) {
+                ctx.firstErr.compareAndSet(null, new IOException("分段工作线程异常: " + t, t));
+                ctx.abort.set(true);
+            } finally {
+                latch.countDown();
+            }
+        }
+    }
+
+    private static void downloadByteSegment(ByteContext ctx, int index) throws IOException {
+        long segmentStart = ctx.starts[index];
+        long segmentEnd = ctx.ends[index];
+        long start = segmentStart + ctx.done.get(index);
+        HttpURLConnection c = null;
+        InputStream in = null;
+        RandomAccessFile raf = null;
+        long lastSave = System.nanoTime();
+        try {
+            c = open(ctx.url, ctx.direct);
+            c.setRequestMethod("GET");
+            c.setRequestProperty("Range", "bytes=" + start + "-" + segmentEnd);
+            if (ctx.etag != null && ctx.etag.length() > 0) c.setRequestProperty("If-Range", ctx.etag);
+            int code = c.getResponseCode();
+            if (code != 206) {
+                if (code == 200) ctx.rangeIgnored.set(true);
+                throw new IOException("分段 " + index + " 期望 206，实得 HTTP " + code);
+            }
+            RangeInfo r = parseContentRange(c.getHeaderField("Content-Range"));
+            if (r == null || r.start != start || r.end != segmentEnd || r.total != ctx.total) {
+                throw new IOException("分段 " + index + " Content-Range 不符: "
+                        + c.getHeaderField("Content-Range"));
+            }
+            long expected = segmentEnd - start + 1L;
+            long cl = parseLong(c.getHeaderField("Content-Length"), -1L);
+            if (cl >= 0 && cl != expected) throw new IOException("分段 Content-Length 不符");
+
+            in = new BufferedInputStream(c.getInputStream(), 1 << 16);
+            raf = new RandomAccessFile(ctx.part, "rw");
+            raf.seek(start);
+            byte[] buf = new byte[1 << 16];
+            long received = 0L;
+            while (true) {
+                if (ctx.abort.get() || !ctx.open.get()) throw new IOException("已中断");
+                if (ctx.sink != null && ctx.sink.isCancelled()) throw new IOException("已取消");
+                int n = in.read(buf);
+                if (n < 0) break;
+                if (n == 0) continue;
+                if (received + n > expected) throw new IOException("分段响应越界");
+                raf.write(buf, 0, n);
+                received += n;
+                ctx.done.addAndGet(index, n);
+                long totalNow = ctx.totalDone.addAndGet(n);
+                ctx.networkBytes.addAndGet(n);
+                long now = System.nanoTime();
+                ctx.lastMoveNs.set(now);
+                if (ctx.sink != null) ctx.sink.onProgress(totalNow, ctx.total);
+                if (now - lastSave >= META_SAVE_INTERVAL_NS) {
+                    saveByteMeta(ctx.meta, ctx.total, ctx.starts.length, ctx.segmentSize,
+                            ctx.etag, ctx.url, ctx.done);
+                    lastSave = now;
+                }
+            }
+            if (received != expected) {
+                throw new IOException("分段 " + index + " 短读: " + received + " / " + expected);
+            }
+            raf.getFD().sync();
+        } finally {
+            if (ctx.open.get()) {
+                saveByteMeta(ctx.meta, ctx.total, ctx.starts.length, ctx.segmentSize,
+                        ctx.etag, ctx.url, ctx.done);
+            }
+            closeQuietly(raf);
+            closeQuietly(in);
+            disconnect(c);
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // 监控、状态与工具
+    // -----------------------------------------------------------------
+
+    private static void monitor(CountDownLatch latch, ExecutorService pool,
+                                AtomicBoolean abort, AtomicBoolean open,
+                                AtomicReference<IOException> firstErr,
+                                AtomicLong lastMoveNs, AtomicLong networkBytes,
+                                long total, Sink sink) {
+        long lastSpeedNs = System.nanoTime();
+        long lastSpeedBytes = networkBytes.get();
+        long lowWindowNs = System.nanoTime();
+        long lowWindowBytes = networkBytes.get();
+        long stallNs = TimeUnit.SECONDS.toNanos(Math.max(1, CNMirrors.stallSeconds()));
+        long minBps = Math.max(0L, (long) CNMirrors.minSpeedKbps()) * 1000L / 8L;
+        try {
+            while (!latch.await(1L, TimeUnit.SECONDS)) {
+                long now = System.nanoTime();
+                if (sink != null && sink.isCancelled()) {
+                    firstErr.compareAndSet(null, new IOException("已取消"));
+                    abort.set(true);
+                    break;
+                }
+                if (firstErr.get() != null) {
+                    abort.set(true);
+                    break;
+                }
+                if (now - lastMoveNs.get() > stallNs) {
+                    firstErr.compareAndSet(null, new IOException("线路停滞："
+                            + CNMirrors.stallSeconds() + " 秒内没有数据"));
+                    abort.set(true);
+                    break;
+                }
+                long speedDt = now - lastSpeedNs;
+                if (speedDt >= TimeUnit.MILLISECONDS.toNanos(500L)) {
+                    long moved = networkBytes.get() - lastSpeedBytes;
+                    if (sink != null) {
+                        sink.onSpeed((float) ((moved * 1.0E9d / speedDt) / 1_000_000.0d));
+                    }
+                    lastSpeedNs = now;
+                    lastSpeedBytes = networkBytes.get();
+                }
+                long lowDt = now - lowWindowNs;
+                if (minBps > 0 && lowDt >= TimeUnit.SECONDS.toNanos(10L)) {
+                    long moved = networkBytes.get() - lowWindowBytes;
+                    long bps = (long) (moved / (lowDt / 1.0E9d));
+                    if (bps < minBps) {
+                        firstErr.compareAndSet(null, new IOException("线路过慢："
+                                + (bps * 8L / 1000L) + " kbps < "
+                                + CNMirrors.minSpeedKbps() + " kbps"));
+                        abort.set(true);
+                        break;
+                    }
+                    lowWindowNs = now;
+                    lowWindowBytes = networkBytes.get();
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            firstErr.compareAndSet(null, new IOException("已取消"));
+            abort.set(true);
+        } finally {
+            pool.shutdownNow();
+            try { pool.awaitTermination(5L, TimeUnit.SECONDS); }
+            catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            // 读超时后才醒来的线程必须看到封口，禁止再提交块或覆盖元数据。
+            open.set(false);
+            if (sink != null) sink.onSpeed(0f);
+        }
+    }
+
+    private static ChunkHashes validateManifest(ChunkHashes h, long total) {
+        if (h == null || h.chunkSize <= 0 || h.total != total || h.count <= 0) return null;
+        long expectedCount = ceilDiv(total, h.chunkSize);
+        if (expectedCount != h.count || expectedCount > 100000L) return null;
+        for (int i = 0; i < h.count; i++) {
+            String s = h.chunks[i];
+            if (s == null || s.trim().length() != 32) return null;
+        }
+        return h;
+    }
+
+    private static String manifestFingerprint(ChunkHashes h) throws IOException {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            updateUtf8(md, String.valueOf(h.total));
+            updateUtf8(md, ":");
+            updateUtf8(md, String.valueOf(h.chunkSize));
+            for (int i = 0; i < h.count; i++) {
+                updateUtf8(md, ":");
+                updateUtf8(md, h.chunks[i].toLowerCase(Locale.US));
+            }
+            return hex(md.digest());
+        } catch (Exception e) {
+            throw new IOException("无法计算清单身份", e);
+        }
+    }
+
+    private static void updateUtf8(MessageDigest md, String s) throws Exception {
+        md.update(s.getBytes("UTF-8"));
+    }
+
+    private static int clampWorkers(int requested, int pending) {
+        int n = requested < 1 ? 1 : requested;
+        n = Math.min(MAX_NETWORK_WORKERS, n);
+        return Math.max(1, Math.min(n, pending));
+    }
+
+    private static String[] candidateUrls(String primary, String remoteName) {
+        ArrayList<String> out = new ArrayList<String>();
+        addUnique(out, primary);
+        if (remoteName != null && remoteName.length() > 0) {
+            try {
+                List<CNMirrors.Mirror> healthy = CNMirrors.healthy();
+                for (int i = 0; healthy != null && i < healthy.size()
+                        && out.size() < MAX_MIRROR_CANDIDATES; i++) {
+                    CNMirrors.Mirror m = healthy.get(i);
+                    if (m != null) addUnique(out, m.urlFor(remoteName));
+                }
+            } catch (Throwable t) {
+                CNLog.w(TAG, "读取备用镜像失败，块重试只用主线路: " + t);
+            }
+        }
+        return out.toArray(new String[0]);
+    }
+
+    private static void addUnique(ArrayList<String> out, String value) {
+        if (value == null || value.length() == 0) return;
+        for (int i = 0; i < out.size(); i++) if (value.equals(out.get(i))) return;
+        out.add(value);
+    }
+
+    private static int[] pendingBlocks(AtomicIntegerArray verified) {
+        int count = 0;
+        for (int i = 0; i < verified.length(); i++) if (verified.get(i) == 0) count++;
+        int[] out = new int[count];
+        int p = 0;
+        for (int i = 0; i < verified.length(); i++) if (verified.get(i) == 0) out[p++] = i;
+        return out;
+    }
+
+    private static long verifiedBytes(AtomicIntegerArray verified, ChunkHashes h) {
+        long n = 0L;
+        for (int i = 0; i < verified.length(); i++) {
+            if (verified.get(i) != 0) {
+                long start = i * h.chunkSize;
+                n += Math.min(h.chunkSize, h.total - start);
+            }
+        }
+        return n;
+    }
+
+    private static int countSet(AtomicIntegerArray a) {
+        int n = 0;
+        for (int i = 0; i < a.length(); i++) if (a.get(i) != 0) n++;
+        return n;
+    }
+
+    private static File blockTemp(File part, int block) {
+        return new File(part.getPath() + ".block." + block + "."
+                + Thread.currentThread().getId());
+    }
+
+    private static void cleanBlockTemps(File part) {
+        File parent = part.getParentFile();
+        File[] files = parent == null ? null : parent.listFiles();
+        if (files == null) return;
+        String prefix = part.getName() + ".block.";
+        for (int i = 0; i < files.length; i++) {
+            if (files[i].getName().startsWith(prefix)) deleteQuietly(files[i]);
+        }
+    }
+
+    private static void finish(File part, File meta, File target, boolean verifyZip,
+                               Sink sink, long total) throws IOException {
+        if (!part.isFile() || part.length() != total) {
+            throw new IOException("临时文件大小异常: " + part.length() + " / " + total);
+        }
+        if (verifyZip && !CNArchiveValidate.isZipStructurallyValid(part)) {
+            deleteQuietly(part);
+            deleteQuietly(meta);
+            throw new IOException("完工校验失败: zip 结构非法");
+        }
+        promote(part, target);
+        deleteQuietly(meta);
+        if (sink != null) {
+            sink.onProgress(total, total);
+            sink.onSpeed(0f);
+        }
+    }
+
+    private static void ensureParent(File target) throws IOException {
+        File p = target.getParentFile();
+        if (p != null && !p.isDirectory() && !p.mkdirs() && !p.isDirectory()) {
+            throw new IOException("无法创建下载目录: " + p);
+        }
+    }
+
+    private static void preallocate(File f, long total) throws IOException {
+        RandomAccessFile raf = null;
+        try {
+            raf = new RandomAccessFile(f, "rw");
+            if (raf.length() != total) raf.setLength(total);
+        } finally {
+            closeQuietly(raf);
+        }
+    }
+
+    private static boolean etagCompatible(String oldUrl, String oldEtag,
+                                          String newUrl, String newEtag) {
+        if (oldUrl == null || !oldUrl.equals(newUrl)) return true;
+        if (oldEtag == null || oldEtag.length() == 0 || newEtag == null || newEtag.length() == 0) {
+            return true;
+        }
+        return oldEtag.equals(newEtag);
+    }
+
+    private static synchronized void saveHashMeta(File meta, long total, long blockSize,
+                                                  int count, String manifestId,
+                                                  String etag, String url,
+                                                  AtomicIntegerArray verified) {
         Writer w = null;
+        File tmp = new File(meta.getPath() + ".tmp");
         try {
             w = new OutputStreamWriter(new FileOutputStream(tmp, false), "UTF-8");
-            StringBuilder sb = new StringBuilder();
-            sb.append(META_MAGIC).append('\n');
-            sb.append(total).append(' ').append(done.length())
-              .append(' ').append(chunkSize).append('\n');
-            sb.append(sanitize(etag)).append('\n');
-            sb.append(sanitize(url)).append('\n');
-            for (int i = 0; i < done.length(); i++) sb.append(done.get(i)).append('\n');
-            w.write(sb.toString());
+            w.write(META_HASH); w.write('\n');
+            w.write(total + " " + blockSize + " " + count + "\n");
+            w.write(sanitize(manifestId)); w.write('\n');
+            w.write(sanitize(etag)); w.write('\n');
+            w.write(sanitize(url)); w.write('\n');
+            for (int i = 0; i < count; i++) {
+                w.write(verified.get(i) == 0 ? "0\n" : "1\n");
+            }
             w.flush();
+            closeQuietly(w); w = null;
+            replace(tmp, meta);
         } catch (Throwable t) {
-            if (w != null) { try { w.close(); } catch (Throwable ignore) {} w = null; }
-            deleteQuietly(tmp);
-            return;
+            CNLog.w(TAG, "保存分块断点失败: " + t);
         } finally {
-            if (w != null) { try { w.close(); } catch (Throwable ignore) {} }
-        }
-        if (!tmp.renameTo(meta)) {
-            deleteQuietly(meta);
-            if (!tmp.renameTo(meta)) deleteQuietly(tmp);
+            closeQuietly(w);
+            deleteQuietly(tmp);
         }
     }
 
-    private static synchronized Resume readResume(File meta) {
-        if (!meta.isFile() || meta.length() > 1 << 20) return null;
+    private static synchronized void saveByteMeta(File meta, long total, int segments,
+                                                  long segmentSize, String etag, String url,
+                                                  AtomicLongArray done) {
+        Writer w = null;
+        File tmp = new File(meta.getPath() + ".tmp");
+        try {
+            w = new OutputStreamWriter(new FileOutputStream(tmp, false), "UTF-8");
+            w.write(META_BYTE); w.write('\n');
+            w.write(total + " " + segments + " " + segmentSize + "\n");
+            w.write(sanitize(etag)); w.write('\n');
+            w.write(sanitize(url)); w.write('\n');
+            for (int i = 0; i < segments; i++) w.write(done.get(i) + "\n");
+            w.flush();
+            closeQuietly(w); w = null;
+            replace(tmp, meta);
+        } catch (Throwable t) {
+            CNLog.w(TAG, "保存分段断点失败: " + t);
+        } finally {
+            closeQuietly(w);
+            deleteQuietly(tmp);
+        }
+    }
+
+    private static HashResume readHashResume(File meta) {
         BufferedReader br = null;
         try {
-            br = new BufferedReader(new InputStreamReader(
-                    new FileInputStream(meta), "UTF-8"));
-            String magic = br.readLine();
-            if (!META_MAGIC.equals(magic)) return null;
-            String head = br.readLine();
-            if (head == null) return null;
-            String[] tk = head.trim().split("\\s+");
-            if (tk.length < 2) return null;
-
-            Resume st = new Resume();
-            st.total  = Long.parseLong(tk[0]);
-            st.chunks = Integer.parseInt(tk[1]);
-            // 分片数上限对齐 download() 的分块校验上限（1024）。旧版 64 会让
-            // 16MB 对齐布局下的大文件（如 cn_base_03=85 块）永远无法续传。
-            if (st.total <= 0 || st.chunks < 1 || st.chunks > 1024) return null;
-            st.chunkSize = tk.length >= 3 ? Long.parseLong(tk[2]) : 0L;
-
-            String e = br.readLine();
-            st.etag = e == null ? "" : e.trim();
-            String u = br.readLine();
-            st.url = u == null ? "" : u.trim();
-
-            st.done = new long[st.chunks];
-            for (int i = 0; i < st.chunks; i++) {
-                String line = br.readLine();
-                if (line == null) return null;   // 行数不够 = 元数据被截断，整体作废
-                st.done[i] = Long.parseLong(line.trim());
+            br = new BufferedReader(new InputStreamReader(new FileInputStream(meta), "UTF-8"));
+            if (!META_HASH.equals(br.readLine())) return null;
+            String[] h = split(br.readLine(), 3);
+            HashResume r = new HashResume();
+            r.total = Long.parseLong(h[0]);
+            r.blockSize = Long.parseLong(h[1]);
+            r.count = Integer.parseInt(h[2]);
+            if (r.total <= 0 || r.blockSize <= 0 || r.count <= 0 || r.count > 100000) return null;
+            r.manifestId = line(br);
+            r.etag = line(br);
+            r.url = line(br);
+            r.verified = new int[r.count];
+            for (int i = 0; i < r.count; i++) {
+                String s = br.readLine();
+                if (!"0".equals(s) && !"1".equals(s)) return null;
+                r.verified[i] = "1".equals(s) ? 1 : 0;
             }
-            return st;
+            return r;
         } catch (Throwable t) {
             return null;
         } finally {
-            if (br != null) { try { br.close(); } catch (Throwable ignore) {} }
+            closeQuietly(br);
         }
     }
 
-    // ---- 小工具 ----
-
-    private static String sanitize(String s) {
-        if (s == null) return "";
-        return s.replace('\r', ' ').replace('\n', ' ').trim();
+    private static ByteResume readByteResume(File meta) {
+        BufferedReader br = null;
+        try {
+            br = new BufferedReader(new InputStreamReader(new FileInputStream(meta), "UTF-8"));
+            if (!META_BYTE.equals(br.readLine())) return null;
+            String[] h = split(br.readLine(), 3);
+            ByteResume r = new ByteResume();
+            r.total = Long.parseLong(h[0]);
+            r.segments = Integer.parseInt(h[1]);
+            r.segmentSize = Long.parseLong(h[2]);
+            r.etag = line(br);
+            r.url = line(br);
+            if (r.total <= 0 || r.segments <= 0 || r.segments > MAX_BYTE_SEGMENTS
+                    || r.segmentSize <= 0) return null;
+            r.done = new long[r.segments];
+            for (int i = 0; i < r.segments; i++) {
+                String s = br.readLine();
+                if (s == null) return null;
+                r.done[i] = Long.parseLong(s.trim());
+            }
+            return r;
+        } catch (Throwable t) {
+            return null;
+        } finally {
+            closeQuietly(br);
+        }
     }
 
-    /** MessageDigest 摘要 → 小写 hex。 */
-    private static String hexMd5(MessageDigest md) {
-        StringBuilder sb = new StringBuilder(32);
-        for (byte b : md.digest()) sb.append(String.format(Locale.US, "%02x", b & 0xff));
-        return sb.toString();
+    private static final class HashResume {
+        long total;
+        long blockSize;
+        int count;
+        String manifestId;
+        String etag;
+        String url;
+        int[] verified;
+    }
+
+    private static final class ByteResume {
+        long total;
+        int segments;
+        long segmentSize;
+        String etag;
+        String url;
+        long[] done;
+    }
+
+    private static boolean byteResumeBoundsValid(ByteResume r) {
+        if (r.done == null || r.done.length != r.segments) return false;
+        for (int i = 0; i < r.segments; i++) {
+            long start = i * r.segmentSize;
+            long end = Math.min(start + r.segmentSize, r.total);
+            long len = Math.max(0L, end - start);
+            if (len <= 0 || r.done[i] < 0 || r.done[i] > len) return false;
+        }
+        return true;
+    }
+
+    private static String[] split(String s, int n) {
+        if (s == null) throw new IllegalArgumentException("缺少元数据头");
+        String[] a = s.trim().split("\\s+");
+        if (a.length != n) throw new IllegalArgumentException("元数据头字段数错误");
+        return a;
+    }
+
+    private static String line(BufferedReader br) throws IOException {
+        String s = br.readLine();
+        return s == null ? "" : s.trim();
+    }
+
+    private static void replace(File tmp, File dst) throws IOException {
+        if (dst.exists() && !dst.delete()) throw new IOException("无法替换 " + dst);
+        if (!tmp.renameTo(dst)) throw new IOException("无法重命名 " + tmp + " -> " + dst);
     }
 
     private static void promote(File part, File target) throws IOException {
-        if (target.exists() && !target.delete()) {
-            throw new IOException("无法替换目标文件 " + target);
-        }
-        if (!part.renameTo(target)) {
-            throw new IOException("无法重命名 " + part + " -> " + target);
+        if (target.exists() && !target.delete()) throw new IOException("无法替换目标文件 " + target);
+        if (!part.renameTo(target)) throw new IOException("无法重命名 " + part + " -> " + target);
+    }
+
+    private static final class RangeInfo {
+        final long start;
+        final long end;
+        final long total;
+        RangeInfo(long start, long end, long total) {
+            this.start = start;
+            this.end = end;
+            this.total = total;
         }
     }
 
-    private static void deleteQuietly(File f) {
-        if (f != null && f.exists() && !f.delete()) {
-            CNLog.w(TAG, "无法删除 " + f);
-        }
+    private static RangeInfo parseContentRange(String value) {
+        if (value == null) return null;
+        String s = value.trim().toLowerCase(Locale.US);
+        if (!s.startsWith("bytes ")) return null;
+        int dash = s.indexOf('-', 6);
+        int slash = s.indexOf('/', dash + 1);
+        if (dash < 0 || slash < 0) return null;
+        long start = parseLong(s.substring(6, dash), -1L);
+        long end = parseLong(s.substring(dash + 1, slash), -1L);
+        long total = parseLong(s.substring(slash + 1), -1L);
+        if (start < 0 || end < start || total <= end) return null;
+        return new RangeInfo(start, end, total);
+    }
+
+    private static long ceilDiv(long a, long b) {
+        return a / b + (a % b == 0 ? 0 : 1);
+    }
+
+    private static long sum(long[] a) {
+        long n = 0L;
+        if (a != null) for (int i = 0; i < a.length; i++) n += a[i];
+        return n;
+    }
+
+    private static long sum(AtomicLongArray a) {
+        long n = 0L;
+        for (int i = 0; i < a.length(); i++) n += a.get(i);
+        return n;
     }
 
     private static long parseLong(String s, long dflt) {
         if (s == null) return dflt;
-        try {
-            long v = Long.parseLong(s.trim());
-            return v >= 0 ? v : dflt;
-        } catch (NumberFormatException e) {
-            return dflt;
+        try { return Long.parseLong(s.trim()); }
+        catch (Throwable t) { return dflt; }
+    }
+
+    private static String trim(String s) {
+        return s == null ? "" : s.trim();
+    }
+
+    private static String sanitize(String s) {
+        return s == null ? "" : s.replace('\r', ' ').replace('\n', ' ').trim();
+    }
+
+    private static String hex(byte[] b) {
+        StringBuilder sb = new StringBuilder(b.length * 2);
+        for (int i = 0; i < b.length; i++) sb.append(String.format(Locale.US, "%02x", b[i] & 0xff));
+        return sb.toString();
+    }
+
+    private static void disconnect(HttpURLConnection c) {
+        if (c != null) try { c.disconnect(); } catch (Throwable ignore) {}
+    }
+
+    private static void deleteQuietly(File f) {
+        if (f != null && f.exists() && !f.delete()) CNLog.w(TAG, "无法删除 " + f);
+    }
+
+    private static void closeQuietly(java.io.Closeable c) {
+        if (c != null) try { c.close(); } catch (Throwable ignore) {}
+    }
+
+    private static final class DownloadThreadFactory implements ThreadFactory {
+        private final AtomicInteger ids = new AtomicInteger(0);
+        @Override public Thread newThread(Runnable r) {
+            Thread t = new Thread(r, "cnv-range-" + ids.incrementAndGet());
+            t.setDaemon(true);
+            return t;
         }
-    }
-
-    /** 从 {@code Content-Range: bytes 100-199/12345} 解析出起始偏移。 */
-    private static long rangeStart(String v) {
-        if (v == null) return -1L;
-        String s = v.trim().toLowerCase(Locale.US);
-        if (!s.startsWith("bytes ")) return -1L;
-        int dash = s.indexOf('-', 6);
-        if (dash < 0) return -1L;
-        return parseLong(s.substring(6, dash), -1L);
-    }
-
-    /** 从 {@code Content-Range: bytes 0-0/12345} 解析出总长度。 */
-    private static long totalFromContentRange(String v) {
-        if (v == null) return -1L;
-        String s = v.trim().toLowerCase(Locale.US);
-        int slash = s.indexOf('/');
-        if (slash < 0) return -1L;
-        return parseLong(s.substring(slash + 1), -1L);
     }
 }

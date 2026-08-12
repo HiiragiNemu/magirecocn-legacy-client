@@ -1,57 +1,80 @@
 import io.kamihama.magianative.CNChunkedDownload;
 import io.kamihama.magianative.CNChunkedDownload.ChunkHashes;
+
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.IOException;
 import java.security.MessageDigest;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 /**
- * 分块哈希下载的集成测试：连真实 HTTP 服务器下载，验证
- *  - 正确清单 → 下载成功
- *  - 错误指纹 → 触发 ResetRequired（坏块检测）
- *  - 分片边界对齐 16MB 块
- *
- * 用 CNChunkedDownload.download(..., verifyZip=false, chunkHashes) 直调。
- * 服务器：tools/server.py <size> <port> 提供可 Range 的 file.bin。
+ * 分块事务下载集成测试。除“能发现坏块”外，重点钉住 03 事故所需的恢复语义：
+ * 校验块数不等于线程数、坏块不得持久化为完成、非整除布局的已验证块可跨重启复用。
  */
 public class ChunkHashIntegrationTest {
     static int pass = 0, fail = 0;
+
+    static final class Sink implements CNChunkedDownload.Sink {
+        long first = -1L;
+        long last = 0L;
+        long cancelAt = Long.MAX_VALUE;
+        public void onTotal(long total) {}
+        public void onProgress(long soFar, long total) {
+            if (first < 0) first = soFar;
+            last = soFar;
+        }
+        public void onSpeed(float mbps) {}
+        public boolean isCancelled() { return last >= cancelAt; }
+    }
 
     static void check(String name, boolean cond, String detail) {
         if (cond) { pass++; System.out.println("  ✓ " + name + " — " + detail); }
         else      { fail++; System.out.println("  ✗ " + name + " — " + detail); }
     }
 
-    /** 读文件算整文件 md5。 */
     static String fileMd5(File f) throws Exception {
         MessageDigest md = MessageDigest.getInstance("MD5");
         FileInputStream in = new FileInputStream(f);
         byte[] buf = new byte[1 << 16];
         int n;
-        while ((n = in.read(buf)) >= 0) md.update(buf, 0, n);
+        while ((n = in.read(buf)) >= 0) if (n > 0) md.update(buf, 0, n);
         in.close();
-        StringBuilder sb = new StringBuilder();
-        for (byte b : md.digest()) sb.append(String.format("%02x", b & 0xff));
-        return sb.toString();
+        return hex(md.digest());
     }
 
-    /** 按 chunkSize 切块算每块 md5。 */
     static List<String> chunkMd5s(File f, int chunkSize) throws Exception {
         List<String> out = new ArrayList<String>();
         FileInputStream in = new FileInputStream(f);
-        byte[] buf = new byte[chunkSize];
-        int n;
-        while ((n = in.read(buf)) >= 0) {
+        byte[] buf = new byte[1 << 16];
+        long remainTotal = f.length();
+        while (remainTotal > 0) {
+            long blockLen = Math.min((long) chunkSize, remainTotal);
             MessageDigest md = MessageDigest.getInstance("MD5");
-            md.update(buf, 0, n);
-            StringBuilder sb = new StringBuilder();
-            for (byte b : md.digest()) sb.append(String.format("%02x", b & 0xff));
-            out.add(sb.toString());
+            long got = 0L;
+            while (got < blockLen) {
+                int want = (int) Math.min((long) buf.length, blockLen - got);
+                int n = in.read(buf, 0, want);
+                if (n < 0) throw new IOException("参考文件短读");
+                if (n == 0) continue;
+                md.update(buf, 0, n);
+                got += n;
+            }
+            out.add(hex(md.digest()));
+            remainTotal -= blockLen;
         }
         in.close();
         return out;
+    }
+
+    static void clean(File target) {
+        target.delete();
+        CNChunkedDownload.partFileFor(target).delete();
+        CNChunkedDownload.metaFileFor(target).delete();
+        File parent = target.getParentFile();
+        File[] files = parent == null ? null : parent.listFiles();
+        String prefix = target.getName() + ".cpart.block.";
+        if (files != null) for (File f : files) if (f.getName().startsWith(prefix)) f.delete();
     }
 
     public static void main(String[] args) throws Exception {
@@ -60,71 +83,87 @@ public class ChunkHashIntegrationTest {
             System.exit(1);
         }
         String url = args[0];
-        long   size = Long.parseLong(args[1]);
-        int    chunk = Integer.parseInt(args[2]);
+        long expectedSize = Long.parseLong(args[1]);
+        int chunk = Integer.parseInt(args[2]);
+        File dir = new File("work/chunk-tx");
+        dir.mkdirs();
 
-        // 先探测文件并下载原文件算真实指纹（用 single download）
         CNChunkedDownload.Probe probe = CNChunkedDownload.probe(url, true);
+        check("探测结果", probe.rangeSupported && probe.total == expectedSize,
+                "total=" + probe.total + " range=" + probe.rangeSupported);
 
-        // 下载到临时文件算指纹
-        File ref = File.createTempFile("chunkref", ".bin");
-        CNChunkedDownload.download(url, ref, 4, true, probe, null, null, "file.bin", false);
+        File ref = new File(dir, "reference.bin");
+        clean(ref);
+        CNChunkedDownload.download(url, ref, 4, true, probe, new Sink(), null, null, false);
         List<String> realChunks = chunkMd5s(ref, chunk);
-        long realSize = ref.length();
-        System.out.println("参考文件: " + realSize + " 字节, " + realChunks.size() + " 块");
+        ChunkHashes good = new ChunkHashes(chunk, ref.length(), realChunks);
+        System.out.println("参考文件: " + ref.length() + " 字节, " + realChunks.size() + " 块");
 
-        // ── 场景 1: 正确清单 → 下载成功
-        System.out.println("\n[1] 正确清单 → 下载成功");
-        ChunkHashes good = new ChunkHashes(chunk, realSize, realChunks);
-        File out1 = File.createTempFile("chunkok", ".bin");
-        boolean ok1 = true;
+        System.out.println("\n[1] 正确清单 + requested=85：块数与线程数解耦");
+        File normal = new File(dir, "normal.bin");
+        clean(normal);
+        CNChunkedDownload.Result r = CNChunkedDownload.download(url, normal, 85, true,
+                CNChunkedDownload.probe(url, true), new Sink(), null, null, false, good);
+        check("下载成功", normal.isFile(), "target exists");
+        check("内容一致", fileMd5(normal).equals(fileMd5(ref)), "md5 match");
+        check("全部块已认证", r.chunkVerified, "chunkVerified=true");
+
+        System.out.println("\n[2] 错误指纹不得写进主文件或完成状态");
+        List<String> badList = new ArrayList<String>(realChunks);
+        badList.set(0, "00000000000000000000000000000000");
+        ChunkHashes bad = new ChunkHashes(chunk, ref.length(), badList);
+        File poisoned = new File(dir, "poisoned.bin");
+        clean(poisoned);
+        boolean rejected = false;
         try {
-            CNChunkedDownload.Probe p2 = CNChunkedDownload.probe(url, true);
-            CNChunkedDownload.download(url, out1, 1, true, p2, null, null, "file.bin", false, good);
-        } catch (Exception e) {
-            ok1 = false;
-            System.out.println("  异常: " + e);
+            CNChunkedDownload.download(url, poisoned, 1, true,
+                    CNChunkedDownload.probe(url, true), new Sink(), null, null, false, bad);
+        } catch (IOException expected) {
+            rejected = true;
+            System.out.println("  期望异常: " + expected.getMessage());
         }
-        check("下载成功", ok1, "correct manifest");
-        check("内容一致", fileMd5(out1).equals(fileMd5(ref)), "md5 match");
+        check("错误块被拒绝", rejected, "hash mismatch");
+        Sink afterBad = new Sink();
+        CNChunkedDownload.download(url, poisoned, 1, true,
+                CNChunkedDownload.probe(url, true), afterBad, null, null, false, good);
+        check("错误块未被伪装成已完成", afterBad.first == 0L,
+                "首次可信进度=" + afterBad.first);
+        check("恢复后内容正确", fileMd5(poisoned).equals(fileMd5(ref)), "md5 match");
 
-        // ── 场景 2: 错误指纹 → ResetRequired
-        System.out.println("\n[2] 错误指纹 → 触发校验失败");
-        List<String> badChunks = new ArrayList<String>(realChunks);
-        badChunks.set(0, "00000000000000000000000000000000");   // 块0 指纹改错
-        ChunkHashes bad = new ChunkHashes(chunk, realSize, badChunks);
-        File out2 = File.createTempFile("chunkbad", ".bin");
-        boolean reset = false;
+        System.out.println("\n[3] 非整除块布局跨重启复用（03 的 85 块同类结构）");
+        File resumed = new File(dir, "resumed.bin");
+        clean(resumed);
+        Sink stop = new Sink();
+        stop.cancelAt = Math.min((long) chunk, ref.length());
+        boolean interrupted = false;
         try {
-            CNChunkedDownload.Probe p3 = CNChunkedDownload.probe(url, true);
-            CNChunkedDownload.download(url, out2, 1, true, p3, null, null, "file.bin", false, bad);
-        } catch (Exception e) {
-            reset = true;
-            System.out.println("  期望的异常: " + e.getClass().getSimpleName()
-                    + " — " + (e.getMessage() == null ? "" : e.getMessage().substring(0, Math.min(60, e.getMessage().length()))));
+            CNChunkedDownload.download(url, resumed, 1, true,
+                    CNChunkedDownload.probe(url, true), stop, null, null, false, good);
+        } catch (IOException expected) {
+            interrupted = true;
+            System.out.println("  期望中断: " + expected.getMessage());
         }
-        check("触发 ResetRequired", reset, "corrupt chunk 0");
-
-        // ── 场景 3: 分片边界对齐（用大 chunk 模拟多分片）
-        System.out.println("\n[3] 多分片下载（分片数=块数）");
-        if (realChunks.size() >= 2) {
-            File out3 = File.createTempFile("chunkmulti", ".bin");
-            boolean ok3 = true;
-            try {
-                // 请求 1 分片会被 download 覆盖成块数（若 chunkHashes 在）
-                CNChunkedDownload.Probe p4 = CNChunkedDownload.probe(url, true);
-                CNChunkedDownload.download(url, out3, 1, true, p4, null, null, "file.bin", false, good);
-            } catch (Exception e) {
-                ok3 = false;
-                System.out.println("  异常: " + e);
-            }
-            check("多分片下载成功", ok3, "requested 1 chunk, overridden to blocks");
-            check("内容一致", fileMd5(out3).equals(fileMd5(ref)), "md5 match");
-        } else {
-            System.out.println("  （文件不足 2 块，跳过）");
-        }
+        check("中断后保留事务断点", interrupted
+                        && CNChunkedDownload.partFileFor(resumed).isFile()
+                        && CNChunkedDownload.metaFileFor(resumed).isFile(),
+                "part/meta retained");
+        Sink continueSink = new Sink();
+        CNChunkedDownload.download(url, resumed, 1, true,
+                CNChunkedDownload.probe(url, true), continueSink,
+                null, null, false, good);
+        check("从已验证块继续而非归零",
+                continueSink.first >= Math.min((long) chunk, ref.length())
+                        && continueSink.first < ref.length(),
+                "首次可信进度=" + continueSink.first);
+        check("续传成品正确", fileMd5(resumed).equals(fileMd5(ref)), "md5 match");
 
         System.out.println("\n通过 " + pass + " / 失败 " + fail);
         if (fail > 0) System.exit(1);
+    }
+
+    static String hex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) sb.append(String.format("%02x", b & 0xff));
+        return sb.toString();
     }
 }

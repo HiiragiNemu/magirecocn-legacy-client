@@ -1,6 +1,6 @@
 name: 🟢 全量回归 + last-green
 
-# ╔════════════════════════════════════════════════════════════════════╗
+# ╔═══════════════════════════════════════════════════════════════════╗
 # ║   main 每次 push 后的全量回归（协作方案第四节，见 CONTRIBUTING.md）   ║
 # ╠════════════════════════════════════════════════════════════════════╣
 # ║   比 main-checks 更「重」的一道：跑 tools/ 下全部测试套件 +           ║
@@ -14,7 +14,7 @@ name: 🟢 全量回归 + last-green
 # ║          只许修主线的提交（见 CONTRIBUTING.md「红灯协议」）。          ║
 # ║                                                                    ║
 # ║   tag 只是内部锚点，不是对外产物——不违反「不做自动发版」。            ║
-# ╚════════════════════════════════════════════════════════════════════╝
+# ╚═════════════════════════════════════════════════════════════════════╝
 
 on:
   push:
@@ -87,7 +87,7 @@ jobs:
           python3 tools/server.py 8388608 8779 > /tmp/resume-server.log 2>&1 &
           sleep 1
           for t in HotUpdateTxTest SafeLinkTest WebProxyTest ConfigGuardTest \
-                   LogTest BgmLoopTest ThrottleTest FlushTest; do
+                   LogTest BgmLoopTest ThrottleTest FlushTest ChunkHashTest; do
             java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar $t
           done
           java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar ProxyFetchTest 8791
@@ -95,6 +95,9 @@ jobs:
           RESUME_SHA=$(awk '/payload sha256/{print $3}' /tmp/resume-server.log)
           java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar \
             ResumeTest "http://127.0.0.1:8779/file.bin" "$RESUME_SHA" 8388608
+          # 事务分块回归：85 请求并发上限、坏块不提交、非整除布局跨重启续传
+          java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar \
+            ChunkHashIntegrationTest "http://127.0.0.1:8779/file.bin" 8388608 1048576
 
       - name: 🛡 跑全部守卫
         run: |

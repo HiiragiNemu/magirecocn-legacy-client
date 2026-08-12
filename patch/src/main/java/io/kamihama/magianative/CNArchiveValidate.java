@@ -7,30 +7,12 @@ import java.security.MessageDigest;
 import java.util.Locale;
 import java.util.zip.ZipFile;
 
-/**
- * 非热更（基础资源包）的下载/导入校验。
- *
- * <p>与 {@link CNHotUpdateValidate} 区分：热更包（cn_scenario_update.zip /
- * cn_js_update.zip）走版本 json 的 size/md5 校验，放另一个文件；这里收的是
- * 基础包的两种校验：
- * <ul>
- *   <li>{@link #isZipStructurallyValid}：zip 结构预检（EOCD+CEN 可读）——分片跨
- *       镜像/断点续传可能把异源字节混进同一文件，凑满即坏，promote 前拦一道。</li>
- *   <li>{@link #verifyChunks}：按 16MB 块逐一比 {@link CNChunkedDownload.ChunkHashes}
- *       指纹——离线导入包（与在线下载同源）的完整性验证。</li>
- * </ul>
- *
- * <p>纯静态工具类，编译 classpath 只有 android.jar + OkHttp/Okio，无第三方依赖。
- */
+/** 基础资源包的 ZIP 结构与分块清单校验。 */
 public final class CNArchiveValidate {
     private static final String TAG = "CNArchiveValidate";
 
     private CNArchiveValidate() {}
 
-    /**
-     * zip 结构预检：能打开 {@link ZipFile}（EOCD+中央目录可解析）即视为结构合法。
-     * 不逐条读文件，对 GB 级大包也是毫秒级；坏则让上层整份作废重下。
-     */
     public static boolean isZipStructurallyValid(File f) {
         try (ZipFile zf = new ZipFile(f)) {
             return true;
@@ -40,35 +22,42 @@ public final class CNArchiveValidate {
     }
 
     /**
-     * 按 16MB 块逐块算 md5 与清单比对。公开供测试复用。
-     *
-     * @return true 表示每个完整块都通过；长度/指纹不符返回 false。
+     * 按清单块边界完整读取并计算 MD5。不能把一次 InputStream.read() 当成一整块：
+     * read 允许短返回，旧实现因此可能把同一个 16MiB 块错误切成多个“小块”校验。
      */
     public static boolean verifyChunks(File f, CNChunkedDownload.ChunkHashes h) throws Exception {
-        MessageDigest md = MessageDigest.getInstance("MD5");
-        long off = 0L;
+        if (f == null || h == null || h.chunkSize <= 0 || h.total < 0
+                || f.length() != h.total) return false;
+        long expectedCount = h.total / h.chunkSize + (h.total % h.chunkSize == 0 ? 0 : 1);
+        if (expectedCount != h.count) return false;
+
+        byte[] buf = new byte[1 << 16];
+        long offset = 0L;
         try (InputStream in = new FileInputStream(f)) {
-            byte[] buf = new byte[(int) h.chunkSize];
-            int n;
-            while ((n = in.read(buf)) >= 0 && off < h.total) {
-                if (n == 0) continue;
-                int want = (int) Math.min((long) n, h.chunkSize);
-                md.update(buf, 0, want);
-                long blkEnd = off + want;
-                if (blkEnd == off + h.chunkSize || blkEnd == h.total) {
-                    String got = hex(md.digest());
-                    String exp = h.hashFor(off, blkEnd);
-                    if (exp == null || !exp.equalsIgnoreCase(got)) {
-                        CNLog.w(TAG, "块校验失败 offset=" + off
-                                + " 期望=" + (exp == null ? "?" : exp) + " 实得=" + got);
-                        return false;
-                    }
-                    off = blkEnd;
-                    md = MessageDigest.getInstance("MD5");
+            for (int block = 0; block < h.count; block++) {
+                long blockLen = Math.min(h.chunkSize, h.total - offset);
+                MessageDigest md = MessageDigest.getInstance("MD5");
+                long read = 0L;
+                while (read < blockLen) {
+                    int want = (int) Math.min((long) buf.length, blockLen - read);
+                    int n = in.read(buf, 0, want);
+                    if (n < 0) return false;
+                    if (n == 0) continue;
+                    md.update(buf, 0, n);
+                    read += n;
                 }
+                long end = offset + blockLen;
+                String got = hex(md.digest());
+                String exp = h.hashFor(offset, end);
+                if (exp == null || !exp.equalsIgnoreCase(got)) {
+                    CNLog.w(TAG, "块校验失败 offset=" + offset
+                            + " 期望=" + (exp == null ? "?" : exp) + " 实得=" + got);
+                    return false;
+                }
+                offset = end;
             }
+            return offset == h.total && in.read() < 0;
         }
-        return off == h.total;
     }
 
     private static String hex(byte[] b) {
