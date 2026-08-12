@@ -486,10 +486,13 @@ public final class CNHotUpdateCheck {
         } else {
             CNLog.i(TAG, "热更检查完毕：无需更新");
             CNCNDownloadUI.updateSimple("已是最新",
-                    "即将进入游戏；点按浮层（如「教程」胶囊播序章）可稍作停留", 0);
+                    "检查已完成。可点「停留本页」继续查看，或等待进入游戏。", 0);
         }
         awaitPlayerWindow();
         awaitConfigSettled();
+        // 配置到位的短等待期间玩家仍可能点‘停留本页’；收浮层前再做一次
+        // 无上限的显式停留闸。只有玩家自己点‘进入游戏’才释放。
+        awaitExplicitStayRelease();
         // running 要在浮层收掉之前清掉：之后再点胶囊（浮层还在的最后一刻）
         // 应当走「自己重启」那条路，而不是挂在一个马上就结束的检查上。
         running = false;
@@ -770,6 +773,12 @@ public final class CNHotUpdateCheck {
         try {
             while (true) {
                 long now = android.os.SystemClock.uptimeMillis();
+                // ‘停留本页’是玩家明确选择，不受 120 秒自动窗口上限约束。
+                // 这里直接阻断收浮层与进入游戏，而不是隐藏后重新盖回浮层。
+                if (CNDownloadUiAssist.shouldStayOnPage()) {
+                    Thread.sleep(100);
+                    continue;
+                }
                 long lastTouch = CNCNDownloadUI.lastInteractionMs();
                 boolean interacted = lastTouch > start;
                 // 只认窗口开始后的交互；更早的触摸属于检查过程本身，不该顺延
@@ -783,6 +792,15 @@ public final class CNHotUpdateCheck {
                 Thread.sleep(100);
             }
         } catch (Throwable ignore) {}
+    }
+
+    /** 显式停留没有自动超时；按钮切回‘进入游戏’后才继续完成启动。 */
+    private static void awaitExplicitStayRelease() {
+        try {
+            while (CNDownloadUiAssist.shouldStayOnPage()) Thread.sleep(100L);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /** 收浮层前等 config.json 到位，只等「还在加载」这一种状态。 */
