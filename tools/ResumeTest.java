@@ -264,7 +264,7 @@ public class ResumeTest {
         try {
             CNChunkedDownload.download(url, t, 4, false, p, new Sink());
         } catch (IOException e) { threw = true; msg = String.valueOf(e.getMessage()); }
-        check("报错而非静默写坏文件", threw && msg.contains("总长不符"), msg);
+        check("报错而非静默写坏文件", threw && msg.contains("Content-Range"), msg);
         check("没有提交目标文件", !t.exists(), "");
     }
 
