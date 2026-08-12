@@ -87,7 +87,8 @@ jobs:
           python3 tools/server.py 8388608 8779 > /tmp/resume-server.log 2>&1 &
           sleep 1
           for t in HotUpdateTxTest SafeLinkTest WebProxyTest ConfigGuardTest \
-                   LogTest BgmLoopTest ThrottleTest FlushTest ChunkHashTest; do
+                   LogTest BgmLoopTest ThrottleTest FlushTest ChunkHashTest \
+                   ManualRedownloadTest; do
             java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar $t
           done
           java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar ProxyFetchTest 8791
