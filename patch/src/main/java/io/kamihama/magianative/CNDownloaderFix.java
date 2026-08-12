@@ -610,13 +610,7 @@ public final class CNDownloaderFix {
             //
             // 浮层要留到问完再收：询问框挂在浮层上，先 hide 就没地方显示了。
             awaitTutorialChoice();
-            // 首次安装与手动单包重下载完成后也尊重‘停留本页’。资源已经提交，
-            // 但在玩家点‘进入游戏’前不收浮层、不执行必须的进程重启。
-            try {
-                while (CNDownloadUiAssist.shouldStayOnPage()) Thread.sleep(100L);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-            }
+            CNDownloadUiAssist.awaitReleaseIfRequested();
             CNCNDownloadUI.hide();
 
             if (CNDebugFlags.isOn(CNDebugFlags.SKIP_RESTART)) {

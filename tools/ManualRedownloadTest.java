@@ -45,6 +45,14 @@ public class ManualRedownloadTest {
         String[] names = CNCNDownloadUI.FILE_NAMES;
         for (String name : names) write(new File(state, name + ".done"), marker(name));
 
+        System.out.println("[0] 热更新 ZIP 必须映射到对应版本键");
+        check("台词包重下会重置 scenario_version",
+                "scenario_version".equals(CNManualRedownload.hotVersionKeyForTest(0)));
+        check("脚本包重下会重置 js_version",
+                "js_version".equals(CNManualRedownload.hotVersionKeyForTest(1)));
+        check("基础资源不改热更新版本号",
+                CNManualRedownload.hotVersionKeyForTest(5) == null);
+
         System.out.println("[1] 另外 14 个 marker 都有效时允许单文件模式");
         check("选择 03 时其余 marker 有效",
                 CNManualRedownload.firstInvalidOtherForTest(state, 5) == null);

@@ -635,9 +635,7 @@ public class CNCNDownloadUI {
         glassLp.bottomMargin = dp(act, 40);
         root.addView(glass, glassLp);
 
-        // ── 第 2 层：主内容区（左右两列） ──
-        LinearLayout mainRow = new LinearLayout(act);
-        mainRow.setOrientation(LinearLayout.HORIZONTAL);
+        // ── 第 2 层：主内容区（固定视口 + 底部横向滚动条） ──
         FrameLayout.LayoutParams mainLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT);
@@ -645,7 +643,26 @@ public class CNCNDownloadUI {
         mainLp.rightMargin  = dp(act, 14) + dp(act, 14);
         main-hostMargin    = dp(act, 52) + dp(act, 12);
         mainLp.bottomMargin = dp(act, 40) + dp(act, 12);
-        root.addView(mainRow, mainLp);
+
+        HorizontalScrollView mainScroll = new HorizontalScrollView(act);
+        mainScroll.setTag(CNDownloadUiAssist.TAG_H_SCROLL);
+        mainScroll.setFillViewport(true);
+        mainScroll.setHorizontalScrollBarEnabled(true);
+        mainScroll.setScrollbarFadingEnabled(false);
+        mainScroll.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+        mainScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+        mainScroll.setClipToPadding(false);
+        mainScroll.setPadding(0, 0, 0, dp(act, 5));
+
+        int contentBaseWidth = Math.max(dp(act, 560),
+                act.getResources().getDisplayMetrics().widthPixels
+                        - mainLp.leftMargin - mainLp.rightMargin);
+        LinearLayout mainRow = new LinearLayout(act);
+        mainRow.setTag(CNDownloadUiAssist.TAG_CONTENT_ROOT);
+        mainRow.setOrientation(LinearLayout.HORIZONTAL);
+        mainScroll.addView(mainRow, new FrameLayout.LayoutParams(
+                contentBaseWidth, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(mainScroll, mainLp);
 
         // ---- 左列：Logo + 署名区 ----
         LinearLayout leftCol = new LinearLayout(act);
@@ -725,6 +742,13 @@ public class CNCNDownloadUI {
         rightCol.addView(vStatus, lpRow(0, dp(act, 6)));
 
         ScrollView slotScroll = new ScrollView(act);
+        slotScroll.setTag(CNDownloadUiAssist.TAG_V_SCROLL);
+        slotScroll.setVerticalScrollBarEnabled(true);
+        slotScroll.setScrollbarFadingEnabled(false);
+        slotScroll.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+        slotScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+        slotScroll.setClipToPadding(false);
+        slotScroll.setPadding(0, 0, dp(act, 5), 0);
         slotContainer = new LinearLayout(act);
         slotContainer.setOrientation(LinearLayout.VERTICAL);
         slotScroll.addView(slotContainer, new ScrollView.LayoutParams(
@@ -2126,10 +2150,23 @@ public class CNCNDownloadUI {
             } finally {
                 if (onDone != null) {
                     handedBack = true;
+                    // 安装收尾的自动询问中，“是”本身就意味着继续进入游戏。
+                    if (yes) {
+                        try { CNDownloadUiAssist.setStayOnPage(false); }
+                        catch (Throwable ignore) {}
+                    }
                     try { onDone.run(); } catch (Throwable ignore) {}
                 }
             }
-            if (!handedBack) restartAfterTutorialChoice(act, yes);
+            if (!handedBack) {
+                if (yes) {
+                    CNDownloadUiAssist.setStayOnPage(false);
+                    restartAfterTutorialChoice(act, true);
+                } else {
+                    CNDownloadUiAssist.setStayOnPage(true);
+                    toast(act, "已设为正常进入游戏；仍停留在资源页");
+                }
+            }
         }
     }
 
@@ -3521,6 +3558,7 @@ public class CNCNDownloadUI {
         // 放在 isShowing 判断之前：即使浮层没建起来，也要保证不会有残留的播放线程。
         stopOverlayFlag();  // 先撤引擎闸门标记，引擎才能继续推进
         try { CNBgm.stop(); } catch (Throwable ignore) {}
+        try { CNDownloadUiAssist.onOverlayDetached(); } catch (Throwable ignore) {}
         Handler handler;
         if (!isShowing || (handler = uiHandler) == null) {
             // 即使浮层没真正建成/handler 已丢，也必须释放 native 闸门。

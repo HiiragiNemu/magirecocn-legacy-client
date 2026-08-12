@@ -1,8 +1,12 @@
 package io.kamihama.magianative;
 
 import android.app.Activity;
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.TypedValue;
@@ -13,33 +17,63 @@ import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.TextView;
 
 import java.lang.reflect.Field;
+import java.util.WeakHashMap;
 
 /**
- * 下载浮层的内嵌辅助控件。所有控件都属于 overlayView，关闭下载页即一起销毁；
- * 不再向 decorView 塞独立悬浮窗，也不再平移整个游戏画面。
+ * 下载浮层内部的显示、停留和单包重下载入口。
+ *
+ * <p>所有可见控件都挂在 {@link CNCNDownloadUI#overlayView} 内；关闭下载页即一起销毁。
+ * 本类绝不向 decorView 添加悬浮面板，也绝不平移整个下载浮层或游戏画面。
  */
 public final class CNDownloadUiAssist {
+    /** buildOverlay 给中央内容和两条真实滚动容器使用的稳定标签。 */
+    public static final String TAG_CONTENT_ROOT = "cn-download-content-root";
+    public static final String TAG_H_SCROLL = "cn-download-content-hscroll";
+    public static final String TAG_V_SCROLL = "cn-download-content-vscroll";
+
     private static final String LEGACY_TAG = "cn-download-ui-assist";
     private static final String TAG_STAY = "cn-download-stay";
+    private static final String TAG_DISPLAY = "cn-download-display";
     private static final String TAG_RELOAD = "cn-download-reload-";
+    private static final String PREFS = "cnv_bootstrap_ui_assist";
+    private static final String PREF_SCALE = "font_scale_pct";
     private static final String OLD_LINGER =
             "即将进入游戏；点按浮层（如「教程」胶囊播序章）可稍作停留";
     private static final String NEW_LINGER =
-            "检查已完成。可点「停留本页」继续查看，或等待进入游戏。";
+            "检查已完成。可查看日志或管理资源；需要停留请使用“停留本页”。";
+
+    private static final Object STAY_LOCK = new Object();
+    private static final WeakHashMap<TextView, Float> BASE_TEXT_PX =
+            new WeakHashMap<TextView, Float>();
 
     private static View attachedOverlay;
+    private static View contentRoot;
+    private static HorizontalScrollView hScroll;
+    private static ScrollView vScroll;
     private static TextView stayChip;
+    private static TextView displayChip;
+    private static TextView scaleLabel;
+    private static SeekBar scaleSeek;
     private static FrameLayout confirmModal;
+    private static FrameLayout displayModal;
+    private static SharedPreferences prefs;
+    private static int scalePct = 100;
+    private static int baseContentWidth;
     private static volatile boolean stayRequested;
+    private static volatile boolean leaveRequested;
     private static volatile Thread stayThread;
+
     private static final Runnable INSTALL = new InstallTask();
-    private static final Runnable POLISH = new PolishTask();
+    private static final Runnable APPLY = new ApplyTask();
+    private static final Runnable DETACH = new DetachTask();
 
     private CNDownloadUiAssist() {}
 
+    /** 可从任意线程调用；浮层尚未创建时直接返回。 */
     public static void ensureInstalled() {
         if (CNCNDownloadUI.overlayView == null || CNCNDownloadUI.decorView == null) return;
         try {
@@ -51,97 +85,182 @@ public final class CNDownloadUiAssist {
                 h.post(INSTALL);
             }
         } catch (Throwable t) {
-            try { CNLog.w("界面", "内嵌辅助控件安装失败: " + t); } catch (Throwable ignore) {}
+            try { CNLog.w("界面", "内嵌显示控件安装失败: " + t); } catch (Throwable ignore) {}
         }
     }
 
-    public static boolean shouldStayOnPage() { return stayRequested; }
+    public static boolean shouldStayOnPage() {
+        return stayRequested;
+    }
 
-    static void setStayOnPage(boolean stay) {
-        stayRequested = stay;
-        if (stay) startStayWatchdog(); else stopStayWatchdog();
+    /** “进入游戏”是一次性动作；热更新停留窗口消费后自动清掉。 */
+    public static boolean consumeLeaveRequest() {
+        synchronized (STAY_LOCK) {
+            if (!leaveRequested) return false;
+            leaveRequested = false;
+            return true;
+        }
+    }
+
+    /** 下载 UI 自己的模态框也必须阻止自动收页。 */
+    public static boolean isModalOpen() {
+        return confirmModal != null || displayModal != null;
+    }
+
+    /** 包内调用：教程“否”、单包重下和顶部胶囊共用同一停留状态。 */
+    public static void setStayOnPage(boolean stay) {
+        synchronized (STAY_LOCK) {
+            stayRequested = stay;
+            leaveRequested = !stay;
+            STAY_LOCK.notifyAll();
+        }
+        if (stay) startStayWatchdog();
+        else stopStayWatchdog();
         postInstall();
+    }
+
+    /** 首次安装收尾调用：玩家点了“停留本页”时一直等到其点“进入游戏”。 */
+    public static void awaitReleaseIfRequested() {
+        synchronized (STAY_LOCK) {
+            while (stayRequested) {
+                try {
+                    STAY_LOCK.wait(250L);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }
+    }
+
+    /** 浮层关闭前调用，终止所有引用和看门狗，保证控件绝不进入游戏主界面。 */
+    public static void onOverlayDetached() {
+        synchronized (STAY_LOCK) {
+            stayRequested = false;
+            leaveRequested = false;
+            STAY_LOCK.notifyAll();
+        }
+        stopStayWatchdog();
+        try {
+            Handler h = CNCNDownloadUI.uiHandler;
+            if (h != null) {
+                h.removeCallbacks(INSTALL);
+                h.removeCallbacks(APPLY);
+            }
+            if (Looper.myLooper() == Looper.getMainLooper()) detachOnMain();
+            else if (h != null) h.post(DETACH);
+            else detachRefs();
+        } catch (Throwable t) {
+            detachRefs();
+        }
     }
 
     private static final class InstallTask implements Runnable {
         @Override public void run() { installOnMain(); }
     }
 
-    private static final class PolishTask implements Runnable {
+    private static final class ApplyTask implements Runnable {
         @Override public void run() {
-            View ov = CNCNDownloadUI.overlayView;
-            if (ov == null || ov != attachedOverlay || !CNCNDownloadUI.isShowing) return;
-            try {
-                removeLegacy();
-                ov.setTranslationX(0f);
-                ov.setTranslationY(0f);
-                enableBars(ov);
-                replaceLinger(ov);
-                installStay(ov);
-                installReloads(ov);
-                styleStay();
-            } catch (Throwable t) {
-                try { CNLog.w("界面", "刷新内嵌控件失败: " + t); } catch (Throwable ignore) {}
+            if (attachedOverlay != null && attachedOverlay == CNCNDownloadUI.overlayView
+                    && CNCNDownloadUI.isShowing) {
+                applyScale();
+                styleScrollbars();
             }
-            Handler h = CNCNDownloadUI.uiHandler;
-            if (h != null) h.postDelayed(POLISH, 500L);
         }
     }
 
+    private static final class DetachTask implements Runnable {
+        @Override public void run() { detachOnMain(); }
+    }
+
     private static void installOnMain() {
-        FrameLayout ov = CNCNDownloadUI.overlayView;
-        if (ov == null) return;
+        FrameLayout overlay = CNCNDownloadUI.overlayView;
+        if (overlay == null) return;
         removeLegacy();
-        try { CNManualRedownload.recoverCompletedRequest(); } catch (Throwable ignore) {}
-        if (attachedOverlay != ov) {
-            attachedOverlay = ov;
+        overlay.setTranslationX(0f);
+        overlay.setTranslationY(0f);
+
+        if (attachedOverlay != overlay) {
+            attachedOverlay = overlay;
+            contentRoot = overlay.findViewWithTag(TAG_CONTENT_ROOT);
+            View hs = overlay.findViewWithTag(TAG_H_SCROLL);
+            View vs = overlay.findViewWithTag(TAG_V_SCROLL);
+            hScroll = hs instanceof HorizontalScrollView ? (HorizontalScrollView) hs : null;
+            vScroll = vs instanceof ScrollView ? (ScrollView) vs : null;
             stayChip = null;
+            displayChip = null;
             confirmModal = null;
+            displayModal = null;
+            baseContentWidth = 0;
+            BASE_TEXT_PX.clear();
+            loadPrefs(overlay.getContext());
         }
-        ov.setTranslationX(0f);
-        ov.setTranslationY(0f);
-        enableBars(ov);
-        replaceLinger(ov);
-        installStay(ov);
-        installReloads(ov);
+
+        replaceLinger(overlay);
+        installStay(overlay);
+        installDisplay(overlay);
+        installReloads(overlay);
         styleStay();
+        styleDisplay();
+        styleScrollbars();
+        applyScale();
+        try { CNManualRedownload.recoverCompletedRequest(); } catch (Throwable ignore) {}
+
         Handler h = CNCNDownloadUI.uiHandler;
         if (h != null) {
-            h.removeCallbacks(POLISH);
-            h.postDelayed(POLISH, 500L);
+            h.removeCallbacks(APPLY);
+            h.postDelayed(APPLY, 120L);
+            h.postDelayed(APPLY, 800L);
+            h.postDelayed(APPLY, 1800L);
         }
         if (stayRequested) startStayWatchdog();
+    }
+
+    private static void loadPrefs(Context context) {
+        if (prefs == null && context != null) {
+            prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        }
+        if (prefs != null) scalePct = clamp(prefs.getInt(PREF_SCALE, 100), 75, 150);
+    }
+
+    private static void detachOnMain() {
+        removeLegacy();
+        View overlay = attachedOverlay;
+        if (overlay != null) {
+            try {
+                overlay.setTranslationX(0f);
+                overlay.setTranslationY(0f);
+            } catch (Throwable ignore) {}
+        }
+        detachRefs();
+    }
+
+    private static void detachRefs() {
+        attachedOverlay = null;
+        contentRoot = null;
+        hScroll = null;
+        vScroll = null;
+        stayChip = null;
+        displayChip = null;
+        scaleLabel = null;
+        scaleSeek = null;
+        confirmModal = null;
+        displayModal = null;
+        baseContentWidth = 0;
+        BASE_TEXT_PX.clear();
     }
 
     private static void removeLegacy() {
         try {
             ViewGroup decor = CNCNDownloadUI.decorView;
             if (decor == null) return;
-            View old = decor.findViewWithTag(LEGACY_TAG);
-            if (old != null && old.getParent() instanceof ViewGroup) {
+            while (true) {
+                View old = decor.findViewWithTag(LEGACY_TAG);
+                if (old == null || !(old.getParent() instanceof ViewGroup)) break;
                 ((ViewGroup) old.getParent()).removeView(old);
                 CNLog.i("界面", "已移除旧版独立字/平移悬浮控件");
             }
         } catch (Throwable ignore) {}
-    }
-
-    /** 使用真实内容容器的长滚动条，而不是平移窗口。 */
-    private static void enableBars(View v) {
-        if (v instanceof ScrollView) {
-            ScrollView s = (ScrollView) v;
-            s.setVerticalScrollBarEnabled(true);
-            s.setScrollbarFadingEnabled(false);
-            s.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
-        } else if (v instanceof HorizontalScrollView) {
-            HorizontalScrollView s = (HorizontalScrollView) v;
-            s.setHorizontalScrollBarEnabled(true);
-            s.setScrollbarFadingEnabled(false);
-            s.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
-        }
-        if (v instanceof ViewGroup) {
-            ViewGroup g = (ViewGroup) v;
-            for (int i = 0; i < g.getChildCount(); i++) enableBars(g.getChildAt(i));
-        }
     }
 
     private static void replaceLinger(View v) {
@@ -156,13 +275,41 @@ public final class CNDownloadUiAssist {
         }
     }
 
-    private static void installStay(View root) {
+    private static LinearLayout findTopLeftRow(View root) {
         TextView log = findText(root, "LOG");
-        if (log == null || !(log.getParent() instanceof LinearLayout)) return;
-        LinearLayout row = (LinearLayout) log.getParent();
-        View existing = row.findViewWithTag(TAG_STAY);
-        if (existing instanceof TextView) { stayChip = (TextView) existing; return; }
+        return log != null && log.getParent() instanceof LinearLayout
+                ? (LinearLayout) log.getParent() : null;
+    }
 
+    private static void installStay(View root) {
+        LinearLayout row = findTopLeftRow(root);
+        if (row == null) return;
+        View existing = row.findViewWithTag(TAG_STAY);
+        if (existing instanceof TextView) {
+            stayChip = (TextView) existing;
+            return;
+        }
+        TextView chip = createTopChip(row, TAG_STAY);
+        chip.setOnClickListener(new StayClick());
+        row.addView(chip, topChipLp(chip));
+        stayChip = chip;
+    }
+
+    private static void installDisplay(View root) {
+        LinearLayout row = findTopLeftRow(root);
+        if (row == null) return;
+        View existing = row.findViewWithTag(TAG_DISPLAY);
+        if (existing instanceof TextView) {
+            displayChip = (TextView) existing;
+            return;
+        }
+        TextView chip = createTopChip(row, TAG_DISPLAY);
+        chip.setOnClickListener(new DisplayClick());
+        row.addView(chip, topChipLp(chip));
+        displayChip = chip;
+    }
+
+    private static TextView createTopChip(LinearLayout row, String tag) {
         TextView template = null;
         for (int i = row.getChildCount() - 1; i >= 0; i--) {
             if (row.getChildAt(i) instanceof TextView) {
@@ -171,22 +318,25 @@ public final class CNDownloadUiAssist {
             }
         }
         TextView chip = new TextView(row.getContext());
-        chip.setTag(TAG_STAY);
+        chip.setTag(tag);
         chip.setGravity(Gravity.CENTER);
         chip.setTextSize(TypedValue.COMPLEX_UNIT_PX,
                 template == null ? sp(chip, 11f) : template.getTextSize());
-        chip.setTypeface(template == null ? Typeface.DEFAULT_BOLD : template.getTypeface(), Typeface.BOLD);
+        chip.setTypeface(template == null ? Typeface.DEFAULT_BOLD : template.getTypeface(),
+                Typeface.BOLD);
         int px = template == null ? dp(chip, 12) : template.getPaddingLeft();
         int py = template == null ? dp(chip, 6) : template.getPaddingTop();
         chip.setPadding(px, py, px, py);
         chip.setClickable(true);
         chip.setFocusable(true);
-        chip.setOnClickListener(new StayClick());
+        return chip;
+    }
+
+    private static LinearLayout.LayoutParams topChipLp(View v) {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.leftMargin = dp(chip, 8);
-        row.addView(chip, lp);
-        stayChip = chip;
+        lp.leftMargin = dp(v, 8);
+        return lp;
     }
 
     private static final class StayClick implements View.OnClickListener {
@@ -195,9 +345,21 @@ public final class CNDownloadUiAssist {
             setStayOnPage(next);
             CNCNDownloadUI.noteInteraction();
             Activity act = RestClient.getCurrentActivity();
-            if (next) CNCNDownloadUI.toast(act, "已停留；点“进入游戏”再离开资源页");
-            else if (CNHotUpdateCheck.isRunning()) CNCNDownloadUI.toast(act, "将在当前检查收尾后进入游戏");
-            else CNCNDownloadUI.hide();
+            if (next) {
+                CNCNDownloadUI.toast(act, "已停留；点“进入游戏”再离开资源页");
+            } else if (CNHotUpdateCheck.isRunning() || CNDownloaderFix.isInstalling()) {
+                CNCNDownloadUI.toast(act, "将在当前任务安全收尾后进入游戏");
+            } else {
+                CNCNDownloadUI.hide();
+            }
+        }
+    }
+
+    private static final class DisplayClick implements View.OnClickListener {
+        @Override public void onClick(View v) {
+            Activity act = RestClient.getCurrentActivity();
+            openDisplay(act);
+            CNCNDownloadUI.noteInteraction();
         }
     }
 
@@ -216,6 +378,18 @@ public final class CNDownloadUiAssist {
             bg.setColor(0x00000000);
             bg.setStroke(dp(v, 1), color("COLOR_GLASS_STK", 0x55B53C8C));
         }
+        v.setBackground(bg);
+    }
+
+    private static void styleDisplay() {
+        TextView v = displayChip;
+        if (v == null) return;
+        v.setText("Aa " + scalePct + "%");
+        v.setTextColor(color("COLOR_ACCENT2", 0xFF9C5BC2));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0x00000000);
+        bg.setCornerRadius(dp(v, 20));
+        bg.setStroke(dp(v, 1), color("COLOR_ACCENT2", 0xFF9C5BC2));
         v.setBackground(bg);
     }
 
@@ -262,7 +436,6 @@ public final class CNDownloadUiAssist {
                 CNCNDownloadUI.toast(act, "该文件正在下载，完成后再选择重下");
                 return;
             }
-            setStayOnPage(true);
             CNCNDownloadUI.noteInteraction();
             openConfirm(act, index);
         }
@@ -280,18 +453,10 @@ public final class CNDownloadUiAssist {
         modal.setFocusable(true);
         modal.setOnClickListener(new CloseConfirmClick());
 
-        LinearLayout panel = new LinearLayout(act);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(panel, 22), dp(panel, 20), dp(panel, 22), dp(panel, 18));
-        panel.setClickable(true);
+        LinearLayout panel = dialogPanel(act);
         panel.setOnClickListener(new ConsumeClick());
-        GradientDrawable panelBg = new GradientDrawable();
-        panelBg.setColor(color("COLOR_LOG_PANEL_BG", 0xFFFFFFFF));
-        panelBg.setCornerRadius(dp(panel, 16));
-        panelBg.setStroke(dp(panel, 1), color("COLOR_CARD_STK", 0x33B53C8C));
-        panel.setBackground(panelBg);
         FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
-                dp(panel, 360), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+                dp(panel, 380), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
         panelLp.leftMargin = panelLp.rightMargin = dp(panel, 20);
         modal.addView(panel, panelLp);
 
@@ -300,10 +465,13 @@ public final class CNDownloadUiAssist {
         title.setTypeface(title.getTypeface(), Typeface.BOLD);
         panel.addView(title, rowLp(title, 0, 10));
 
+        String extra = index < 2
+                ? "\n\n该包属于热更新通道；安装器完成后还会按版本清单补齐最新版本。"
+                : "";
         TextView msg = text(act,
                 "只重新下载：\n" + names[index]
-                + "\n\n其他已验证资源不会删除。确认后游戏会重启到下载页，"
-                + "完成该文件的下载、校验和解压后再自动重启一次。",
+                + "\n\n其他已验证资源和已解压内容不会删除。确认后游戏会重启到下载页，"
+                + "完成该文件的下载、校验和解压后再自动重启一次。" + extra,
                 13f, color("COLOR_LOG_PANEL_TEXT", 0xFF2A1A3B));
         msg.setLineSpacing(dp(msg, 2), 1f);
         panel.addView(msg, rowLp(msg, 0, 18));
@@ -317,14 +485,233 @@ public final class CNDownloadUiAssist {
         cancel.setOnClickListener(new CloseConfirmClick());
         yes.setOnClickListener(new ConfirmReloadClick(act, index));
         buttons.addView(cancel);
-        LinearLayout.LayoutParams yesLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        LinearLayout.LayoutParams yesLp = topChipLp(yes);
         yesLp.leftMargin = dp(yes, 10);
         buttons.addView(yes, yesLp);
 
         host.addView(modal, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         confirmModal = modal;
+    }
+
+    private static final class ConfirmReloadClick implements View.OnClickListener {
+        private final Activity act;
+        private final int index;
+        ConfirmReloadClick(Activity act, int index) { this.act = act; this.index = index; }
+        @Override public void onClick(View v) {
+            closeConfirm();
+            setStayOnPage(true);
+            CNManualRedownload.request(act, index);
+        }
+    }
+
+    private static void openDisplay(Activity act) {
+        FrameLayout host = CNCNDownloadUI.overlayView;
+        if (act == null || host == null) return;
+        closeDisplay();
+
+        FrameLayout modal = new FrameLayout(act);
+        modal.setBackgroundColor(color("COLOR_DIM", 0x88000000));
+        modal.setClickable(true);
+        modal.setFocusable(true);
+        modal.setOnClickListener(new CloseDisplayClick());
+
+        LinearLayout panel = dialogPanel(act);
+        panel.setOnClickListener(new ConsumeClick());
+        FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
+                dp(panel, 380), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        panelLp.leftMargin = panelLp.rightMargin = dp(panel, 20);
+        modal.addView(panel, panelLp);
+
+        TextView title = text(act, "显示大小", 16f,
+                color("COLOR_ACCENT", 0xFFD63384));
+        title.setTypeface(title.getTypeface(), Typeface.BOLD);
+        panel.addView(title, rowLp(title, 0, 8));
+
+        TextView explain = text(act,
+                "只调整下载页中央内容。文字放大后，可用右侧纵向滚动条和底部横向滚动条查看超出部分；游戏画面不会移动。",
+                12.5f, color("COLOR_LOG_PANEL_TEXT", 0xFF2A1A3B));
+        explain.setLineSpacing(dp(explain, 2), 1f);
+        panel.addView(explain, rowLp(explain, 0, 12));
+
+        scaleLabel = text(act, "字体 " + scalePct + "%", 14f,
+                color("COLOR_ACCENT2", 0xFF9C5BC2));
+        scaleLabel.setGravity(Gravity.CENTER);
+        scaleLabel.setTypeface(scaleLabel.getTypeface(), Typeface.BOLD);
+        panel.addView(scaleLabel, rowLp(scaleLabel, 0, 4));
+
+        scaleSeek = new SeekBar(act);
+        scaleSeek.setMax(75);
+        scaleSeek.setProgress(scalePct - 75);
+        if (Build.VERSION.SDK_INT >= 21) {
+            int accent = color("COLOR_ACCENT", 0xFFD63384);
+            scaleSeek.setProgressTintList(ColorStateList.valueOf(accent));
+            scaleSeek.setThumbTintList(ColorStateList.valueOf(accent));
+            scaleSeek.setProgressBackgroundTintList(
+                    ColorStateList.valueOf(color("COLOR_BAR_BG", 0x335B4661)));
+        }
+        scaleSeek.setOnSeekBarChangeListener(new ScaleSeekListener());
+        panel.addView(scaleSeek, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(scaleSeek, 42)));
+
+        LinearLayout controls = new LinearLayout(act);
+        controls.setOrientation(LinearLayout.HORIZONTAL);
+        controls.setGravity(Gravity.CENTER);
+        panel.addView(controls, rowLp(controls, 4, 12));
+        TextView minus = dialogButton(act, "A−", false);
+        TextView reset = dialogButton(act, "恢复 100%", false);
+        TextView plus = dialogButton(act, "A+", false);
+        minus.setOnClickListener(new ScaleStepClick(-5));
+        reset.setOnClickListener(new ScaleResetClick());
+        plus.setOnClickListener(new ScaleStepClick(5));
+        controls.addView(minus);
+        LinearLayout.LayoutParams resetLp = topChipLp(reset);
+        resetLp.leftMargin = dp(reset, 8);
+        controls.addView(reset, resetLp);
+        LinearLayout.LayoutParams plusLp = topChipLp(plus);
+        plusLp.leftMargin = dp(plus, 8);
+        controls.addView(plus, plusLp);
+
+        TextView done = dialogButton(act, "完成", true);
+        done.setOnClickListener(new CloseDisplayClick());
+        LinearLayout.LayoutParams doneLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        panel.addView(done, doneLp);
+
+        host.addView(modal, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        displayModal = modal;
+    }
+
+    private static final class ScaleSeekListener implements SeekBar.OnSeekBarChangeListener {
+        @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+            if (fromUser) setScale(progress + 75);
+        }
+        @Override public void onStartTrackingTouch(SeekBar bar) {}
+        @Override public void onStopTrackingTouch(SeekBar bar) {}
+    }
+
+    private static final class ScaleStepClick implements View.OnClickListener {
+        private final int delta;
+        ScaleStepClick(int delta) { this.delta = delta; }
+        @Override public void onClick(View v) { setScale(scalePct + delta); }
+    }
+
+    private static final class ScaleResetClick implements View.OnClickListener {
+        @Override public void onClick(View v) { setScale(100); }
+    }
+
+    private static void setScale(int value) {
+        scalePct = clamp(value, 75, 150);
+        if (prefs != null) prefs.edit().putInt(PREF_SCALE, scalePct).apply();
+        if (scaleSeek != null && scaleSeek.getProgress() != scalePct - 75) {
+            scaleSeek.setProgress(scalePct - 75);
+        }
+        if (scaleLabel != null) scaleLabel.setText("字体 " + scalePct + "%");
+        styleDisplay();
+        applyScale();
+        CNCNDownloadUI.noteInteraction();
+    }
+
+    private static void applyScale() {
+        View root = contentRoot;
+        if (root == null) return;
+        applyTextScale(root);
+
+        HorizontalScrollView hs = hScroll;
+        int viewport = hs == null ? 0 : hs.getWidth();
+        if (viewport <= 0 && attachedOverlay != null) {
+            viewport = Math.max(1, attachedOverlay.getWidth() - dp(attachedOverlay, 56));
+        }
+        if (viewport <= 0) {
+            viewport = Math.max(1, root.getResources().getDisplayMetrics().widthPixels
+                    - dp(root, 56));
+        }
+        ViewGroup.LayoutParams lp = root.getLayoutParams();
+        if (baseContentWidth <= 0) {
+            int declared = lp == null ? 0 : lp.width;
+            baseContentWidth = Math.max(viewport, declared > 0 ? declared : viewport);
+        }
+        int width = Math.max(viewport,
+                Math.round(baseContentWidth * Math.max(100, scalePct) / 100f));
+        if (lp != null && lp.width != width) {
+            lp.width = width;
+            root.setLayoutParams(lp);
+        }
+        root.requestLayout();
+    }
+
+    private static void applyTextScale(View v) {
+        if (v instanceof TextView) {
+            TextView tv = (TextView) v;
+            Float base = BASE_TEXT_PX.get(tv);
+            if (base == null) {
+                base = Float.valueOf(tv.getTextSize());
+                BASE_TEXT_PX.put(tv, base);
+            }
+            tv.setTextSize(TypedValue.COMPLEX_UNIT_PX,
+                    base.floatValue() * scalePct / 100f);
+        }
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) applyTextScale(g.getChildAt(i));
+        }
+    }
+
+    private static void styleScrollbars() {
+        HorizontalScrollView hs = hScroll;
+        ScrollView vs = vScroll;
+        if (hs != null) {
+            hs.setHorizontalScrollBarEnabled(true);
+            hs.setScrollbarFadingEnabled(false);
+            hs.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+            hs.setClipToPadding(false);
+            hs.setPadding(hs.getPaddingLeft(), hs.getPaddingTop(), hs.getPaddingRight(), dp(hs, 5));
+            if (Build.VERSION.SDK_INT >= 29) {
+                hs.setHorizontalScrollbarThumbDrawable(scrollThumb(hs));
+                hs.setHorizontalScrollbarTrackDrawable(scrollTrack(hs));
+            }
+        }
+        if (vs != null) {
+            vs.setVerticalScrollBarEnabled(true);
+            vs.setScrollbarFadingEnabled(false);
+            vs.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+            vs.setClipToPadding(false);
+            vs.setPadding(vs.getPaddingLeft(), vs.getPaddingTop(), dp(vs, 5), vs.getPaddingBottom());
+            if (Build.VERSION.SDK_INT >= 29) {
+                vs.setVerticalScrollbarThumbDrawable(scrollThumb(vs));
+                vs.setVerticalScrollbarTrackDrawable(scrollTrack(vs));
+            }
+        }
+    }
+
+    private static GradientDrawable scrollThumb(View v) {
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(color("COLOR_ACCENT", 0xFFD63384));
+        d.setCornerRadius(dp(v, 6));
+        d.setSize(dp(v, 6), dp(v, 6));
+        return d;
+    }
+
+    private static GradientDrawable scrollTrack(View v) {
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(color("COLOR_BAR_BG", 0x335B4661));
+        d.setCornerRadius(dp(v, 6));
+        d.setSize(dp(v, 5), dp(v, 5));
+        return d;
+    }
+
+    private static LinearLayout dialogPanel(Activity act) {
+        LinearLayout panel = new LinearLayout(act);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(panel, 22), dp(panel, 20), dp(panel, 22), dp(panel, 18));
+        panel.setClickable(true);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(color("COLOR_LOG_PANEL_BG", 0xFFFFFFFF));
+        bg.setCornerRadius(dp(panel, 16));
+        bg.setStroke(dp(panel, 1), color("COLOR_CARD_STK", 0x33B53C8C));
+        panel.setBackground(bg);
+        return panel;
     }
 
     private static TextView dialogButton(Activity act, String label, boolean primary) {
@@ -348,21 +735,29 @@ public final class CNDownloadUiAssist {
     private static final class ConsumeClick implements View.OnClickListener {
         @Override public void onClick(View v) {}
     }
+
     private static final class CloseConfirmClick implements View.OnClickListener {
         @Override public void onClick(View v) { closeConfirm(); }
     }
-    private static final class ConfirmReloadClick implements View.OnClickListener {
-        private final Activity act; private final int index;
-        ConfirmReloadClick(Activity act, int index) { this.act = act; this.index = index; }
-        @Override public void onClick(View v) {
-            closeConfirm();
-            CNManualRedownload.request(act, index);
-        }
+
+    private static final class CloseDisplayClick implements View.OnClickListener {
+        @Override public void onClick(View v) { closeDisplay(); }
     }
 
     private static void closeConfirm() {
         FrameLayout m = confirmModal;
         confirmModal = null;
+        if (m != null && m.getParent() instanceof ViewGroup) {
+            ((ViewGroup) m.getParent()).removeView(m);
+        }
+        CNCNDownloadUI.noteInteraction();
+    }
+
+    private static void closeDisplay() {
+        FrameLayout m = displayModal;
+        displayModal = null;
+        scaleLabel = null;
+        scaleSeek = null;
         if (m != null && m.getParent() instanceof ViewGroup) {
             ((ViewGroup) m.getParent()).removeView(m);
         }
@@ -392,22 +787,23 @@ public final class CNDownloadUiAssist {
         @Override public void run() {
             while (stayRequested) {
                 try {
+                    FrameLayout overlay = CNCNDownloadUI.overlayView;
+                    if (!CNCNDownloadUI.isShowing || overlay == null) return;
                     Activity act = RestClient.getCurrentActivity();
-                    if (act != null) {
-                        FrameLayout ov = CNCNDownloadUI.overlayView;
-                        if (!CNCNDownloadUI.isShowing || ov == null || ov.getParent() == null) {
-                            CNCNDownloadUI.show(act);
-                            CNCNDownloadUI.ensureVisible(act);
-                        }
-                        ensureInstalled();
+                    if (act != null && overlay.getParent() == null) {
+                        CNCNDownloadUI.ensureVisible(act);
                     }
-                    Thread.sleep(150L);
+                    ensureInstalled();
+                    Thread.sleep(500L);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     return;
                 } catch (Throwable t) {
-                    try { Thread.sleep(300L); }
-                    catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
+                    try { Thread.sleep(500L); }
+                    catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
                 }
             }
         }
@@ -457,7 +853,9 @@ public final class CNDownloadUiAssist {
             Field f = CNCNDownloadUI.class.getDeclaredField(name);
             f.setAccessible(true);
             return f.getInt(null);
-        } catch (Throwable t) { return fallback; }
+        } catch (Throwable t) {
+            return fallback;
+        }
     }
 
     private static int dp(View v, int value) {
@@ -467,5 +865,9 @@ public final class CNDownloadUiAssist {
     private static float sp(View v, float value) {
         return TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, value,
                 v.getResources().getDisplayMetrics());
+    }
+
+    private static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 }

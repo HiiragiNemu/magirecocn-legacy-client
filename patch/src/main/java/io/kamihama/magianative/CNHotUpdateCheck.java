@@ -486,7 +486,7 @@ public final class CNHotUpdateCheck {
         } else {
             CNLog.i(TAG, "热更检查完毕：无需更新");
             CNCNDownloadUI.updateSimple("已是最新",
-                    "检查已完成。可点「停留本页」继续查看，或等待进入游戏。", 0);
+                    "检查已完成。可查看日志或管理资源；需要停留请使用“停留本页”。", 0);
         }
         awaitPlayerWindow();
         awaitConfigSettled();
@@ -772,21 +772,27 @@ public final class CNHotUpdateCheck {
         long start = android.os.SystemClock.uptimeMillis();
         try {
             while (true) {
-                long now = android.os.SystemClock.uptimeMillis();
-                // ‘停留本页’是玩家明确选择，不受 120 秒自动窗口上限约束。
-                // 这里直接阻断收浮层与进入游戏，而不是隐藏后重新盖回浮层。
-                if (CNDownloadUiAssist.shouldStayOnPage()) {
+                if (CNDownloadUiAssist.consumeLeaveRequest()) {
+                    CNLog.i(TAG, "玩家点击“进入游戏”，结束资源页停留");
+                    break;
+                }
+                // 玩家明确停留、或正在操作任一模态框时不设强制上限，绝不能
+                // 从手底下抽走页面。引擎闸门也要一直保留到真正 hide。
+                if (CNDownloadUiAssist.shouldStayOnPage()
+                        || CNCNDownloadUI.isModalOpen()
+                        || CNDownloadUiAssist.isModalOpen()) {
                     Thread.sleep(100);
                     continue;
                 }
+                long now = android.os.SystemClock.uptimeMillis();
                 long lastTouch = CNCNDownloadUI.lastInteractionMs();
                 boolean interacted = lastTouch > start;
                 // 只认窗口开始后的交互；更早的触摸属于检查过程本身，不该顺延
                 long anchor = interacted ? lastTouch : start;
                 long linger = interacted ? INTERACT_LINGER_MS : IDLE_LINGER_MS;
-                if (!CNCNDownloadUI.isModalOpen() && now - anchor >= linger) break;
+                if (now - anchor >= linger) break;
                 if (now - start >= PLAYER_WINDOW_MAX_MS) {
-                    CNLog.w(TAG, "玩家窗口到达总上限，强制收浮层进游戏");
+                    CNLog.w(TAG, "无人停留且无模态操作，玩家窗口到达总上限");
                     break;
                 }
                 Thread.sleep(100);

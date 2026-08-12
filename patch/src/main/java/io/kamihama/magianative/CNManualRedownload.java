@@ -1,6 +1,8 @@
 package io.kamihama.magianative;
 
 import android.app.Activity;
+import android.content.Context;
+import android.content.SharedPreferences;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -19,6 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class CNManualRedownload {
     private static final String TAG = "CNManualRedownload";
+    private static final String PREFS_NAME = "MagiaCN";
     private static final String CANONICAL_BASE = "https://assets.example.test/";
     private static final String REQUEST_NAME = "manual-redownload.request";
     private static final String BACKUP_SUFFIX = ".manual-redownload.bak";
@@ -140,6 +143,7 @@ public final class CNManualRedownload {
                 throw new IOException("无法撤销总完成标记");
             }
             m.finalFlagRemoved = true;
+            resetHotUpdateVersion(m, selected);
             cleanupArtifacts(fileRoot(), state, selected);
             return m;
         } catch (Throwable t) {
@@ -157,6 +161,9 @@ public final class CNManualRedownload {
         final File request;
         boolean markerBackedUp;
         boolean finalFlagRemoved;
+        String versionKey;
+        int versionBefore;
+        boolean versionReset;
         Mutation(File finalFlag, String finalContent, File marker, File backup, File request) {
             this.finalFlag = finalFlag;
             this.finalContent = finalContent;
@@ -183,7 +190,52 @@ public final class CNManualRedownload {
         } catch (Throwable t) {
             CNLog.e(TAG, "恢复总完成标记失败", t);
         }
+        try {
+            if (m.versionReset && m.versionKey != null) {
+                SharedPreferences p = prefs();
+                if (p == null || !p.edit().putInt(m.versionKey, m.versionBefore).commit()) {
+                    throw new IOException("无法恢复热更新版本号 " + m.versionKey);
+                }
+            }
+        } catch (Throwable t) {
+            CNLog.e(TAG, "恢复热更新版本号失败", t);
+        }
         deleteQuietly(m.request);
+    }
+
+    private static void resetHotUpdateVersion(Mutation m, int index) throws IOException {
+        String key = hotVersionKey(index);
+        if (key == null) return;
+        SharedPreferences p = prefs();
+        if (p == null) throw new IOException("无法读取热更新版本状态");
+        m.versionKey = key;
+        m.versionBefore = p.getInt(key, 0);
+        if (!p.edit().putInt(key, 0).commit()) {
+            throw new IOException("无法重置热更新版本号 " + key);
+        }
+        m.versionReset = true;
+        CNLog.i(TAG, "已重置热更新版本号，下载完成后将按版本清单补更: " + key);
+    }
+
+    private static String hotVersionKey(int index) {
+        if (index == 0) return "scenario_version";
+        if (index == 1) return "js_version";
+        return null;
+    }
+
+    private static SharedPreferences prefs() {
+        Context c = appContext();
+        return c == null ? null : c.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+    }
+
+    private static Context appContext() {
+        try {
+            Class<?> cls = Class.forName("android.app.ActivityThread");
+            Object thread = cls.getMethod("currentActivityThread").invoke(null);
+            return (Context) cls.getMethod("getApplication").invoke(thread);
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     /** 删除的范围严格限定为所选 ZIP 的下载产物，不碰解压后的活动资源树。 */
@@ -384,5 +436,9 @@ public final class CNManualRedownload {
 
     public static void cleanupArtifactsForTest(File root, File state, int index) {
         cleanupArtifacts(root, state, index);
+    }
+
+    public static String hotVersionKeyForTest(int index) {
+        return hotVersionKey(index);
     }
 }
