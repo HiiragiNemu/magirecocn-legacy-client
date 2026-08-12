@@ -1,0 +1,50 @@
+name: one-shot-release-ui-assist-fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/release-ui-assist-fix-once.yml
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Remove dispatcher and start official APK release
+        env:
+          : ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/release-ui-assist-fix-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(ci): remove one-shot UI fix release dispatcher" \
+                     -m "The UI assist lifecycle fix passed APK build verification; remove the temporary dispatcher before publishing the corrected latest APK." \
+                     -m "Co-authored-by: Codex <noreply@openai.com>"
+          git push origin HEAD:main
+
+          CLEAN_SHA="$(git rev-parse HEAD)"
+          for attempt in 1 2 3 4 5; do
+            REMOTE_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
+            if [ "$REMOTE_SHA" = "$CLEAN_SHA" ]; then
+              break
+            fi
+            sleep 2
+          done
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)" = "$CLEAN_SHA"
+
+          gh workflow run build-apk.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f verify_only=false
+
+          echo "release_source_sha=${CLEAN_SHA}" >> "$GITHUB_STEP_SUMMARY"
+          echo "dispatched=build-apk.yml verify_only=false" >> "$GITHUB_STEP_SUMMARY"
