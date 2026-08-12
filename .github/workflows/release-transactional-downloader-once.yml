@@ -1,0 +1,54 @@
+name: one-shot-release-transactional-downloader
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/release-transactional-downloader-once.yml
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Remove dispatcher and start official APK release
+        env:
+          : ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git rm .github/workflows/release-transactional-downloader-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(ci): remove one-shot APK release dispatcher" \
+                     -m "The transactional downloader passed full regression and main APK verification; remove the temporary dispatcher before starting the public release build." \
+                     -m "Co-authored-by: Codex <noreply@openai.com>"
+          git push origin HEAD:main
+
+          # -originated pushes intentionally do not recurse into normal push workflows.
+          # workflow_dispatch is explicit and does run; dispatch only after main resolves to cleanup HEAD.
+          CLEAN_SHA="$(git rev-parse HEAD)"
+          for attempt in 1 2 3 4 5; do
+            REMOTE_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
+            if [ "$REMOTE_SHA" = "$CLEAN_SHA" ]; then
+              break
+            fi
+            sleep 2
+          done
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)" = "$CLEAN_SHA"
+
+          gh workflow run build-apk.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f verify_only=false
+
+          echo "release_source_sha=${CLEAN_SHA}" >> "$GITHUB_STEP_SUMMARY"
+          echo "dispatched=.github/workflows/build-apk.yml verify_only=false" >> "$GITHUB_STEP_SUMMARY"
