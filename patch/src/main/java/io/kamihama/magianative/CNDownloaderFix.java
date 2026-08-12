@@ -1769,6 +1769,14 @@ public final class CNDownloaderFix {
         } else {
             pct = 0;
         }
+        // 进度条只增不减：aria2 多连接分片（completedLength 按 bitfield 算，
+        // 单分片失败重拉时 bit 先清后补）与主引擎分块重拉，完成量都会瞬时回落，
+        // 条往回退会让玩家以为下载出错。净进度始终向前，clamp 到已到过的高点
+        // （2026-08-12 反馈）。
+        int[] progress = CNCNDownloadUI.fileProgress;
+        if (progress != null && index < progress.length && pct < progress[index]) {
+            return;
+        }
         CNCNDownloadUI.setFileDownloaded(index, (float) (soFar / 1000000.0d));
         CNCNDownloadUI.updateFileProgress(index, pct);
     }
