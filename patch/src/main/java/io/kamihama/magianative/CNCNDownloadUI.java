@@ -451,6 +451,8 @@ public class CNCNDownloadUI {
     private static FrameLayout aria2AskModal;
     /** 离线包导入框。非空即表示正在显示，用于防重入（2026-08-12 补，原版会叠框）。 */
     private static FrameLayout offlineModal;
+    /** 离线导入结果弹窗（成功/失败确认）。非空即表示正在显示，用于防重入。 */
+    private static FrameLayout importResultModal;
 
     /**
      * 浮层上最后一次用户交互（任意按下）的时间（uptimeMillis）。
@@ -1824,26 +1826,120 @@ public class CNCNDownloadUI {
         showOfflineDialog(act);
     }
 
+    /**
+     * 离线导入结果弹窗（浮层内建样式）。成功显示「已导入」，失败显示原因。
+     * <b>不用系统 Toast</b>——引擎全屏 Activity 上系统 Toast 不可靠，玩家会
+     * 以为没导入成功（2026-08-12 反馈）。单「确定」钮，点掉才收。
+     *
+     * <p>可在任意线程调用，内部切到 UI 线程。浮层不在时记日志了事。
+     *
+     * @param ok   是否导入成功
+     * @param name 文件名
+     * @param err  失败原因（成功时 null）
+     */
+    public static void showImportResultDialog(final Activity act, final boolean ok,
+                                              final String name, final String err) {
+        final FrameLayout host = overlayView;
+        if (act == null || host == null) {
+            CNLog.w("离线", "浮层不在，无法显示导入结果弹窗");
+            return;
+        }
+        act.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                try { buildImportResultDialog(act, host, ok, name, err); }
+                catch (Throwable t) { CNLog.e("离线", "构建导入结果弹窗失败", t); }
+            }
+        });
+    }
+
+    /** 在 UI 线程上构建导入结果弹窗（与离线/教程框同一套模态样式）。 */
+    private static void buildImportResultDialog(final Activity act, FrameLayout host,
+                                                final boolean ok, final String name,
+                                                final String err) {
+        if (host == null || importResultModal != null) {   // 已开着一个，别叠第二层
+            return;
+        }
+        final FrameLayout modal = new FrameLayout(act);
+        modal.setBackgroundColor(COLOR_DIM);
+        modal.setClickable(true);
+        modal.setFocusable(true);
+
+        LinearLayout panel = new LinearLayout(act);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(act, 22), dp(act, 20), dp(act, 22), dp(act, 18));
+        GradientDrawable panelBg = new GradientDrawable();
+        panelBg.setColor(COLOR_LOG_PANEL_BG);
+        panelBg.setCornerRadius(dp(act, 16));
+        panelBg.setStroke(dp(act, 1), COLOR_CARD_STK);
+        panel.setBackground(panelBg);
+        FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
+                dp(act, 330), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        panelLp.leftMargin = panelLp.rightMargin = dp(act, 20);
+        modal.addView(panel, panelLp);
+
+        TextView title = new TextView(act);
+        title.setText(ok ? "✓ 导入成功" : "导入失败");
+        title.setTextColor(ok ? 0xFF8BB87A : COLOR_ACCENT);   // 成功用绿（同署名调色板）
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f);
+        title.setTypeface(title.getTypeface(), Typeface.BOLD);
+        panel.addView(title, lpRow(0, dp(act, 10)));
+
+        TextView msg = new TextView(act);
+        msg.setText(ok
+                ? ("「" + name + "」已导入，安装时将跳过网络下载。\n\n"
+                   + "继续导入其它文件也行，点「关闭」即可离开。")
+                : ("「" + name + "」导入失败："
+                   + (err == null ? "未知原因" : err)
+                   + "\n\n请确认文件名与下方列表一致、包未损坏后重试。"));
+        msg.setTextColor(COLOR_LOG_PANEL_TEXT);
+        msg.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
+        msg.setLineSpacing(dp(act, 2), 1f);
+        panel.addView(msg, lpRow(0, dp(act, 18)));
+
+        LinearLayout row = new LinearLayout(act);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.END);
+        panel.addView(row, lpRow(0, 0));
+
+        TextView okBtn = dialogButton(act, "确定", 0xFFFFFFFF, COLOR_ACCENT, false);
+        row.addView(okBtn, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        okBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { closeImportResultDialog(); }
+        });
+
+        host.addView(modal, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        importResultModal = modal;
+    }
+
+    private static void closeImportResultDialog() {
+        FrameLayout m = importResultModal;
+        importResultModal = null;
+        if (m != null && m.getParent() instanceof ViewGroup) {
+            ((ViewGroup) m.getParent()).removeView(m);
+        }
+        noteInteraction();
+    }
+
     /** 触发导入某文件；成功后关闭对话框。 */
     private static void importOne(final Activity act, final FrameLayout host,
                                   final FrameLayout modal, final String name) {
         boolean started = CNOfflineImportActivity.requestImport(act, name,
                 new CNOfflineImportActivity.Callback() {
                     @Override public void onResult(boolean ok, String fn, String err) {
-                        if (ok) {
-                            toast(act, "已导入 " + fn);
-                            // 关闭对话框
-                            offlineModal = null;
-                            try { host.removeView(modal); } catch (Throwable ignore) {}
-                            if (vOfflinePill != null) {
-                                vOfflinePill.setText("📦  导入离线包 ✓");
-                            }
-                        } else {
-                            toast(act, (err == null ? "导入失败" : err));
+                        // 先关掉离线导入框，再改浮层内建弹窗给结果——系统 Toast 在
+                        // 引擎 Activity 上不可靠，玩家会以为没导入成功（2026-08-12）。
+                        offlineModal = null;
+                        try { host.removeView(modal); } catch (Throwable ignore) {}
+                        if (ok && vOfflinePill != null) {
+                            vOfflinePill.setText("📦  导入离线包 ✓");
                         }
+                        showImportResultDialog(act, ok, fn, err);
                     }
                 });
-        if (!started) toast(act, "无法启动文件选择");
+        if (!started) showImportResultDialog(act, false, name, "无法打开文件选择器");
     }
 
     private static LinearLayout.LayoutParams lpWrap() {
