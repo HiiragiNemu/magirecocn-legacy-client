@@ -48,3 +48,36 @@ if contract.is_file():
     if c.count(old) != 1:
         raise SystemExit(f'current-PID contract baseline changed: {c.count(old)}')
     contract.write_text(c.replace(old, new, 1), encoding='utf-8')
+
+# The generic open(url, direct) sequence also occurs in probe(); bind the verified-range
+# lease assignment strictly to fetchRangeToTemp so temp/lastMoveNs are in scope.
+s = p.read_text(encoding='utf-8')
+old_block = '''old = \'\'\'        try {
+            c = open(url, direct);
+            c.setRequestMethod("GET");\'\'\'
+new = \'\'\'        try {
+            lease = CNDownloadConcurrency.acquire(
+                    "verified-range:" + temp.getName(), lastMoveNs);
+            c = open(url, direct);
+            c.setRequestMethod("GET");\'\'\'
+if s.count(old) < 1:
+    raise SystemExit(\'chunk verified range open baseline not found\')
+s = s.replace(old, new, 1)'''
+new_block = '''method_at = s.index(\'    private static String fetchRangeToTemp\')
+method_end = s.index(\'\\n    private static void commitTempBlock\', method_at)
+head, method, tail = s[:method_at], s[method_at:method_end], s[method_end:]
+old = \'\'\'        try {
+            c = open(url, direct);
+            c.setRequestMethod("GET");\'\'\'
+new = \'\'\'        try {
+            lease = CNDownloadConcurrency.acquire(
+                    "verified-range:" + temp.getName(), lastMoveNs);
+            c = open(url, direct);
+            c.setRequestMethod("GET");\'\'\'
+if method.count(old) != 1:
+    raise SystemExit(f\'chunk verified range open baseline changed: {method.count(old)}\')
+method = method.replace(old, new, 1)
+s = head + method + tail'''
+if s.count(old_block) != 1:
+    raise SystemExit(f'verified-range script repair baseline changed: {s.count(old_block)}')
+p.write_text(s.replace(old_block, new_block, 1), encoding='utf-8')
