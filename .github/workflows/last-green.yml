@@ -88,7 +88,8 @@ jobs:
           sleep 1
           for t in HotUpdateTxTest SafeLinkTest WebProxyTest ConfigGuardTest \
                    LogTest BgmLoopTest ThrottleTest FlushTest ChunkHashTest \
-                   ManualRedownloadTest; do
+                   ManualRedownloadTest DownloadConcurrencyTest HotUpdateRoutingTest \
+                   UiAssistStateTest; do
             java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar $t
           done
           java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar ProxyFetchTest 8791
@@ -108,6 +109,9 @@ jobs:
                    check-debug-flag-boundary; do
             python3 tools/$g.py
           done
+          # 下载页新增合同：任意 ZIP 独立重下、动态热更身份、全局并发预算、
+          # 真实横纵滚动、窄屏弹窗与当前 PID 日志必须同时成立。
+          python3 tools/check-download-ui-contract.py
 
       - name: 🟢 移动 last-green tag
         run: |
