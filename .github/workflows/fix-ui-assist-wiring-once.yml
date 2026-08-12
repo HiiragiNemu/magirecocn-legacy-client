@@ -24,69 +24,17 @@ jobs:
           from pathlib import Path
           p = Path('patch/src/main/java/io/kamihama/magianative/CNCNDownloadUI.java')
           s = p.read_text(encoding='utf-8')
-
-          reps = [
-            (
-'''                if (existing != null) {
-                    overlayView = existing;
-                    decorView   = dv;
-                    isShowing   = true;
-                    CNLog.w("界面", "认领已在视图树上的浮层，跳过重建");
-                    return;
-                }''',
-'''                if (existing != null) {
-                    overlayView = existing;
-                    decorView   = dv;
-                    isShowing   = true;
-                    CNDownloadUiAssist.ensureInstalled();
-                    CNLog.w("界面", "认领已在视图树上的浮层，跳过重建");
-                    return;
-                }'''
-            ),
-            (
-'''                    decorView = dv;
-                    CNLog.w("界面", "浮层曾脱离视图树，已重新挂上");
-                    return;''',
-'''                    decorView = dv;
-                    CNDownloadUiAssist.ensureInstalled();
-                    CNLog.w("界面", "浮层曾脱离视图树，已重新挂上");
-                    return;'''
-            ),
-            (
-'''                decorView   = dv;
-                overlayView = fresh;
-                isShowing   = true;
-                renderAll();''',
-'''                decorView   = dv;
-                overlayView = fresh;
-                isShowing   = true;
-                CNDownloadUiAssist.ensureInstalled();
-                renderAll();'''
-            ),
-            (
-'''            overlayView = fresh;
-            // 立即把当前进度重新渲染到新视图上
-            renderAll();''',
-'''            overlayView = fresh;
-            CNDownloadUiAssist.ensureInstalled();
-            // 立即把当前进度重新渲染到新视图上
-            renderAll();'''
-            ),
-            (
-'''                CNCNDownloadUI.overlayView = root;
-                CNCNDownloadUI.isShowing = true;''',
-'''                CNCNDownloadUI.overlayView = root;
-                CNCNDownloadUI.isShowing = true;
-                CNDownloadUiAssist.ensureInstalled();'''
-            ),
-          ]
-
-          for i, (old, new) in enumerate(reps, 1):
+          def once(old, new, label):
+              global s
               n = s.count(old)
               if n != 1:
-                  raise SystemExit(f'replacement {i}: expected 1 occurrence, got {n}')
+                  raise SystemExit('%s: expected 1 occurrence, got %d' % (label, n))
               s = s.replace(old, new, 1)
-
+          once('                    isShowing   = true;\n                    CNLog.w("界面", "认领已在视图树上的浮层，跳过重建");', '                    isShowing   = true;\n                    CNDownloadUiAssist.ensureInstalled();\n                    CNLog.w("界面", "认领已在视图树上的浮层，跳过重建");', 'reclaim')
+          once('                    decorView = dv;\n                    CNLog.w("界面", "浮层曾脱离视图树，已重新挂上");', '                    decorView = dv;\n                    CNDownloadUiAssist.ensureInstalled();\n                    CNLog.w("界面", "浮层曾脱离视图树，已重新挂上");', 'reattach')
+          once('                isShowing   = true;\n                renderAll();', '                isShowing   = true;\n                CNDownloadUiAssist.ensureInstalled();\n                renderAll();', 'rebuild')
+          once('            overlayView = fresh;\n            // 立即把当前进度重新渲染到新视图上', '            overlayView = fresh;\n            CNDownloadUiAssist.ensureInstalled();\n            // 立即把当前进度重新渲染到新视图上', 'theme')
+          once('                CNCNDownloadUI.isShowing = true;', '                CNCNDownloadUI.isShowing = true;\n                CNDownloadUiAssist.ensureInstalled();', 'initial-create')
           p.write_text(s, encoding='utf-8')
           PY
 
