@@ -2,7 +2,8 @@ name: one-shot-apply-stay-contract
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - .github/workflows/apply-stay-contract-once.yml
 
@@ -16,93 +17,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Integrate explicit stay into real completion paths
+
+      - name: Apply explicit stay contract
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          hot = Path('patch/src/main/java/io/kamihama/magianative/CNHotUpdateCheck.java')
-          s = hot.read_text(encoding='utf-8')
-          old = '''            CNCNDownloadUI.updateSimple("已是最新",
-                    "即将进入游戏；点按浮层（如「教程」胶囊播序章）可稍作停留", 0);'''
-          new = '''            CNCNDownloadUI.updateSimple("已是最新",
-                    "检查已完成。可点「停留本页」继续查看，或等待进入游戏。", 0);'''
-          if old not in s:
-              raise SystemExit('hot-update linger text baseline not found')
-          s = s.replace(old, new, 1)
-
-          old = '''        awaitPlayerWindow();
-        awaitConfigSettled();
-        // running 要在浮层收掉之前清掉：之后再点胶囊（浮层还在的最后一刻）'''
-          new = '''        awaitPlayerWindow();
-        awaitConfigSettled();
-        // 配置到位的短等待期间玩家仍可能点“停留本页”；收浮层前再做一次
-        // 无上限的显式停留闸。只有玩家自己点“进入游戏”才释放。
-        awaitExplicitStayRelease();
-        // running 要在浮层收掉之前清掉：之后再点胶囊（浮层还在的最后一刻）'''
-          if old not in s:
-              raise SystemExit('hot-update completion baseline not found')
-          s = s.replace(old, new, 1)
-
-          old = '''                long now = android.os.SystemClock.uptimeMillis();
-                long lastTouch = CNCNDownloadUI.lastInteractionMs();'''
-          new = '''                long now = android.os.SystemClock.uptimeMillis();
-                // “停留本页”是玩家明确选择，不受 120 秒自动窗口上限约束。
-                // 这里真正阻断收浮层与进入游戏，而不是把已经隐藏的浮层重新盖回来。
-                if (CNDownloadUiAssist.shouldStayOnPage()) {
-                    Thread.sleep(100);
-                    continue;
-                }
-                long lastTouch = CNCNDownloadUI.lastInteractionMs();'''
-          if old not in s:
-              raise SystemExit('awaitPlayerWindow loop baseline not found')
-          s = s.replace(old, new, 1)
-
-          marker = '''    /** 收浮层前等 config.json 到位，只等「还在加载」这一种状态。 */
-    private static void awaitConfigSettled() {'''
-          insert = '''    /** 显式停留没有自动超时；按钮切回“进入游戏”后才继续完成启动。 */
-    private static void awaitExplicitStayRelease() {
-        try {
-            while (CNDownloadUiAssist.shouldStayOnPage()) Thread.sleep(100L);
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-        }
-    }
-
-    /** 收浮层前等 config.json 到位，只等「还在加载」这一种状态。 */
-    private static void awaitConfigSettled() {'''
-          if marker not in s:
-              raise SystemExit('awaitConfigSettled baseline not found')
-          s = s.replace(marker, insert, 1)
-          hot.write_text(s, encoding='utf-8')
-
-          installer = Path('patch/src/main/java/io/kamihama/magianative/CNDownloaderFix.java')
-          s = installer.read_text(encoding='utf-8')
-          old = '''            awaitTutorialChoice();
-            CNCNDownloadUI.hide();'''
-          new = '''            awaitTutorialChoice();
-            // 首次安装与手动单包重下载完成后也尊重“停留本页”。资源已经提交，
-            // 但在玩家点“进入游戏”前不收浮层、不执行必须的进程重启。
-            try {
-                while (CNDownloadUiAssist.shouldStayOnPage()) Thread.sleep(100L);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-            }
-            CNCNDownloadUI.hide();'''
-          if old not in s:
-              raise SystemExit('installer completion baseline not found')
-          installer.write_text(s.replace(old, new, 1), encoding='utf-8')
-          PY
-
+          python3 tools/apply-stay-contract.py
           git diff --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add patch/src/main/java/io/kamihama/magianative/CNHotUpdateCheck.java \
-                  patch/src/main/java/io/kamihama/magianative/CNDownloaderFix.java
+          git add patch/src/main/java/io/kamihama/magianative/CNHotUpdateCheck.java
+          git add patch/src/main/java/io/kamihama/magianative/CNDownloaderFix.java
           git commit -m "fix(ui): 停留按钮真正阻断进入游戏" \
-            -m "热更新结论页和首次安装收尾都直接等待显式停留状态释放；停留不受 120 秒自动窗口限制，也不再依赖隐藏后重新挂浮层。玩家点“进入游戏”后才收页面并继续启动或重启。" \
+            -m "热更新结论页和首次安装收尾都直接等待显式停留状态释放；停留不受 120 秒自动窗口限制，也不再依赖隐藏后重新挂浮层。玩家点‘进入游戏’后才收页面并继续启动或重启。" \
             -m "文档: 沿用 DOWNLOAD_TRANSACTIONAL_CHUNKS.md 的停留合同" \
             -m "Co-authored-by: Codex <noreply@openai.com>"
           git push origin HEAD:main
