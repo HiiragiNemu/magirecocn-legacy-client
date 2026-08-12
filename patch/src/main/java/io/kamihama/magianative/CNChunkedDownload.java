@@ -731,7 +731,13 @@ public final class CNChunkedDownload {
                 int n = in.read(buf);
                 if (n < 0) break;
                 if (n == 0) continue;
-                if (received + n > expected) throw new IOException("分段响应越界");
+                // 无清单兼容路径：响应头已经严格回验为请求区间时，若中间设备仍在
+                // 正文尾部多发字节，只接收声明区间内的部分并在下一轮退出。绝不能
+                // 把越界正文写进相邻分段；有清单的事务块路径仍对任何越界严格拒绝。
+                if (received + n > expected) {
+                    n = (int) (expected - received);
+                    if (n <= 0) break;
+                }
                 raf.write(buf, 0, n);
                 received += n;
                 ctx.done.addAndGet(index, n);
