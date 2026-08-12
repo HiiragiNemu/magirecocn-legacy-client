@@ -52,6 +52,19 @@ public final class ChunkManifest {
         return m == null ? null : m.get(fileName);
     }
 
+    /**
+     * 作废缓存：分块校验失败时调用，下次 {@link #forFile} 重新拉取。
+     *
+     * <p>热更文件重新发布后，本进程里缓存的旧块哈希会和新文件对不上（manifest
+     * 是「一次启动只拉一次」）。校验失败说明要么传输损坏、要么清单过期——前者
+     * 重拉无妨，后者重拉即治（2026-08-12 真机日志：cn_scenario_update.zip 重发后
+     * 客户端旧清单反复 ResetRequired）。
+     */
+    public static synchronized void invalidate() {
+        cached = null;
+        attempted = false;
+    }
+
     /** 多线路重试拉取并解析一次（全失败静默，退化为无清单）。 */
     private static synchronized Map<String, CNChunkedDownload.ChunkHashes> fetchOnce() {
         if (cached != null || attempted) return cached;
