@@ -185,6 +185,7 @@ Co-authored-by: Codex <noreply@openai.com>
 | Codex | `Codex <noreply@openai.com>` |
 | Claude | `Claude <noreply@anthropic.com>` |
 | Kimi | `Kimi <noreply@moonshot.cn>` |
+| DeepSeek | `DeepSeek <noreply@deepseek.com>` |
 
 **不要**让 `github-actions[bot]` 当作者——那说明你在用 CI 代提交，见 §2。
 （CI 自动打的 tag 不算提交，不在此列。）
