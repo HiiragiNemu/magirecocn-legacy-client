@@ -60,6 +60,19 @@
 
 > 2026-08-13 真机：`cn_scenario_update.zip` 的块 0 在 edge / esa / gh-proxy v4 / gh-proxy 四条线路上得到同一个 `bb4e7df4…`，而清单期望 `acb43c47…`。四个镜像众口一词说明文件没坏，是清单旧了；同日核对 `cn_js_update.zip` 的整包 MD5 与 `version_js.json` 完全一致，而清单里那一块同样对不上。
 
+### 空间不足与线路故障的分界（2026-08-13）
+
+写 `.cpart` 或解压时的 ENOSPC 抛的是普通 `IOException`，与超时、断流、坏块走同一个 catch。不区分的后果有三层：无辜线路被 `reportFailure` 记一次失败（线上 `switch_after_failures=1`，一次就进 60 秒冷却）；四次重试逐条线路轮过去把整个重试窗口白烧掉；玩家最终看到红条加四个都不解决问题的选项（重试 / 备用引擎 / 单线程 / 离线包），只会一直点重试。
+
+因此：
+
+1. `CNDiskSpace.isOutOfSpace` 按文本认 errno（`ErrnoException` 的常量在编译 classpath 上够不着），并遍历整条 cause 链——解压那条路是 `InstallIOException("Cannot write extraction temp: …", ErrnoException)`，包了两层；
+2. 预检放在**知道大小的那一刻**：探针给出 `probe.total` 时（扣掉已有断点），以及解压前由 zip 目录累加出 `totalBytes` 时（扣掉已解压部分）。等写满再报，等于白下一个多小时；
+3. 判定为空间不足时**不** `reportFailure`、**不**再重试，直接把还差多少告诉玩家。断点与已解压内容一律保留，腾出空间后重试是接着装；
+4. 取不到可用空间（`getUsableSpace()` 失败）时一律**放行**——宁可照旧在写的时候失败，也不能因为读不到一个数字就把玩家挡在门外。
+
+这件事最常撞在 `cn_base_03.zip` 上，而且与「03 有什么毛病」无关：它 1.3 GiB，是队列里第一个真正的大包，前面五个装完空间峰值正好落在它这里。玩家的感受是「03 老是下不了」，实际是「空间在 03 用尽」。
+
 ## 回归合同
 
 `ChunkHashIntegrationTest` 必须覆盖：
@@ -76,6 +89,8 @@
 `DownloadConcurrencyTest` 必须证明第九条连接在全局上限处等待，释放许可后继续，峰值不超过 8。
 
 `HotUpdateRoutingTest` 必须钉住动态热更新不读取基础包 manifest、身份查询键稳定，以及“一个成功 + 一个失败”只能显示“部分更新完成”。还必须钉住**首次安装器**同样不给这两包套 manifest，且反向钉住 13 个静态基础包继续走块指纹事务——把判据写宽能让红条消失，代价是整批基础包退回只剩 ZIP 结构预检。
+
+`DiskSpaceTest` 必须钉住 ENOSPC 的各种长相都认得出（含包了两层的 cause 与自环 cause），且超时／分块校验失败／Range 越界这些真正的网络故障**不**被误判为空间不足——反了的代价一样实在：网络故障被当成磁盘满就再也不换线、不重试了。
 
 `UiAssistStateTest` 必须覆盖：显式停留、一次性进入游戏请求与浮层销毁后的状态清零。
 `check-download-ui-contract.py` 必须拒绝 decorView 外挂、整屏平移、缺失的横纵滚动容器、教程“否”触发重启，以及缺失的热更新版本复位。

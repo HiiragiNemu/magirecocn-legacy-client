@@ -119,6 +119,20 @@ checks = {
         "TAG_SLOT_INFO" in assist
         and "row.findViewWithTag(TAG_SLOT_INFO)" in assist
         and "row.addView(b, at, lp)" in assist,
+    # 磁盘满不能伪装成网络故障。ENOSPC 抛的是普通 IOException，和超时、断流走同一个
+    # catch，于是：线路被 reportFailure（线上 switch_after_failures=1，一次就冷却
+    # 60 秒）、四次重试逐条线路白烧、玩家对着「重试/备用引擎/单线程/离线包」四个
+    # 都不解决问题的选项反复点。最容易撞上的是 cn_base_03.zip——1.3 GiB，队列里第一个
+    # 真正的大包，前面五个装完空间峰值正好落在它这里。
+    "磁盘满不按线路故障处理":
+        "CNDiskSpace.isOutOfSpace" in downloader
+        and "catch (CNDiskSpace.NotEnoughSpace e)" in downloader
+        and "reportNoSpace" in downloader,
+    # 预检要在**知道大小的那一刻**做，不能等写满：探针刚给出长度、以及解压前
+    # 由 zip 目录累加出 totalBytes 的那两处。
+    "下载与解压都先看装不装得下":
+        "CNDiskSpace.require(archive, probe.total - partBytes(archive), name)" in downloader
+        and "CNDiskSpace.require(root, totalBytes - doneBytes" in extract_tx,
     # 权限引导页的宿主固定 decorView，靠布局回调持续置顶。曾按「下载浮层在就挂
     # 进浮层」选宿主，可它由挂载看门狗在 Activity 出现后几毫秒触发，那时下载浮层
     # 还没建出来——判断永远走 decorView，几百毫秒后浮层加进同一个 decorView 把它

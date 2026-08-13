@@ -1056,7 +1056,20 @@ public final class CNDownloaderFix {
                 }
                 CNLog.w(TAG, "resume-reset file=" + name + " attempt=" + attempt
                         + " reason=" + e.getMessage());
+            } catch (CNDiskSpace.NotEnoughSpace e) {
+                // 设备装不下，不是线路的错。**不** reportFailure（线上
+                // switch_after_failures=1，一次就够把一条无辜线路冷却 60 秒），
+                // 也不再重试——空间不会因为多试四次就长出来。
+                reportNoSpace(index, name, e.getMessage());
+                return false;
             } catch (ExtractionPaused e) {
+                if (CNDiskSpace.isOutOfSpace(e)) {
+                    // 解压途中写满了。ZIP 与解压检查点都保留着，腾出空间后
+                    // 重试会接着装——但得先让玩家知道要腾空间。
+                    reportNoSpace(index, name, CNDiskSpace.shortfall(
+                            name + " 解压", 0L, CNDiskSpace.usableBytes(archive)));
+                    return false;
+                }
                 CNLog.e(TAG, "extract-paused file=" + name
                         + "（完整 ZIP 与解压进度均保留，重试将继续解压）", e);
                 markFailed(index);
@@ -1087,6 +1100,13 @@ public final class CNDownloaderFix {
                     CNCNDownloadUI.resetFileProgress(index);
                     attempt = 0;
                     continue;
+                }
+                // ENOSPC 也可能从写 .cpart 的中途冒出来，这时它长得就是一个
+                // 普通 IOException。先认出来，别当成线路故障处理。
+                if (CNDiskSpace.isOutOfSpace(e)) {
+                    reportNoSpace(index, name, CNDiskSpace.shortfall(
+                            name, 0L, CNDiskSpace.usableBytes(archive)));
+                    return false;
                 }
                 CNLog.e(TAG, "archive-failed file=" + name + " attempt=" + attempt
                         + " mirror=" + mirror.name, e);
@@ -1350,6 +1370,10 @@ public final class CNDownloaderFix {
                     if (fit < chunks) chunks = (int) Math.max(1L, fit);
                 }
                 if (chunks > 1) {
+                    // 探针刚给出真实长度，这是第一个能判断「装得下吗」的时刻。
+                    // 放在这里而不是下完之后：03 这种 1.4G 的包，等写到最后一个
+                    // 块才 ENOSPC，等于白下一个多小时（见 CNDiskSpace 的说明）。
+                    CNDiskSpace.require(archive, probe.total - partBytes(archive), name);
                     CNLog.i(TAG, "chunked-download file=" + name + " mirror=" + mirror.name
                             + " chunks=" + chunks + " bytes=" + probe.total + " direct=" + direct);
                     updateSize(index, probe.total);
@@ -1370,6 +1394,34 @@ public final class CNDownloaderFix {
         DownloadMetadata single = downloadOnce(url, archive, index, direct, restartToken);
         verifyHotIdentity(name, archive);
         return single;
+    }
+
+    /**
+     * 把「空间不足」如实报给玩家，并把这一项标红。
+     *
+     * <p>和别的失败分开写，是因为玩家该做的事完全不同：别的失败点「重试」有意义，
+     * 这个不点也罢——先去腾空间。所以话里要有<b>数字</b>，不能只说「失败，请重试」。
+     * 断点与已解压的内容一律保留：腾出空间后重试是接着装，不是从头来。
+     */
+    private static void reportNoSpace(int index, String name, String msg) {
+        CNLog.e(TAG, "no-space file=" + name + " " + msg);
+        try {
+            CNCNDownloadUI.updateSimple("存储空间不足",
+                    msg + "。请清理后点「重试」，已下好的部分会保留。", 0);
+        } catch (Throwable ignore) {}
+        markFailed(index);
+    }
+
+    /** 已落盘的断点字节数（两条下载路径的残片文件名不同，都算上）。 */
+    private static long partBytes(File archive) {
+        long n = 0L;
+        try {
+            File a = new File(archive.getPath() + ".part");
+            if (a.isFile()) n += a.length();
+            File b = CNChunkedDownload.partFileFor(archive);
+            if (b.isFile()) n += b.length();
+        } catch (Throwable ignore) {}
+        return n;
     }
 
     /**

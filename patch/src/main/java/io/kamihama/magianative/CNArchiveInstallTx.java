@@ -116,6 +116,11 @@ public final class CNArchiveInstallTx {
                 ZipEntry e = entries.get(i);
                 if (!e.isDirectory() && e.getSize() > 0) doneBytes += e.getSize();
             }
+            // 这里是**唯一**能事先知道解压后要占多少的时刻（totalBytes 由 zip 目录
+            // 逐条累加而来）。先看装不装得下：不查的话，1.4G 的 03 会解压到一半写满，
+            // 玩家看到的是一句语焉不详的 extract-paused，而真正该做的是去腾空间。
+            // 断点与已解压的内容都保留，腾完接着装。
+            CNDiskSpace.require(root, totalBytes - doneBytes, archive.getName() + " 解压");
             if (progress != null) progress.onProgress(next, entries.size(), doneBytes, totalBytes);
             CNLog.i(TAG, "extract-start file=" + archive.getName() + " entries="
                     + entries.size() + " resume=" + next);
