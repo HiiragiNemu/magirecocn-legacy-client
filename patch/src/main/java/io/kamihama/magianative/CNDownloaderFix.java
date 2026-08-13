@@ -312,12 +312,19 @@ public final class CNDownloaderFix {
      * <p>要等，是因为本方法跑在 {@code Application.onCreate} 拉起的后台线程上，
      * 那时引擎的 Activity 往往还没建出来；不能在这里同步等，那会拖住整条启动链。
      *
-     * <p>总闸关着（正式发布包）时一条线程都不起——这条判断必须在最前面，
-     * 不然「收回调试权限」就变成了「功能还在，只是不显示」。
+     * <p>🔴 <b>总闸不能在这里问</b>。它烧在 libMagiaLegacy.so 里，而那个库是在
+     * {@code Cocos2dxActivity} 里链式加载的（引擎库之后）——比本方法所在的
+     * {@code Application.onCreate} 线程<b>晚</b>。在这里问必然抛
+     * UnsatisfiedLinkError，早先据此 return 的写法让悬浮窗在真机上从不出现，
+     * 连权限提示都到不了（2026-08-13）。
+     *
+     * <p>所以把总闸判断挪进下面的循环：等到 Activity 出现时，库必然已经加载
+     * （加载它的正是那个 Activity），那时问才问得到真话。代价是正式发布包上会
+     * 多起一条守护线程，但它拿到 Activity、发现总闸是关的就立刻退出，不建任何
+     * 窗口、不留任何常驻物——「收回调试权限」仍然是彻底的。
      */
     private static void mountDebugOverlay() {
         try {
-            if (!CNDebugBridge.overlayAllowed()) return;
             Thread t = new Thread(new MountDebugOverlay(), "cnv-debug-overlay-mount");
             t.setDaemon(true);
             t.start();
@@ -334,6 +341,13 @@ public final class CNDownloaderFix {
                 try {
                     Activity act = RestClient.getCurrentActivity();
                     if (act != null) {
+                        // 到这里 libMagiaLegacy 必然已加载（加载它的就是这个
+                        // Activity），总闸这时才问得到真话——理由见
+                        // mountDebugOverlay 的注释。
+                        if (!CNDebugBridge.overlayAllowed()) {
+                            CNLog.i(TAG, "调试总闸是关的，不挂悬浮窗");
+                            return;
+                        }
                         // WindowManager 只能在 UI 线程上碰。
                         act.runOnUiThread(new MountOnUi(act));
                         return;

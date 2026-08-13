@@ -27,6 +27,20 @@ public class DebugBridgeTest {
         check("[1a] 没有 native 库时总闸按关处理", !CNDebugBridge.overlayAllowed());
         check("[1b] 总闸关时 isActive 恒假", !CNDebugBridge.isActive());
 
+        // [1c] 真机 bug 的回归（2026-08-13）：libMagiaLegacy.so 在
+        // Cocos2dxActivity 里链式加载，而 triggerInstaller 跑在 Application
+        // .onCreate 的线程上——比它早。第一次问总闸必然 UnsatisfiedLinkError。
+        // 早先把这个失败缓存成 false，于是整个会话不再重试：悬浮窗永不出现，
+        // 连权限提示都到不了，症状看起来像「功能没做进去」。
+        //
+        // JVM 上没有 native 库，这里走的正是那条抛异常的路。
+        check("[1c] 问不到总闸时**不缓存**，下次还会重试",
+                CNDebugBridge.cachedForTest() == null);
+        CNDebugBridge.setAllowedForTest(true);
+        check("[1d] 稍后问到了就认这个答案", CNDebugBridge.overlayAllowed()
+                && Boolean.TRUE.equals(CNDebugBridge.cachedForTest()));
+        CNDebugBridge.resetForTest();
+
         // ── [2] 接管判据：允许挂 ≠ 已经挂上 ─────────────────────────
         // 浮层靠这条决定要不要撤掉「停留」「重下」。判错的代价是玩家卡住时
         // 失去自救手段，所以两个条件必须同时成立才算接管。

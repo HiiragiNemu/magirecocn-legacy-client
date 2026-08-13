@@ -100,25 +100,46 @@ public final class CNDebugBridge {
     // ══ 总闸 ═════════════════════════════════════════════════════════
 
     /**
-     * 本包允不允许调试悬浮窗。取 native 烧进去的常量，只问一次。
+     * 本包允不允许调试悬浮窗。取 native 烧进去的常量。
      *
-     * <p><b>失败一律按「不允许」</b>：native 库没起来 / 方法没绑上时，与其猜
-     * 一个宽松的默认值，不如不出现——这是道分界，宁可少给功能也不能多给。
+     * <p><b>问不到时按「不允许」，但绝不缓存这个「不允许」。</b>这两句必须分开，
+     * 否则就是 2026-08-13 那个真机 bug：
+     *
+     * <pre>
+     *   libMagiaLegacy.so 在 Cocos2dxActivity 里链式加载（引擎库之后），
+     *   而 CNDownloaderFix.triggerInstaller 跑在 Application.onCreate 拉起的
+     *   线程上——**比 Activity 早**。第一次问总闸时库还没加载，
+     *   nativeDebugOverlayEnabled 抛 UnsatisfiedLinkError。
+     * </pre>
+     *
+     * 早先的实现把这个失败缓存成 {@code false}，于是整个会话再也不重试：悬浮窗
+     * 永不出现，连权限提示都到不了，日志里也只有一行「取不到调试总闸」——症状
+     * 看起来像「功能没做进去」，而不是「问早了」。
+     *
+     * <p>所以只缓存<b>真正问到的答案</b>：native 说 false 才是 false（那是正式
+     * 发布包翻了那个布尔），抛异常只说明「现在还问不到」。
      */
     public static boolean overlayAllowed() {
         Boolean cached = allowedCache;
         if (cached != null) return cached.booleanValue();
-        boolean ok;
         try {
-            ok = nativeDebugOverlayEnabled();
+            boolean ok = nativeDebugOverlayEnabled();
+            allowedCache = Boolean.valueOf(ok);
+            return ok;
         } catch (Throwable t) {
-            // UnsatisfiedLinkError（没绑上）也走这里。只记一次，不刷屏。
-            CNLog.i(TAG, "取不到调试总闸，按「关」处理: " + t);
-            ok = false;
+            // 库还没加载（UnsatisfiedLinkError）。**不缓存**，下次再问。
+            // 只记一次，免得 HUD 每秒刷新时刷屏。
+            if (!warnedNoNative) {
+                warnedNoNative = true;
+                CNLog.i(TAG, "暂时取不到调试总闸（native 库还没加载？）"
+                        + "，本次按「关」处理，稍后重试: " + t);
+            }
+            return false;
         }
-        allowedCache = Boolean.valueOf(ok);
-        return ok;
     }
+
+    /** 「取不到总闸」只记一行，别跟着 HUD 刷新刷屏。 */
+    private static volatile boolean warnedNoNative;
 
     /**
      * 悬浮窗<b>此刻真的挂在屏幕上</b>没有。由本体在挂载/摘除时调
@@ -482,7 +503,15 @@ public final class CNDebugBridge {
     public static void resetForTest() {
         allowedCache = null;
         active = false;
+        warnedNoNative = false;
     }
+    /**
+     * 总闸的缓存现状：{@code null} = 还没问到过（下次会重试）。
+     *
+     * <p>专门给「问不到时不缓存」那条用例。这个区别在真机上的表现是
+     * 「悬浮窗永远不出现」，靠人眼复查发现不了——只能靠钉这一条。
+     */
+    public static Boolean cachedForTest() { return allowedCache; }
     public static int hudMaxNamesForTest() { return HUD_MAX_NAMES; }
     public static Set<String> newSetForTest() { return new HashSet<String>(); }
     /** 不过滤（P7）的全表：给「维护者手动开的开关仍出现在 activeFlags」用例用。 */
