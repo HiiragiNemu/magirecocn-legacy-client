@@ -1,0 +1,82 @@
+name: one-shot-03-completion-ui-speed-fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-03-completion-ui-speed-fix-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Apply audited runtime patch
+        run: |
+          set -euo pipefail
+          cat .github/patch-payload/03-completion-*.gzpart | gzip -dc > /tmp/apply-fix.py
+          python3 -m py_compile /tmp/apply-fix.py
+          python3 /tmp/apply-fix.py
+          git diff --check
+
+      - name: Compile Java patch and focused regressions
+        run: |
+          set -euo pipefail
+          mkdir -p .cache/deps .build/stubs/io/kamihama/magianative .build-test
+          curl -sSL -o .cache/deps/platform.zip \
+            "https://dl.google.com/android/repository/platform-33_r02.zip"
+          unzip -o -q -j .cache/deps/platform.zip "*/android.jar" -d .cache/deps
+          curl -sSL -o .cache/deps/orgjson.jar \
+            "https://repo1.maven.org/maven2/org/json/json/20231013/json-20231013.jar"
+          cat > .build/stubs/io/kamihama/magianative/RestClient.java <<'STUB'
+          package io.kamihama.magianative;
+          import android.app.Activity;
+          public class RestClient {
+              public static Activity getCurrentActivity() { return null; }
+          }
+          STUB
+          javac -nowarn -source 8 -target 8 -encoding UTF-8 \
+            -cp .cache/deps/android.jar \
+            -d .build-test \
+            $(find patch/src/main/java -name '*.java') \
+            tools/teststubs/android/webkit/WebResourceResponse.java \
+            tools/*Test.java \
+            .build/stubs/io/kamihama/magianative/RestClient.java
+          java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar ArchiveInstallTxTest
+          java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar ManualRedownloadTest
+          python3 tools/check-download-ui-contract.py
+
+      - name: Commit runtime fix
+        run: |
+          set -euo pipefail
+          git config user.name "CyberNova2333"
+          git config user.email "167044144+CyberNova2333@users.noreply.github.com"
+          git add AndroidManifest.xml docs/DOWNLOAD_TRANSACTIONAL_CHUNKS.md \
+            patch/src/main/java/io/kamihama/magianative/CNArchiveInstallTx.java \
+            patch/src/main/java/io/kamihama/magianative/CNDownloadRestart.java \
+            patch/src/main/java/io/kamihama/magianative/CNChunkedDownload.java \
+            patch/src/main/java/io/kamihama/magianative/CNDownloaderFix.java \
+            patch/src/main/java/io/kamihama/magianative/CNHotUpdate.java \
+            patch/src/main/java/io/kamihama/magianative/CNManualRedownload.java \
+            patch/src/main/java/io/kamihama/magianative/CNDownloadUiAssist.java \
+            patch/src/main/java/io/kamihama/magianative/CNCNDownloadUI.java \
+            tools/ArchiveInstallTxTest.java tools/check-download-ui-contract.py
+          git commit -m "fix(download): 03完工可续解压并允许下载中重下" \
+            -m "完整03 ZIP在marker提交前不再被启动流程删除；新增带中心目录指纹、逐文件CRC、原子换入与检查点的可恢复解压事务。进程在100%后的解压阶段被杀，下一次启动复用已验证ZIP并继续，不再反复下载。" \
+            -m "下载中的任意ZIP可直接重下：中止该文件当前传输、清除该文件断点并从头开始，其它并行文件不受影响。速度改按单调有效进度的3秒窗口计算，失败块和镜像重试不再重复叠加。" \
+            -m "UI默认75/100%严格贴合视口，仅真实溢出时出现横向滚动；压缩纵向间距、重排左侧品牌区、缩短并加粗进度条，百分比保留在条外且精确到0.1%。移除无用的全盘和悬浮窗权限。" \
+            -m "文档: 更新 docs/DOWNLOAD_TRANSACTIONAL_CHUNKS.md" \
+            -m "Co-authored-by: Codex <noreply@openai.com>"
+          git push origin HEAD:main
