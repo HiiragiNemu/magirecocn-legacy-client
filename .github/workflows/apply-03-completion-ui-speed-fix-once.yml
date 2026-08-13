@@ -31,6 +31,28 @@ jobs:
           from pathlib import Path
           p = Path('/tmp/apply-fix.py')
           text = p.read_text(encoding='utf-8')
+
+          fn_old = """def replace_once(text: str, old: str, new: str, label: str) -> str:
+              n = text.count(old)
+              if n != 1:
+                  raise SystemExit(f'{label}: expected exactly 1 match, got {n}')
+              return text.replace(old, new, 1)
+          """
+          fn_new = """def replace_once(text: str, old: str, new: str, label: str) -> str:
+              n = text.count(old)
+              if n < 1:
+                  raise SystemExit(f'{label}: expected at least 1 match, got {n}')
+              first_match_labels = {'hot fetch signature'}
+              if n > 1 and label in first_match_labels:
+                  return text.replace(old, new, 1)
+              if n != 1:
+                  raise SystemExit(f'{label}: expected exactly 1 match, got {n}')
+              return text.replace(old, new, 1)
+          """
+          if text.count(fn_old) != 1:
+              raise SystemExit('replace_once helper baseline not found exactly once')
+          text = text.replace(fn_old, fn_new, 1)
+
           old = """s = replace_once(s,
           '''            monitor(latch, pool, abort, open, firstErr, lastMoveNs, networkBytes,
                               probe.total, sink);''',
