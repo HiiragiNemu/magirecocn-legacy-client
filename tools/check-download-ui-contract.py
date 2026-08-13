@@ -51,7 +51,7 @@ checks = {
     # 那正是「下完了却是旧台词」。
     "热更两包按 version json 身份完工校验":
         "verifyHotIdentity" in downloader
-        and "CNHotUpdateCheck.metaForSlot(slot)" in downloader
+        and "CNHotUpdateCheck.metaForSlot(indexOfArchive(name))" in downloader
         and "CNHotUpdateValidate.verifyZip(archive, meta)" in downloader
         and "static CNHotUpdateValidate.VerMeta metaForSlot(int slot)" in hot_check,
     "动态热更新绑定 version-size-md5": "cnv_hot=" in hot and "hotIdentity" in hot and "verifyZip(dest, expected)" in hot,
@@ -174,12 +174,29 @@ checks = {
         and 'CNMirrors.reportFailure(mirror, "aria2 code=" + rv)' in downloader
         and "A2_MAX_ATTEMPTS = 4" in downloader
         and downloader.count("CNMirrors.reportSuccess(mirror)") >= 2,
+    # 热更两包在**同一个 URL** 上被反复重发，CDN 各节点因此可能同时存在好几个版本。
+    # 热更轮一直靠 cnv_hot=<version-size-md5> 把它们隔开，安装器与 aria2 这两条路
+    # 却一次都没加——于是可能下到旧副本：主引擎那边校验必然不过（换线、再下、再
+    # 不过，四轮 740 MiB 全白费），aria2 那边则是装上旧台词、等热更轮再下一遍。
+    # 「scenario_update 特别容易下载失败」的最后一个诱因就是它。
+    "热更两包按本轮身份取（三条路同一个格式）":
+        "CNHotUpdate.withIdentity(mirror.urlFor(name), hotMeta)" in downloader
+        and "CNHotUpdate.withIdentity(mirror.urlFor(name), a2Meta)" in downloader
+        and "static String withIdentity(String url, CNHotUpdateValidate.VerMeta meta)" in hot,
+    # 下哪个与校验哪个必须是**同一份** meta：分两次取会在重发的瞬间撞上不一致，
+    # 表现为「刚下完就说身份不对」。
+    "取包与校验复用同一份身份":
+        "verifyHotIdentity(name, archive, hotMeta)" in downloader
+        and "CNHotUpdateValidate.VerMeta hotMeta = useManifest ? null" in downloader,
     # 维护者决定（2026-08-13）：aria2 模式下不叠加额外内容校验，判据是 ZIP 自带的
     # 完整性。所以这里是**反向**断言——这条路上不许再冒出 manifest 块指纹或热更
     # version json 的比对。代价写在代码注释里：拦得住「没下全」，拦不住「下全了但
     # 是旧的」，后者交给随后的热更新轮按版本号发现。
+    # 反向断言：aria2 那条路上不许出现 verifyHotIdentity。两处调用都在 fetchArchive
+    # （主引擎的分片路径与单线程路径各一处），aria2 分支一处都不该有。
     "aria2 模式旁路额外内容校验":
-        downloader.count("verifyHotIdentity(name, archive)") == 2
+        downloader.count("verifyHotIdentity(name, archive, hotMeta)") == 2
+        and "verifyHotIdentity(name, archive, a2Meta)" not in downloader
         and "isAria2ArchiveUsable(archive, name)" in downloader,
     "aria2 解压走同一套事务（带空间预检与逐条目校验）":
         "CNArchiveInstallTx.extract(archive, new File(INSTALL_ROOT)," in downloader

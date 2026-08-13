@@ -358,7 +358,14 @@ public final class CNHotUpdate {
         }
     }
 
-    private static String withIdentity(String url, CNHotUpdateValidate.VerMeta meta) {
+    /**
+     * 给 URL 挂上本轮身份，把 CDN 上可能存在的旧副本隔开。
+     *
+     * <p>包内可见而不是 private：首次安装器取热更两包时要用<b>同一个</b>格式。
+     * 两边各写一份迟早会漂，而漂了的表现是「安装器下到的和热更轮下到的不是同
+     * 一个东西」——最难查的那种。
+     */
+    static String withIdentity(String url, CNHotUpdateValidate.VerMeta meta) {
         if (meta == null) return url;
         String sep = url.indexOf('?') >= 0 ? "&" : "?";
         return url + sep + "cnv_hot=" + hotIdentity(meta);

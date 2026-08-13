@@ -1270,7 +1270,14 @@ public final class CNDownloaderFix {
                     }
                 };
 
-                String url = mirror.urlFor(name);
+                // 同样按本轮身份取热更两包。这**不是**校验（aria2 模式下的校验按
+                // 维护者口径一律旁路），是**取哪一个**的问题：不带 cnv_hot 就可能
+                // 从 CDN 拿到一份结构完好的旧副本，装上去玩家看到的是上一版台词，
+                // 直到随后的热更轮按版本号发现并重下——白下 185 MiB。取不到身份
+                // 就用裸 URL，不因此让下载失败。
+                CNHotUpdateValidate.VerMeta a2Meta = usesChunkManifest(name) ? null
+                        : CNHotUpdateCheck.metaForSlot(index);
+                String url = CNHotUpdate.withIdentity(mirror.urlFor(name), a2Meta);
                 // 连接数过同一个判据。CNDownloadMode.cap() 原先只管主引擎那四处，
                 // aria2 这里硬编码 16——于是玩家在失败弹窗里选了「改用单线程
                 // 下载」之后，下一个文件照样先走 aria2、照样 16 条连接，正好是
@@ -1433,9 +1440,24 @@ public final class CNDownloaderFix {
             return new DownloadMetadata(len, readSidecarEtag(archive));
         }
 
-        String url = mirror.urlFor(name);
-        int wanted = mirror.effectiveChunks();
         final boolean useManifest = usesChunkManifest(name);
+        // 热更两包（scenario / js）在同一个 URL 上被反复重发，所以 CDN 各节点上
+        // 完全可能同时存在好几个版本。热更轮一直靠 cnv_hot=<version-size-md5>
+        // 把它们隔开，安装器这条路却一次都没加——于是它可能下到一份旧副本，
+        // 而校验用的是**当前**的 version json，必然对不上：换线、再下、再对不上，
+        // 四轮 740 MiB 全白费，最后红条。这正是「scenario_update 特别容易下载
+        // 失败」的那个诱因。
+        //
+        // 同一份 meta 既决定下哪个、又决定校验哪个——两者必须是同一个版本，
+        // 分两次取会在重发的瞬间撞上不一致。取不到就退回裸 URL 并跳过校验，
+        // 由随后的热更轮按版本号补齐。
+        CNHotUpdateValidate.VerMeta hotMeta = useManifest ? null
+                : CNHotUpdateCheck.metaForSlot(indexOfArchive(name));
+        String url = CNHotUpdate.withIdentity(mirror.urlFor(name), hotMeta);
+        if (hotMeta != null) {
+            CNLog.i(TAG, "热更包按本轮身份取: " + name + " version=" + hotMeta.version);
+        }
+        int wanted = mirror.effectiveChunks();
 
         if (wanted > 1) {
             CNChunkedDownload.Probe probe = CNChunkedDownload.probe(url, direct);
@@ -1477,7 +1499,7 @@ public final class CNDownloaderFix {
                             url, archive, chunks, direct, probe,
                             new ArchiveSink(index, restartToken),
                             mirror, name, true, hashes);
-                    verifyHotIdentity(name, archive);
+                    verifyHotIdentity(name, archive, hotMeta);
                     return new DownloadMetadata(r.totalBytes, r.etag);
                 }
             }
@@ -1485,7 +1507,7 @@ public final class CNDownloaderFix {
                     + " → 单线程续传");
         }
         DownloadMetadata single = downloadOnce(url, archive, index, direct, restartToken);
-        verifyHotIdentity(name, archive);
+        verifyHotIdentity(name, archive, hotMeta);
         return single;
     }
 
@@ -1591,10 +1613,9 @@ public final class CNDownloaderFix {
      * 版本号重新比对；此刻卡住安装只会把「服务端某个小 json 冷启动超时」升级成
      * 「装不上游戏」。核对不上则删包抛错，交给上层换线重试。
      */
-    private static void verifyHotIdentity(String name, File archive) throws IOException {
+    private static void verifyHotIdentity(String name, File archive,
+                                          CNHotUpdateValidate.VerMeta meta) throws IOException {
         if (usesChunkManifest(name) || archive == null || !archive.isFile()) return;
-        int slot = indexOfArchive(name);
-        CNHotUpdateValidate.VerMeta meta = CNHotUpdateCheck.metaForSlot(slot);
         if (meta == null) {
             CNLog.w(TAG, "热更包取不到版本身份，本次只做结构预检 file=" + name
                     + "（热更那一轮会再按版本号核对）");
