@@ -6,11 +6,14 @@ import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.InsetDrawable;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -39,8 +42,22 @@ public final class CNDownloadUiAssist {
     private static final String TAG_STAY = "cn-download-stay";
     private static final String TAG_DISPLAY = "cn-download-display";
     private static final String TAG_RELOAD = "cn-download-reload-";
+    private static final String TAG_SPLIT = "cn-download-split";
     private static final String PREFS = "cnv_bootstrap_ui_assist";
     private static final String PREF_SCALE = "font_scale_pct";
+    private static final String PREF_SPLIT = "split_left_pct";
+
+    /**
+     * 左右分界线可拖到的范围与默认值（左列占比 %）。
+     *
+     * <p>默认 38 = `CNCNDownloadUI` 建左右两列时给的 0.38f / 0.62f，不改原设计，
+     * 只是让它可调。上下限留得比较紧：两边都还要放得下东西——左列是 Logo + 署名，
+     * 右列是 15 个槽位行，谁被压到 20% 以下都只剩省略号，那种「调得动但没法用」
+     * 的自由度不如不给。
+     */
+    private static final int SPLIT_MIN = 20;
+    private static final int SPLIT_MAX = 70;
+    private static final int SPLIT_DEFAULT = 38;
     private static final String OLD_LINGER =
             "即将进入游戏；点按浮层（如「教程」胶囊播序章）可稍作停留";
     private static final String NEW_LINGER =
@@ -60,8 +77,11 @@ public final class CNDownloadUiAssist {
     private static SeekBar scaleSeek;
     private static FrameLayout confirmModal;
     private static FrameLayout displayModal;
+    private static View splitHandle;
+    private static TextView splitLabel;
     private static SharedPreferences prefs;
     private static int scalePct = 100;
+    private static int splitPct = SPLIT_DEFAULT;
     private static int baseContentWidth;
     private static volatile boolean stayRequested;
     private static volatile boolean leaveRequested;
@@ -192,6 +212,8 @@ public final class CNDownloadUiAssist {
             displayChip = null;
             confirmModal = null;
             displayModal = null;
+            splitHandle = null;
+            splitLabel = null;
             baseContentWidth = 0;
             BASE_TEXT_PX.clear();
             loadPrefs(overlay.getContext());
@@ -201,6 +223,7 @@ public final class CNDownloadUiAssist {
         installStay(overlay);
         installDisplay(overlay);
         installReloads(overlay);
+        installSplit();
         refreshReloadStates();
         styleStay();
         styleDisplay();
@@ -222,7 +245,11 @@ public final class CNDownloadUiAssist {
         if (prefs == null && context != null) {
             prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         }
-        if (prefs != null) scalePct = clamp(prefs.getInt(PREF_SCALE, 100), 75, 150);
+        if (prefs != null) {
+            scalePct = clamp(prefs.getInt(PREF_SCALE, 100), 75, 150);
+            splitPct = clamp(prefs.getInt(PREF_SPLIT, SPLIT_DEFAULT),
+                    SPLIT_MIN, SPLIT_MAX);
+        }
     }
 
     private static void detachOnMain() {
@@ -248,6 +275,8 @@ public final class CNDownloadUiAssist {
         scaleSeek = null;
         confirmModal = null;
         displayModal = null;
+        splitHandle = null;
+        splitLabel = null;
         baseContentWidth = 0;
         BASE_TEXT_PX.clear();
     }
@@ -330,6 +359,11 @@ public final class CNDownloadUiAssist {
         }
         TextView chip = createTopChip(row, TAG_DISPLAY);
         chip.setOnClickListener(new DisplayClick());
+        // 点开弹窗（细调）与长按拖动（粗调）并存，见 DisplayDrag 的注释
+        DisplayDrag drag = new DisplayDrag();
+        chip.setLongClickable(true);
+        chip.setOnLongClickListener(drag);
+        chip.setOnTouchListener(drag);
         row.addView(chip, topChipLp(chip));
         displayChip = chip;
     }
@@ -623,6 +657,34 @@ String extra = activeNow
         plusLp.leftMargin = dp(plus, 8);
         controls.addView(plus, plusLp);
 
+        // ── 左右分界线 ──
+        // 拖动本身在分界线上做（那里才看得见效果，弹窗会盖住内容），这里只放
+        // 说明和复位：拖歪了要能一键回到 38/62，不然只能靠手感往回蹭。
+        TextView splitTitle = text(act, "左右分界线", 14f,
+                color("COLOR_ACCENT", 0xFFD63384));
+        splitTitle.setTypeface(splitTitle.getTypeface(), Typeface.BOLD);
+        LinearLayout.LayoutParams splitTitleLp = rowLp(splitTitle, 14, 4);
+        panel.addView(splitTitle, splitTitleLp);
+
+        TextView splitHint = text(act,
+                "长按左右两列中间那根竖线，然后左右拖动即可调整宽度分配。",
+                12.5f, color("COLOR_LOG_PANEL_TEXT", 0xFF2A1A3B));
+        splitHint.setLineSpacing(dp(splitHint, 2), 1f);
+        panel.addView(splitHint, rowLp(splitHint, 0, 8));
+
+        LinearLayout splitCtl = new LinearLayout(act);
+        splitCtl.setOrientation(LinearLayout.HORIZONTAL);
+        splitCtl.setGravity(Gravity.CENTER_VERTICAL);
+        panel.addView(splitCtl, rowLp(splitCtl, 0, 14));
+        splitLabel = text(act, "左右分界 " + splitPct + "% / " + (100 - splitPct) + "%",
+                13f, color("COLOR_ACCENT2", 0xFF9C5BC2));
+        splitLabel.setTypeface(splitLabel.getTypeface(), Typeface.BOLD);
+        splitCtl.addView(splitLabel, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView splitReset = dialogButton(act, "复位 " + SPLIT_DEFAULT + "%", false);
+        splitReset.setOnClickListener(new SplitResetClick());
+        splitCtl.addView(splitReset);
+
         TextView done = dialogButton(act, "完成", true);
         done.setOnClickListener(new CloseDisplayClick());
         LinearLayout.LayoutParams doneLp = new LinearLayout.LayoutParams(
@@ -650,6 +712,14 @@ String extra = activeNow
 
     private static final class ScaleResetClick implements View.OnClickListener {
         @Override public void onClick(View v) { setScale(100); }
+    }
+
+    private static final class SplitResetClick implements View.OnClickListener {
+        @Override public void onClick(View v) {
+            setSplit(SPLIT_DEFAULT);
+            if (prefs != null) prefs.edit().putInt(PREF_SPLIT, splitPct).apply();
+            CNCNDownloadUI.noteInteraction();
+        }
     }
 
     private static void setScale(int value) {
@@ -757,6 +827,226 @@ String extra = activeNow
 
 
 
+    // ══ 左右分界线：长按进入调节，横向拖动改占比 ═══════════════════════
+    //
+    // `CNCNDownloadUI` 建的 mainRow 是 [左列 0.38f][右列 0.62f]，两列之间原本
+    // 连条线都没有。这里在中间插一根**可拖**的把手，改的只是两侧的 weight，
+    // 不动任何一列的内部布局——所以对面怎么返工那两列都不受影响。
+    //
+    // 为什么是「长按之后才拖」而不是直接拖：把手正好落在 mainScroll
+    // （HorizontalScrollView）里，字号放大到 >100% 时那层是要横向滚动的。
+    // 直接拖会和滚动抢同一个手势，误触率高得离谱。长按先确认意图，再
+    // requestDisallowInterceptTouchEvent 把手势从滚动那里要过来。
+
+    private static void installSplit() {
+        LinearLayout row = splitRow();
+        if (row == null) return;
+
+        View existing = row.findViewWithTag(TAG_SPLIT);
+        if (existing != null) {
+            splitHandle = existing;
+            styleSplit(false);
+            applySplit();
+            return;
+        }
+        if (row.getChildCount() < 2) return;      // 还没建出两列
+
+        View handle = new View(row.getContext());
+        handle.setTag(TAG_SPLIT);
+        handle.setLongClickable(true);            // 没有这个收不到长按
+        SplitDrag drag = new SplitDrag();
+        handle.setOnLongClickListener(drag);
+        handle.setOnTouchListener(drag);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                dp(handle, 14), ViewGroup.LayoutParams.MATCH_PARENT);
+        row.addView(handle, 1, lp);               // 夹在两列中间
+        splitHandle = handle;
+        styleSplit(false);
+        applySplit();
+    }
+
+    /** mainRow：横向的那个内容根。形状不对（对面改了布局）一律返回 null。 */
+    private static LinearLayout splitRow() {
+        View cr = contentRoot;
+        if (!(cr instanceof LinearLayout)) return null;
+        LinearLayout row = (LinearLayout) cr;
+        return row.getOrientation() == LinearLayout.HORIZONTAL ? row : null;
+    }
+
+    /**
+     * 把当前占比写进两侧的 weight。
+     *
+     * <p>只在「两列都是按 weight 排的」时才动手：谁哪天把某一列改成固定宽度，
+     * 这里就该什么都不做，而不是把它的宽度清零——那会直接让半个界面消失。
+     */
+    private static void applySplit() {
+        LinearLayout row = splitRow();
+        if (row == null || row.getChildCount() < 3) return;
+        View left = row.getChildAt(0);
+        View right = row.getChildAt(2);
+        if (!weighted(left) || !weighted(right)) return;
+        setWeight(left, splitPct / 100f);
+        setWeight(right, (100 - splitPct) / 100f);
+        row.requestLayout();
+        if (splitLabel != null) splitLabel.setText("左右分界 " + splitPct + "% / "
+                + (100 - splitPct) + "%");
+    }
+
+    private static boolean weighted(View v) {
+        ViewGroup.LayoutParams lp = v.getLayoutParams();
+        return lp instanceof LinearLayout.LayoutParams
+                && ((LinearLayout.LayoutParams) lp).weight > 0f;
+    }
+
+    private static void setWeight(View v, float weight) {
+        LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) v.getLayoutParams();
+        lp.weight = weight;
+        lp.width = 0;
+        v.setLayoutParams(lp);
+    }
+
+    /** 平时是一根淡描边线；进入调节模式后加粗并换成强调色。 */
+    private static void styleSplit(boolean active) {
+        View v = splitHandle;
+        if (v == null) return;
+        GradientDrawable line = new GradientDrawable();
+        line.setColor(active ? color("COLOR_ACCENT", 0xFFD63384)
+                             : color("COLOR_CARD_STK", 0x33B53C8C));
+        line.setCornerRadius(dp(v, 2));
+        int inset = active ? dp(v, 5) : dp(v, 6);   // 14dp 把手 → 4dp / 2dp 可见线
+        v.setBackground(new InsetDrawable(line, inset, dp(v, 6), inset, dp(v, 6)));
+    }
+
+    private static void setSplit(int value) {
+        splitPct = clamp(value, SPLIT_MIN, SPLIT_MAX);
+        applySplit();
+    }
+
+    /**
+     * 长按进调节、拖动改占比。
+     *
+     * <p>static 嵌套类——匿名/非静态内部类会带合成字段 this$0，d8 撞上直接 NPE
+     * （CLAUDE.md 铁律 4，CI 的 check-d8-pitfalls.py 会拦）。
+     */
+    private static final class SplitDrag
+            implements View.OnTouchListener, View.OnLongClickListener {
+        private boolean dragging;
+        private float startX;
+        private int startPct;
+
+        @Override public boolean onLongClick(View v) {
+            dragging = true;
+            startPct = splitPct;
+            // 把手势从 HorizontalScrollView 手里要过来，否则一横向移动就被它吃掉
+            grabGesture(v, true);
+            try { v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS); }
+            catch (Throwable ignore) {}
+            styleSplit(true);
+            CNCNDownloadUI.noteInteraction();
+            CNCNDownloadUI.toast(RestClient.getCurrentActivity(),
+                    "左右拖动调整分界；松手保存");
+            return true;
+        }
+
+        @Override public boolean onTouch(View v, MotionEvent e) {
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    startX = e.getRawX();
+                    startPct = splitPct;
+                    dragging = false;
+                    return false;            // 交给 View 自己去产生长按
+                case MotionEvent.ACTION_MOVE: {
+                    if (!dragging) return false;
+                    LinearLayout row = splitRow();
+                    int w = row == null ? 0 : row.getWidth();
+                    if (w > 0) {
+                        float delta = e.getRawX() - startX;
+                        setSplit(startPct + Math.round(delta * 100f / w));
+                    }
+                    return true;
+                }
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    if (!dragging) return false;
+                    dragging = false;
+                    grabGesture(v, false);
+                    styleSplit(false);
+                    if (prefs != null) prefs.edit().putInt(PREF_SPLIT, splitPct).apply();
+                    CNCNDownloadUI.noteInteraction();
+                    return true;
+                default:
+                    return false;
+            }
+        }
+    }
+
+    /**
+     * 拖动期间把手势从祖先的滚动容器手里要过来（松手时还回去）。
+     *
+     * <p>两个把手都在 `HorizontalScrollView` / `ScrollView` 里，不要过来的话
+     * 一横向移动就被滚动吃掉，长按之后根本拖不动。
+     */
+    private static void grabGesture(View v, boolean grab) {
+        try {
+            android.view.ViewParent p = v.getParent();
+            if (p != null) p.requestDisallowInterceptTouchEvent(grab);
+        } catch (Throwable ignore) {}
+    }
+
+    // ══ 字号胶囊：点开弹窗（原有），长按后横向拖动直接调（新增）══════════
+    //
+    // 不动原来的点击行为——弹窗里有滑块、A−/A+、恢复 100%，那些还得留着。
+    // 加长按拖动是因为「调字号」这件事本身要反复试，每次都开一次弹窗、
+    // 弹窗又盖住了要看的内容，试到第三次就烦了。手势与分界线保持一致。
+
+    private static final class DisplayDrag
+            implements View.OnTouchListener, View.OnLongClickListener {
+        private boolean dragging;
+        private float startX;
+        private int startPct;
+
+        @Override public boolean onLongClick(View v) {
+            dragging = true;
+            startPct = scalePct;
+            grabGesture(v, true);
+            try { v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS); }
+            catch (Throwable ignore) {}
+            CNCNDownloadUI.noteInteraction();
+            CNCNDownloadUI.toast(RestClient.getCurrentActivity(),
+                    "左右拖动调整字号；松手保存");
+            return true;
+        }
+
+        @Override public boolean onTouch(View v, MotionEvent e) {
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    startX = e.getRawX();
+                    startPct = scalePct;
+                    dragging = false;
+                    return false;
+                case MotionEvent.ACTION_MOVE: {
+                    if (!dragging) return false;
+                    // 一屏宽 ≈ 满量程（75–150）。比分界线灵敏度低一档：
+                    // 字号每一步都会重排整页，太灵敏会拖得满屏乱跳。
+                    int span = Math.max(1, v.getResources()
+                            .getDisplayMetrics().widthPixels);
+                    float delta = e.getRawX() - startX;
+                    setScale(startPct + Math.round(delta * 75f / span));
+                    return true;
+                }
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    if (!dragging) return false;
+                    dragging = false;
+                    grabGesture(v, false);
+                    CNCNDownloadUI.noteInteraction();
+                    return true;
+                default:
+                    return false;
+            }
+        }
+    }
+
     /** 弹窗宽度永远不超过当前逻辑屏幕减 40dp，覆盖窄屏、分屏和高 DPI。 */
     private static int adaptiveDialogWidth(View v) {
         int available = v.getResources().getDisplayMetrics().widthPixels - dp(v, 40);
@@ -820,6 +1110,7 @@ String extra = activeNow
         displayModal = null;
         scaleLabel = null;
         scaleSeek = null;
+        splitLabel = null;
         if (m != null && m.getParent() instanceof ViewGroup) {
             ((ViewGroup) m.getParent()).removeView(m);
         }
@@ -932,4 +1223,13 @@ String extra = activeNow
     private static int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
     }
+
+    // ---- JVM 回归测试入口 ----
+    // 拖动本身要真机，但**夹紧范围**是纯算术，而它恰恰是拖坏界面的唯一途径：
+    // 越界一格，某一列就变成一条只剩省略号的缝。
+    public static int splitPctForTest() { return splitPct; }
+    public static void setSplitForTest(int value) { setSplit(value); }
+    public static int splitDefaultForTest() { return SPLIT_DEFAULT; }
+    public static int splitMinForTest() { return SPLIT_MIN; }
+    public static int splitMaxForTest() { return SPLIT_MAX; }
 }
