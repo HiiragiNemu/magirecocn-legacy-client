@@ -53,8 +53,19 @@ checks = {
     "下载中重下会中止并从头开始": "requestActiveRestart" in downloader
         and "manual-restart-active" in downloader
         and "停止当前传输" in manual,
-    "高风险悬浮窗与全盘权限已移除": "MANAGE_EXTERNAL_STORAGE" not in manifest
-        and "SYSTEM_ALERT_WINDOW" not in manifest,
+    # SYSTEM_ALERT_WINDOW 是**原包自带**的权限，不是我们加的。9688f7e7 把它连同
+    # MANAGE_EXTERNAL_STORAGE 一起删掉，理由写作「移除无用的悬浮窗权限」，并在这里
+    # 立了一条「不许回来」的断言——而维护者对这条改动**完全不知情**。
+    #
+    # 它不是无用的：调试悬浮窗（docs/DEBUG_FLOATING_WINDOW_DESIGN.md）正是靠它挂
+    # WindowManager 窗口，而那个窗口要解决的恰恰是「群友不会用 Termux 改 flag」——
+    # 移除 android:debuggable 就是因为这条路送不到人。删掉权限等于把唯一够得着的
+    # 入口也一并堵死。
+    #
+    # 断言因此**反过来**：这个权限必须在。上一次它是被静默删掉的，那种改动人眼复查
+    # 拦不住，所以钉在这里——谁再删，CI 当场红灯。
+    "原包自带的悬浮窗权限必须保留": "SYSTEM_ALERT_WINDOW" in manifest,
+    "不主动申请全盘存储权限": "MANAGE_EXTERNAL_STORAGE" not in manifest,
 }
 
 failed = [name for name, ok in checks.items() if not ok]
