@@ -109,17 +109,12 @@ checks = {
     "离线即时安装不会自删离线候选": "keepOffline" in downloader
         and "cleanupArchiveDownloadState(index, true)" in downloader,
     # 原版里「文字进度」的右端与下面那条整宽进度条的右端对齐，这条竖线是整块的
-    # 视觉基准。按钮（重试 / 重下）只要排在它后面，一出现就把它往左顶，右边界立刻
-    # 错开——2026-08-13 真机连报两次。所以：文字进度必须是资源行的最后一个孩子，
-    # 重下要**插到它前面**而不是追加到行尾。
+    # 视觉基准。「重试」只要排在它后面，一出现就把它往左顶，右边界立刻错开
+    # ——2026-08-13 真机连报两次。文字进度必须是资源行的最后一个孩子。
     "文字进度是资源行最后一个孩子":
         "info.setTag(CNDownloadUiAssist.TAG_SLOT_INFO)" in ui
         and "headRow.addView(retry, retryLp);" in ui
         and ui.index("headRow.addView(retry, retryLp);") < ui.index("headRow.addView(info, infoLp);"),
-    "重下插在文字进度之前":
-        "TAG_SLOT_INFO" in assist
-        and "row.findViewWithTag(TAG_SLOT_INFO)" in assist
-        and "row.addView(b, at, lp)" in assist,
     # 磁盘满不能伪装成网络故障。ENOSPC 抛的是普通 IOException，和超时、断流走同一个
     # catch，于是：线路被 reportFailure（线上 switch_after_failures=1，一次就冷却
     # 60 秒）、四次重试逐条线路白烧、玩家对着「重试/备用引擎/单线程/离线包」四个
@@ -157,17 +152,20 @@ checks = {
     "膨胀比阈值旁边留着实测表":
         "2.11x" in downloader and "cn_base_03.zip" in downloader
         and "2.11x" in extract_tx,
-    # 浮层必须**建出来就是**玩家调好的比例。原先 buildOverlay 写死 0.38f/0.62f，
-    # 每次重建（切主题、看门狗补挂）都先闪回默认值，等 ensureInstalled 那轮的
-    # applySplit 才改回来——玩家看到的就是「刷新后比例被重置」。
-    "浮层建出来就是玩家调好的分界比例":
-        "CNDownloadUiAssist.leftWeight(act)" in ui
-        and "CNDownloadUiAssist.rightWeight(act)" in ui
-        and "0.38f" not in ui and "0.62f" not in ui,
     # COLOR_* 全是无初始值的 static int，默认 0 = #00000000 全透明。调试悬浮窗
     # 反射读它们取色，读到 0 就把文字画成透明——面板上开关名、说明、「已激活」
     # 标签全消失，只剩硬编码白色的主按钮还在，且时有时无（取决于这次启动有没有
     # 建过下载浮层）。两道：类加载时兜底 + 取色时把 alpha=0 当「没取到」。
+    # 「重下」胶囊与左右分界线拖动已按维护者要求整体撤回（2026-08-13）。下面两条是
+    # **反向**断言：谁再把它们加回来，CI 当场红。撤回的理由不是实现有 bug，是维护者
+    # 不要这两个特性——判据因此钉在「不存在」，而不是「实现得对不对」。
+    "不再有单包重下胶囊":
+        "installReloads" not in assist and "TAG_RELOAD" not in assist
+        and "ReloadClick" not in assist,
+    "不再有左右分界线拖动":
+        "SplitDrag" not in assist and "TAG_SPLIT" not in assist
+        and "splitPct" not in assist
+        and "0.38f" in ui and "0.62f" in ui,
     "调色板在类加载时就有值":
         "static { loadPalette(false); }" in ui and "ensurePalette" in ui,
     "取色把全透明当成没取到":
@@ -176,8 +174,12 @@ checks = {
     # 悬浮窗的日志预览：原先是固定 220dp 高的裸 TextView 直接 setText——没有
     # MovementMethod 就没有内部滚动，外层 ScrollView 滚的是整页不是这个框，于是
     # 超出高度的内容既滚不到也不会随新行走，能看见的只有最早那十几行。
-    "悬浮窗日志预览可滚动且自动吸底":
-        "logtailscroll" in overlay and "stickToBottom" in overlay
+    # 一页只留一个滚动容器。上一版在固定 220dp 的预览框上又套了个 ScrollView，
+    # 结果页面滚动容器与它抢同一个竖直手势，吸底吸的是内层、玩家看到的是外层
+    # 没动（2026-08-13 反馈「内外两个滑动条相互打架，吸底依旧不管用」）。
+    "悬浮窗日志页只有一个滚动容器且吸底吸它":
+        "logtailscroll" not in overlay
+        and '"pagescroll"' in overlay and "stickToBottom" in overlay
         and "fullScroll(View.FOCUS_DOWN)" in overlay and "isAtBottom" in overlay,
     # 解析器与下载浮层那块共用 CNLogFormat，不另写一份。
     "悬浮窗日志预览走同一个解析器":

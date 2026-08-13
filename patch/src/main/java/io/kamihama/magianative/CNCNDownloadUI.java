@@ -753,12 +753,8 @@ public class CNCNDownloadUI {
         LinearLayout leftCol = new LinearLayout(act);
         leftCol.setOrientation(LinearLayout.VERTICAL);
         leftCol.setPadding(dp(act, 4), 0, dp(act, 12), 0);
-        // 比例取玩家调好的那一份，不写死 0.38/0.62。写死的话每次重建浮层
-        // （切主题、看门狗补挂）都会先闪回默认值，等 ensureInstalled 那一轮的
-        // applySplit 才改回来——玩家看到的就是「刷新后比例被重置」。
         mainRow.addView(leftCol, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.MATCH_PARENT,
-                CNDownloadUiAssist.leftWeight(act)));
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 0.38f));
 
         // Logo 整幅在上、贡献者列表在下。9688f7e7 曾改成「Logo 122dp 靠左 +
         // 右侧三行品牌文字」，观感上不成立，已退回。那三行文字也一并去掉：
@@ -796,8 +792,7 @@ public class CNCNDownloadUI {
         rightCol.setOrientation(LinearLayout.VERTICAL);
         rightCol.setPadding(dp(act, 10), dp(act, 4), dp(act, 4), dp(act, 4));
         mainRow.addView(rightCol, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.MATCH_PARENT,
-                CNDownloadUiAssist.rightWeight(act)));
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 0.62f));
 
         LinearLayout headRow = new LinearLayout(act);
         headRow.setOrientation(LinearLayout.HORIZONTAL);

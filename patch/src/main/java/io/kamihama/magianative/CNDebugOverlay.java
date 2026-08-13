@@ -654,6 +654,7 @@ public final class CNDebugOverlay {
             card.addView(top, rowLp(act, 0, 6));
 
             ScrollView scroll = new ScrollView(act);
+            scroll.setTag("pagescroll");
             pageContent = new LinearLayout(act);
             pageContent.setOrientation(LinearLayout.VERTICAL);
             scroll.addView(pageContent, new ScrollView.LayoutParams(
@@ -1147,29 +1148,26 @@ public final class CNDebugOverlay {
         tail.setBackground(tailBg);
         tail.setTag("logtail");
         tail.setText(composeTail());
-        // 预览框自己能滚，并且默认停在最新那一行。
+        // 预览框**不再**自己套一层 ScrollView。
         //
-        // 原先是一个固定 220dp 高的 TextView 直接 setText：超过这个高度的内容
-        // 既滚不到（TextView 没有 MovementMethod 就没有内部滚动），也不会随新行
-        // 往下走——外层那个 ScrollView 滚的是整页，不是这个框。于是「日志预览」
-        // 实际只能看见最早的十几行，而要看的恰恰是最后几行（2026-08-13 反馈）。
-        ScrollView tailScroll = new ScrollView(act);
-        tailScroll.setTag("logtailscroll");
-        tailScroll.setVerticalScrollBarEnabled(true);
-        tailScroll.setScrollbarFadingEnabled(false);
-        tailScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
-        tailScroll.addView(tail, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+        // 上一版在固定 220dp 的框上又套了个 ScrollView，结果是页面的滚动容器和
+        // 它抢同一个竖直手势：手指落在预览框上时两边都想滚，谁抢到看运气，而且
+        // 吸底吸的是内层、玩家看到的却是外层没动（2026-08-13 反馈「内外两个滑动条
+        // 相互打架，吸底依旧不管用」）。
+        //
+        // 一页只留一个滚动容器：预览按内容自然高度展开，滚动与吸底都交给外层那个
+        // 页面 ScrollView。要看的是最后几行，而它们现在就在这一页的最下面。
         LinearLayout.LayoutParams tailLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 220));
-        content.addView(tailScroll, tailLp);
-        stickToBottom(tailScroll);
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        content.addView(tail, tailLp);
 
         // 新行进来时刷新预览。listener 是 CNLog 的单例槽位：进场占、出场按身份归还，
         // 不踩下载浮层日志面板占着的那一份。
         myLogListener = new LogTailListener();
         CNLog.setListener(myLogListener);
+        // 进页面就停在最新那一行：这一页存在的理由就是看最后几行。
+        View pageScroll = panelRoot == null ? null : panelRoot.findViewWithTag("pagescroll");
+        if (pageScroll instanceof ScrollView) stickToBottom((ScrollView) pageScroll);
 
         TextView share = dialogButton(act, "打包并分享日志", true, false);
         share.setOnClickListener(new ShareLogClick());
@@ -1216,12 +1214,12 @@ public final class CNDebugOverlay {
         LogTailRefresh(TextView tail) { this.tail = tail; }
         @Override public void run() {
             if (panelRoot == null || !PAGE_LOG.equals(currentPage())) return;
-            View sc = panelRoot.findViewWithTag("logtailscroll");
+            View sc = panelRoot.findViewWithTag("pagescroll");
             // 只有本来就贴着底的时候才继续贴底。玩家往回翻着看某一行时，新行
             // 一来就把他拽回底部，那比不自动滚还难用。
-            boolean atBottom = !(sc instanceof ScrollView) || isAtBottom((ScrollView) sc);
+            boolean atBottom = sc instanceof ScrollView && isAtBottom((ScrollView) sc);
             tail.setText(composeTail());
-            if (atBottom && sc instanceof ScrollView) stickToBottom((ScrollView) sc);
+            if (atBottom) stickToBottom((ScrollView) sc);
         }
     }
 
