@@ -185,6 +185,14 @@ push 到 main
 - 修改本约定 → 被 ruleset 拒绝（force push / 删分支），且破坏约定本身
   比破坏任何功能代码都严重。
 
+### 禁止一次性 Workflow（2026-08-13 维护者补充）
+
+- **禁止新建任何 `*-once` / 一次性 workflow 文件**（如 `apply-*-once.yml`、
+  `generate-*-once.yml`）。workflow 是长期资产，不是脚手架；
+- 一次性迁移/生成逻辑写进 `tools/` 下脚本（可带 `--once` 参数），或并入
+  现有主 workflow 的步骤，不得以独立 workflow 文件入库；
+- 违反视为与 §八 同级的事故，审查会拦。
+
 ### 生效范围
 
 本约定随本文件推送到全部活跃分支（含 `main`）。分支内容与该分支无关的
