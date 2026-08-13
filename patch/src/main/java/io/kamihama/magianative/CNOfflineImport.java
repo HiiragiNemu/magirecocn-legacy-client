@@ -71,6 +71,16 @@ public final class CNOfflineImport {
         File dir = offlineDir();
         File target = new File(dir, fileName);
 
+        // 上一次导入被中途杀掉留下的半截文件。它们跟目标同名加后缀，hasOffline
+        // 看不见，于是既不会被用上、也永远没人删——而这类文件动辄一两个 G。
+        sweepStaleTemps(dir, fileName);
+
+        // 先看装不装得下。导入是**再拷一份**：玩家自己下的那份还在（多半在下载
+        // 目录里），我们又要在私有区放一份等大的。不预检的话，拷到最后几十兆才
+        // ENOSPC，前面几十分钟白费，而且半截文件还留在盘上。
+        long need = sizeOf(ctx, uri);
+        if (need > 0) CNDiskSpace.require(dir, need, fileName + " 导入");
+
         // TOCTOU 防护：一次性拷到临时文件，后续校验/解压都读它，避免 ContentProvider
         // 两次 openInputStream 返回不同字节。
         File tmp = new File(dir, fileName + ".importing");
@@ -80,6 +90,10 @@ public final class CNOfflineImport {
             byte[] buf = new byte[1 << 16];
             int n;
             while ((n = src.read(buf)) != -1) dst.write(buf, 0, n);
+        } catch (Throwable t) {
+            // 拷贝失败必须把半截文件带走，否则它就是下一个「永远没人删」。
+            deleteQuietly(tmp);
+            throw t;
         }
 
         // 分块校验：逐块算 md5 与清单比对
@@ -112,6 +126,34 @@ public final class CNOfflineImport {
         }
         CNLog.i(TAG, "离线包导入成功: " + fileName + " (" + target.length() + " 字节)");
         return target;
+    }
+
+    /** 所选内容的字节数；取不到返回 -1（此时不预检，照旧拷，写满才失败）。 */
+    private static long sizeOf(Context ctx, Uri uri) {
+        android.database.Cursor c = null;
+        try {
+            c = ctx.getContentResolver().query(uri, null, null, null, null);
+            if (c != null && c.moveToFirst()) {
+                int i = c.getColumnIndex(android.provider.OpenableColumns.SIZE);
+                if (i >= 0 && !c.isNull(i)) return c.getLong(i);
+            }
+        } catch (Throwable ignore) {
+        } finally {
+            if (c != null) try { c.close(); } catch (Throwable ignore) {}
+        }
+        return -1L;
+    }
+
+    /** 清掉本文件遗留的 {@code *.importing} 半截产物。 */
+    private static void sweepStaleTemps(File dir, String fileName) {
+        try {
+            File stale = new File(dir, fileName + ".importing");
+            if (stale.isFile()) {
+                CNLog.w(TAG, "清理上次未完成的导入残留: " + stale.getName()
+                        + "（" + stale.length() + " 字节）");
+                deleteQuietly(stale);
+            }
+        } catch (Throwable ignore) {}
     }
 
     private static void deleteQuietly(File f) {

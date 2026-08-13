@@ -430,8 +430,18 @@ public final class CNLog {
     }
 
     /** 注册缓冲区变更回调；传 null 取消。 */
-    public static void setListener(Runnable r) {
+    /**
+     * 换上新的「有新行了」回调，并<b>返回原来那个</b>。
+     *
+     * <p>返回旧值不是锦上添花：这是个单槽位，而现在有两处在抢——下载浮层的 LOG
+     * 面板与调试悬浮窗的日志页。后者用完若直接置 null，前者的实时刷新就永久停了
+     * （2026-08-13 审计发现：那边的注释写着「别把下载浮层的 listener 顶掉」，
+     * 代码却正是那么做的）。占用方拿着旧值，离场时原样归还。
+     */
+    public static Runnable setListener(Runnable r) {
+        Runnable old = listener;
         listener = r;
+        return old;
     }
 
     // ---- 写入 ----

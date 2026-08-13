@@ -119,8 +119,22 @@ public class LogTest {
         try { CNLog.initEarly(); } catch(Throwable t){ threw=true; }
         check("重复调用也正常返回", !threw, threw?"抛了异常":"ok");
 
+        System.out.println("\n[7] 监听器是单槽位，占用方必须能原样归还");
+        // 下载浮层的 LOG 面板与调试悬浮窗的日志页都要占它。后者用完置 null 的话，
+        // 前者的实时刷新这一整个会话都恢复不了（2026-08-13 审计发现）。
+        // setListener 返回旧值，就是为了让占用方还得回去。
+        Runnable ra = new Noop();
+        Runnable rb = new Noop();
+        CNLog.setListener(null);
+        check("首次设置返回 null", CNLog.setListener(ra)==null, "");
+        check("再次设置返回上一个", CNLog.setListener(rb)==ra, "");
+        check("归还后拿回的是被顶掉的那个", CNLog.setListener(ra)==rb, "");
+        CNLog.setListener(null);
+
         System.out.println("\n通过 "+pass+" / 失败 "+fail);
         if(fail>0) System.exit(1);
     }
+    /** static 嵌套类：匿名/非静态内部类带 this$0，d8 撞上直接 NPE。 */
+    static final class Noop implements Runnable { @Override public void run(){} }
     static void deleteRec(File f){ if(f.isDirectory()){File[] c=f.listFiles(); if(c!=null) for(File x:c) deleteRec(x);} f.delete(); }
 }

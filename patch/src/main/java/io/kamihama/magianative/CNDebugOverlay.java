@@ -132,6 +132,7 @@ public final class CNDebugOverlay {
     private static String expandedRadio;             // 手风琴：当前展开的单选控件 id
     private static boolean resourcePageActive;       // 资源页轮询开关
     private static Runnable myLogListener;           // 日志页占着的 listener（离开时按身份归还）
+    private static Runnable prevLogListener;         // 被顶掉的那个（多半是下载浮层的），离场原样还回去
 
     // 本体唯一的后台通道（单线程执行器）：shareLog（内部 flush+打包）与
     // applyAndRestart（CNRestart 在调用线程 sleep）都不许在 UI 线程跑，都经它
@@ -1163,8 +1164,12 @@ public final class CNDebugOverlay {
 
         // 新行进来时刷新预览。listener 是 CNLog 的单例槽位：进场占、出场按身份归还，
         // 不踩下载浮层日志面板占着的那一份。
-        myLogListener = new LogTailListener();
-        CNLog.setListener(myLogListener);
+        // 记住被顶掉的那个（下载浮层的 LOG 面板多半正占着），离场时原样还回去。
+        // 只在首次占用时记，重复进本页不会把自己记成「前一个」。
+        Runnable mine = new LogTailListener();
+        Runnable displaced = CNLog.setListener(mine);
+        if (myLogListener == null) prevLogListener = displaced;
+        myLogListener = mine;
         // 进页面就停在最新那一行：这一页存在的理由就是看最后几行。
         View pageScroll = panelRoot == null ? null : panelRoot.findViewWithTag("pagescroll");
         if (pageScroll instanceof ScrollView) stickToBottom((ScrollView) pageScroll);
@@ -1283,9 +1288,11 @@ public final class CNDebugOverlay {
 
     private static void leaveLogPage() {
         if (myLogListener != null) {
-            // 只在自己占着时归还，别把下载浮层日志面板的 listener 顶掉。
+            // 归还成**被顶掉的那个**，而不是 null。置 null 等于把下载浮层 LOG
+            // 面板的实时刷新一并关掉，且这一整个会话都恢复不了。
             myLogListener = null;
-            CNLog.setListener(null);
+            CNLog.setListener(prevLogListener);
+            prevLogListener = null;
         }
     }
 

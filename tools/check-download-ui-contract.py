@@ -14,6 +14,7 @@ log = Path("patch/src/main/java/io/kamihama/magianative/CNLog.java").read_text(e
 extract_tx = Path("patch/src/main/java/io/kamihama/magianative/CNArchiveInstallTx.java").read_text(encoding="utf-8")
 overlay = Path("patch/src/main/java/io/kamihama/magianative/CNDebugOverlay.java").read_text(encoding="utf-8")
 zipplan = Path("patch/src/main/java/io/kamihama/magianative/CNZipPlan.java").read_text(encoding="utf-8")
+offline = Path("patch/src/main/java/io/kamihama/magianative/CNOfflineImport.java").read_text(encoding="utf-8")
 manifest = Path("AndroidManifest.xml").read_text(encoding="utf-8")
 
 checks = {
@@ -186,6 +187,27 @@ checks = {
     "aria2 路径上的空间不足也不当引擎故障":
         "catch (CNDiskSpace.NotEnoughSpace e)" in downloader
         and downloader.count("reportNoSpace") >= 4,
+    # 离线包是玩家从网盘下了一两个 G 再手动导入的。原先任何 Throwable 都删它并
+    # 回退网络下载——磁盘满也删。删完接着走网络，只会以同样的方式再失败一次，而他
+    # 得从头再下一遍。只有 ZipException（包真坏）才该删。
+    "离线包只在 ZIP 真坏时才删":
+        "offline-zip-bad" in downloader
+        and "catch (ZipException e)" in downloader
+        and "保留离线包，下轮重试" in downloader,
+    "离线解压走同一套事务":
+        'CNArchiveInstallTx.stateFile(\n                        new File(STATE_ROOT), name + ".offline")' in downloader,
+    # 导入是「再拷一份」：不预检就会拷到最后几十兆才 ENOSPC，前面几十分钟白费，
+    # 半截文件还留在盘上没人删（动辄一两个 G）。
+    "离线导入先预检空间且清理半截产物":
+        "CNDiskSpace.require(dir, need" in offline
+        and "sweepStaleTemps" in offline
+        and "deleteQuietly(tmp);\n            throw t;" in offline,
+    # CNLog 的「有新行了」回调是单槽位，下载浮层 LOG 面板与悬浮窗日志页都要占。
+    # 后者用完置 null 的话，前者的实时刷新这一整个会话都恢复不了。
+    "日志监听器离场原样归还而不是置 null":
+        "public static Runnable setListener(Runnable r)" in log
+        and "prevLogListener" in overlay
+        and "CNLog.setListener(prevLogListener)" in overlay,
     # 玩家的选择压过云端，且**不落盘**（2026-08-13 维护者要求）。求或的写法会让
     # 云端一开玩家就再也关不掉，而坐在设备前面的是他；落盘则是「一次慢次次慢」——
     # 他为一次网络抖动选的降级路线会跟着他到永远，还没有任何地方提示他开着。

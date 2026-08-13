@@ -931,23 +931,48 @@ public final class CNDownloaderFix {
                 && !CNOfflineImport.isHotUpdateFile(name)
                 && CNOfflineImport.hasOffline(name)) {
             File offline = new File(CNOfflineImport.offlineDir(), name);
+            long offlineBytes = offline.length();
             try {
+                // 解压走与主引擎同一套事务：空间预检 + 逐条目 size/CRC + 断点续解压。
+                // 原先用 extractChecked，那套都没有——03 这种解压后 2.79 GiB 的包
+                // 一旦中途被杀，下次要从零再解一遍。
+                File offState = CNArchiveInstallTx.stateFile(
+                        new File(STATE_ROOT), name + ".offline");
                 synchronized (EXTRACT_LOCK) {
-                    extractChecked(offline, new File(INSTALL_ROOT));
+                    CNArchiveInstallTx.extract(offline, new File(INSTALL_ROOT),
+                            offState, null, null);
                 }
+                CNArchiveInstallTx.clearState(offState);
                 writeMarker(marker, name, canonicalUrl,
-                        new DownloadMetadata(offline.length(), "offline"));
+                        new DownloadMetadata(offlineBytes, "offline"));
                 if (!offline.delete() && offline.exists()) {
                     CNLog.w(TAG, "Offline archive retained: " + offline);
                 }
                 markDone(index);
                 CNLog.i(TAG, "offline-installed file=" + name
-                        + " bytes=" + offline.length());
+                        + " bytes=" + offlineBytes);
                 return true;
-            } catch (Throwable t) {
-                CNLog.e(TAG, "offline-extract-failed file=" + name + ": " + t, t);
-                // 解压失败：删掉离线包，回退网络下载
+            } catch (CNDiskSpace.NotEnoughSpace e) {
+                // 装不下**不是包的错**。这个包是玩家从网盘下了一两个 G、再手动导入
+                // 进来的；因为磁盘满就把它删掉，等于让他从头再下一遍——而且删完接着
+                // 走网络下载，只会以同样的方式再失败一次。留着，让他腾完空间点重试。
+                reportNoSpace(index, name, e.getMessage());
+                return false;
+            } catch (ZipException e) {
+                // 只有这一种才该删：包本身结构不合法或条目 size/CRC 对不上，
+                // 留着也永远装不上。删掉回退网络下载是对的。
+                CNLog.e(TAG, "offline-zip-bad file=" + name + "，删除离线包并回退网络: " + e, e);
                 deleteQuietly(offline);
+            } catch (Throwable t) {
+                if (CNDiskSpace.isOutOfSpace(t)) {
+                    reportNoSpace(index, name, CNDiskSpace.shortfall(
+                            name + " 解压", 0L, CNDiskSpace.usableBytes(offline)));
+                    return false;
+                }
+                // 其它失败（IO 抖动、被中断等）一律**保留**离线包：它多半还是好的，
+                // 下一轮还能用；删了就得让玩家重新从网盘拉一两个 G。
+                CNLog.e(TAG, "offline-extract-failed file=" + name
+                        + "（保留离线包，下轮重试）: " + t, t);
             }
         }
 

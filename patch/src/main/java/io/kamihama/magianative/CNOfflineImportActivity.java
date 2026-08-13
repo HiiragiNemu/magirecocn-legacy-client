@@ -72,6 +72,9 @@ public final class CNOfflineImportActivity extends Activity {
         }
         final Uri uri = data.getData();
         final Activity self = this;
+        // 用完即清。留着的话，下一次这个 Activity 因配置变化等原因重建时，
+        // onCreate 会拿这个陈旧的名字再弹一次文件选择器。
+        pendingName = null;
         // 拷贝 + 校验是 IO 操作，丢到后台线程，避免阻塞 UI。
         // 用静态嵌套类 + 构造参数，避免匿名类带 this$0 触发 d8 陷阱（铁律 4）。
         new Thread(new ImportTask(self, uri, name), "cnv-offline-import").start();
