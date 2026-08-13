@@ -16,7 +16,54 @@ overlay = Path("patch/src/main/java/io/kamihama/magianative/CNDebugOverlay.java"
 zipplan = Path("patch/src/main/java/io/kamihama/magianative/CNZipPlan.java").read_text(encoding="utf-8")
 offline = Path("patch/src/main/java/io/kamihama/magianative/CNOfflineImport.java").read_text(encoding="utf-8")
 hot_tx = Path("patch/src/main/java/io/kamihama/magianative/CNHotUpdateTx.java").read_text(encoding="utf-8")
+hud = Path("patch/src/main/java/io/kamihama/magianative/CNDebugHud.java").read_text(encoding="utf-8")
 manifest = Path("AndroidManifest.xml").read_text(encoding="utf-8")
+
+
+def code_lines(src):
+    """去掉注释后的非空代码行。
+
+    本文件的判据是「源码里写没写某段字」，而这个仓库的注释写得比代码还长，
+    里头经常**原样引用**被禁掉的写法（例如「⚠ 绝不能设 setTextIsSelectable(true)」）。
+    拿整份文本做 `not in` 判断的话，注释会替代码顶罪：把危险写法解释清楚的那条注释
+    反而让守卫红灯。凡是「某写法必须不存在」的判据，都过这一层。
+    """
+    out, in_block = [], False
+    for raw in src.splitlines():
+        line = raw
+        if in_block:
+            end = line.find("*/")
+            if end < 0:
+                continue
+            line, in_block = line[end + 2:], False
+        while True:
+            start = line.find("/*")
+            if start < 0:
+                break
+            end = line.find("*/", start + 2)
+            if end < 0:
+                line, in_block = line[:start], True
+                break
+            line = line[:start] + line[end + 2:]
+        slash = line.find("//")
+        if slash >= 0:
+            line = line[:slash]
+        line = line.strip()
+        if line:
+            out.append(line)
+    return out
+
+
+def code(src):
+    return "\n".join(code_lines(src))
+
+
+def followed_by(src, first, second):
+    """`first` 之后紧跟着的下一行代码就是 `second`（中间的注释不算数）。"""
+    lines = code_lines(src)
+    return any(lines[i] == first and lines[i + 1] == second
+               for i in range(len(lines) - 1))
+
 
 checks = {
     "不再向 decorView 添加独立显示控件": "decor.addView(dock" not in assist and "decor.addView(panel" not in assist,
@@ -304,6 +351,31 @@ checks = {
     #
     # 断言因此**反过来**：这个权限必须在。上一次它是被静默删掉的，那种改动人眼复查
     # 拦不住，所以钉在这里——谁再删，CI 当场红灯。
+    # ---- 2026-08-13 的九项修复，逐条钉住判据 ----
+    # 1. 「按分辨率推荐字号」原先拿 560dp 当参考、斜率取 1，于是几乎所有设备都被
+    #    推到 115%–150%。而 dp = px/density，720p 低密度手机报出的 dp（797）比
+    #    1080p 手机（642）还多——dp 宽度根本不是屏幕大小的代理，方向都可能是反的。
+    #    参考值抬到 720dp、斜率取半、结果夹在 85–125：一个「推荐」必须真的在区分
+    #    设备，而不是对所有人都喊最大值。
+    "字号建议用半速率并夹在窄量程内":
+        "DESIGN_WIDTH_DP = 720f" in assist
+        and "SUGGEST_SLOPE = 0.5f" in assist
+        and "SUGGEST_MIN = 85" in assist and "SUGGEST_MAX = 125" in assist
+        and "delta * SUGGEST_SLOPE * 100f" in assist,
+    # 2. 浮层总进度条比它上面那行字长出一截：文字行贴着 slotScroll 的 5dp 滚动条
+    #    留白，进度条却是满宽。两者必须用同一个 inset，否则右端永远差 5dp。
+    "总进度条与文字行右端留白一致":
+        "totalRowLp0.setPadding(0, 0, dp(act, 5), 0)" in ui
+        and "overallLp.rightMargin = dp(act, 5)" in ui,
+    # 3. 热更新检查完就跳走，玩家来不及看清结果（尤其失败时）。停留窗口拉长；
+    #    上限 PLAYER_WINDOW_MAX_MS 不动，手动「停留」按钮仍是唯一的无限期通道。
+    "热更新结果停留时间足够看清":
+        "IDLE_LINGER_MS = 9000L" in hot_check
+        and "INTERACT_LINGER_MS = 12000L" in hot_check,
+    # 4. 调大字号会把左右两栏撑大，再调小回不去——scrollX 停在旧内容宽度上，
+    #    栏宽由权重算但滚动位置没归位。applyScale 收尾必须重新布局并复位滚动条。
+    "改字号后重新布局并复位滚动状态":
+        followed_by(assist, "root.requestLayout();", "styleScrollbars();"),
     "原包自带的悬浮窗权限必须保留": "SYSTEM_ALERT_WINDOW" in manifest,
     "不主动申请全盘存储权限": "MANAGE_EXTERNAL_STORAGE" not in manifest,
 }

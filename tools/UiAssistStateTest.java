@@ -31,23 +31,44 @@ public class UiAssistStateTest {
         // 这里原有的夹紧范围断言一并移除——判据没了，测试留着只会误导。
 
         // ── 按分辨率建议字号 ────────────────────────────────────────
-        // 真机反馈：大屏上 100% 就是一行蚂蚁。依据是「内容区有多少 dp 宽」，
         // 参考宽度处的建议必须正好是 100%，否则整条标度就是歪的。
         float ref = CNDownloadUiAssist.designWidthDpForTest();
         check("参考宽度处建议 100%",
                 CNDownloadUiAssist.suggestFromDpForTest(ref) == 100);
-        check("宽一倍时建议更大（但夹在上限内）",
-                CNDownloadUiAssist.suggestFromDpForTest(ref * 2f) == 150);
-        check("窄一半时建议更小（但夹在下限内）",
-                CNDownloadUiAssist.suggestFromDpForTest(ref / 2f) == 75);
-        check("略宽于参考时按比例给建议",
-                CNDownloadUiAssist.suggestFromDpForTest(ref * 1.2f) == 120);
+
+        // 2026-08-13：判据被刻意压平了。dp 宽度只是「屏幕看起来多大」的粗糙代理，
+        // 方向甚至可能是反的（720p 低密度手机报出的 dp 比 1080p 手机还多），所以
+        // 斜率取半、建议值夹在 85–125。改判据前的旧标度对**几乎所有设备**都给出
+        // 115%–150%——一个对所有人都推荐接近最大值的「推荐」，没有在推荐任何东西。
+        int lo = CNDownloadUiAssist.suggestMinForTest();
+        int hi = CNDownloadUiAssist.suggestMaxForTest();
+        check("建议量程明显窄于手动量程（75–150）", lo >= 80 && hi <= 130 && lo < hi);
+        check("宽一倍只多半程，且夹在上限内",
+                CNDownloadUiAssist.suggestFromDpForTest(ref * 2f) == hi);
+        check("窄一半只少半程，且夹在下限内",
+                CNDownloadUiAssist.suggestFromDpForTest(ref / 2f) == lo);
+        check("略宽于参考时按半速率给建议",
+                CNDownloadUiAssist.suggestFromDpForTest(ref * 1.2f) == 110);
+        check("略窄于参考时按半速率给建议",
+                CNDownloadUiAssist.suggestFromDpForTest(ref * 0.8f) == 90);
+        // 单调性：更宽的屏幕不该建议更小的字号。
+        check("建议随宽度单调不减",
+                CNDownloadUiAssist.suggestFromDpForTest(ref * 0.9f)
+                        <= CNDownloadUiAssist.suggestFromDpForTest(ref)
+                && CNDownloadUiAssist.suggestFromDpForTest(ref)
+                        <= CNDownloadUiAssist.suggestFromDpForTest(ref * 1.1f));
+        // 真机代表值：改判据前这几台一律 115%–150%，现在落在合理区间。
+        check("典型设备不再一律顶到上限",
+                CNDownloadUiAssist.suggestFromDpForTest(642f) < 100
+                && CNDownloadUiAssist.suggestFromDpForTest(724f) == 100
+                && CNDownloadUiAssist.suggestFromDpForTest(1224f) <= hi);
         // 取不到分辨率时不能给出 0 或负的字号——那会让整页字消失。
         check("0 宽度回落到 100%", CNDownloadUiAssist.suggestFromDpForTest(0f) == 100);
         check("负宽度回落到 100%", CNDownloadUiAssist.suggestFromDpForTest(-1f) == 100);
-        int lo = CNDownloadUiAssist.suggestFromDpForTest(1f);
-        int hi = CNDownloadUiAssist.suggestFromDpForTest(100000f);
-        check("建议值恒在 75–150 内", lo >= 75 && lo <= 150 && hi >= 75 && hi <= 150);
+        int edgeLo = CNDownloadUiAssist.suggestFromDpForTest(1f);
+        int edgeHi = CNDownloadUiAssist.suggestFromDpForTest(100000f);
+        check("建议值恒在 75–150 内",
+                edgeLo >= 75 && edgeLo <= 150 && edgeHi >= 75 && edgeHi <= 150);
 
         System.out.println("通过 " + pass + " / 失败 " + fail);
         if (fail > 0) System.exit(1);

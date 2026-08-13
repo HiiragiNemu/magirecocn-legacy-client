@@ -60,10 +60,30 @@ public final class CNDownloadUiAssist {
             new WeakHashMap<ImageView, int[]>();
 
     /**
-     * 本页布局的参考宽度（dp）。{@link #suggestedScale} 拿它当 100% 的基准。
-     * 560 是返工前内容区宽度下限用的数，也就是这套布局当初排版时的目标宽度。
+     * 建议字号的参考宽度（dp）：内容区有这么宽时建议 100%。
+     *
+     * <p>720dp ≈ 一台普通手机横屏的内容区宽度。原先用的是 560——那是「返工前
+     * 内容区宽度下限」，把一个**下限**当成排版目标，结果几乎每台设备都被推到
+     * 115%～150%（实测：1080p 手机 115%，高密度 129%，2K 与平板一律顶到 150%）。
+     * 一个「推荐值」如果对所有人都推荐接近最大值，它就没有在推荐任何东西。
      */
-    private static final float DESIGN_WIDTH_DP = 560f;
+    private static final float DESIGN_WIDTH_DP = 720f;
+
+    /**
+     * 建议值随宽度变化的斜率，以及建议值自己的上下限。
+     *
+     * <p><b>为什么要压斜率、收量程</b>：dp 宽度只是「屏幕看起来多大」的<b>粗糙
+     * 代理</b>，而且方向还可能是反的——dp = px / density，一台 720p 低密度手机
+     * 报出的 dp（797）比 1080p 手机（642）还多，于是前者被建议放得更大。真正
+     * 决定可读性的是物理尺寸与视距，而 {@code xdpi} 在 Android 上普遍不可信。
+     *
+     * <p>既然判据只能是粗糙代理，那就别让它有能力给出荒谬答案：斜率取半
+     * （宽一倍只多 50%），建议值夹在 85%–125%。玩家手动仍可调到 75%–150%——
+     * 那是他自己的选择，我们只是不主动把人推到极端。
+     */
+    private static final float SUGGEST_SLOPE = 0.5f;
+    private static final int SUGGEST_MIN = 85;
+    private static final int SUGGEST_MAX = 125;
 
     private static View attachedOverlay;
     private static View contentRoot;
@@ -581,9 +601,9 @@ public final class CNDownloadUiAssist {
     /**
      * 按设备分辨率推荐一个字号。
      *
-     * <p>依据是「内容区有多少 dp 宽」：本页布局是照约 560dp 排的（那也是返工前
-     * 内容区宽度下限用的数），屏幕比它宽就该按比例把字放大，窄就缩小——这样字
-     * 在画面里占的**比例**是恒定的，而不是在大屏上变成一行蚂蚁。
+     * <p>依据是「内容区有多少 dp 宽」，与 {@link #DESIGN_WIDTH_DP} 比出一个偏差，
+     * 按半速率折算。这个判据是**粗糙代理**而不是真理，所以量程被刻意收窄——
+     * 理由与实测数字见 {@link #SUGGEST_SLOPE}。
      *
      * <p>只是<b>建议</b>：玩家没自己调过时拿它当默认值，调过之后一律以玩家的
      * 选择为准。默默覆盖玩家的设置比给个烂默认值更糟。
@@ -605,7 +625,10 @@ public final class CNDownloadUiAssist {
      */
     static int suggestFromDp(float dpWidth) {
         if (!(dpWidth > 0f)) return 100;
-        return clamp(Math.round(dpWidth / DESIGN_WIDTH_DP * 100f), 75, 150);
+        // 相对参考宽度的偏差，按半速率折算成百分比。参考宽度处恰好 100%。
+        float delta = (dpWidth - DESIGN_WIDTH_DP) / DESIGN_WIDTH_DP;
+        return clamp(Math.round(100f + delta * SUGGEST_SLOPE * 100f),
+                SUGGEST_MIN, SUGGEST_MAX);
     }
 
     private static void applyScale() {
@@ -626,6 +649,13 @@ public final class CNDownloadUiAssist {
             root.setLayoutParams(lp);
         }
         root.requestLayout();
+        // 宽度变了就得把横向滚动状态一起归位。
+        //
+        // 少了这一步的表现正是「调大字号后两栏被撑大，再调小就回不去」：在 150%
+        // 上向右滚过之后调回 100%，内容宽度确实缩回去了，但 scrollX 还停在原处，
+        // 而滚动条又已经按「没溢出」关掉——看起来就是左右两栏歪着且拉不回来。
+        // 原先这件事只在下一次 ensureInstalled() 里顺带做，而调字号并不触发它。
+        styleScrollbars();
     }
 
     /**
@@ -921,4 +951,6 @@ public final class CNDownloadUiAssist {
 
     public static int suggestFromDpForTest(float dpWidth) { return suggestFromDp(dpWidth); }
     public static float designWidthDpForTest() { return DESIGN_WIDTH_DP; }
+    public static int suggestMinForTest() { return SUGGEST_MIN; }
+    public static int suggestMaxForTest() { return SUGGEST_MAX; }
 }

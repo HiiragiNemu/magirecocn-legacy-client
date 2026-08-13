@@ -73,17 +73,25 @@ public final class CNHotUpdateCheck {
     private static final long ACTIVITY_WAIT_STEP_MS = 100L;
 
     /**
-     * 没有更新时，把「已是最新」这个结论留在屏幕上的基础时长。
-     * 900ms 只够看见一行字，不够玩家反应过来去点教程胶囊（播序章）、
-     * BGM 胶囊这些手动入口——留 4 秒，给「看一眼再决定要不要动手」用。
+     * 没有更新时，把结论留在屏幕上的基础时长（无交互）。
+     *
+     * <p>原先 4 秒，太短（2026-08-13 反馈）：玩家要先看清屏幕上写了什么、再决定
+     * 要不要点 LOG 或「停留本页」，然后手还得移过去。4 秒基本只够看清第一行字，
+     * 按钮还没够着页面就收了，于是「想看日志永远来不及」。
+     *
+     * <p>代价是每次启动都多停几秒，所以没有放得更长——真要久留有「停留本页」，
+     * 那条不受这里限制。
      */
-    private static final long IDLE_LINGER_MS = 4000L;
+    private static final long IDLE_LINGER_MS = 9000L;
 
     /**
      * 玩家在浮层上每交互一次（任意按下），停留就从该时刻起再顺延这么长。
      * 有弹窗/日志面板开着时则一直等（见 awaitPlayerWindow），直到总上限。
+     *
+     * <p>原先 3 秒：手指刚离开屏幕三秒页面就没了，正在看的东西被抽走。既然玩家
+     * 已经明确在操作，就该给足反应时间——他真想走，点「进入游戏」即可。
      */
-    private static final long INTERACT_LINGER_MS = 3000L;
+    private static final long INTERACT_LINGER_MS = 12000L;
 
     /**
      * 玩家窗口的总上限。弹窗开着也会在这之后强制收浮层进游戏——

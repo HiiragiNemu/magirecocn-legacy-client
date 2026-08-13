@@ -850,6 +850,14 @@ public class CNCNDownloadUI {
         LinearLayout totalRow = new LinearLayout(act);
         totalRow.setOrientation(LinearLayout.HORIZONTAL);
         totalRow.setGravity(Gravity.CENTER_VERTICAL);
+        // ⚠ 右侧留白必须与文件区一致。
+        //
+        // slotScroll 为了给常驻纵向滚动条让位，右边留了 5dp；而 totalRow 与总进度条
+        // 是直接加在 rightCol 上的，没有这 5dp——于是它们比上面每一行文件都长出
+        // 5dp，看起来就是「默认情况下进度条偏长」（2026-08-13 反馈）。这跟「重下」
+        // 按钮无关，那颗胶囊早已撤掉；是滚动条留白只加在了一边。
+        LinearLayout totalRowLp0 = totalRow;
+        totalRowLp0.setPadding(0, 0, dp(act, 5), 0);
         rightCol.addView(totalRow, lpRow(dp(act, 8), dp(act, 2)));
 
         vOverallText = new TextView(act);
@@ -873,8 +881,10 @@ public class CNCNDownloadUI {
         progressBarOverall.setMax(100);
         progressBarOverall.setProgress(0);
         tintBar(progressBarOverall, COLOR_ACCENT);
-        rightCol.addView(progressBarOverall, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 10)));
+        LinearLayout.LayoutParams overallLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 10));
+        overallLp.rightMargin = dp(act, 5);      // 与 slotScroll 的滚动条留白对齐
+        rightCol.addView(progressBarOverall, overallLp);
 
         // ── 第 3 层：左上角 LOG 胶囊 ──
         logPillBg = new GradientDrawable();
