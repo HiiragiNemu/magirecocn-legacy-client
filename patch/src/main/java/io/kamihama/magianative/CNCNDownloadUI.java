@@ -2074,9 +2074,53 @@ public class CNCNDownloadUI {
                             vOfflinePill.setText("📦  导入离线包 ✓");
                         }
                         showImportResultDialog(act, ok, fn, err);
+                        // 🔴 导入成功必须**立刻去用它**。
+                        //
+                        // 离线检查在 installArchive 的开头，而安装器的 15 文件循环
+                        // 启动时只跑一次：已经处理过那个文件就「导入了没反应」，
+                        // 正在下那个文件就「红条一直重试」——包躺在那没人消费
+                        // （2026-08-13 真机反馈的两个症状，同一个根因）。
+                        if (ok) applyOfflineAsync(fn);
                     }
                 });
         if (!started) showImportResultDialog(act, false, name, "无法打开文件选择器");
+    }
+
+    /**
+     * 把刚导入的离线包交给安装器立刻应用。跑在后台线程——
+     * {@code installOfflineNow} 会解压整个包，绝不能放在 UI 线程上。
+     */
+    private static void applyOfflineAsync(String name) {
+        try {
+            Thread t = new Thread(new ApplyOfflineTask(name), "cnv-offline-apply");
+            t.setDaemon(true);
+            t.start();
+        } catch (Throwable e) {
+            CNLog.w(TAG, "离线包应用线程起不来: " + e);
+        }
+    }
+
+    /** static 嵌套类：匿名/非静态内部类带 this$0，d8 撞上直接 NPE。 */
+    private static final class ApplyOfflineTask implements Runnable {
+        private final String name;
+        ApplyOfflineTask(String name) { this.name = name; }
+        @Override public void run() {
+            try {
+                int idx = CNDownloaderFix.indexOfArchive(name);
+                if (idx < 0) {
+                    CNLog.w(TAG, "离线包文件名不在资源表里: " + name);
+                    return;
+                }
+                updateSimple("应用离线包", name + "：正在解压校验…", 0);
+                boolean ok = CNDownloaderFix.installOfflineNow(idx);
+                updateSimple(ok ? "离线包已应用" : "离线包应用失败",
+                        ok ? (name + "：已就位，不再从网络下载")
+                           : (name + "：解压或校验未通过，将继续走网络下载"), 0);
+                throttledUpdate();
+            } catch (Throwable t) {
+                CNLog.e(TAG, "应用离线包失败: " + name, t);
+            }
+        }
     }
 
     private static LinearLayout.LayoutParams lpWrap() {

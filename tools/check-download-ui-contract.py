@@ -80,6 +80,14 @@ checks = {
     "主引擎与热更失败都会问玩家":
         "awaitDownloadFallbackChoice" in downloader
         and "awaitDownloadFallbackChoice" in hot_check,
+    # 离线包导入成功后必须**立刻被消费**。离线检查在 installArchive 的开头，而
+    # 安装器的 15 文件循环启动时只跑一次——不接这条线，就是「导入了没反应」
+    # 和「红条一直重试」两个症状（2026-08-13 真机）。
+    "离线包导入后立刻应用": "installOfflineNow" in downloader
+        and "applyOfflineAsync" in ui,
+    # 「重下」要删离线候选、「用刚导入的包」要留它，同一个清理函数两种语义。
+    "离线即时安装不会自删离线候选": "keepOffline" in downloader
+        and "cleanupArchiveDownloadState(index, true)" in downloader,
     # SYSTEM_ALERT_WINDOW 是**原包自带**的权限，不是我们加的。9688f7e7 把它连同
     # MANAGE_EXTERNAL_STORAGE 一起删掉，理由写作「移除无用的悬浮窗权限」，并在这里
     # 立了一条「不许回来」的断言——而维护者对这条改动**完全不知情**。

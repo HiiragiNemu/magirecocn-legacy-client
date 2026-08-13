@@ -2222,6 +2222,86 @@ public final class CNDownloaderFix {
         }
     }
 
+    /**
+     * 玩家刚导入了离线包，<b>立刻</b>用它，不必等下一次启动。
+     *
+     * <h3>为什么必须有这条路</h3>
+     *
+     * 离线检查在 {@link #installArchive} 的<b>开头</b>，而安装器对 15 个文件的
+     * 循环在启动时只跑一次。于是真机上出现两种症状（2026-08-13 反馈）：
+     *
+     * <ul>
+     *   <li>安装器<b>已经处理过</b>那个文件 → 导入完全没反应，要等下次启动；</li>
+     *   <li>安装器<b>正在下</b>那个文件 → 重试循环在 installArchive <b>内部</b>，
+     *       不会重新走开头的离线检查，于是红条一直重试，导入的包躺在那没人用。</li>
+     * </ul>
+     *
+     * 导入成功后原先只改了胶囊文字和弹了个结果框，没有任何东西去消费那个包。
+     *
+     * <h3>怎么保证不打架</h3>
+     *
+     * {@code ArchiveTask} 全程持有 {@code ARCHIVE_LOCKS[index]}，本方法拿同一把
+     * 锁，所以与正在跑的安装天然串行。进锁前先 {@link #requestActiveRestart}
+     * 中止在传的下载——离线包已经过分块校验，继续下没有意义，而且不中止的话这把
+     * 锁要等它整轮重试跑完（可能几分钟）。
+     *
+     * <p>清理中间产物时走 {@code keepOffline=true}：默认那条是给「重下」用的，
+     * 它会把离线候选一起删掉，正好与这里相反。
+     *
+     * <p>不设 {@code FORCE_REDOWNLOAD}：设了的话 installArchive 开头的离线分支
+     * 就被跳过了（那个标记的语义正是「这次必须走网络」）。
+     */
+    public static boolean installOfflineNow(int index) {
+        if (index < 0 || index >= ARCHIVE_COUNT) return false;
+        String name = FILE_NAMES[index];
+        if (CNOfflineImport.isHotUpdateFile(name)) {
+            CNLog.w(TAG, "热更包不走离线安装: " + name);
+            return false;
+        }
+        if (!CNOfflineImport.hasOffline(name)) {
+            CNLog.w(TAG, "离线区没有这个包，无法即时安装: " + name);
+            return false;
+        }
+        CNLog.i(TAG, "离线包即时安装开始: " + name);
+        boolean signalled = requestActiveRestart(index);
+        if (signalled) CNLog.i(TAG, "已中止 " + name + " 在传的下载，改用离线包");
+        CNDownloadRestart.register(index);
+        try {
+            synchronized (ARCHIVE_LOCKS[index]) {
+                if (!CNOfflineImport.hasOffline(name)) {
+                    CNLog.w(TAG, "等锁期间离线包已消失: " + name);
+                    return false;
+                }
+                CNCNDownloadUI.markFilePending(index);
+                cleanupArchiveDownloadState(index, true);
+                boolean ok = installArchive(index);
+                if (ok) {
+                    try { commitFinalFlagIfComplete(); }
+                    catch (Throwable t) { CNLog.w(TAG, "补齐总完成标记失败: " + t); }
+                    signalExternalCompletion();
+                    CNLog.i(TAG, "离线包即时安装完成: " + name);
+                } else {
+                    CNLog.w(TAG, "离线包即时安装未成功: " + name);
+                }
+                return ok;
+            }
+        } catch (Throwable t) {
+            CNLog.e(TAG, "离线包即时安装异常: " + name, t);
+            return false;
+        } finally {
+            CNDownloadRestart.unregister(index);
+        }
+    }
+
+    /** 文件名 → 槽位下标；找不到返回 -1。 */
+    public static int indexOfArchive(String name) {
+        if (name == null) return -1;
+        for (int i = 0; i < FILE_NAMES.length; i++) {
+            if (FILE_NAMES[i].equals(name)) return i;
+        }
+        return -1;
+    }
+
     private static Object[] createArchiveLocks() {
         Object[] out = new Object[ARCHIVE_COUNT];
         for (int i = 0; i < out.length; i++) out[i] = new Object();
@@ -2229,6 +2309,14 @@ public final class CNDownloaderFix {
     }
 
     private static void cleanupArchiveDownloadState(int index) {
+        cleanupArchiveDownloadState(index, false);
+    }
+
+    /**
+     * @param keepOffline 保留同名离线候选。<b>「重下」要删它、「用刚导入的离线包」
+     *     要留它</b>——两者清理的是同一批中间产物，只有这一处语义相反。
+     */
+    private static void cleanupArchiveDownloadState(int index, boolean keepOffline) {
         String name = FILE_NAMES[index];
         File archive = new File(FILE_ROOT, name);
         deleteQuietly(archive);
@@ -2252,9 +2340,11 @@ public final class CNDownloaderFix {
             }
         }
         // “重下”必须走网络；同名离线候选会让安装器绕过下载，因此只清所选项。
-        File offline = new File(CNOfflineImport.offlineDir(), name);
-        deleteQuietly(offline);
-        deleteQuietly(new File(offline.getPath() + ".importing"));
+        if (!keepOffline) {
+            File offline = new File(CNOfflineImport.offlineDir(), name);
+            deleteQuietly(offline);
+            deleteQuietly(new File(offline.getPath() + ".importing"));
+        }
     }
 
 }
