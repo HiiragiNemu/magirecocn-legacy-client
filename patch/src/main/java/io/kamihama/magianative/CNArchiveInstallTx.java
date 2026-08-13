@@ -52,6 +52,9 @@ public final class CNArchiveInstallTx {
 
     private CNArchiveInstallTx() {}
 
+    /** 本轮解压实际写出去的字节数。回归测试用它区分「写之前拦下」与「写完再拒」。 */
+    public static long writtenThisRunForTest() { return writtenThisRun; }
+
     static File stateFile(File stateRoot, String archiveName) {
         return new File(stateRoot, archiveName + ".extract.tx");
     }
@@ -92,15 +95,12 @@ public final class CNArchiveInstallTx {
                 if (!entry.isDirectory() && entry.getSize() > 0) totalBytes += entry.getSize();
             }
             if (entries.isEmpty()) throw new ZipException("Archive contains no entries: " + archive);
-            // 膨胀比上限 200x，判据与阈值和 CNDownloaderFix.EXTRACT_MAX_RATIO 保持一致
-            // （两条路：这里是首次安装器，那边是离线导入与热更新）。
-            //
-            // 别按「游戏资源膨胀比接近 1」去收紧：实测 cn_base_03.zip 是 2.11x
-            // （1.32 → 2.79 GiB），15 个包里唯一真正会膨胀的。收到 2x 以下就等于
-            // 把它判成 zip 炸弹，每次装到一半整包作废重下。表见 EXTRACT_MAX_RATIO。
-            if (totalBytes >= 256L * 1024L * 1024L
+            // 第一道：按中央目录**声明**的未压缩总量看比例，一个字节都还没写就能拒。
+            // 声明可以撒谎，所以还有第二道（writeEntry 里的边写边看）。两道都在，
+            // 缺一不可：这道快而便宜，那道防谎报。阈值见 EXTRACT_MAX_RATIO。
+            if (totalBytes >= EXTRACT_MIN_BYTES_BEFORE_RATIO
                     && archive.length() > 0
-                    && totalBytes / archive.length() > 200L) {
+                    && totalBytes / archive.length() > EXTRACT_MAX_RATIO) {
                 throw new ZipException("Archive expansion ratio is too high: "
                         + totalBytes + " / " + archive.length());
             }
@@ -131,6 +131,9 @@ public final class CNArchiveInstallTx {
             CNLog.i(TAG, "extract-start file=" + archive.getName() + " entries="
                     + entries.size() + " resume=" + next);
 
+            // 每次解压重新计数。续解压时前面那些字节上一轮已经写过了，
+            // 不该算进本轮的「已写出」——否则续几次就会把比例判据顶爆。
+            writtenThisRun = 0L;
             int sinceCheckpoint = 0;
             long bytesSinceCheckpoint = 0L;
             long lastCheckpointNs = System.nanoTime();
@@ -149,7 +152,7 @@ public final class CNArchiveInstallTx {
                         throw new InstallIOException("Cannot create directory " + out);
                     }
                 } else {
-                    writeEntry(zip, entry, out, cancel);
+                    writeEntry(zip, entry, out, cancel, archive.length());
                     if (entry.getSize() > 0) {
                         doneBytes += entry.getSize();
                         bytesSinceCheckpoint += entry.getSize();
@@ -196,7 +199,46 @@ public final class CNArchiveInstallTx {
         return out;
     }
 
-    private static void writeEntry(ZipFile zip, ZipEntry entry, File out, Cancel cancel)
+    /**
+     * 解压膨胀比上限与「小包不看比例」的门槛。数值与判据都来自原
+     * {@code CNDownloaderFix.extractChecked}——那份实现已并入本类，这两个常量
+     * 随之搬来，不是新立的。
+     *
+     * <p>正常包实测的膨胀比（2026-08-13，读线上各包的中央目录累加得出）：
+     *
+     * <pre>
+     *   cn_base_03.zip     1.32 → 2.79 GiB   2.11x   ← 15 个包里最高
+     *   cn_voice_01.zip    1.85 → 2.15 GiB   1.16x
+     *   cn_base_02.zip     0.89 → 0.94 GiB   1.06x
+     *   movie.zip          1.33 → 1.35 GiB   1.02x
+     * </pre>
+     *
+     * <p>别按「游戏资源膨胀比接近 1」去收紧：那句话对 14 个包成立，对 03 不成立。
+     * 收到 2x 以下就等于把它判成 zip 炸弹，每次装到一半整包作废重下。真实余量按
+     * 最高的 03 算是约 95 倍；要动这个数，先把上面这张表重测一遍。
+     */
+    private static final long EXTRACT_MAX_RATIO = 200L;
+    /**
+     * 小包不看比例。几 KB 的包里放一个高度可压的小文件，比例很容易冲上去，
+     * 但那点绝对量根本谈不上「把磁盘写满」，没必要为它中止。
+     */
+    private static final long EXTRACT_MIN_BYTES_BEFORE_RATIO = 256L * 1024 * 1024;
+
+    /**
+     * 本次解压已经写出去的字节数。**边写边看**用的，不是统计。
+     *
+     * <p>为什么必须边写边看：上面 {@code extract()} 开头那道比例检查读的是中央
+     * 目录<b>声明</b>的未压缩长度，而声明是可以撒谎的——一个谎报小尺寸、实际
+     * 解出几十 GB 的包能整份通过那道闸。而 {@code writeEntry} 是读到 EOF 才比
+     * {@code copied != entry.getSize()}，等它报错时磁盘已经铺满了。zip 炸弹的
+     * 伤害就在于「写出去」这件事本身，事后拒绝没有意义。
+     *
+     * <p>单线程使用：解压全程在 {@code EXTRACT_LOCK} 之内串行。
+     */
+    private static long writtenThisRun;
+
+    private static void writeEntry(ZipFile zip, ZipEntry entry, File out, Cancel cancel,
+                                   long archiveBytes)
             throws IOException {
         File parent = out.getParentFile();
         if (parent != null && !parent.isDirectory() && !parent.mkdirs() && !parent.isDirectory()) {
@@ -237,6 +279,25 @@ public final class CNArchiveInstallTx {
                 }
                 if (n < 0) break;
                 if (n == 0) continue;
+                // 两道判据都在 write **之前**。写完再判等于「炸弹已经落地，
+                // 事后宣布它不该落地」——zip 炸弹的伤害就是写出去这件事本身。
+                //
+                // ① 单条目不许超过它自己声明的长度。中央目录说多少就只收多少，
+                //    谎报的那部分一个字节都不落盘。
+                long declared = entry.getSize();
+                if (declared >= 0 && copied + n > declared) {
+                    throw new ZipException("Entry longer than declared: " + entry.getName()
+                            + " declared=" + declared + " atLeast=" + (copied + n));
+                }
+                // ② 整包累计仍要看比例：即使每条都「诚实」，条目数量本身也能堆出
+                //    一个炸弹。判据与门槛沿用并入前的那份实现。
+                if (archiveBytes > 0
+                        && writtenThisRun + n > EXTRACT_MIN_BYTES_BEFORE_RATIO
+                        && writtenThisRun + n > archiveBytes * EXTRACT_MAX_RATIO) {
+                    throw new ZipException("解压膨胀比超限（已写 " + writtenThisRun
+                            + "B，归档 " + archiveBytes + "B，上限 "
+                            + EXTRACT_MAX_RATIO + "x）：" + entry.getName());
+                }
                 try {
                     output.write(buf, 0, n);
                 } catch (IOException e) {
@@ -244,6 +305,7 @@ public final class CNArchiveInstallTx {
                 }
                 crc.update(buf, 0, n);
                 copied += n;
+                writtenThisRun += n;
             }
             try {
                 output.flush();
@@ -251,6 +313,15 @@ public final class CNArchiveInstallTx {
             } catch (IOException e) {
                 throw new InstallIOException("Cannot sync extraction temp: " + temp, e);
             }
+        } catch (Throwable t) {
+            // 从写入循环里抛出来时，半截临时文件必须带走。原先只有循环**之后**
+            // 那两处检查会 deleteQuietly(temp)，于是新加的即时判据一旦命中，
+            // .cnv-install.tmp 就留在盘上没人管了。
+            closeQuietly(output);
+            closeQuietly(raw);
+            closeQuietly(in);
+            deleteQuietly(temp);
+            throw t;
         } finally {
             closeQuietly(output);
             closeQuietly(raw);

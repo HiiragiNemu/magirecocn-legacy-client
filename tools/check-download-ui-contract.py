@@ -15,6 +15,7 @@ extract_tx = Path("patch/src/main/java/io/kamihama/magianative/CNArchiveInstallT
 overlay = Path("patch/src/main/java/io/kamihama/magianative/CNDebugOverlay.java").read_text(encoding="utf-8")
 zipplan = Path("patch/src/main/java/io/kamihama/magianative/CNZipPlan.java").read_text(encoding="utf-8")
 offline = Path("patch/src/main/java/io/kamihama/magianative/CNOfflineImport.java").read_text(encoding="utf-8")
+hot_tx = Path("patch/src/main/java/io/kamihama/magianative/CNHotUpdateTx.java").read_text(encoding="utf-8")
 manifest = Path("AndroidManifest.xml").read_text(encoding="utf-8")
 
 checks = {
@@ -146,13 +147,12 @@ checks = {
     # 用同一个数。诱惑在于「游戏资源膨胀比接近 1，收紧一点更安全」——那句话对 14 个包
     # 成立，对 cn_base_03.zip 不成立：它 2.11x（1.32→2.79 GiB），是唯一真正会膨胀的。
     # 收到 2x 以下就等于把它判成 zip 炸弹，每次装到一半整包作废重下。
-    "解压膨胀比上限保持 200x 且两处一致":
-        "EXTRACT_MAX_RATIO = 200L" in downloader
-        and "totalBytes / archive.length() > 200L" in extract_tx,
+    "解压膨胀比上限保持 200x":
+        "EXTRACT_MAX_RATIO = 200L" in extract_tx
+        and "EXTRACT_MIN_BYTES_BEFORE_RATIO = 256L * 1024 * 1024" in extract_tx,
     # 依据要跟着阈值走：只留一个数字，下一个人还是会照「接近 1」去拍。
     "膨胀比阈值旁边留着实测表":
-        "2.11x" in downloader and "cn_base_03.zip" in downloader
-        and "2.11x" in extract_tx,
+        "2.11x" in extract_tx and "cn_base_03.zip" in extract_tx,
     # COLOR_* 全是无初始值的 static int，默认 0 = #00000000 全透明。调试悬浮窗
     # 反射读它们取色，读到 0 就把文字画成透明——面板上开关名、说明、「已激活」
     # 标签全消失，只剩硬编码白色的主按钮还在，且时有时无（取决于这次启动有没有
@@ -187,6 +187,21 @@ checks = {
     "aria2 路径上的空间不足也不当引擎故障":
         "catch (CNDiskSpace.NotEnoughSpace e)" in downloader
         and downloader.count("reportNoSpace") >= 4,
+    # 全仓只此一套解压实现（2026-08-13 收敛）。原先 extractChecked 与
+    # CNArchiveInstallTx.extract 并存，两者的膨胀比防护**时机不同**：前者边写边看，
+    # 后者读到 EOF 才比 size。naive 合并会悄悄丢掉前者那道——而一个谎报未压缩长度的
+    # 包正是靠它拦住的。合并时把两道都留下了，这里钉住。
+    "解压实现只此一套":
+        "extractChecked" not in downloader
+        and "CNDownloaderFix.extractChecked" not in hot_tx,
+    "膨胀比两道防护都在（声明侧 + 边写边看）":
+        "totalBytes / archive.length() > EXTRACT_MAX_RATIO" in extract_tx
+        and "copied + n > declared" in extract_tx
+        and "writtenThisRun + n > archiveBytes * EXTRACT_MAX_RATIO" in extract_tx,
+    # 判据必须在 write 之前：写完再拒等于「炸弹已经落地，事后宣布它不该落地」。
+    "膨胀比判据在写出去之前":
+        extract_tx.index("copied + n > declared")
+            < extract_tx.index("output.write(buf, 0, n);"),
     # 离线包是玩家从网盘下了一两个 G 再手动导入的。原先任何 Throwable 都删它并
     # 回退网络下载——磁盘满也删。删完接着走网络，只会以同样的方式再失败一次，而他
     # 得从头再下一遍。只有 ZipException（包真坏）才该删。

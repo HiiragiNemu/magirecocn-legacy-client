@@ -16,7 +16,6 @@ import java.net.Proxy;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Enumeration;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Callable;
@@ -31,7 +30,6 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.zip.ZipEntry;
 import java.util.zip.ZipException;
 import java.util.zip.ZipFile;
 
@@ -934,8 +932,8 @@ public final class CNDownloaderFix {
             long offlineBytes = offline.length();
             try {
                 // 解压走与主引擎同一套事务：空间预检 + 逐条目 size/CRC + 断点续解压。
-                // 原先用 extractChecked，那套都没有——03 这种解压后 2.79 GiB 的包
-                // 一旦中途被杀，下次要从零再解一遍。
+                // 全仓只此一套解压实现（2026-08-13 收敛）：空间预检、逐条目
+                // size/CRC、两道膨胀比防护、断点续解压，都在它里面。
                 File offState = CNArchiveInstallTx.stateFile(
                         new File(STATE_ROOT), name + ".offline");
                 synchronized (EXTRACT_LOCK) {
@@ -1295,9 +1293,8 @@ public final class CNDownloaderFix {
                     // 通过。今天 cn_scenario_update.zip 正是这种（尺寸一样、内容是上
                     // 一版）。这条路上它只能靠随后的热更新轮按版本号发现并补下。
                     //
-                    // 解压仍走 CNArchiveInstallTx.extract 而不是 extractChecked：它给的
-                    // 是空间预检与断点续解压，那不是「内容校验」，去掉只会让 03 那类
-                    // 大包白解压半天再翻车。
+                    // 解压走全仓唯一那套事务：它给的是空间预检与断点续解压，
+                    // 那不是「内容校验」，去掉只会让 03 那类大包白解压半天再翻车。
                     File a2State = CNArchiveInstallTx.stateFile(new File(STATE_ROOT), name);
                     synchronized (EXTRACT_LOCK) {
                         CNArchiveInstallTx.extract(archive, new File(INSTALL_ROOT),
@@ -1843,125 +1840,8 @@ public final class CNDownloaderFix {
     // 解压
     // ==================================================================
 
-    /**
-     * 解压膨胀比上限。超过它、且已经写出 {@link #EXTRACT_MIN_BYTES_BEFORE_RATIO}
-     * 之后才判定为 zip 炸弹。
-     *
-     * <p><b>正常包实测的膨胀比</b>（2026-08-13，读线上各包的中央目录累加得出）：
-     *
-     * <pre>
-     *   cn_base_03.zip     1.32 → 2.79 GiB   2.11x   ← 15 个包里最高
-     *   cn_voice_01.zip    1.85 → 2.15 GiB   1.16x
-     *   cn_base_02.zip     0.89 → 0.94 GiB   1.06x
-     *   movie.zip          1.33 → 1.35 GiB   1.02x
-     * </pre>
-     *
-     * <p>原注释写的是「游戏资源都是 PNG / 音频 / 已压缩容器，实测膨胀比接近 1」
-     * ——对 14 个包成立，对 <b>03 不成立</b>：它 2.11x，是唯一真正会膨胀的包。
-     * 结论（200 有足够余量）没变，但那句依据现在是错的，留着会误导下一个想
-     * 「收紧一点更安全」的人：按「接近 1」去收，很容易收到 2x 以下，那就是把 03
-     * 判成 zip 炸弹、每次装到一半整包作废重下。
-     *
-     * <p>真实余量按最高的 03 算：2.11x 对 200x，约 95 倍。要动这个数，先把上面
-     * 这张表重测一遍，别照着「接近 1」拍。
-     */
-    private static final long EXTRACT_MAX_RATIO = 200L;
 
-    /**
-     * 小包不看比例。几 KB 的包里放一个高度可压的小文件，比例很容易冲上去，
-     * 但那点绝对量根本谈不上「把磁盘写满」，没必要为它中止。
-     */
-    private static final long EXTRACT_MIN_BYTES_BEFORE_RATIO = 256L * 1024 * 1024;
 
-    /**
-     * 解压 {@code archive} 到 {@code root}，带 Zip Slip 防护、逐条目大小核对
-     * 与膨胀比上限。
-     *
-     * <p>包内可见（而非 private）是因为热更新走的是同一套解压要求：
-     * {@link CNHotUpdateCheck} 直接复用，不再另写一份。
-     *
-     * <h3>为什么要看膨胀比</h3>
-     *
-     * 归档的 md5/大小校验（只有热更包有，见 {@code CNHotUpdateCheck.verifyZip}）
-     * 管的是<b>压缩后</b>那份，管不到解压出来有多大。一个几十 MB 的包完全可以
-     * 炸出几十 GB，把玩家的存储写满——而写满之后倒霉的不只是游戏，整台机器都会
-     * 开始出问题。这一条与内容是否可信无关，纯粹是别让一个坏包能造成不可逆的破坏。
-     */
-    static void extractChecked(File archive, File root) throws IOException {
-        if (!archive.isFile()) {
-            throw new IOException("Archive is missing: " + archive);
-        }
-        if (!root.isDirectory() && !root.mkdirs() && !root.isDirectory()) {
-            throw new IOException("Cannot create extraction root: " + root);
-        }
-        String rootCanonical = root.getCanonicalPath();
-        String prefix        = rootCanonical + File.separator;
-
-        final long archiveBytes = Math.max(1L, archive.length());
-        final long ratioCap     = archiveBytes * EXTRACT_MAX_RATIO;
-        long writtenTotal = 0L;
-
-        ZipFile zip = new ZipFile(archive);
-        try {
-            Enumeration<? extends ZipEntry> entries = zip.entries();
-            boolean sawFile = false;
-            while (entries.hasMoreElements()) {
-                ZipEntry entry = entries.nextElement();
-                File out = new File(root, entry.getName());
-                String canonical = out.getCanonicalPath();
-                // Zip Slip 防护：条目必须落在解压根之内
-                if (!canonical.equals(rootCanonical) && !canonical.startsWith(prefix)) {
-                    throw new ZipException("ZIP entry escapes extraction root: " + entry.getName());
-                }
-                if (entry.isDirectory()) {
-                    if (!out.isDirectory() && !out.mkdirs() && !out.isDirectory()) {
-                        throw new IOException("Cannot create directory " + out);
-                    }
-                    continue;
-                }
-                File parent = out.getParentFile();
-                if (parent != null && !parent.isDirectory() && !parent.mkdirs()
-                        && !parent.isDirectory()) {
-                    throw new IOException("Cannot create directory " + parent);
-                }
-                InputStream  in  = null;
-                OutputStream os  = null;
-                try {
-                    in = new BufferedInputStream(zip.getInputStream(entry), 65536);
-                    os = new BufferedOutputStream(new FileOutputStream(out), 65536);
-                    byte[] buf = new byte[65536];
-                    long copied = 0L;
-                    int n;
-                    while ((n = in.read(buf)) >= 0) {
-                        os.write(buf, 0, n);
-                        copied += n;
-                        writtenTotal += n;
-                        // 边写边看，而不是写完再算——zip 炸弹的伤害就在于「写出去」本身，
-                        // 等它铺完磁盘再报错已经晚了
-                        if (writtenTotal > EXTRACT_MIN_BYTES_BEFORE_RATIO
-                                && writtenTotal > ratioCap) {
-                            throw new ZipException("解压膨胀比超限（已写 " + writtenTotal
-                                    + "B，归档 " + archiveBytes + "B，上限 "
-                                    + EXTRACT_MAX_RATIO + "x）：" + archive.getName());
-                        }
-                    }
-                    os.flush();
-                    if (entry.getSize() >= 0 && copied != entry.getSize()) {
-                        throw new ZipException("Entry size mismatch: " + entry.getName());
-                    }
-                    sawFile = true;
-                } finally {
-                    closeQuietly(os);
-                    closeQuietly(in);
-                }
-            }
-            if (!sawFile) {
-                throw new ZipException("Archive contains no file entries: " + archive);
-            }
-        } finally {
-            zip.close();
-        }
-    }
 
     // ==================================================================
     // 速度看门狗

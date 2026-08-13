@@ -77,7 +77,11 @@ PROTECTED = [
     (J + "CNSafeLink.java",      None,                 "外链白名单（整份文件）"),
     (J + "CNMirrors.java",       "normalizeBase",      "config.json 只收 https"),
     (J + "CNMirrors.java",       "isSaneProxyDomain",  "代理域名最小粒度"),
-    (J + "CNDownloaderFix.java", "extractChecked",     "解压膨胀比上限（zip bomb）"),
+    # 2026-08-13：两套解压实现收敛成一份，膨胀比防护随之搬到 CNArchiveInstallTx。
+    # 那里有**两道**：extract() 开头按中央目录声明的总量看比例（快，一个字节没写就能拒），
+    # writeEntry() 里边写边看（防声明撒谎——谎报小尺寸的包能整份骗过第一道）。
+    (J + "CNArchiveInstallTx.java", "extract",           "解压膨胀比上限·声明侧（zip bomb）"),
+    (J + "CNArchiveInstallTx.java", "writeEntry",        "解压膨胀比上限·边写边看（zip bomb）"),
     (J + "CNWebProxy.java",      "rewriteWith",        "代理改写的域名判据"),
     (N,                          "tryRewriteUrl",      "native 侧代理改写的域名判据"),
     (N,                          "proxySnapshot",      "native 侧代理配置快照"),

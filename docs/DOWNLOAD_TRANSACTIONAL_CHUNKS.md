@@ -121,6 +121,26 @@
 
 > 已知边界：导入时的分块校验要拉 `manifest.json`，也就是**导入仍需要能连上 CDN**。而玩家用离线导入的场合往往正是网络不好。`manifest.json` 只有几十 KB，通常还拉得动，但完全断网时导入会以「无清单，拒收」失败。
 
+### 解压：全仓只此一套（2026-08-13）
+
+原先有两套并存：`CNDownloaderFix.extractChecked` 与 `CNArchiveInstallTx.extract`。首次安装器用后者，热更暂存、离线导入、aria2 用前者——而前者没有空间预检、没有断点续解压。已收敛到 `CNArchiveInstallTx.extract` 一份，`extractChecked` 删除。
+
+**合并时差点丢掉一道安全防线**，记在这里：两套的膨胀比防护<b>时机不同</b>。
+
+- `extractChecked`：**边写边看**，累计写出量超过 `归档大小 × 200` 就中止；
+- `CNArchiveInstallTx`：读到 EOF 才比 `copied != entry.getSize()`。
+
+后者拦不住**谎报未压缩长度**的包——中央目录声明 16 字节、实际解出几十 GB，那道事后检查要等磁盘铺满才触发。而 zip 炸弹的伤害就是「写出去」这件事本身，事后拒绝没有意义。
+
+因此合并后保留**两道**，且都在 `output.write()` **之前**：
+
+1. `extract()` 开头按中央目录声明的未压缩总量看比例——快，一个字节都还没写就能拒；
+2. `writeEntry()` 循环里，写每一块之前先判 `copied + n > entry.getSize()`（单条目不许超过自己声明的长度）与 `writtenThisRun + n > 归档 × 200`（整包累计）。
+
+`ArchiveInstallTxTest` 用一个**真 ZIP** 改掉中央目录里的未压缩长度字段来复现「声明撒谎」，并断言落盘量停在一个缓冲以内——光断言「抛没抛」区分不出来，因为事后那道检查同样会抛 `ZipException`。停用即时判据重跑，该断言会红（实测：有防护落盘 65536 字节，无防护 1048576 字节）。
+
+`tools/check-debug-flag-boundary.py` 的保护区随之从 `CNDownloaderFix.extractChecked` 改为 `CNArchiveInstallTx` 的 `extract` 与 `writeEntry` 两处。
+
 ## 回归合同
 
 `ChunkHashIntegrationTest` 必须覆盖：

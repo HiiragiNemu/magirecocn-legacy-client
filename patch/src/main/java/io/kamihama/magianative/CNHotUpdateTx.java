@@ -25,8 +25,8 @@ import java.util.zip.ZipFile;
  *
  * <h3>要解决的问题</h3>
  *
- * 原本热更是「下载 → {@link CNDownloaderFix#extractChecked} 直接解压覆盖」。
- * {@code extractChecked} 是**逐条目往活动目录树上写**的，中途失败（磁盘满、
+ * 原本热更是「下载 → 直接解压覆盖活动目录树」。
+ * 那种做法是**逐条目往活动目录树上写**的，中途失败（磁盘满、
  * 进程被杀、断电）就留下一棵新旧混杂的树。
  *
  * <p>版本号确实是解压成功后才写的，所以下次启动会重下重解——**但那是「以后能
@@ -183,7 +183,15 @@ public final class CNHotUpdateTx {
             if (!stage.mkdirs() && !stage.isDirectory()) {
                 throw new IOException("建不出暂存目录: " + stage);
             }
-            CNDownloaderFix.extractChecked(archive, stage);
+            // 与首次安装器、离线导入同一套解压事务（2026-08-13 收敛到一份实现）。
+            // 暂存区是本次事务专用的新目录，状态文件放它旁边即可；解压失败会把
+            // 整个暂存区丢掉，所以这里的断点续解压只在同一轮内有意义。
+            File stageState = new File(stage.getPath() + ".extract.tx");
+            try {
+                CNArchiveInstallTx.extract(archive, stage, stageState, null, null);
+            } finally {
+                CNArchiveInstallTx.clearState(stageState);
+            }
 
             // ---- 阶段二：列计划、写 journal、fsync ----
             List<String> rels = new ArrayList<String>();
