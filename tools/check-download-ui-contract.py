@@ -9,6 +9,8 @@ downloader = Path("patch/src/main/java/io/kamihama/magianative/CNDownloaderFix.j
 manual = Path("patch/src/main/java/io/kamihama/magianative/CNManualRedownload.java").read_text(encoding="utf-8")
 chunk = Path("patch/src/main/java/io/kamihama/magianative/CNChunkedDownload.java").read_text(encoding="utf-8")
 log = Path("patch/src/main/java/io/kamihama/magianative/CNLog.java").read_text(encoding="utf-8")
+extract_tx = Path("patch/src/main/java/io/kamihama/magianative/CNArchiveInstallTx.java").read_text(encoding="utf-8")
+manifest = Path("AndroidManifest.xml").read_text(encoding="utf-8")
 
 checks = {
     "不再向 decorView 添加独立显示控件": "decor.addView(dock" not in assist and "decor.addView(panel" not in assist,
@@ -37,6 +39,22 @@ checks = {
         and 'CNDownloadConcurrency.acquire(' in hot,
     "活动资源树修改共用提交锁": "extractCommitLock" in downloader and "synchronized (CNDownloaderFix.extractCommitLock())" in hot_check,
     "日志只回收当前进程": '"--pid="' in log and "android.os.Process.myPid()" in log,
+    "默认100%内容宽度等于视口": "int contentBaseWidth = Math.max(1" in ui
+        and "scalePct <= 100 ? viewport" in assist,
+    "横向滚动只在真实溢出时启用": "setHorizontalScrollBarEnabled(overflow)" in assist
+        and "if (!overflow) hs.scrollTo(0, 0)" in assist,
+    "进度与下载字节单调不回撤": "if (clean > progress[i])" in ui
+        and "if (clean > downloaded[i])" in ui,
+    "速度由有效进度而非重试流量计算": "AtomicLong usefulBytes" in chunk
+        and "currentUseful - lastSpeedBytes" in chunk,
+    "03完整ZIP可复用并断点续解压": "CNArchiveInstallTx.extract" in downloader
+        and "extract-resume-accept" in extract_tx
+        and "Do not delete a complete archive here" in downloader,
+    "下载中重下会中止并从头开始": "requestActiveRestart" in downloader
+        and "manual-restart-active" in downloader
+        and "停止当前传输" in manual,
+    "高风险悬浮窗与全盘权限已移除": "MANAGE_EXTERNAL_STORAGE" not in manifest
+        and "SYSTEM_ALERT_WINDOW" not in manifest,
 }
 
 failed = [name for name, ok in checks.items() if not ok]

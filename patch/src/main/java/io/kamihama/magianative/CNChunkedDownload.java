@@ -330,7 +330,7 @@ public final class CNChunkedDownload {
                 pool.submit(new HashWorker(ctx, latch));
             }
             monitor(latch, pool, abort, open, firstErr, lastMoveNs, networkBytes,
-                    probe.total, sink);
+                    committed, probe.total, sink);
             IOException err = firstErr.get();
             if (err != null) throw err;
         }
@@ -632,7 +632,7 @@ public final class CNChunkedDownload {
             CountDownLatch latch = new CountDownLatch(workers);
             for (int i = 0; i < workers; i++) pool.submit(new ByteWorker(ctx, latch));
             monitor(latch, pool, abort, open, firstErr, lastMoveNs, networkBytes,
-                    probe.total, sink);
+                    totalDone, probe.total, sink);
             IOException err = firstErr.get();
             if (err != null) {
                 if (rangeIgnored.get()) {
@@ -806,9 +806,13 @@ public final class CNChunkedDownload {
                                 AtomicBoolean abort, AtomicBoolean open,
                                 AtomicReference<IOException> firstErr,
                                 AtomicLong lastMoveNs, AtomicLong networkBytes,
-                                long total, Sink sink) {
+                                AtomicLong usefulBytes, long total, Sink sink) {
+        // Display speed is based on monotonic useful progress (verified bytes for manifest
+        // blocks, persisted bytes for byte segments), never on raw wire bytes. Failed block
+        // attempts and mirror retries therefore cannot be counted twice.
         long lastSpeedNs = System.nanoTime();
-        long lastSpeedBytes = networkBytes.get();
+        long lastSpeedBytes = usefulBytes.get();
+        double smoothedMbps = 0.0d;
         long lowWindowNs = System.nanoTime();
         long lowWindowBytes = networkBytes.get();
         long stallNs = TimeUnit.SECONDS.toNanos(Math.max(1, CNMirrors.stallSeconds()));
@@ -832,13 +836,15 @@ public final class CNChunkedDownload {
                     break;
                 }
                 long speedDt = now - lastSpeedNs;
-                if (speedDt >= TimeUnit.MILLISECONDS.toNanos(500L)) {
-                    long moved = networkBytes.get() - lastSpeedBytes;
-                    if (sink != null) {
-                        sink.onSpeed((float) ((moved * 1.0E9d / speedDt) / 1_000_000.0d));
-                    }
+                if (speedDt >= TimeUnit.SECONDS.toNanos(3L)) {
+                    long currentUseful = usefulBytes.get();
+                    long moved = Math.max(0L, currentUseful - lastSpeedBytes);
+                    double instant = (moved * 1.0E9d / speedDt) / 1_000_000.0d;
+                    smoothedMbps = smoothedMbps <= 0.0d
+                            ? instant : smoothedMbps * 0.70d + instant * 0.30d;
+                    if (sink != null) sink.onSpeed((float) smoothedMbps);
                     lastSpeedNs = now;
-                    lastSpeedBytes = networkBytes.get();
+                    lastSpeedBytes = currentUseful;
                 }
                 long lowDt = now - lowWindowNs;
                 if (minBps > 0 && lowDt >= TimeUnit.SECONDS.toNanos(10L)) {

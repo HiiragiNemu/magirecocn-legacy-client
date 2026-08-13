@@ -442,8 +442,8 @@ public final class CNDownloadUiAssist {
             boolean active = CNCNDownloadUI.fileStatus != null
                     && i < CNCNDownloadUI.fileStatus.length
                     && CNCNDownloadUI.fileStatus[i] == CNCNDownloadUI.ST_RUNNING;
-            b.setText(manual ? "进行中" : (active ? "下载中" : "重下"));
-            b.setAlpha((manual || active) ? 0.55f : 1.0f);
+            b.setText((manual || active) ? "重下" : "重下");
+            b.setAlpha(1.0f);
         }
     }
 
@@ -452,12 +452,6 @@ public final class CNDownloadUiAssist {
         ReloadClick(int index) { this.index = index; }
         @Override public void onClick(View v) {
             Activity act = RestClient.getCurrentActivity();
-            int[] status = CNCNDownloadUI.fileStatus;
-            if (status != null && index >= 0 && index < status.length
-                    && status[index] == CNCNDownloadUI.ST_RUNNING) {
-                CNCNDownloadUI.toast(act, "该文件正在下载，完成后再选择重下");
-                return;
-            }
             CNCNDownloadUI.noteInteraction();
             openConfirm(act, index);
         }
@@ -487,9 +481,14 @@ public final class CNDownloadUiAssist {
         title.setTypeface(title.getTypeface(), Typeface.BOLD);
         panel.addView(title, rowLp(title, 0, 10));
 
-        String extra = index < 2
-                ? "\n\n该包属于热更新通道；安装器完成后还会按版本清单补齐最新版本。"
-                : "";
+        int[] status = CNCNDownloadUI.fileStatus;
+boolean activeNow = status != null && index < status.length
+        && status[index] == CNCNDownloadUI.ST_RUNNING;
+String extra = activeNow
+        ? "\n\n该文件当前正在处理。确认后会停止本文件当前传输、清除本文件断点并从头重下；其它文件不受影响。"
+        : (index < 2
+            ? "\n\n该包属于热更新通道；安装器完成后还会按版本清单补齐最新版本。"
+            : "");
         TextView msg = text(act,
                 "只重新下载：\n" + names[index]
                 + "\n\n不要求其它资源已经下载齐全；不同 ZIP 可以同时下载。"
@@ -650,12 +649,12 @@ public final class CNDownloadUiAssist {
                     - dp(root, 56));
         }
         ViewGroup.LayoutParams lp = root.getLayoutParams();
-        if (baseContentWidth <= 0) {
-            int declared = lp == null ? 0 : lp.width;
-            baseContentWidth = Math.max(viewport, declared > 0 ? declared : viewport);
-        }
-        int width = Math.max(viewport,
-                Math.round(baseContentWidth * Math.max(100, scalePct) / 100f));
+        // The unscaled layout always equals the real viewport. Horizontal scrolling is a
+        // fallback only for zoom >100% or genuinely narrow windows; 75/100% must never start
+        // with half the UI off-screen.
+        baseContentWidth = viewport;
+        int width = scalePct <= 100 ? viewport
+                : Math.max(viewport, Math.round(viewport * scalePct / 100f));
         if (lp != null && lp.width != width) {
             lp.width = width;
             root.setLayoutParams(lp);
@@ -684,8 +683,11 @@ public final class CNDownloadUiAssist {
         HorizontalScrollView hs = hScroll;
         ScrollView vs = vScroll;
         if (hs != null) {
-            hs.setHorizontalScrollBarEnabled(true);
+            boolean overflow = contentRoot != null
+                    && hs.getWidth() > 0 && contentRoot.getWidth() > hs.getWidth() + dp(hs, 2);
+            hs.setHorizontalScrollBarEnabled(overflow);
             hs.setScrollbarFadingEnabled(false);
+            if (!overflow) hs.scrollTo(0, 0);
             hs.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
             hs.setClipToPadding(false);
             hs.setPadding(hs.getPaddingLeft(), hs.getPaddingTop(), hs.getPaddingRight(), dp(hs, 5));

@@ -129,6 +129,8 @@ public class CNCNDownloadUI {
     public static float[] fileSize       = new float[15];
     public static float[] fileSpeed      = new float[15];
     public static float[] fileDownloaded = new float[15];
+    private static final Object PROGRESS_LOCK = new Object();
+    private static int overallProgressHighWater = 0;
 
     // ==================================================================
     // 以下为改版新增的内部状态（无外部引用）
@@ -647,14 +649,14 @@ public class CNCNDownloadUI {
         HorizontalScrollView mainScroll = new HorizontalScrollView(act);
         mainScroll.setTag(CNDownloadUiAssist.TAG_H_SCROLL);
         mainScroll.setFillViewport(true);
-        mainScroll.setHorizontalScrollBarEnabled(true);
+        mainScroll.setHorizontalScrollBarEnabled(false);
         mainScroll.setScrollbarFadingEnabled(false);
         mainScroll.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
         mainScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
         mainScroll.setClipToPadding(false);
         mainScroll.setPadding(0, 0, 0, dp(act, 5));
 
-        int contentBaseWidth = Math.max(dp(act, 560),
+        int contentBaseWidth = Math.max(1,
                 act.getResources().getDisplayMetrics().widthPixels
                         - mainLp.leftMargin - mainLp.rightMargin);
         LinearLayout mainRow = new LinearLayout(act);
@@ -671,19 +673,52 @@ public class CNCNDownloadUI {
         mainRow.addView(leftCol, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.MATCH_PARENT, 0.38f));
 
+        LinearLayout brandRow = new LinearLayout(act);
+        brandRow.setOrientation(LinearLayout.HORIZONTAL);
+        brandRow.setGravity(Gravity.CENTER_VERTICAL);
+        leftCol.addView(brandRow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 66)));
+
         ImageView logoView = new ImageView(act);
         logoView.setScaleType(ImageView.ScaleType.FIT_CENTER);
         loadBitmapFromAssets(act, LOGO_ASSET, logoView);
         LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 64));
-        logoLp.bottomMargin = dp(act, 8);
-        leftCol.addView(logoView, logoLp);
+                dp(act, 122), dp(act, 64));
+        logoLp.rightMargin = dp(act, 8);
+        brandRow.addView(logoView, logoLp);
+
+        LinearLayout brandText = new LinearLayout(act);
+        brandText.setOrientation(LinearLayout.VERTICAL);
+        brandText.setGravity(Gravity.CENTER_VERTICAL);
+        brandRow.addView(brandText, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        TextView brandTitle = new TextView(act);
+        brandTitle.setText("魔法纪录Totentanz中文化");
+        brandTitle.setTextColor(COLOR_ACCENT);
+        brandTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f);
+        brandTitle.setTypeface(brandTitle.getTypeface(), Typeface.BOLD);
+        brandText.addView(brandTitle);
+        TextView brandCore = new TextView(act);
+        brandCore.setText("核心逆向开发：MadeInMagius");
+        brandCore.setTextColor(COLOR_TEXT);
+        brandCore.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f);
+        brandCore.setSingleLine(true);
+        brandCore.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        brandText.addView(brandCore);
+        TextView brandAuto = new TextView(act);
+        brandAuto.setText("补丁与自动化：PhotonFlow");
+        brandAuto.setTextColor(COLOR_TEXT);
+        brandAuto.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f);
+        brandAuto.setSingleLine(true);
+        brandAuto.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        brandText.addView(brandAuto);
 
         View divider = new View(act);
         divider.setBackgroundColor(COLOR_CARD_STK);
         LinearLayout.LayoutParams divLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 1));
-        divLp.bottomMargin = dp(act, 8);
+        divLp.topMargin = dp(act, 3);
+        divLp.bottomMargin = dp(act, 3);
         leftCol.addView(divider, divLp);
 
         ScrollView contribScroll = new ScrollView(act);
@@ -708,7 +743,7 @@ public class CNCNDownloadUI {
         LinearLayout headRow = new LinearLayout(act);
         headRow.setOrientation(LinearLayout.HORIZONTAL);
         headRow.setGravity(Gravity.CENTER_VERTICAL);
-        rightCol.addView(headRow, lpRow(0, dp(act, 4)));
+        rightCol.addView(headRow, lpRow(0, dp(act, 1)));
 
         vPhase = new TextView(act);
         vPhase.setText(phaseText);
@@ -733,13 +768,10 @@ public class CNCNDownloadUI {
         vStatus.setText(detailText);
         vStatus.setTextColor(COLOR_TEXT);
         vStatus.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
-        // 固定两行：首屏那句要交代「热更新内容已排到最前」，一行放不下。
-        // min=max=2 是为了让这一行的高度恒定——否则文案在一行/两行之间变动时，
-        // 下面的文件列表会跟着上下跳。
-        vStatus.setMinLines(2);
+        vStatus.setMinLines(1);
         vStatus.setMaxLines(2);
         vStatus.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        rightCol.addView(vStatus, lpRow(0, dp(act, 6)));
+        rightCol.addView(vStatus, lpRow(0, dp(act, 2)));
 
         ScrollView slotScroll = new ScrollView(act);
         slotScroll.setTag(CNDownloadUiAssist.TAG_V_SCROLL);
@@ -761,7 +793,7 @@ public class CNCNDownloadUI {
         LinearLayout totalRow = new LinearLayout(act);
         totalRow.setOrientation(LinearLayout.HORIZONTAL);
         totalRow.setGravity(Gravity.CENTER_VERTICAL);
-        rightCol.addView(totalRow, lpRow(dp(act, 8), dp(act, 2)));
+        rightCol.addView(totalRow, lpRow(dp(act, 4), dp(act, 1)));
 
         vOverallText = new TextView(act);
         vOverallText.setText("总进度");
@@ -784,8 +816,15 @@ public class CNCNDownloadUI {
         progressBarOverall.setMax(100);
         progressBarOverall.setProgress(0);
         tintBar(progressBarOverall, COLOR_ACCENT);
-        rightCol.addView(progressBarOverall, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 10)));
+        LinearLayout overallBarRow = new LinearLayout(act);
+        overallBarRow.setOrientation(LinearLayout.HORIZONTAL);
+        rightCol.addView(overallBarRow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 11)));
+        overallBarRow.addView(progressBarOverall, new LinearLayout.LayoutParams(
+                0, dp(act, 11), 3f));
+        View overallSpacer = new View(act);
+        overallBarRow.addView(overallSpacer, new LinearLayout.LayoutParams(
+                0, dp(act, 1), 1f));
 
         // ── 第 3 层：左上角 LOG 胶囊 ──
         logPillBg = new GradientDrawable();
@@ -1360,6 +1399,13 @@ public class CNCNDownloadUI {
         int renderCount = 0;
         for (int i = 0; i < credits.texts.length; i++) {
             int kind = credits.kinds[i];
+            String creditText = credits.texts[i] == null ? "" : credits.texts[i];
+            if (creditText.contains("魔法纪录Totentanz中文化")
+                    || creditText.contains("核心逆向开发")
+                    || creditText.contains("补丁与自动化")
+                    || creditText.contains("独立完成汉化引擎")) {
+                continue;
+            }
             if (kind == KIND_ITEM) {
                 LinearLayout row = new LinearLayout(act);
                 row.setOrientation(LinearLayout.HORIZONTAL);
@@ -1367,7 +1413,7 @@ public class CNCNDownloadUI {
                 LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT);
-                row-hostMargin = dp(act, 3);
+                row-hostMargin = dp(act, 1);
                 vContribList.addView(row, rowLp);
 
                 DotView dot = new DotView(act,
@@ -1385,7 +1431,7 @@ public class CNCNDownloadUI {
                 t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
                 t.setText(highlight(credits.texts[i], span));
                 if (url.length() > 0) {
-                    row.setPadding(0, dp(act, 3), 0, dp(act, 3));
+                    row.setPadding(0, dp(act, 1), 0, dp(act, 1));
                     row.setClickable(true);
                     row.setOnClickListener(new CreditLinkClick(act, url));
                 }
@@ -1401,13 +1447,13 @@ public class CNCNDownloadUI {
                     t.setTextColor(COLOR_ACCENT);
                     t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
                     t.setTypeface(t.getTypeface(), Typeface.BOLD);
-                    lp.bottomMargin = dp(act, 4);
+                    lp.bottomMargin = dp(act, 2);
                 } else if (kind == KIND_HEAD) {
                     t.setTextColor(COLOR_ACCENT2);
                     t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
                     t.setTypeface(t.getTypeface(), Typeface.BOLD);
-                    lp.topMargin    = dp(act, 8);
-                    lp.bottomMargin = dp(act, 2);
+                    lp.topMargin    = dp(act, 4);
+                    lp.bottomMargin = dp(act, 1);
                 } else {  // KIND_SUB
                     t.setTextColor(COLOR_SUB);
                     t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f);
@@ -1462,7 +1508,7 @@ public class CNCNDownloadUI {
             LinearLayout.LayoutParams hrLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT);
-            hrLp.topMargin = dp(act, 5);
+            hrLp.topMargin = dp(act, 2);
             row.addView(headRow, hrLp);
 
             TextView name = new TextView(act);
@@ -1507,16 +1553,21 @@ public class CNCNDownloadUI {
             bar.setMax(100);
             bar.setProgress(0);
             tintBar(bar, 0x55888888);
-            LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 6));
-            barLp.topMargin = dp(act, 2);
-            row.addView(bar, barLp);
+            LinearLayout barRow = new LinearLayout(act);
+            barRow.setOrientation(LinearLayout.HORIZONTAL);
+            LinearLayout.LayoutParams barRowLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 8));
+            barRowLp.topMargin = dp(act, 1);
+            row.addView(barRow, barRowLp);
+            barRow.addView(bar, new LinearLayout.LayoutParams(0, dp(act, 8), 3f));
+            View barSpacer = new View(act);
+            barRow.addView(barSpacer, new LinearLayout.LayoutParams(0, dp(act, 1), 1f));
 
             View div = new View(act);
             div.setBackgroundColor(darkMode ? 0x22FFFFFF : 0x18000000);
             LinearLayout.LayoutParams divLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, 1);
-            divLp.topMargin = dp(act, 4);
+            divLp.topMargin = dp(act, 2);
             row.addView(div, divLp);
 
             slotList.add(new SlotViews(name, info, retry, bar, div));
@@ -3215,6 +3266,10 @@ public class CNCNDownloadUI {
             } else {
                 overall = 0;
             }
+            synchronized (PROGRESS_LOCK) {
+                if (overall < overallProgressHighWater) overall = overallProgressHighWater;
+                else overallProgressHighWater = overall;
+            }
             ProgressBar pb = progressBarOverall;
             if (pb != null) pb.setProgress(overall);
         }
@@ -3271,7 +3326,12 @@ public class CNCNDownloadUI {
                 } else if (st == 1) {
                     sv.infoView.setTextColor(COLOR_SUB);
                     StringBuilder sb = new StringBuilder();
-                    sb.append(pct).append('%');
+                    float exactPct = pct;
+                    if (downloaded != null && size != null && size[i] > 0f) {
+                        exactPct = Math.max(exactPct,
+                                Math.min(100f, Math.max(0f, downloaded[i] * 100f / size[i])));
+                    }
+                    sb.append(String.format(Locale.US, "%.1f%%", exactPct));
                     if (downloaded != null && size != null && size[i] > 0f) {
                         sb.append("  ").append(formatMb(downloaded[i]))
                           .append(" / ").append(formatMb(size[i]));
@@ -3625,10 +3685,7 @@ public class CNCNDownloadUI {
      */
     public static void markFilePending(int i) {
         if (i < 0 || i >= FILE_COUNT) return;
-        if (fileStatus != null) fileStatus[i] = 0;
-        if (fileProgress != null) fileProgress[i] = 0;
-        if (fileSpeed != null) fileSpeed[i] = 0.0f;
-        if (fileDownloaded != null) fileDownloaded[i] = 0.0f;
+        resetFileProgress(i);
         Handler handler = uiHandler;
         if (handler != null) handler.post(new UpdateRunnable());
         try { CNLog.i(TAG, "[Hotupdate UI] slot=" + i + " -> pending/downloading"); } catch (Throwable ignore) {}
@@ -3636,16 +3693,38 @@ public class CNCNDownloadUI {
 
     public static void setDownloadSpeed(int i, float f) {
         float[] speed = fileSpeed;
-        if (speed != null) {
-            speed[i] = f;
+        if (speed != null && i >= 0 && i < speed.length) {
+            speed[i] = Float.isNaN(f) || Float.isInfinite(f) || f < 0f ? 0f : f;
         }
     }
 
     public static void setFileDownloaded(int i, float f) {
-        float[] downloaded = fileDownloaded;
-        if (downloaded != null) {
-            downloaded[i] = f;
+        synchronized (PROGRESS_LOCK) {
+            float[] downloaded = fileDownloaded;
+            if (downloaded != null && i >= 0 && i < downloaded.length) {
+                float clean = Float.isNaN(f) || Float.isInfinite(f) || f < 0f ? 0f : f;
+                if (clean > downloaded[i]) downloaded[i] = clean;
+            }
         }
+    }
+
+    /** Deliberate user restart/run reset. Normal callbacks are monotonic. */
+    public static void resetFileProgress(int i) {
+        if (i < 0 || i >= FILE_COUNT) return;
+        synchronized (PROGRESS_LOCK) {
+            if (fileStatus != null) fileStatus[i] = ST_WAIT;
+            if (fileProgress != null) fileProgress[i] = 0;
+            if (fileSpeed != null) fileSpeed[i] = 0f;
+            if (fileDownloaded != null) fileDownloaded[i] = 0f;
+        }
+        Handler handler = uiHandler;
+        if (handler != null) handler.post(new UpdateRunnable());
+    }
+
+    public static void resetOverallProgress() {
+        synchronized (PROGRESS_LOCK) { overallProgressHighWater = 0; }
+        ProgressBar pb = progressBarOverall;
+        if (pb != null) pb.setProgress(0);
     }
 
     public static void setFileSize(int i, float f) {
@@ -3760,12 +3839,13 @@ public class CNCNDownloadUI {
     }
 
     public static void updateFileProgress(int i, int i2) {
-        int[] progress = fileProgress;
-        if (progress != null) {
-            progress[i] = i2;
-            int[] status = fileStatus;
-            if (status != null && status[i] != 2) {
-                fileStatus[i] = 1;
+        synchronized (PROGRESS_LOCK) {
+            int[] progress = fileProgress;
+            if (progress != null && i >= 0 && i < progress.length) {
+                int clean = Math.max(0, Math.min(100, i2));
+                if (clean > progress[i]) progress[i] = clean;
+                int[] status = fileStatus;
+                if (status != null && status[i] != ST_DONE) fileStatus[i] = ST_RUNNING;
             }
         }
         throttledUpdate();

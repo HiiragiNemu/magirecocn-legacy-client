@@ -41,6 +41,17 @@ public final class CNHotUpdate {
     public static boolean download(String url, String destPath,
                                    String displayName, int index,
                                    CNHotUpdateValidate.VerMeta expected) {
+        CNDownloadRestart.register(index);
+        try {
+            return downloadRegistered(url, destPath, displayName, index, expected);
+        } finally {
+            CNDownloadRestart.unregister(index);
+        }
+    }
+
+    private static boolean downloadRegistered(String url, String destPath,
+                                   String displayName, int index,
+                                   CNHotUpdateValidate.VerMeta expected) {
         if (url == null || destPath == null) {
             CNLog.e(TAG, "参数为空，放弃下载 url=" + url + " dest=" + destPath);
             return false;
@@ -69,7 +80,8 @@ public final class CNHotUpdate {
         if (remoteName == null) {
             CNLog.i(TAG, "非主线地址，按原地址下载: " + url);
             try {
-                singleStream(withIdentity(url, expected), dest, index, false, expected);
+                singleStream(withIdentity(url, expected), dest, index, false, expected,
+                        CNDownloadRestart.generation(index));
                 String bad = expected == null ? null : CNHotUpdateValidate.verifyZip(dest, expected);
                 if (bad != null) throw new IOException("热更新完工校验失败: " + bad);
                 markDone(index);
@@ -93,12 +105,14 @@ public final class CNHotUpdate {
                 markFailed(index);
                 return false;
             }
+            final int restartToken = CNDownloadRestart.generation(index);
             CNMirrors.Mirror mirror = CNMirrors.pick(attempt);
             boolean direct = true;
             String tryUrl = withIdentity(mirror.urlFor(remoteName), expected);
             CNCNDownloadUI.setDownloadSpeed(index, 0.0f);
             try {
-                fetch(tryUrl, dest, index, direct, mirror, remoteName, expected);
+                fetch(tryUrl, dest, index, direct, mirror, remoteName, expected,
+                        restartToken);
                 String bad = expected == null ? null : CNHotUpdateValidate.verifyZip(dest, expected);
                 if (bad != null) {
                     cleanupDownloadArtifacts(dest);
@@ -110,6 +124,15 @@ public final class CNHotUpdate {
                         + " mirror=" + mirror.name + " identity=" + hotIdentity(expected));
                 return true;
             } catch (Throwable t) {
+                if (CNDownloadRestart.changed(index, restartToken)) {
+                    CNLog.i(TAG, "manual-restart-active file=" + remoteName
+                            + " attempt=" + attempt + "：清除该文件断点并从头重下");
+                    CNDownloadRestart.clearInterrupt();
+                    cleanupDownloadArtifacts(dest);
+                    CNCNDownloadUI.resetFileProgress(index);
+                    attempt = 0;
+                    continue;
+                }
                 CNMirrors.reportFailure(mirror, String.valueOf(t.getMessage()));
                 CNLog.w(TAG, "下载失败 " + remoteName + " attempt=" + attempt
                         + " mirror=" + mirror.name, t);
@@ -138,7 +161,8 @@ public final class CNHotUpdate {
     private static void fetch(String url, File dest, int index,
                               boolean direct, CNMirrors.Mirror mirror,
                               String remoteName,
-                              CNHotUpdateValidate.VerMeta expected) throws IOException {
+                              CNHotUpdateValidate.VerMeta expected,
+                              int restartToken) throws IOException {
         int wanted = mirror.effectiveChunks();
         if (wanted > 1) {
             CNChunkedDownload.Probe probe = CNChunkedDownload.probe(url, direct);
@@ -160,18 +184,22 @@ public final class CNHotUpdate {
                     CNCNDownloadUI.setFileSize(index, (float) (probe.total / 1000000.0d));
                     // hashes 必须为 null：动态包由 version JSON 的 whole-file MD5 认证。
                     CNChunkedDownload.download(url, dest, chunks, direct, probe,
-                            new HotSink(index), mirror, remoteName, true, null);
+                            new HotSink(index, restartToken), mirror, remoteName, true, null);
                     return;
                 }
             }
             CNLog.i(TAG, "不支持 Range 或文件过小，改用单线程: " + dest.getName());
         }
-        singleStream(url, dest, index, direct, expected);
+        singleStream(url, dest, index, direct, expected, restartToken);
     }
 
     private static final class HotSink implements CNChunkedDownload.Sink {
         private final int index;
-        HotSink(int index) { this.index = index; }
+        private final int restartToken;
+        HotSink(int index, int restartToken) {
+            this.index = index;
+            this.restartToken = restartToken;
+        }
         @Override public void onTotal(long total) {
             CNCNDownloadUI.setFileSize(index, (float) (total / 1000000.0d));
         }
@@ -185,13 +213,14 @@ public final class CNHotUpdate {
             CNCNDownloadUI.setDownloadSpeed(index, mbps);
         }
         @Override public boolean isCancelled() {
-            return Thread.currentThread().isInterrupted();
+            return CNDownloadRestart.cancelled(index, restartToken);
         }
     }
 
     /** Range 不可用时的单连接续传，同样受全局 8 连接闸门约束。 */
     private static void singleStream(String url, File dest, int index, boolean direct,
-                                     CNHotUpdateValidate.VerMeta expected) throws IOException {
+                                     CNHotUpdateValidate.VerMeta expected,
+                                     int restartToken) throws IOException {
         File part = new File(dest.getPath() + ".part");
         File parent = part.getParentFile();
         if (parent != null && !parent.isDirectory() && !parent.mkdirs()
@@ -249,7 +278,11 @@ public final class CNHotUpdate {
             long windowStart = System.nanoTime();
             long slowSinceNs = 0L;
             int n;
+            double smoothedMbps = 0.0d;
             while ((n = in.read(buf)) != -1) {
+                if (CNDownloadRestart.cancelled(index, restartToken)) {
+                    throw new IOException("manual restart during hot-update download");
+                }
                 if (n == 0) continue;
                 out.write(buf, 0, n);
                 written += n;
@@ -261,10 +294,12 @@ public final class CNHotUpdate {
                 }
                 long now = System.nanoTime();
                 long dt = now - windowStart;
-                if (dt >= TimeUnit.MILLISECONDS.toNanos(500L)) {
+                if (dt >= TimeUnit.SECONDS.toNanos(3L)) {
                     long windowBytes = written - speedBase;
-                    CNCNDownloadUI.setDownloadSpeed(index,
-                            (float) ((windowBytes * 1.0E9d / dt) / 1000000.0d));
+                    double instant = (windowBytes * 1.0E9d / dt) / 1000000.0d;
+                    smoothedMbps = smoothedMbps <= 0.0d
+                            ? instant : smoothedMbps * 0.70d + instant * 0.30d;
+                    CNCNDownloadUI.setDownloadSpeed(index, (float) smoothedMbps);
                     if (windowBytes * 1000000000L / dt < MIN_OK_BPS) {
                         if (slowSinceNs == 0L) slowSinceNs = now;
                         else if (now - slowSinceNs >= SLOW_FAIL_NS) {
@@ -291,6 +326,11 @@ public final class CNHotUpdate {
             if (c != null) try { c.disconnect(); } catch (Throwable ignore) {}
             lease.close();
         }
+    }
+
+    /** Request a from-zero restart of the currently active hot package. */
+    static boolean requestActiveRestart(int index) {
+        return CNDownloadRestart.request(index);
     }
 
     /** 清理某一动态包的全部下载态，不触碰已经事务应用的活动资源。 */

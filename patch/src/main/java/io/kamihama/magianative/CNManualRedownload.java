@@ -48,10 +48,20 @@ public final class CNManualRedownload {
             return;
         }
         int[] status = CNCNDownloadUI.fileStatus;
-        if (status != null && index < status.length
-                && status[index] == CNCNDownloadUI.ST_RUNNING
-                && RUNNING.get(index) == 0) {
-            CNCNDownloadUI.toast(act, "该文件当前正在下载；不会重复启动同一文件");
+        boolean active = (status != null && index < status.length
+                && status[index] == CNCNDownloadUI.ST_RUNNING)
+                || RUNNING.get(index) != 0;
+        if (active) {
+            boolean signalled = index < 2
+                    ? CNHotUpdate.requestActiveRestart(index)
+                    : CNDownloaderFix.requestActiveRestart(index);
+            CNCNDownloadUI.resetFileProgress(index);
+            CNCNDownloadUI.updateSimple("重新开始下载",
+                    CNCNDownloadUI.FILE_NAMES[index]
+                            + "：正在停止当前传输并清除该文件断点…", 0);
+            CNCNDownloadUI.toast(act, signalled
+                    ? "已停止当前传输，将从头重新下载该文件"
+                    : "已登记从头重下；当前阶段结束后立即执行");
             return;
         }
         if (!RUNNING.compareAndSet(index, 0, 1)) {
@@ -59,6 +69,7 @@ public final class CNManualRedownload {
             return;
         }
 
+        if (RUNNING_COUNT.get() == 0) CNCNDownloadUI.resetOverallProgress();
         RUNNING_COUNT.incrementAndGet();
         CNDownloadUiAssist.setStayOnPage(true);
         CNCNDownloadUI.markFilePending(index);
@@ -161,6 +172,7 @@ public final class CNManualRedownload {
                     RUNNING_COUNT.set(0);
                     left = 0;
                 }
+                if (ok) CNDownloaderFix.signalExternalCompletion();
                 if (left == 0) finishSummary();
                 else refreshSummary("已有任务完成，剩余 " + left + " 个");
                 CNDownloadUiAssist.ensureInstalled();

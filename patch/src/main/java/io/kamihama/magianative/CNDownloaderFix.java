@@ -786,8 +786,13 @@ public final class CNDownloaderFix {
         private final int index;
         ArchiveTask(int index) { this.index = index; }
         @Override public Boolean call() {
-            synchronized (ARCHIVE_LOCKS[index]) {
-                return Boolean.valueOf(installArchive(index));
+            CNDownloadRestart.register(index);
+            try {
+                synchronized (ARCHIVE_LOCKS[index]) {
+                    return Boolean.valueOf(installArchive(index));
+                }
+            } finally {
+                CNDownloadRestart.unregister(index);
             }
         }
     }
@@ -858,7 +863,9 @@ public final class CNDownloaderFix {
             }
             // a2 == A2_MAIN → 回退主引擎重试
         }
-        deleteQuietly(archive);
+        // Do not delete a complete archive here. If the process was killed after 03 reached
+        // 100% but while its large ZIP was being extracted, the next launch must reuse that
+        // verified 1.4GB archive and resume extraction instead of downloading it again.
         deleteQuietly(new File(archive.getPath() + ".aria2"));
 
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -867,6 +874,7 @@ public final class CNDownloaderFix {
                 return false;
             }
 
+            final int restartToken = CNDownloadRestart.generation(index);
             CNMirrors.Mirror mirror = CNMirrors.pick(attempt);
             // 资源下载一律直连（Proxy.NO_PROXY）：系统代理会劫持 CDN 大文件传输，
             // 损坏分片拼出的 zip 导致「完工校验失败」。曾按 attempt 奇偶交替走代理，
@@ -877,9 +885,38 @@ public final class CNDownloaderFix {
             setActive(index, true);
             CNCNDownloadUI.setDownloadSpeed(index, 0.0f);
             try {
-                DownloadMetadata meta = fetchArchive(mirror, name, archive, index, direct);
-                synchronized (EXTRACT_LOCK) {
-                    extractChecked(archive, new File(INSTALL_ROOT));
+                DownloadMetadata meta = fetchArchive(
+                        mirror, name, archive, index, direct, restartToken);
+                CNCNDownloadUI.setDownloadSpeed(index, 0.0f);
+                CNCNDownloadUI.updateFileProgress(index, 100);
+                CNCNDownloadUI.updateSimple("正在安装资源",
+                        name + "：下载已验证，正在解压并提交…", 100);
+                final int tokenForExtract = restartToken;
+                File extractState = CNArchiveInstallTx.stateFile(new File(STATE_ROOT), name);
+                try {
+                    synchronized (EXTRACT_LOCK) {
+                        CNArchiveInstallTx.extract(archive, new File(INSTALL_ROOT), extractState,
+                                new CNArchiveInstallTx.Cancel() {
+                                    @Override public boolean isCancelled() {
+                                        return CNDownloadRestart.cancelled(index, tokenForExtract);
+                                    }
+                                },
+                                new CNArchiveInstallTx.Progress() {
+                                    @Override public void onProgress(int doneEntries, int totalEntries,
+                                                                     long doneBytes, long totalBytes) {
+                                        CNCNDownloadUI.updateFileProgress(index, 100);
+                                        CNCNDownloadUI.updateSimple("正在安装资源",
+                                                name + "：解压 " + doneEntries + "/" + totalEntries,
+                                                100);
+                                    }
+                                });
+                    }
+                } catch (CNArchiveInstallTx.CancelledException e) {
+                    throw new ResetRequired("manual restart during extraction");
+                } catch (ZipException e) {
+                    throw e;
+                } catch (CNArchiveInstallTx.InstallIOException e) {
+                    throw new ExtractionPaused(e.getMessage(), e);
                 }
                 writeMarker(marker, name, canonicalUrl, meta);
                 if (!archive.delete() && archive.exists()) {
@@ -897,8 +934,22 @@ public final class CNDownloaderFix {
                         + " mirror=" + mirror.name);
                 return true;
             } catch (ResetRequired e) {
+                if (CNDownloadRestart.changed(index, restartToken)) {
+                    CNLog.i(TAG, "manual-restart-active file=" + name
+                            + " attempt=" + attempt + "：清除该文件断点并从头重下");
+                    CNDownloadRestart.clearInterrupt();
+                    cleanupArchiveDownloadState(index);
+                    CNCNDownloadUI.resetFileProgress(index);
+                    attempt = 0;
+                    continue;
+                }
                 CNLog.w(TAG, "resume-reset file=" + name + " attempt=" + attempt
                         + " reason=" + e.getMessage());
+            } catch (ExtractionPaused e) {
+                CNLog.e(TAG, "extract-paused file=" + name
+                        + "（完整 ZIP 与解压进度均保留，重试将继续解压）", e);
+                markFailed(index);
+                return false;
             } catch (ZipException e) {
                 CNLog.e(TAG, "corrupt-zip file=" + name + " attempt=" + attempt, e);
                 // 损坏通常来自本地跨镜像混装/断点残留，不是线路的错——
@@ -909,7 +960,18 @@ public final class CNDownloaderFix {
                 deleteQuietly(new File(archive.getPath() + ".part.meta"));
                 deleteQuietly(CNChunkedDownload.partFileFor(archive));
                 deleteQuietly(CNChunkedDownload.metaFileFor(archive));
+                CNArchiveInstallTx.clearState(
+                        CNArchiveInstallTx.stateFile(new File(STATE_ROOT), name));
             } catch (IOException e) {
+                if (CNDownloadRestart.changed(index, restartToken)) {
+                    CNLog.i(TAG, "manual-restart-active file=" + name
+                            + " attempt=" + attempt + "：清除该文件断点并从头重下");
+                    CNDownloadRestart.clearInterrupt();
+                    cleanupArchiveDownloadState(index);
+                    CNCNDownloadUI.resetFileProgress(index);
+                    attempt = 0;
+                    continue;
+                }
                 CNLog.e(TAG, "archive-failed file=" + name + " attempt=" + attempt
                         + " mirror=" + mirror.name, e);
                 CNMirrors.reportFailure(mirror, String.valueOf(e.getMessage()));
@@ -1072,7 +1134,8 @@ public final class CNDownloaderFix {
      * 在指定线路上取回压缩包：优先多线程分片，不满足条件时退回单线程续传。
      */
     private static DownloadMetadata fetchArchive(CNMirrors.Mirror mirror, String name,
-                                                 File archive, int index, boolean direct)
+                                                 File archive, int index, boolean direct,
+                                                 int restartToken)
             throws IOException {
         if (archive.isFile()) {
             long len = archive.length();
@@ -1099,7 +1162,8 @@ public final class CNDownloaderFix {
                     updateProgress(index, 0L, probe.total);
                     CNChunkedDownload.ChunkHashes hashes = ChunkManifest.forFile(name);
                     CNChunkedDownload.Result r = CNChunkedDownload.download(
-                            url, archive, chunks, direct, probe, new ArchiveSink(index),
+                            url, archive, chunks, direct, probe,
+                            new ArchiveSink(index, restartToken),
                             mirror, name, true, hashes);
                     return new DownloadMetadata(r.totalBytes, r.etag);
                 }
@@ -1107,13 +1171,17 @@ public final class CNDownloaderFix {
             CNLog.i(TAG, "range-unsupported-or-small file=" + name + " mirror=" + mirror.name
                     + " → 单线程续传");
         }
-        return downloadOnce(url, archive, index, direct);
+        return downloadOnce(url, archive, index, direct, restartToken);
     }
 
     /** 把分片下载的进度接到既有的 UI/看门狗上。 */
     private static final class ArchiveSink implements CNChunkedDownload.Sink {
         private final int index;
-        ArchiveSink(int index) { this.index = index; }
+        private final int restartToken;
+        ArchiveSink(int index, int restartToken) {
+            this.index = index;
+            this.restartToken = restartToken;
+        }
 
         @Override public void onTotal(long total) {
             updateSize(index, total);
@@ -1126,7 +1194,7 @@ public final class CNDownloaderFix {
             CNCNDownloadUI.setDownloadSpeed(index, mbps);
         }
         @Override public boolean isCancelled() {
-            return Thread.currentThread().isInterrupted();
+            return CNDownloadRestart.cancelled(index, restartToken);
         }
     }
 
@@ -1135,7 +1203,8 @@ public final class CNDownloaderFix {
      * 服务端不支持 Range、或文件太小不值得切片时走这里。
      */
     private static DownloadMetadata downloadOnce(String url, File archive,
-                                                 int index, boolean direct)
+                                                 int index, boolean direct,
+                                                 int restartToken)
             throws IOException {
         if (archive.isFile()) {
             long len = archive.length();
@@ -1268,17 +1337,23 @@ public final class CNDownloaderFix {
             long speedBaseline = 0L;
             long slowSinceNs   = 0L;  // 低速看门狗：半死镜像滴速下载时主动换线
             int  n;
+            double smoothedMbps = 0.0d;
             while ((n = in.read(buf)) >= 0) {
+                if (CNDownloadRestart.cancelled(index, restartToken)) {
+                    throw new ResetRequired("manual restart during single-stream download");
+                }
                 fos.write(buf, 0, n);
                 written += n;
                 long now = System.nanoTime();
                 LAST_PROGRESS_NS.set(index, now);
                 updateProgress(index, offset + written, total);
                 long dt = now - windowStart;
-                if (dt >= TimeUnit.MILLISECONDS.toNanos(500L)) {
+                if (dt >= TimeUnit.SECONDS.toNanos(3L)) {
                     long windowBytes = written - speedBaseline;
-                    CNCNDownloadUI.setDownloadSpeed(index,
-                            (float) ((windowBytes * 1.0E9d / dt) / 1000000.0d));
+                    double instant = (windowBytes * 1.0E9d / dt) / 1000000.0d;
+                    smoothedMbps = smoothedMbps <= 0.0d
+                            ? instant : smoothedMbps * 0.70d + instant * 0.30d;
+                    CNCNDownloadUI.setDownloadSpeed(index, (float) smoothedMbps);
                     // 持续低速（<100KB/s 超过 15s）视为镜像半死：
                     // read timeout 只在完全无字节时触发，滴速线路会永远卡在这里
                     if (windowBytes * 1000000000L / dt < MIN_OK_BPS) {
@@ -1758,17 +1833,11 @@ public final class CNDownloaderFix {
     }
 
     private static void resetUiForRun() {
+        CNCNDownloadUI.resetOverallProgress();
         for (int i = 0; i < ARCHIVE_COUNT; i++) {
             if (!isMarkerValid(markerFor(FILE_NAMES[i]), FILE_NAMES[i],
                     RESOURCE_BASE_URL + FILE_NAMES[i])) {
-                if (CNCNDownloadUI.fileStatus != null) {
-                    CNCNDownloadUI.fileStatus[i] = 0;
-                }
-                if (CNCNDownloadUI.fileProgress != null) {
-                    CNCNDownloadUI.fileProgress[i] = 0;
-                }
-                CNCNDownloadUI.setDownloadSpeed(i, 0.0f);
-                CNCNDownloadUI.setFileDownloaded(i, 0.0f);
+                CNCNDownloadUI.resetFileProgress(i);
             } else {
                 markDone(i);
             }
@@ -1800,9 +1869,7 @@ public final class CNDownloaderFix {
     }
 
     private static void resetProgress(int index) {
-        CNCNDownloadUI.setDownloadSpeed(index, 0.0f);
-        CNCNDownloadUI.setFileDownloaded(index, 0.0f);
-        CNCNDownloadUI.updateFileProgress(index, 0);
+        CNCNDownloadUI.resetFileProgress(index);
     }
 
     private static void markDone(int index) {
@@ -1904,6 +1971,11 @@ public final class CNDownloaderFix {
         }
     }
 
+    static final class ExtractionPaused extends IOException {
+        private static final long serialVersionUID = 1L;
+        ExtractionPaused(String message, Throwable cause) { super(message, cause); }
+    }
+
     static final class ResetRequired extends IOException {
         private static final long serialVersionUID = 1;
         ResetRequired(String message) {
@@ -1924,7 +1996,9 @@ public final class CNDownloaderFix {
         if (index == HOT_SLOT_SCENARIO || index == HOT_SLOT_JS) {
             return CNHotUpdateCheck.redownloadPackage(index);
         }
-        synchronized (ARCHIVE_LOCKS[index]) {
+        CNDownloadRestart.register(index);
+        try {
+            synchronized (ARCHIVE_LOCKS[index]) {
             if (!FORCE_REDOWNLOAD.compareAndSet(index, 0, 1)) {
                 CNLog.w(TAG, "同一文件已有强制重下载任务 index=" + index);
                 return false;
@@ -1936,6 +2010,9 @@ public final class CNDownloaderFix {
             } finally {
                 FORCE_REDOWNLOAD.set(index, 0);
             }
+            }
+        } finally {
+            CNDownloadRestart.unregister(index);
         }
     }
 
@@ -1951,13 +2028,34 @@ public final class CNDownloaderFix {
 
     /** 手动逐项补齐到 15 个 marker 时补回总完成标记；缺项时只返回 false。 */
     static boolean commitFinalFlagIfComplete() throws IOException {
-        if (!allMarkersValid()) return false;
+        if (!allBaseMarkersValid()) return false;
         File flag = new File(FINAL_FLAG);
         if (!flag.isFile()) {
             writeAtomic(flag, "schema=2\narchives=15\n");
             CNLog.i(TAG, "手动任务已补齐全部 marker，提交总完成标记");
         }
         return true;
+    }
+
+    private static boolean allBaseMarkersValid() {
+        for (int i = 2; i < ARCHIVE_COUNT; i++) {
+            String name = FILE_NAMES[i];
+            if (!isMarkerValid(markerFor(name), name, RESOURCE_BASE_URL + name)) return false;
+        }
+        return true;
+    }
+
+    /** Restart the active transfer/extraction for exactly one file. */
+    static boolean requestActiveRestart(int index) {
+        return index >= 0 && index < ARCHIVE_COUNT && CNDownloadRestart.request(index);
+    }
+
+    /** Wake the first-install retry loop after an external manual task completed. */
+    static void signalExternalCompletion() {
+        synchronized (RETRY_LOCK) {
+            retryRequested = true;
+            RETRY_LOCK.notifyAll();
+        }
     }
 
     private static Object[] createArchiveLocks() {
@@ -1979,6 +2077,8 @@ public final class CNDownloaderFix {
         deleteQuietly(cpart);
         deleteQuietly(cmeta);
         deleteQuietly(new File(cmeta.getPath() + ".tmp"));
+        CNArchiveInstallTx.clearState(
+                CNArchiveInstallTx.stateFile(new File(STATE_ROOT), name));
         File[] siblings = new File(FILE_ROOT).listFiles();
         String prefix = cpart.getName() + ".block.";
         if (siblings != null) {
