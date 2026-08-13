@@ -35,6 +35,11 @@ jobs:
     steps:
       - name: 📦 检出仓库
         uses: actions/checkout@v4
+        with:
+          # 用维护者 PAT 而不是默认 ：移动 last-green tag 是
+          # force push，会被 ruleset「refs/tags/*」（禁强推）拦下——
+          # github-actions[bot] 不能绕过 ruleset，PAT 在 bypass 列表。
+          token: ${{ secrets. }}
 
       - name: ☕ 设置 JDK 17
         uses: actions/setup-java@v4
