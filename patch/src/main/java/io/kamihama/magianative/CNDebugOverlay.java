@@ -159,7 +159,12 @@ public final class CNDebugOverlay {
             activity = act;
             if (ballView != null) return true;      // 已挂上；setActive 只调过一次
             if (!CNDebugBridge.canDrawOverlays(act)) {
+                // 这一行不能省。2026-08-13 那次排查里，整条挂载链一行日志都没打，
+                // 于是「没权限」「没打进包」「时序不对」三种可能在日志上长得一模
+                // 一样，只能靠读代码猜。
+                CNLog.i(TAG, "没有悬浮窗权限，挂权限引导页并开始轮询");
                 showPermissionGuide(act);
+                startPermPoll(act);
                 return false;
             }
             dismissPermissionGuide();
@@ -403,7 +408,16 @@ public final class CNDebugOverlay {
     private static void showPermissionGuide(final Activity act) {
         try {
             dismissPermissionGuide();
-            ViewGroup decor = (ViewGroup) act.getWindow().getDecorView();
+            // 🔴 宿主要选**当前最上层**的那个，不能一律用 decorView。
+            //
+            // CNCNDownloadUI 的下载浮层也挂在 decorView 上、全屏、且它和本引导页
+            // 是同一秒建出来的。挂在 decorView 上时引导页在它**下面**——玩家看到
+            // 的是「什么都没发生」，而日志里同样什么都没有（2026-08-13 真机）。
+            //
+            // 浮层在就挂进浮层，它自己就在 decorView 顶上；浮层不在才退回 decorView。
+            ViewGroup decor = CNCNDownloadUI.overlayView != null
+                    ? CNCNDownloadUI.overlayView
+                    : (ViewGroup) act.getWindow().getDecorView();
             FrameLayout mask = new FrameLayout(act);
             mask.setBackgroundColor(color("COLOR_DIM", 0x88000000));
             mask.setClickable(true);
@@ -443,7 +457,10 @@ public final class CNDebugOverlay {
 
             decor.addView(mask, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            mask.bringToFront();
             permGuide = mask;
+            CNLog.i(TAG, "权限引导页已显示（宿主="
+                    + (decor == CNCNDownloadUI.overlayView ? "下载浮层" : "decorView") + "）");
         } catch (Throwable t) {
             CNLog.w(TAG, "权限引导页没挂出来: " + t);
         }
@@ -467,6 +484,41 @@ public final class CNDebugOverlay {
             if (ui != null && act != null) {
                 ui.postDelayed(new PermRecheck(act), 10_000L);
             }
+        }
+    }
+
+    /**
+     * 权限轮询。<b>不依赖玩家点「去开启授权」那个按钮</b>——他完全可能自己摸到
+     * 系统设置里开掉（2026-08-13 就是这么试的），甚至根本没看见引导页。
+     * 只要权限到手就挂上，挂上即停。
+     */
+    private static final long PERM_POLL_MS  = 5000L;
+    private static final int  PERM_POLL_MAX = 120;      // 约 10 分钟后放弃
+    private static int permPolls;
+
+    private static void startPermPoll(Activity act) {
+        if (ui == null) ui = new Handler(Looper.getMainLooper());
+        permPolls = 0;
+        ui.postDelayed(new PermPoll(act), PERM_POLL_MS);
+    }
+
+    private static final class PermPoll implements Runnable {
+        private final Activity act;
+        PermPoll(Activity act) { this.act = act; }
+        @Override public void run() {
+            try {
+                if (ballView != null) return;                 // 已经挂上了
+                if (CNDebugBridge.canDrawOverlays(act)) {
+                    CNLog.i(TAG, "检测到悬浮窗权限已授予，挂载小球");
+                    mount(act);
+                    return;
+                }
+                if (++permPolls >= PERM_POLL_MAX) {
+                    CNLog.i(TAG, "等待悬浮窗权限超时，停止轮询（下次启动会再问一次）");
+                    return;
+                }
+                if (ui != null) ui.postDelayed(new PermPoll(act), PERM_POLL_MS);
+            } catch (Throwable ignore) {}
         }
     }
 

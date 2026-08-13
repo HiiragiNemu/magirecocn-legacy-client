@@ -336,7 +336,11 @@ public final class CNDownloaderFix {
     /** 见 {@link #mountDebugOverlay()}。static 嵌套类，理由同 AfterVersionCheck。 */
     private static final class MountDebugOverlay implements Runnable {
         @Override public void run() {
-            long deadline = System.currentTimeMillis() + DEBUG_OVERLAY_WAIT_MS;
+            // 整条链每一步都留痕。上一次真机排查（2026-08-13）里这条链一行日志
+            // 都没打，于是「没打进包」「总闸关」「等不到 Activity」「没权限」四种
+            // 可能在日志上完全无法区分，只能靠读代码猜——这种事不该有第二次。
+            long started = System.currentTimeMillis();
+            long deadline = started + DEBUG_OVERLAY_WAIT_MS;
             while (System.currentTimeMillis() < deadline) {
                 try {
                     Activity act = RestClient.getCurrentActivity();
@@ -344,10 +348,11 @@ public final class CNDownloaderFix {
                         // 到这里 libMagiaLegacy 必然已加载（加载它的就是这个
                         // Activity），总闸这时才问得到真话——理由见
                         // mountDebugOverlay 的注释。
-                        if (!CNDebugBridge.overlayAllowed()) {
-                            CNLog.i(TAG, "调试总闸是关的，不挂悬浮窗");
-                            return;
-                        }
+                        boolean allowed = CNDebugBridge.overlayAllowed();
+                        CNLog.i(TAG, "调试悬浮窗：等到 Activity（"
+                                + (System.currentTimeMillis() - started) + "ms），总闸="
+                                + (allowed ? "开" : "关"));
+                        if (!allowed) return;
                         // WindowManager 只能在 UI 线程上碰。
                         act.runOnUiThread(new MountOnUi(act));
                         return;
@@ -371,7 +376,13 @@ public final class CNDownloaderFix {
     private static final class MountOnUi implements Runnable {
         private final Activity act;
         MountOnUi(Activity act) { this.act = act; }
-        @Override public void run() { CNDebugBridge.mount(act); }
+        @Override public void run() {
+            boolean ok = CNDebugBridge.mount(act);
+            // false 不一定是错：没权限时本体会挂引导页并自己轮询（见
+            // CNDebugOverlay）。但这一行必须有，否则「挂上了」和「没挂上」
+            // 在日志里分不出来。
+            CNLog.i(TAG, "调试悬浮窗挂载返回 " + ok);
+        }
     }
 
     /**
