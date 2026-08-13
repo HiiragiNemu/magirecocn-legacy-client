@@ -75,17 +75,18 @@ jobs:
           python3 -m py_compile /tmp/apply-fix.py
           python3 /tmp/apply-fix.py
 
-          # The source contains Java string escape sequences (\n\n). The compressed
-          # Python migration intentionally skipped this one block because a normal
-          # Python triple-quoted matcher would decode them into literal newlines.
+          # The Java text contains escaped \n sequences. Match the semantic block with
+          # a narrow regex after all other audited transformations have completed.
           python3 - <<'PY'
+          import re
           from pathlib import Path
           p = Path('patch/src/main/java/io/kamihama/magianative/CNDownloadUiAssist.java')
           text = p.read_text(encoding='utf-8')
-          old = r'''        String extra = index < 2
-                  ? "\n\n该包属于热更新通道；安装器完成后还会按版本清单补齐最新版本。"
-                  : "";'''
-          new = r'''        int[] status = CNCNDownloadUI.fileStatus;
+          pattern = re.compile(
+              r'        String extra = index < 2\s*'
+              r'\? "\\n\\n该包属于热更新通道；安装器完成后还会按版本清单补齐最新版本。"\s*'
+              r': "";')
+          replacement = r'''        int[] status = CNCNDownloadUI.fileStatus;
           boolean activeNow = status != null && index < status.length
                   && status[index] == CNCNDownloadUI.ST_RUNNING;
           String extra = activeNow
@@ -93,9 +94,10 @@ jobs:
                   : (index < 2
                       ? "\n\n该包属于热更新通道；安装器完成后还会按版本清单补齐最新版本。"
                       : "");'''
-          if text.count(old) != 1:
-              raise SystemExit('active confirm source baseline not found exactly once')
-          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          text, count = pattern.subn(lambda _: replacement, text, count=1)
+          if count != 1:
+              raise SystemExit('active confirm semantic baseline not found exactly once')
+          p.write_text(text, encoding='utf-8')
           PY
           git diff --check
 
