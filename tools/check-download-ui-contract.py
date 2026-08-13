@@ -13,6 +13,7 @@ chunk = Path("patch/src/main/java/io/kamihama/magianative/CNChunkedDownload.java
 log = Path("patch/src/main/java/io/kamihama/magianative/CNLog.java").read_text(encoding="utf-8")
 extract_tx = Path("patch/src/main/java/io/kamihama/magianative/CNArchiveInstallTx.java").read_text(encoding="utf-8")
 overlay = Path("patch/src/main/java/io/kamihama/magianative/CNDebugOverlay.java").read_text(encoding="utf-8")
+zipplan = Path("patch/src/main/java/io/kamihama/magianative/CNZipPlan.java").read_text(encoding="utf-8")
 manifest = Path("AndroidManifest.xml").read_text(encoding="utf-8")
 
 checks = {
@@ -131,8 +132,20 @@ checks = {
     # 预检要在**知道大小的那一刻**做，不能等写满：探针刚给出长度、以及解压前
     # 由 zip 目录累加出 totalBytes 的那两处。
     "下载与解压都先看装不装得下":
-        "CNDiskSpace.require(archive, probe.total - partBytes(archive), name)" in downloader
+        "long peak = probe.total - partBytes(archive);" in downloader
+        and "CNDiskSpace.require(archive, peak, name)" in downloader
         and "CNDiskSpace.require(root, totalBytes - doneBytes" in extract_tx,
+    # 安装峰值是 ZIP + 解压后（ZIP 要留到解压成功才删），而这个比例各包差得很远：
+    # cn_base_03.zip 1.32→2.79 GiB（2.11x），其余全在 1.02–1.16x。03 因此拥有 15 个包里
+    # 最高的安装峰值 4.11 GiB，而进度条上只写着 1.3 GB。只按下载量预检等于把那 2.79 GiB
+    # 瞒着玩家——他按 1.3 GB 去清理，然后在解压阶段翻车。
+    "预检按安装峰值而不是下载量":
+        "CNZipPlan.extractedBytes" in downloader
+        and "peak += extract" in downloader,
+    # 算不出来必须是「不知道」，不能当 0：当成小数字等于把玩家放进去再翻车。
+    "解压后大小算不出时按未知放行":
+        "UNKNOWN" in zipplan and "return UNKNOWN;" in zipplan
+        and "extract != CNZipPlan.UNKNOWN" in downloader,
     # 权限引导页的宿主固定 decorView，靠布局回调持续置顶。曾按「下载浮层在就挂
     # 进浮层」选宿主，可它由挂载看门狗在 Activity 出现后几毫秒触发，那时下载浮层
     # 还没建出来——判断永远走 decorView，几百毫秒后浮层加进同一个 decorView 把它

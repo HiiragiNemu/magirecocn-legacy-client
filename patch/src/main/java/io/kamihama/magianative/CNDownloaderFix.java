@@ -1371,9 +1371,25 @@ public final class CNDownloaderFix {
                 }
                 if (chunks > 1) {
                     // 探针刚给出真实长度，这是第一个能判断「装得下吗」的时刻。
-                    // 放在这里而不是下完之后：03 这种 1.4G 的包，等写到最后一个
-                    // 块才 ENOSPC，等于白下一个多小时（见 CNDiskSpace 的说明）。
-                    CNDiskSpace.require(archive, probe.total - partBytes(archive), name);
+                    // 放在这里而不是下完之后：03 这种包等写到最后一个块才 ENOSPC，
+                    // 等于白下一个多小时（见 CNDiskSpace 的说明）。
+                    //
+                    // 要的是**安装峰值**而不是下载量：ZIP 要留到解压成功才删，所以
+                    // 峰值是 ZIP + 解压后。两者的比例各包差得很远，03 是唯一真正
+                    // 膨胀的那个（1.32→2.79 GiB，2.11x，其余都在 1.02–1.16x），
+                    // 峰值 4.11 GiB 是 15 个包里最高的——而进度条上只写着 1.3 GB。
+                    // 只按下载量预检，等于把这 2.79 GiB 瞒着玩家（见 CNZipPlan）。
+                    long extract = CNZipPlan.extractedBytes(
+                            new HttpRanges(url, direct), probe.total);
+                    long peak = probe.total - partBytes(archive);
+                    if (extract != CNZipPlan.UNKNOWN) {
+                        peak += extract;
+                        CNLog.i(TAG, "安装峰值预估 file=" + name
+                                + " zip=" + CNDiskSpace.human(probe.total)
+                                + " 解压后=" + CNDiskSpace.human(extract)
+                                + " 峰值=" + CNDiskSpace.human(probe.total + extract));
+                    }
+                    CNDiskSpace.require(archive, peak, name);
                     CNLog.i(TAG, "chunked-download file=" + name + " mirror=" + mirror.name
                             + " chunks=" + chunks + " bytes=" + probe.total + " direct=" + direct);
                     updateSize(index, probe.total);
@@ -1410,6 +1426,57 @@ public final class CNDownloaderFix {
                     msg + "。请清理后点「重试」，已下好的部分会保留。", 0);
         } catch (Throwable ignore) {}
         markFailed(index);
+    }
+
+    /**
+     * 给 {@link CNZipPlan} 用的 Range 取字节器。
+     *
+     * <p>只读两段、总共两三兆（03 的中央目录 1.7 MB），用来在下 1.3 GB 之前把
+     * 「解压后要占多少」问清楚。任何失败都往上抛，由 CNZipPlan 统一按「不知道」
+     * 处理——这是提前量，不是关卡。
+     */
+    private static final class HttpRanges implements CNZipPlan.Ranges {
+        private final String url;
+        private final boolean direct;
+        HttpRanges(String url, boolean direct) { this.url = url; this.direct = direct; }
+
+        @Override public byte[] get(long start, long endInclusive) throws IOException {
+            HttpURLConnection c = null;
+            InputStream in = null;
+            CNDownloadConcurrency.Lease lease = null;
+            try {
+                lease = CNDownloadConcurrency.acquire("zip-plan");
+                URL u = new URL(url);
+                c = (HttpURLConnection)
+                        (direct ? u.openConnection(Proxy.NO_PROXY) : u.openConnection());
+                c.setConnectTimeout(CONNECT_TIMEOUT_MS);
+                c.setReadTimeout(READ_TIMEOUT_MS);
+                c.setUseCaches(false);
+                c.setInstanceFollowRedirects(true);
+                CNUserAgent.apply(c);
+                c.setRequestProperty("Accept-Encoding", "identity");
+                c.setRequestProperty("Range", "bytes=" + start + "-" + endInclusive);
+                if (c.getResponseCode() != 206) {
+                    throw new IOException("中央目录 Range 期望 206，实得 HTTP "
+                            + c.getResponseCode());
+                }
+                int want = (int) (endInclusive - start + 1L);
+                byte[] out = new byte[want];
+                in = new BufferedInputStream(c.getInputStream(), 1 << 16);
+                int off = 0;
+                while (off < want) {
+                    int n = in.read(out, off, want - off);
+                    if (n < 0) break;
+                    off += n;
+                }
+                if (off != want) throw new IOException("中央目录短读 " + off + "/" + want);
+                return out;
+            } finally {
+                closeQuietly(in);
+                if (c != null) try { c.disconnect(); } catch (Throwable ignore) {}
+                if (lease != null) lease.close();
+            }
+        }
     }
 
     /** 已落盘的断点字节数（两条下载路径的残片文件名不同，都算上）。 */

@@ -96,7 +96,7 @@ jobs:
                    ManualRedownloadTest ArchiveInstallTxTest DownloadConcurrencyTest \
                    HotUpdateRoutingTest UiAssistStateTest DebugBridgeTest \
                    PathsTest LogFormatTest DownloadModeTest DebugOverlayTest \
-                   DiskSpaceTest; do
+                   DiskSpaceTest ZipPlanTest; do
             java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar $t
           done
           java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar ProxyFetchTest 8791
