@@ -54,9 +54,8 @@ import org.json.JSONObject;
  * <h3>不重启</h3>
  *
  * 应用成功后<b>不</b>重启进程，与原实现一致：热更是启动早期跑的，引擎此时还
- * 没读到台词/脚本，原地替换即可生效。整个客户端里只有一处会重启——首次安装
- * 跑完那一次（见 {@code CNDownloaderFix} 末尾），因为那次引擎是在「没有资源」
- * 的状态下起来的，非重启不可。
+ * 没读到台词/脚本，原地替换即可生效。会重启进程的是别处的事——首次安装完成、
+ * 序章播完、手动重下基础包、改写调试开关等场景（见 {@code CNRestart}）。
  */
 public final class CNHotUpdateCheck {
 
@@ -627,11 +626,6 @@ public final class CNHotUpdateCheck {
         return applied ? "更新完成" : "已是最新";
     }
 
-    /**
-     * 处理单个热更包：比对版本，必要时下载 + 解压 + 记录新版本号。
-     * 已被 runInner 内联的「并行取版本 → 并行下载 → 校验 → 顺序解压」流程取代。
-     */
-
     /** 供并行预取版本号用：失败返回 null 并提示，调用方按「跳过本包」处理。 */
     private static CNHotUpdateValidate.VerMeta fetchMetaSafe(Pkg pkg) {
         try {
@@ -766,13 +760,6 @@ public final class CNHotUpdateCheck {
      * 文件名后逐条线路试，失败记冷却；全部失败才抛出（调用方按「跳过本次
      * 热更」处理，不会卡住启动）。
      */
-    /** 版本 json 的三元组（见 {@link CNHotUpdateValidate.VerMeta}）。 */
-
-    /**
-     * 取版本 json（含 size/md5）。<b>走换线</b>：与资源文件同一套线路。
-     * 从规范地址取出文件名后逐条线路试，失败记冷却；全部失败才抛出
-     * （调用方按「跳过本次热更」处理，不会卡住启动）。
-     */
     private static CNHotUpdateValidate.VerMeta fetchMeta(String url) throws Exception {
         // 规范前缀，不是兜底线路——换兜底线路时这里必须岿然不动，
         // 否则剥不出文件名，拼出来的地址每条线路都会 404。
@@ -900,13 +887,6 @@ public final class CNHotUpdateCheck {
     }
 
     /**
-     * 收浮层前给云端配置一个短短的到位窗口（{@link #CONFIG_SETTLE_MS}）。
-     *
-     * <p>只等「还在加载」（configState==0）这一种状态：加载成功/失败都立刻
-     * 放行，超时也放行。调试开关 skipMirrorConfig 下 config 永远不会到位，
-     * 直接不等。
-     */
-    /**
      * 「玩家窗口」：检查结论出来后，收浮层之前留给玩家的时间。
      *
      * <p>三种结局共用一个窗口（已是最新 / 更新完成 / 更新未完成都一样要给
@@ -961,7 +941,13 @@ public final class CNHotUpdateCheck {
         }
     }
 
-    /** 收浮层前等 config.json 到位，只等「还在加载」这一种状态。 */
+    /**
+     * 收浮层前给云端配置一个短短的到位窗口（{@link #CONFIG_SETTLE_MS}）。
+     *
+     * <p>只等「还在加载」（configState==0）这一种状态：加载成功/失败都立刻
+     * 放行，超时也放行。调试开关 skipMirrorConfig 下 config 永远不会到位，
+     * 直接不等。
+     */
     private static void awaitConfigSettled() {
         try {
             if (CNMirrors.configState != 0) return;

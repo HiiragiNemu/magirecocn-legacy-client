@@ -191,7 +191,7 @@ public final class CNAria2 {
             if (cacerts.isFile()) {
                 opt.put("ca-certificate", cacerts.getAbsolutePath());
             } else {
-                // 拿不到系统 CA 桶时放行（文件下载后走结构+分块 sha256 校验，
+                // 拿不到系统 CA 桶时放行（文件下载后走结构+分块 MD5 校验，
                 // 完整性有独立防线，传输层不校验证书可接受）。
                 opt.put("check-certificate", false);
             }

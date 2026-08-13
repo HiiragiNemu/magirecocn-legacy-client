@@ -33,7 +33,7 @@ import java.util.concurrent.Executors;
 
 /**
  * 调试悬浮窗<b>本体</b>：给公测玩家的「自助检修台」。设计理念与文案的事实来源是
- * {@code 调试悬浮窗-设计理念.md}（下称「设计」），本类只是它的投影。
+ * {@code docs/DEBUG_OVERLAY_DESIGN_PRINCIPLES.md}（下称「设计」），本类只是它的投影。
  *
  * <h2>本类的角色（设计 P8 / §8）</h2>
  *
@@ -2491,11 +2491,6 @@ public final class CNDebugOverlay {
         } catch (Throwable ignore) {}
     }
 
-    /**
-     * 色板反射读取：照抄 {@link CNDownloadUiAssist} 的写法（接线清单「没接线的、
-     * 归界面本体的」）。每次现读，于是昼夜切换后重建的页面自然跟随浮层配色
-     * （§8：不提供第二个主题切换入口）。
-     */
     /**
      * 借下载浮层的调色板取色，取不到就用兜底值。
      *

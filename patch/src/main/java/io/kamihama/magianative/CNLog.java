@@ -24,7 +24,7 @@ import java.util.Locale;
  * <ul>
  *   <li><b>logcat</b>：按级别转发到 {@link Log}，tag 为各模块原本的 tag；</li>
  *   <li><b>内存环形缓冲</b>：最多 {@link #BUFFER_MAX} 条，供 LOG 面板与「复制全部」；</li>
- *   <li><b>文件</b>：{@code <files>/cnv_installer.log}，进程被杀也留得下来。</li>
+ *   <li><b>文件</b>：{@code <数据目录>/log/}，每次启动一个新文件，进程被杀也留得下来。</li>
  * </ul>
  *
  * <p>本类在 UI 出现之前就可能被调用（安装器先于浮层启动），所以所有方法都必须
@@ -190,10 +190,6 @@ public final class CNLog {
     private CNLog() {}
 
     /**
-     * 绑定日志文件目录。重复调用是安全的（会先关掉旧文件）。
-     * 未调用时本类依然可用，只是不落盘。
-     */
-    /**
      * 早期初始化：不需要 Context，直接用写死的应用目录。
      *
      * <p>为什么必须有这个：原先只有 {@link #init(File)} 一条路，而它是在浮层
@@ -261,6 +257,10 @@ public final class CNLog {
         }
     }
 
+    /**
+     * 绑定日志文件目录。重复调用是安全的（会先关掉旧文件）。
+     * 未调用时本类依然可用，只是不落盘。
+     */
     public static void init(File dir) {
         synchronized (FILE_LOCK) {
             closeWriterLocked();
@@ -610,8 +610,9 @@ public final class CNLog {
      * <p>这样 LOG 面板里能直接看到 native hook（{@code MagiaClientJNI}）、引擎、
      * 以及任何 Java 异常栈——出问题时不必接电脑。重复调用是安全的。
      *
-     * <p>只从「当前时刻」开始读（{@code -T 1}），不回灌历史，否则开局就会把
-     * 缓冲区冲满。自己模块打的行会被跳过，避免与 {@link #write} 的记录重复。
+     * <p>SDK ≥ 24 用 {@code logcat -T 1000} 回灌最近 1000 行（诊断往往发生在
+     * 采集启动之前，只读当前时刻会漏掉那些行）；SDK < 24 才退化为只从当前时刻读。
+     * 自己模块打的行会被跳过，避免与 {@link #write} 的记录重复。
      */
     public static synchronized void startLogcatCapture() {
         if (logcatThread != null) return;

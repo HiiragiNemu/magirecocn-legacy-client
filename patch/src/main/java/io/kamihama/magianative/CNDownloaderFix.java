@@ -660,7 +660,7 @@ public final class CNDownloaderFix {
                 + " 云端强制=" + a2Cloud + " 本地开关=" + a2Local
                 + " → " + ((a2Cloud || a2Local)
                         ? (a2Avail ? "启用（下载优先走 aria2，失败回退主引擎）"
-                                   : "已要求但 libaria2 加载失败，只能走主引擎")
+                                   : "已要求但 aria2c 加载失败，只能走主引擎")
                         : "未启用（走主引擎）"));
         CNCNDownloadUI.updateSimple("开始下载",
                 "可用线路 " + lineCount + " 条，单文件分片 " + CNMirrors.chunks() + " 线程", 0);

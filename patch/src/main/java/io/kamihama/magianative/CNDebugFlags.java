@@ -149,7 +149,7 @@ public final class CNDebugFlags {
     public static final String FAIL_HOTUPDATE_APPLY= "failHotUpdateApply";
 
     // ── useXxx：可选引擎 ──────────────────────────────────────────────
-    /** 资源下载改用 libaria2 备用引擎（默认关）。开=先走 aria2，失败回退主引擎。 */
+    /** 资源下载改用 aria2c 备用引擎（默认关）。开=先走 aria2，失败回退主引擎。 */
     public static final String USE_ARIA2 = "useAria2";
     /**
      * 下载一律走<b>单线程可靠模式</b>（默认关）：分片工作线程、字节分段、全局
@@ -182,7 +182,7 @@ public final class CNDebugFlags {
         { SLOW_VERSION_QUERY,   "【注入】版本查询拖慢 " + SLOW_INJECT_MS + "ms（验慢网询问框）" },
         { FAIL_DOWNLOAD,        "【注入】资源/热更下载一律失败" },
         { FAIL_HOTUPDATE_APPLY, "【注入】热更事务应用到一半失败（验回滚）" },
-        { USE_ARIA2,            "资源下载改用 libaria2 备用引擎（默认关）" },
+        { USE_ARIA2,            "资源下载改用 aria2c 备用引擎（默认关）" },
         { USE_SINGLE_THREAD,    "下载一律单线程可靠模式（并发全部压到 1，默认关）" },
     };
 

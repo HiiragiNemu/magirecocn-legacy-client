@@ -113,7 +113,7 @@ jobs:
           set -euo pipefail
           for g in check-proxy-hooks check-base-urls check-entry-guard \
                    check-fonts check-webview-interceptor check-branch-hygiene \
-                   check-debug-flag-boundary; do
+                   check-debug-flag-boundary check-docs-fresh; do
             python3 tools/$g.py
           done
           # 下载页新增合同：任意 ZIP 独立重下、动态热更身份、全局并发预算、

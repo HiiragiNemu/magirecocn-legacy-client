@@ -194,10 +194,7 @@ public final class CNMirrors {
         public final boolean enabled;
 
         /**
-         * 观测到的基准速度（字节/秒），取历次观测的最大值。
-         *
-         * <p>用最大值而不是平均：我们要的是「这条线路没被限速时能跑多快」，
-         * 一旦某次跑出过高速，后面掉下去就说明是被限了，而不是它本来就慢。
+         * 观测到的基准速度（字节/秒），用 EMA 平滑而非历史峰值，见 reportBaseline。
          */
         volatile long baselineBps = 0L;
         /** 判定为限速后的降级截止时刻（nanoTime 基准）；降级只降优先级，不禁用。 */
@@ -499,7 +496,7 @@ public final class CNMirrors {
         @Override public void run() {
             // i=0 是**首载**，立即发请求；退避只加在失败后的重试之间。
             //
-            // 原先循环无条件先 sleep(RETRY_BACKOFF_MS[0])（5 秒）再发第一次
+            // 原先循环无条件先 sleep(RETRY_BACKOFF_MS[0])（改动前的旧值）再发第一次
             // 请求——首载也被当成了重试。后果：热更「已是最新」这类秒退路径
             // 两三百毫秒查完版本、900ms 驻留后就拆浮层，而 config.json 要到
             // 第 5 秒才发请求，署名区永远停在「加载中」就随浮层一起消失了。

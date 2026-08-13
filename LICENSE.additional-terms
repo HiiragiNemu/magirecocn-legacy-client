@@ -1,0 +1,95 @@
+Additional terms under GNU GPL version 3 section 7
+==================================================
+
+Copyright (C) 2026 MagirecoCN-Revival-Project
+
+This work is licensed under the GNU General Public License version 3
+(see LICENSE). The following additional terms are imposed under
+section 7 of that License.
+
+These terms fall within the enumerated list in section 7(a)-(f). They
+are therefore NOT "further restrictions" within the meaning of section
+10, and may NOT be removed by downstream recipients.
+
+
+TERMS
+-----
+
+  1. (Section 7(c) — origin of the material)
+
+     You may not misrepresent the origin of this material. If you convey
+     a modified version, you must mark it in reasonable ways as
+     different from the original version.
+
+  2. (Section 7(d) — use of names for publicity)
+
+     You may not use the name "MagirecoCN-Revival-Project", the names of
+     its contributors, or any confusingly similar designation, for
+     publicity purposes — including to endorse, promote, or announce any
+     distribution, publication, product or service that is derived from
+     or incorporates this material — without prior authorization publicly
+     granted by MagirecoCN-Revival-Project.
+
+  3. (Section 7(a) — third-party material is not covered)
+
+     The GNU GPL v3 license in LICENSE covers only this repository's
+     original patch layer and tooling (the `patch/` directory, the
+     `tools/` directory, and the documentation written by the
+     maintainers). The following are NOT covered and remain the property
+     of their respective right holders, who are not granting rights
+     under this License:
+
+        - the game engine bytecode under `smali/`, `smali_classes2/`,
+          `smali_classes3/` (the classes.dex family);
+        - the game assets and native libraries under `assets/`, `lib/`,
+          `res/`, `kotlin/`, `META-INF/`;
+        - the reference copies under `original/`.
+
+     Those come from a third-party commercial APK (base package signed
+     `io.kamihama.totentanz`; original authors are credited in README,
+     section 「原始署名」). This repository keeps them as a
+     re-buildable archive and adds the GPL-licensed patch layer on top;
+     the two layers are independent in both code and license.
+
+
+SCOPE
+-----
+
+Like the GPL itself, these terms apply when you CONVEY the material
+(distribute or publish it). They place no restriction on private or
+internal use.
+
+These terms do NOT prevent anyone from forking this work and conveying
+it under a different name. That freedom is guaranteed by the GPL and is
+not restricted here. What they prohibit is conveying it under OUR name,
+or in a way that misrepresents where the material came from.
+
+
+ON TRADEMARKS — DELIBERATELY OMITTED
+------------------------------------
+
+GPLv3 section 7(e) would permit a term declining to grant rights under
+trademark law. No such term is stated here, because
+MagirecoCN-Revival-Project holds no trademark in this name and does not
+wish to assert one it does not have.
+
+This costs nothing. The protection sought above rests on section 7(d),
+which operates on the NAMES of licensors and authors and requires no
+trademark to be held. Please do not "helpfully" add a trademark clause.
+
+
+TERMINATION
+-----------
+
+Termination is governed by GPLv3 section 8, and only by it.
+
+These terms deliberately state no revocation mechanism of their own.
+Because they are valid section 7 terms, violating them is a violation of
+the License, and section 8 already terminates the violator's rights
+automatically — including any patent licenses granted under section 11 —
+subject to the cure and reinstatement provisions stated there.
+
+Any custom revocation clause written here would fall outside the section
+7(a)-(f) list, would therefore be a "further restriction" under section
+10, and could be removed outright by downstream recipients — defeating
+its own purpose. Do not add one.

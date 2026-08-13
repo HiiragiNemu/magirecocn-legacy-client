@@ -11,9 +11,10 @@
    `smali_classes3/` 整个目录和 `smali_classes2/…/CNCNDownloadUI*.smali`
    在每次 CI 构建时都会被 Java 编译产物覆盖，手改必被冲掉。
 
-2. **唯一允许的手工 smali 改动已经存在**：`RestClient.cnDownloadFileFull`
-   的方法体被换成对 `CNHotUpdate.download` 的一次委托。
-   要再加这类改动，必须在 README 里写清楚为什么不能用 Java 解决。
+2. **允许的手工 smali 改动只有两处**（都已存在，均有守卫脚本）：
+   `RestClient.smali` 精简为桩（`startCNDownload` → `CNDownloaderFix.runInstaller`），
+   以及 `WebViewImpl$WebViewClientImpl.smali` 里的 `CNPaths->filesDir()` 调用。
+   要再加手工 smali 改动，必须在 README 里写清楚为什么不能用 Java 解决。
 
 3. **minSdk 21**：禁用 API 24+ 才有的便捷方法；需要 API 21+ 的调用要用
    `Build.VERSION.SDK_INT` 守卫。编译期 classpath 只有 android.jar + OkHttp，

@@ -3336,10 +3336,6 @@ public class CNCNDownloadUI {
     }
 
     /**
-     * {@link CNLog} 的缓冲区变更回调。日志可能来自任意下载线程，所以要切回主线程
-     * 再碰视图；面板不可见时直接跳过。
-     */
-    /**
      * 待刷新标记。logcat 一秒能灌进来几百行，若每行都 post 一次渲染，主线程
      * 就会被成百上千次大文本重排压死（表现为打开 LOG 面板即掉帧/卡死）。
      * 这里把它们合并成「最多每 {@value #LOG_REFRESH_MS} 毫秒渲染一帧」。
@@ -3358,6 +3354,10 @@ public class CNCNDownloadUI {
         }
     }
 
+    /**
+     * {@link CNLog} 的缓冲区变更回调。日志可能来自任意下载线程，所以要切回主线程
+     * 再碰视图；面板不可见时直接跳过。
+     */
     private static final class LogChanged implements Runnable {
         @Override public void run() {
             scheduleLogRefresh();
@@ -4174,12 +4174,6 @@ public class CNCNDownloadUI {
     }
 
     /**
-     * 阶段 / 明细文本更新。
-     *
-     * <p>改版前这两个参数被直接丢弃；现在把它们渲染到右列顶部的阶段行与状态行，
-     * 调用点与调用时机不变。
-     */
-    /**
      * 两参便捷重载。{@code CNDownloaderFix.probeAllSizes()} 用的是这个签名，
      * 但此前只存在三参版本——当前 main 因此编译不过。百分比参数本就未被使用
      * （见三参版本），这里补一个重载而不是改调用点，改动面最小。
@@ -4188,6 +4182,12 @@ public class CNCNDownloadUI {
         updateSimple(str, str2, 0);
     }
 
+    /**
+     * 阶段 / 明细文本更新。
+     *
+     * <p>改版前这两个参数被直接丢弃；现在把它们渲染到右列顶部的阶段行与状态行，
+     * 调用点与调用时机不变。
+     */
     public static void updateSimple(String str, String str2, int i) {
         if (str != null && str.length() > 0)   phaseText  = str;
         if (str2 != null && str2.length() > 0) detailText = str2;

@@ -415,22 +415,6 @@ public final class CNWebProxy {
     }
 
     /**
-     * 取当前的 WebView 实例。
-     *
-     * <p>直接读 {@code jp.f4samurai.web.WebViewHelper.sWebView} 这个私有静态字段——
-     * 引擎自己就是靠它握着唯一那个 WebView 的（{@code createWebView} 赋值、
-     * {@code removeWebView} 置空）。
-     *
-     * <p><b>不要再改回遍历 view 树找 tag。</b>第一版就是那么写的，照着
-     * {@code WebViewImpl} 构造函数里的 {@code setTag("WebViewImpl")}
-     * 去 {@code findViewWithTag("WebViewImpl")}，结果真机上等满 180 秒也找不到——
-     * 因为 {@code WebViewHelper.createWebView()} 在构造之后<b>紧接着</b>就
-     * {@code setTag("WebView")} 把它覆盖了。那个 tag 从来就不是构造函数里写的那个。
-     * 读字段没有这个问题：它是引擎自己的事实来源，不会被别处改名。
-     *
-     * <p>反射失败或字段为空一律当作「还没到时候」，不报错。
-     */
-    /**
      * 上一个已经处理过的 WebView。
      *
      * <p>用弱引用：它只是个「这个实例我处理过了」的标记，不该因此把一个已经被
@@ -450,6 +434,22 @@ public final class CNWebProxy {
     /** 反射出来的字段缓存一次。轮询是长期跑的，没必要每轮都重新查一遍。 */
     private static volatile Field webViewField;
 
+    /**
+     * 取当前的 WebView 实例。
+     *
+     * <p>直接读 {@code jp.f4samurai.web.WebViewHelper.sWebView} 这个私有静态字段——
+     * 引擎自己就是靠它握着唯一那个 WebView 的（{@code createWebView} 赋值、
+     * {@code removeWebView} 置空）。
+     *
+     * <p><b>不要再改回遍历 view 树找 tag。</b>第一版就是那么写的，照着
+     * {@code WebViewImpl} 构造函数里的 {@code setTag("WebViewImpl")}
+     * 去 {@code findViewWithTag("WebViewImpl")}，结果真机上等满 180 秒也找不到——
+     * 因为 {@code WebViewHelper.createWebView()} 在构造之后<b>紧接着</b>就
+     * {@code setTag("WebView")} 把它覆盖了。那个 tag 从来就不是构造函数里写的那个。
+     * 读字段没有这个问题：它是引擎自己的事实来源，不会被别处改名。
+     *
+     * <p>反射失败或字段为空一律当作「还没到时候」，不报错。
+     */
     private static Object findWebView() {
         try {
             Field f = webViewField;
@@ -833,23 +833,6 @@ public final class CNWebProxy {
     // ==================================================================
 
     /**
-     * 对同一个 URL 拉一次直连、再逐条线路各拉一次，把所有 TTFB 记进同一行日志。
-     *
-     * <p><b>为什么必须在真机上量：</b>开发机（境外容器、出口还套着一层 agent proxy）
-     * 量出来 {@code /stream/} 每次都比直连慢 2～8 倍，但那个数字对国内玩家毫无参考
-     * 价值——国内直连 {@code dorothy.magi-reco.com} 可能很糟，而国内加速入口可能好得
-     * 多，符号完全可能反过来。既然做代理的目的是加速，就只能拿玩家设备上的数字来判。
-     *
-     * <p><b>为什么逐条都测：</b>加了线路表之后，要回答的就不再是「代理比直连快吗」，
-     * 而是「哪条线最快、值不值得把权重调过去」。一行日志里横向摆开才好比。
-     *
-     * <p>全部拉<b>同一个</b> URL，是为了把「这个对象本来就慢」从对比里消掉。
-     * 只取前 {@value #MEASURE_SAMPLE_BYTES} 字节，够算 TTFB，不为了测速把流量打满。
-     *
-     * <p>注意这里测的是<b>首字节延迟</b>而不是吞吐——这正是代理线路与下载线路必须
-     * 分开的地方：几 KB 的 API 往返里，带宽再大也救不了 RTT。
-     */
-    /**
      * 记一笔「本可以代理、但因为不是 GET 只能透传」的请求。<b>只观测，不改写。</b>
      *
      * <h3>它回答的问题，以及它答不了的那半</h3>
@@ -906,6 +889,23 @@ public final class CNWebProxy {
         }
     }
 
+    /**
+     * 对同一个 URL 拉一次直连、再逐条线路各拉一次，把所有 TTFB 记进同一行日志。
+     *
+     * <p><b>为什么必须在真机上量：</b>开发机（境外容器、出口还套着一层 agent proxy）
+     * 量出来 {@code /stream/} 每次都比直连慢 2～8 倍，但那个数字对国内玩家毫无参考
+     * 价值——国内直连 {@code dorothy.magi-reco.com} 可能很糟，而国内加速入口可能好得
+     * 多，符号完全可能反过来。既然做代理的目的是加速，就只能拿玩家设备上的数字来判。
+     *
+     * <p><b>为什么逐条都测：</b>加了线路表之后，要回答的就不再是「代理比直连快吗」，
+     * 而是「哪条线最快、值不值得把权重调过去」。一行日志里横向摆开才好比。
+     *
+     * <p>全部拉<b>同一个</b> URL，是为了把「这个对象本来就慢」从对比里消掉。
+     * 只取前 {@value #MEASURE_SAMPLE_BYTES} 字节，够算 TTFB，不为了测速把流量打满。
+     *
+     * <p>注意这里测的是<b>首字节延迟</b>而不是吞吐——这正是代理线路与下载线路必须
+     * 分开的地方：几 KB 的 API 往返里，带宽再大也救不了 RTT。
+     */
     private static void maybeMeasure(String origUrl) {
         // 只拿静态资源测，绝不碰 /magica/api/。
         //
