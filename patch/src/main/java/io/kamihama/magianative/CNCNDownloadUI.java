@@ -197,6 +197,16 @@ public class CNCNDownloadUI {
     private static int COLOR_GLASS_STK;
     private static boolean darkMode = false;
 
+    /**
+     * 内容区的基准宽度（px），<b>只由屏幕分辨率与固定边距算出</b>。
+     *
+     * <p>{@link CNDownloadUiAssist} 的字号缩放与左右分界线拖动都读这个值，
+     * 而不是读任何 {@code getWidth()}。读测量宽度会形成反馈环：布局改了宽度、
+     * 下一帧又按新宽度算出更大的宽度——真机上表现为「反复拖分界线，左右越变
+     * 越长」（2026-08-13）。按分辨率算是确定的，拖多少次结果都一样。
+     */
+    static volatile int contentBaseWidthPx;
+
     private static void loadPalette(boolean dark) {
         if (dark) {
             COLOR_CARD_STK       = 0x55FF80C0;
@@ -678,6 +688,7 @@ public class CNCNDownloadUI {
         int contentBaseWidth = Math.max(1,
                 act.getResources().getDisplayMetrics().widthPixels
                         - mainLp.leftMargin - mainLp.rightMargin);
+        contentBaseWidthPx = contentBaseWidth;
         LinearLayout mainRow = new LinearLayout(act);
         mainRow.setTag(CNDownloadUiAssist.TAG_CONTENT_ROOT);
         mainRow.setOrientation(LinearLayout.HORIZONTAL);

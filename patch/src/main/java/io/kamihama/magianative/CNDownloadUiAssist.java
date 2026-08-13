@@ -18,6 +18,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
@@ -66,6 +67,15 @@ public final class CNDownloadUiAssist {
     private static final Object STAY_LOCK = new Object();
     private static final WeakHashMap<TextView, Float> BASE_TEXT_PX =
             new WeakHashMap<TextView, Float>();
+    /** 图片的原始 {宽, 高}（px）。与 BASE_TEXT_PX 同理：永远从基准重算。 */
+    private static final WeakHashMap<ImageView, int[]> BASE_IMAGE_PX =
+            new WeakHashMap<ImageView, int[]>();
+
+    /**
+     * 本页布局的参考宽度（dp）。{@link #suggestedScale} 拿它当 100% 的基准。
+     * 560 是返工前内容区宽度下限用的数，也就是这套布局当初排版时的目标宽度。
+     */
+    private static final float DESIGN_WIDTH_DP = 560f;
 
     private static View attachedOverlay;
     private static View contentRoot;
@@ -243,7 +253,13 @@ public final class CNDownloadUiAssist {
         if (prefs == null && context != null) {
             prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         }
-        if (prefs != null) scalePct = clamp(prefs.getInt(PREF_SCALE, 100), 75, 150);
+        if (prefs != null) {
+            // 没调过时用按分辨率算的建议值；调过一次之后一律以玩家的选择为准。
+            // 用 -1 而不是 100 当「没调过」的哨兵：100 是合法选择，分不出
+            // 「玩家特意选了 100%」和「从没动过」。
+            int saved = prefs.getInt(PREF_SCALE, -1);
+            scalePct = saved < 0 ? suggestedScale(context) : clamp(saved, 75, 150);
+        }
         // 分开写而不是并进上一行：字号那条一个字都不动，改分界线时不该连带
         // 出现在它的 diff 里。
         if (prefs != null) {
@@ -278,6 +294,7 @@ public final class CNDownloadUiAssist {
         splitHandle = null;
         baseContentWidth = 0;
         BASE_TEXT_PX.clear();
+        BASE_IMAGE_PX.clear();
     }
 
     private static void removeLegacy() {
@@ -608,7 +625,9 @@ String extra = activeNow
         panel.addView(title, rowLp(title, 0, 8));
 
         TextView explain = text(act,
-                "只调整下载页中央内容。文字放大后，可用右侧纵向滚动条和底部横向滚动条查看超出部分；游戏画面不会移动。",
+                "只调整下载页中央内容，图片会跟着一起缩放。面板本身的左右边距按屏幕"
+                + "分辨率固定，不随字号或分界线变动；文字放大后可用右侧纵向滚动条和"
+                + "底部横向滚动条查看超出部分，游戏画面不会移动。",
                 12.5f, color("COLOR_LOG_PANEL_TEXT", 0xFF2A1A3B));
         explain.setLineSpacing(dp(explain, 2), 1f);
         panel.addView(explain, rowLp(explain, 0, 12));
@@ -638,7 +657,10 @@ String extra = activeNow
         controls.setGravity(Gravity.CENTER);
         panel.addView(controls, rowLp(controls, 4, 12));
         TextView minus = dialogButton(act, "A−", false);
-        TextView reset = dialogButton(act, "恢复 100%", false);
+        // 「恢复」给的是**按这台设备算出来的**建议值，不是死的 100%。
+        // 100% 只对参考宽度那种屏幕才是对的；大屏上恢复到 100% 等于恢复成一行蚂蚁。
+        int suggest = suggestedScale(act);
+        TextView reset = dialogButton(act, "推荐 " + suggest + "%", false);
         TextView plus = dialogButton(act, "A+", false);
         minus.setOnClickListener(new ScaleStepClick(-5));
         reset.setOnClickListener(new ScaleResetClick());
@@ -677,7 +699,7 @@ String extra = activeNow
     }
 
     private static final class ScaleResetClick implements View.OnClickListener {
-        @Override public void onClick(View v) { setScale(100); }
+        @Override public void onClick(View v) { setScale(suggestedScale(v.getContext())); }
     }
 
     private static void setScale(int value) {
@@ -692,20 +714,64 @@ String extra = activeNow
         CNCNDownloadUI.noteInteraction();
     }
 
+    /**
+     * 内容区的基准宽度（px）。<b>只由屏幕分辨率算，绝不读任何 getWidth()。</b>
+     *
+     * <h3>为什么这条是硬规矩</h3>
+     *
+     * 读测量宽度会形成反馈环：这一帧按测得的宽度设了新宽度，下一帧再去测，
+     * 又算出更大的值。真机上的表现是「反复拖左右分界线，左右越变越长」
+     * （2026-08-13）——而且它只在反复操作后才显形，一次两次看不出来。
+     *
+     * <p>权威值由 {@code CNCNDownloadUI.buildOverlay} 用
+     * {@code widthPixels − 左右边距} 算出并存下；这里只在浮层还没建起来时
+     * 用同一个公式兜底。两处必须同一个式子。
+     */
+    private static int contentWidthPx(Context ctx) {
+        int w = CNCNDownloadUI.contentBaseWidthPx;
+        if (w > 0) return w;
+        if (ctx == null) return 1;
+        // 兜底：与 buildOverlay 的 mainLp 左右边距一致（各 14+14dp）
+        android.util.DisplayMetrics m = ctx.getResources().getDisplayMetrics();
+        return Math.max(1, m.widthPixels - Math.round(56 * m.density));
+    }
+
+    /**
+     * 按设备分辨率推荐一个字号。
+     *
+     * <p>依据是「内容区有多少 dp 宽」：本页布局是照约 560dp 排的（那也是返工前
+     * 内容区宽度下限用的数），屏幕比它宽就该按比例把字放大，窄就缩小——这样字
+     * 在画面里占的**比例**是恒定的，而不是在大屏上变成一行蚂蚁。
+     *
+     * <p>只是<b>建议</b>：玩家没自己调过时拿它当默认值，调过之后一律以玩家的
+     * 选择为准。默默覆盖玩家的设置比给个烂默认值更糟。
+     */
+    static int suggestedScale(Context ctx) {
+        try {
+            if (ctx == null) return 100;
+            float density = ctx.getResources().getDisplayMetrics().density;
+            if (density <= 0f) return 100;
+            return suggestFromDp(contentWidthPx(ctx) / density);
+        } catch (Throwable t) {
+            return 100;
+        }
+    }
+
+    /**
+     * {@link #suggestedScale} 的纯算术部分：内容区有多少 dp 宽 → 建议百分比。
+     * 抽出来是为了能在 JVM 上直接测——那边 {@code getResources()} 是桩。
+     */
+    static int suggestFromDp(float dpWidth) {
+        if (!(dpWidth > 0f)) return 100;
+        return clamp(Math.round(dpWidth / DESIGN_WIDTH_DP * 100f), 75, 150);
+    }
+
     private static void applyScale() {
         View root = contentRoot;
         if (root == null) return;
-        applyTextScale(root);
+        applyContentScale(root);
 
-        HorizontalScrollView hs = hScroll;
-        int viewport = hs == null ? 0 : hs.getWidth();
-        if (viewport <= 0 && attachedOverlay != null) {
-            viewport = Math.max(1, attachedOverlay.getWidth() - dp(attachedOverlay, 56));
-        }
-        if (viewport <= 0) {
-            viewport = Math.max(1, root.getResources().getDisplayMetrics().widthPixels
-                    - dp(root, 56));
-        }
+        int viewport = contentWidthPx(root.getContext());
         ViewGroup.LayoutParams lp = root.getLayoutParams();
         // The unscaled layout always equals the real viewport. Horizontal scrolling is a
         // fallback only for zoom >100% or genuinely narrow windows; 75/100% must never start
@@ -720,7 +786,17 @@ String extra = activeNow
         root.requestLayout();
     }
 
-    private static void applyTextScale(View v) {
+    /**
+     * 按当前字号缩放内容：文字<b>和图片一起</b>。
+     *
+     * <p>原先只缩文字，Logo 和图标保持原尺寸——字放到 150% 时图还是原来那么大，
+     * 看着就是别扭（2026-08-13 反馈）。图片按同一个百分比缩放它的 LayoutParams，
+     * 与文字同步。
+     *
+     * <p>两个基准表都缓存<b>第一次见到的</b>尺寸，之后每次都从基准重算而不是在
+     * 当前值上乘——否则反复调字号会指数级放大，和上面那个宽度反馈环是同一类错。
+     */
+    private static void applyContentScale(View v) {
         if (v instanceof TextView) {
             TextView tv = (TextView) v;
             Float base = BASE_TEXT_PX.get(tv);
@@ -730,19 +806,47 @@ String extra = activeNow
             }
             tv.setTextSize(TypedValue.COMPLEX_UNIT_PX,
                     base.floatValue() * scalePct / 100f);
+        } else if (v instanceof ImageView) {
+            scaleImage((ImageView) v);
         }
         if (v instanceof ViewGroup) {
             ViewGroup g = (ViewGroup) v;
-            for (int i = 0; i < g.getChildCount(); i++) applyTextScale(g.getChildAt(i));
+            for (int i = 0; i < g.getChildCount(); i++) applyContentScale(g.getChildAt(i));
         }
+    }
+
+    /** 图片跟着字号走。只动固定尺寸的那一维，MATCH_PARENT / WRAP_CONTENT 不碰。 */
+    private static void scaleImage(ImageView iv) {
+        try {
+            ViewGroup.LayoutParams lp = iv.getLayoutParams();
+            if (lp == null) return;
+            int[] base = BASE_IMAGE_PX.get(iv);
+            if (base == null) {
+                base = new int[] { lp.width, lp.height };
+                BASE_IMAGE_PX.put(iv, base);
+            }
+            boolean changed = false;
+            // 负数是 MATCH_PARENT(-1) / WRAP_CONTENT(-2)，那两种由父布局说了算，
+            // 乘一下只会得出别的负数，把布局搞坏。
+            if (base[0] > 0) {
+                int w = Math.max(1, Math.round(base[0] * scalePct / 100f));
+                if (lp.width != w) { lp.width = w; changed = true; }
+            }
+            if (base[1] > 0) {
+                int h = Math.max(1, Math.round(base[1] * scalePct / 100f));
+                if (lp.height != h) { lp.height = h; changed = true; }
+            }
+            if (changed) iv.setLayoutParams(lp);
+        } catch (Throwable ignore) {}
     }
 
     private static void styleScrollbars() {
         HorizontalScrollView hs = hScroll;
         ScrollView vs = vScroll;
         if (hs != null) {
-            boolean overflow = contentRoot != null
-                    && hs.getWidth() > 0 && contentRoot.getWidth() > hs.getWidth() + dp(hs, 2);
+            // 溢出判据同样不读测量宽度：内容宽度是 applyScale 按分辨率设定的，
+            // 所以「有没有溢出」等价于「字号有没有超过 100%」。
+            boolean overflow = contentRoot != null && scalePct > 100;
             hs.setHorizontalScrollBarEnabled(overflow);
             hs.setScrollbarFadingEnabled(false);
             if (!overflow) hs.scrollTo(0, 0);
@@ -915,7 +1019,9 @@ String extra = activeNow
                 case MotionEvent.ACTION_MOVE: {
                     if (!dragging) return false;
                     LinearLayout row = splitRow();
-                    int w = row == null ? 0 : row.getWidth();
+                    // 同样不读 row.getWidth()：那是被 applyScale 设过的值，
+                    // 拿它做换算就是把反馈环接进了手势里。
+                    int w = row == null ? 0 : contentWidthPx(row.getContext());
                     if (w > 0) {
                         float delta = e.getRawX() - startX;
                         setSplit(startPct + Math.round(delta * 100f / w));
@@ -1168,4 +1274,6 @@ String extra = activeNow
     public static int splitDefaultForTest() { return SPLIT_DEFAULT; }
     public static int splitMinForTest() { return SPLIT_MIN; }
     public static int splitMaxForTest() { return SPLIT_MAX; }
+    public static int suggestFromDpForTest(float dpWidth) { return suggestFromDp(dpWidth); }
+    public static float designWidthDpForTest() { return DESIGN_WIDTH_DP; }
 }
