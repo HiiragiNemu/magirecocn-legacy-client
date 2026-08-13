@@ -160,6 +160,10 @@ public final class CNDebugOverlay {
                 return false;
             }
             activity = act;
+            // 本面板整套配色都是反射读下载浮层那份调色板取的，而调试悬浮窗完全
+            // 可能在下载浮层从未建出来时挂起（资源早装好，直接进游戏）。先确保
+            // 调色板按玩家的主题加载过一次，否则读到的是未初始化的 0 = 全透明。
+            CNCNDownloadUI.ensurePalette(act);
             if (ballView != null) return true;      // 已挂上；setActive 只调过一次
             if (!CNDebugBridge.canDrawOverlays(act)) {
                 // 这一行不能省。2026-08-13 那次排查里，整条挂载链一行日志都没打，
@@ -1142,10 +1146,25 @@ public final class CNDebugOverlay {
         tailBg.setStroke(dp(act, 1), color("COLOR_CARD_STK", 0x33B53C8C));
         tail.setBackground(tailBg);
         tail.setTag("logtail");
-        tail.setText(CNLog.tail(200));
+        tail.setText(composeTail());
+        // 预览框自己能滚，并且默认停在最新那一行。
+        //
+        // 原先是一个固定 220dp 高的 TextView 直接 setText：超过这个高度的内容
+        // 既滚不到（TextView 没有 MovementMethod 就没有内部滚动），也不会随新行
+        // 往下走——外层那个 ScrollView 滚的是整页，不是这个框。于是「日志预览」
+        // 实际只能看见最早的十几行，而要看的恰恰是最后几行（2026-08-13 反馈）。
+        ScrollView tailScroll = new ScrollView(act);
+        tailScroll.setTag("logtailscroll");
+        tailScroll.setVerticalScrollBarEnabled(true);
+        tailScroll.setScrollbarFadingEnabled(false);
+        tailScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+        tailScroll.addView(tail, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
         LinearLayout.LayoutParams tailLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 220));
-        content.addView(tail, tailLp);
+        content.addView(tailScroll, tailLp);
+        stickToBottom(tailScroll);
 
         // 新行进来时刷新预览。listener 是 CNLog 的单例槽位：进场占、出场按身份归还，
         // 不踩下载浮层日志面板占着的那一份。
@@ -1197,7 +1216,70 @@ public final class CNDebugOverlay {
         LogTailRefresh(TextView tail) { this.tail = tail; }
         @Override public void run() {
             if (panelRoot == null || !PAGE_LOG.equals(currentPage())) return;
-            tail.setText(CNLog.tail(200));
+            View sc = panelRoot.findViewWithTag("logtailscroll");
+            // 只有本来就贴着底的时候才继续贴底。玩家往回翻着看某一行时，新行
+            // 一来就把他拽回底部，那比不自动滚还难用。
+            boolean atBottom = !(sc instanceof ScrollView) || isAtBottom((ScrollView) sc);
+            tail.setText(composeTail());
+            if (atBottom && sc instanceof ScrollView) stickToBottom((ScrollView) sc);
+        }
+    }
+
+    /**
+     * 预览用的结构化文本：与下载浮层的日志面板同一个解析器（{@link CNLogFormat}），
+     * 不另写一份。
+     *
+     * <p>纯文字大量快速滚动开发者看着都费劲，何况玩家——这正是当初给下载浮层
+     * 那块加解析的理由，而这里一直还是 {@code CNLog.tail(200)} 的裸文本。
+     * 悬浮窗里没有富文本渲染的余地（预览框只是个 TextView），所以只做解析器
+     * 能给的那部分：来源徽标 + 级别标记 + 时间，让眼睛有落点。
+     */
+    private static CharSequence composeTail() {
+        try {
+            java.util.List<CNLog.Line> rows = CNLog.tailRows(200);
+            if (rows == null || rows.isEmpty()) return CNLog.tail(200);
+            StringBuilder sb = new StringBuilder(rows.size() * 64);
+            for (int i = 0; i < rows.size(); i++) {
+                CNLog.Line r = rows.get(i);
+                CNLogFormat.Parsed p = CNLogFormat.parse(r.src, r.text);
+                if (p == null) { sb.append(r.text).append('\n'); continue; }
+                sb.append('[').append(p.badge).append(']');
+                if (p.time != null && p.time.length() > 0) sb.append(' ').append(p.time);
+                if (CNLogFormat.isFatal(p.level)) sb.append(" ‼");
+                else if (CNLogFormat.isBad(p.level)) sb.append(" !");
+                if (p.comp != null && p.comp.length() > 0) sb.append(' ').append(p.comp);
+                sb.append("  ").append(p.text).append('\n');
+            }
+            return sb;
+        } catch (Throwable t) {
+            // 解析出任何岔子都退回裸文本：日志面板本身不能因为格式化而看不成
+            return CNLog.tail(200);
+        }
+    }
+
+    private static boolean isAtBottom(ScrollView sv) {
+        try {
+            if (sv.getChildCount() == 0) return true;
+            int bottom = sv.getChildAt(0).getBottom();
+            int cur = sv.getScrollY() + sv.getHeight();
+            return bottom - cur <= dp(sv, 24);   // 差不到一行就算贴着底
+        } catch (Throwable t) {
+            return true;
+        }
+    }
+
+    /** 滚到底。必须 post：setText 之后这一帧还没重新测量，立刻滚是滚不到位的。 */
+    private static void stickToBottom(final ScrollView sv) {
+        try {
+            sv.post(new ScrollBottom(sv));
+        } catch (Throwable ignore) {}
+    }
+
+    private static final class ScrollBottom implements Runnable {
+        private final ScrollView sv;
+        ScrollBottom(ScrollView sv) { this.sv = sv; }
+        @Override public void run() {
+            try { sv.fullScroll(View.FOCUS_DOWN); } catch (Throwable ignore) {}
         }
     }
 
@@ -1961,6 +2043,11 @@ public final class CNDebugOverlay {
         return GROUP_OTHER;
     }
 
+    /** 取色判据的测试入口：透明（alpha=0）必须当成「没取到」，见 {@link #color}。 */
+    public static int colorForTest(String name, int fallback) {
+        return color(name, fallback);
+    }
+
     /** 分类 id → 分类定义（设计 §4.2）。public：JVM 测试要钉分类名文案。 */
     public static GroupDef groupDef(String id) {
         for (int i = 0; i < GROUPS.length; i++) {
@@ -2333,11 +2420,25 @@ public final class CNDebugOverlay {
      * 归界面本体的」）。每次现读，于是昼夜切换后重建的页面自然跟随浮层配色
      * （§8：不提供第二个主题切换入口）。
      */
+    /**
+     * 借下载浮层的调色板取色，取不到就用兜底值。
+     *
+     * <p><b>alpha 为 0 也算取不到。</b>那些 {@code COLOR_*} 字段没有初始值，
+     * 默认就是 {@code 0}（{@code #00000000}，全透明）。原先只判「反射有没有抛」，
+     * 字段存在但还没被 {@code loadPalette} 填过时照样返回 0，于是整个面板的文字
+     * 被画成透明——开关名、说明、「已激活」标签全不见，只剩硬编码白色的主按钮
+     * 还在（2026-08-13 反馈「useAria2 的文字疑似会消失」）。
+     *
+     * <p>源头已在 {@code CNCNDownloadUI} 的静态块里兜住，这里再拦一道：以后谁
+     * 新加一个 {@code COLOR_*} 却忘了在 loadPalette 里赋值，最坏也只是用兜底色，
+     * 不会变成隐形文字——那种 bug 看起来像「功能没做」，最难查。
+     */
     private static int color(String name, int fallback) {
         try {
             Field f = CNCNDownloadUI.class.getDeclaredField(name);
             f.setAccessible(true);
-            return f.getInt(null);
+            int v = f.getInt(null);
+            return (v >>> 24) == 0 ? fallback : v;
         } catch (Throwable t) {
             return fallback;
         }

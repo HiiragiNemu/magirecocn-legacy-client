@@ -157,6 +157,32 @@ checks = {
     "膨胀比阈值旁边留着实测表":
         "2.11x" in downloader and "cn_base_03.zip" in downloader
         and "2.11x" in extract_tx,
+    # 浮层必须**建出来就是**玩家调好的比例。原先 buildOverlay 写死 0.38f/0.62f，
+    # 每次重建（切主题、看门狗补挂）都先闪回默认值，等 ensureInstalled 那轮的
+    # applySplit 才改回来——玩家看到的就是「刷新后比例被重置」。
+    "浮层建出来就是玩家调好的分界比例":
+        "CNDownloadUiAssist.leftWeight(act)" in ui
+        and "CNDownloadUiAssist.rightWeight(act)" in ui
+        and "0.38f" not in ui and "0.62f" not in ui,
+    # COLOR_* 全是无初始值的 static int，默认 0 = #00000000 全透明。调试悬浮窗
+    # 反射读它们取色，读到 0 就把文字画成透明——面板上开关名、说明、「已激活」
+    # 标签全消失，只剩硬编码白色的主按钮还在，且时有时无（取决于这次启动有没有
+    # 建过下载浮层）。两道：类加载时兜底 + 取色时把 alpha=0 当「没取到」。
+    "调色板在类加载时就有值":
+        "static { loadPalette(false); }" in ui and "ensurePalette" in ui,
+    "取色把全透明当成没取到":
+        "(v >>> 24) == 0 ? fallback : v" in overlay
+        and "CNCNDownloadUI.ensurePalette(act)" in overlay,
+    # 悬浮窗的日志预览：原先是固定 220dp 高的裸 TextView 直接 setText——没有
+    # MovementMethod 就没有内部滚动，外层 ScrollView 滚的是整页不是这个框，于是
+    # 超出高度的内容既滚不到也不会随新行走，能看见的只有最早那十几行。
+    "悬浮窗日志预览可滚动且自动吸底":
+        "logtailscroll" in overlay and "stickToBottom" in overlay
+        and "fullScroll(View.FOCUS_DOWN)" in overlay and "isAtBottom" in overlay,
+    # 解析器与下载浮层那块共用 CNLogFormat，不另写一份。
+    "悬浮窗日志预览走同一个解析器":
+        "CNLogFormat.parse(r.src, r.text)" in overlay
+        and "CNLog.tailRows(200)" in overlay,
     # 权限引导页的宿主固定 decorView，靠布局回调持续置顶。曾按「下载浮层在就挂
     # 进浮层」选宿主，可它由挂载看门狗在 Activity 出现后几毫秒触发，那时下载浮层
     # 还没建出来——判断永远走 decorView，几百毫秒后浮层加进同一个 decorView 把它

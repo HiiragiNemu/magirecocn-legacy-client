@@ -207,6 +207,41 @@ public class CNCNDownloadUI {
      */
     static volatile int contentBaseWidthPx;
 
+    /**
+     * 调色板必须在类加载时就有值。
+     *
+     * <p>上面那一堆 {@code COLOR_*} 都没有初始值，即默认 {@code 0}——而 0 是
+     * {@code #00000000}，<b>全透明</b>。原先只有 {@code buildOverlay} /
+     * {@code show} / {@code toggleTheme} 才调 {@link #loadPalette}，于是只要下载
+     * 浮层这一轮没被建出来（资源早装好、直接进游戏），这些字段就一直是 0。
+     *
+     * <p>调试悬浮窗是靠反射读这几个字段取色的（{@code CNDebugOverlay.color}），
+     * 读到 0 就把文字画成全透明：面板上 useAria2 这些开关名、说明、「已激活」标签
+     * 统统消失，只剩用硬编码白色画的主按钮还看得见——正是 2026-08-13 反馈的
+     * 「文字疑似会消失」。而它<b>时有时无</b>，取决于这一次启动有没有建过下载浮层。
+     *
+     * <p>这里先按亮色兜一份底。真正的主题在 {@link #ensurePalette(Context)} 里按
+     * 玩家的偏好再覆盖一次；即便那步也没跑到，至少画出来的是能看见的颜色。
+     */
+    static { loadPalette(false); }
+
+    /**
+     * 确保调色板已按玩家保存的主题加载过一次。供<b>不经过下载浮层</b>的调用方
+     * （调试悬浮窗）在渲染前调用，这样它的配色跟着玩家选的主题走，而不是永远亮色。
+     */
+    static void ensurePalette(Context ctx) {
+        if (paletteReady || ctx == null) return;
+        try {
+            darkMode = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .getBoolean(PREF_DARK_MODE, false);
+        } catch (Throwable ignore) {}
+        loadPalette(darkMode);
+        paletteReady = true;
+    }
+
+    /** 见 {@link #ensurePalette(Context)}：只按玩家偏好加载一次。 */
+    private static volatile boolean paletteReady;
+
     private static void loadPalette(boolean dark) {
         if (dark) {
             COLOR_CARD_STK       = 0x55FF80C0;
@@ -718,8 +753,12 @@ public class CNCNDownloadUI {
         LinearLayout leftCol = new LinearLayout(act);
         leftCol.setOrientation(LinearLayout.VERTICAL);
         leftCol.setPadding(dp(act, 4), 0, dp(act, 12), 0);
+        // 比例取玩家调好的那一份，不写死 0.38/0.62。写死的话每次重建浮层
+        // （切主题、看门狗补挂）都会先闪回默认值，等 ensureInstalled 那一轮的
+        // applySplit 才改回来——玩家看到的就是「刷新后比例被重置」。
         mainRow.addView(leftCol, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.MATCH_PARENT, 0.38f));
+                0, ViewGroup.LayoutParams.MATCH_PARENT,
+                CNDownloadUiAssist.leftWeight(act)));
 
         // Logo 整幅在上、贡献者列表在下。9688f7e7 曾改成「Logo 122dp 靠左 +
         // 右侧三行品牌文字」，观感上不成立，已退回。那三行文字也一并去掉：
@@ -757,7 +796,8 @@ public class CNCNDownloadUI {
         rightCol.setOrientation(LinearLayout.VERTICAL);
         rightCol.setPadding(dp(act, 10), dp(act, 4), dp(act, 4), dp(act, 4));
         mainRow.addView(rightCol, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.MATCH_PARENT, 0.62f));
+                0, ViewGroup.LayoutParams.MATCH_PARENT,
+                CNDownloadUiAssist.rightWeight(act)));
 
         LinearLayout headRow = new LinearLayout(act);
         headRow.setOrientation(LinearLayout.HORIZONTAL);

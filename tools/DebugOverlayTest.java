@@ -150,6 +150,46 @@ public class DebugOverlayTest {
         check("[7b] F 类标题与简介都不含禁用词「注入」",
                 !f.title.contains("注入") && !f.blurb.contains("注入"));
 
+        // ── [8] 取色：透明必须当成「没取到」（2026-08-13 真机） ──────────
+        //
+        // 面板整套配色是反射读 CNCNDownloadUI 的 COLOR_* 静态字段取的。那些字段
+        // 没有初始值，默认就是 0——而 0 是 #00000000，全透明。原先 color() 只在
+        // 反射抛异常时才用兜底值，字段存在但还没被 loadPalette 填过时照样返回 0，
+        // 于是整块面板的文字被画成透明：useAria2 这些开关名、说明、「已激活」标签
+        // 全不见，只剩硬编码白色的主按钮还在。而它时有时无——取决于这次启动有没有
+        // 建过下载浮层。这种 bug 看起来像「功能没做」，最难查。
+        int fb = 0xFF123456;
+        check("[8a] 字段不存在时用兜底色",
+                CNDebugOverlay.colorForTest("COLOR_绝无此物", fb) == fb);
+        check("[8b] 取到的颜色不透明（alpha != 0）",
+                (CNDebugOverlay.colorForTest("COLOR_LOG_PANEL_TEXT", fb) >>> 24) != 0);
+
+        // 真正的防线是这条：把所有 COLOR_* 扫一遍。谁新加了一个却忘了在
+        // loadPalette 里赋值，这里当场红——而不是等玩家反馈「文字没了」。
+        int zeroAlpha = 0;
+        int scanned = 0;
+        String firstBad = null;
+        try {
+            java.lang.reflect.Field[] fs =
+                    Class.forName("io.kamihama.magianative.CNCNDownloadUI").getDeclaredFields();
+            for (int i = 0; i < fs.length; i++) {
+                if (!fs[i].getName().startsWith("COLOR_")) continue;
+                if (fs[i].getType() != int.class) continue;
+                fs[i].setAccessible(true);
+                scanned++;
+                if ((fs[i].getInt(null) >>> 24) == 0) {
+                    zeroAlpha++;
+                    if (firstBad == null) firstBad = fs[i].getName();
+                }
+            }
+        } catch (Throwable scanErr) {
+            firstBad = "扫描失败: " + scanErr;
+            zeroAlpha = -1;
+        }
+        check("[8c] 扫到了成组的 COLOR_* 字段", scanned >= 10);
+        check("[8d] 类加载后没有一个 COLOR_* 是全透明的"
+                + (firstBad == null ? "" : "（第一个: " + firstBad + "）"), zeroAlpha == 0);
+
         System.out.println("通过 " + pass + " / 失败 " + fail);
         if (fail > 0) System.exit(1);
     }

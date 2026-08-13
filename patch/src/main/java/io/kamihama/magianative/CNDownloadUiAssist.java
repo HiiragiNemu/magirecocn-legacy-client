@@ -1280,6 +1280,28 @@ String extra = activeNow
     // ---- JVM 回归测试入口 ----
     // 拖动本身要真机，但**夹紧范围**是纯算术，而它恰恰是拖坏界面的唯一途径：
     // 越界一格，某一列就变成一条只剩省略号的缝。
+    /**
+     * 建浮层时左列该占的 weight。
+     *
+     * <p><b>浮层必须<i>建出来就是</i>玩家调好的比例</b>，而不是先按硬编码的
+     * 38/62 建好、再由 {@link #applySplit()} 改回去。原先 {@code buildOverlay}
+     * 里写死 {@code 0.38f / 0.62f}，于是每次重建浮层（切主题、看门狗发现浮层
+     * 掉出视图树而重建）都先闪回默认比例；而 installSplit 要等 ensureInstalled
+     * 那一轮才跑，中间这段就是玩家看到的「刷新后比例被重置」（2026-08-13 反馈）。
+     *
+     * <p>参数带 Context 是因为这可能是本进程第一次碰它——prefs 还没打开过时
+     * 得先把玩家存的值读进来，否则又是一个「默认值假装成玩家的选择」。
+     */
+    public static float leftWeight(Context ctx) {
+        loadPrefs(ctx);
+        return splitPct / 100f;
+    }
+
+    /** 见 {@link #leftWeight(Context)}。两个加起来恒为 1。 */
+    public static float rightWeight(Context ctx) {
+        return 1f - leftWeight(ctx);
+    }
+
     public static int splitPctForTest() { return splitPct; }
     public static void setSplitForTest(int value) { setSplit(value); }
     public static int splitDefaultForTest() { return SPLIT_DEFAULT; }
