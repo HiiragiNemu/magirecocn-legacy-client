@@ -88,8 +88,8 @@ jobs:
           sleep 1
           for t in HotUpdateTxTest SafeLinkTest WebProxyTest ConfigGuardTest \
                    LogTest BgmLoopTest ThrottleTest FlushTest ChunkHashTest \
-                   ManualRedownloadTest DownloadConcurrencyTest HotUpdateRoutingTest \
-                   UiAssistStateTest; do
+                   ManualRedownloadTest ArchiveInstallTxTest DownloadConcurrencyTest \
+                   HotUpdateRoutingTest UiAssistStateTest; do
             java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar $t
           done
           java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar ProxyFetchTest 8791
