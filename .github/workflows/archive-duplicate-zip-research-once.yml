@@ -1,0 +1,44 @@
+name: one-shot-archive-duplicate-zip-research
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/archive-duplicate-zip-research-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Archive exact duplicate research branch, then delete it
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH='research/zip-extract-rollback'
+          TAG='archive/research/zip-extract-rollback'
+          EXPECTED='a08a834d408459d60fdd924757e8a8ef80d74e15'
+
+          git fetch --quiet origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"
+          ACTUAL="$(git rev-parse "refs/remotes/origin/${BRANCH}")"
+          test "$ACTUAL" = "$EXPECTED"
+
+          EXISTING="$(git ls-remote --tags origin "refs/tags/${TAG}" | awk '{print $1}')"
+          if [ -n "$EXISTING" ]; then
+            test "$EXISTING" = "$EXPECTED"
+          else
+            git push origin "${EXPECTED}:refs/tags/${TAG}"
+          fi
+
+          test "$(git ls-remote --tags origin "refs/tags/${TAG}" | awk '{print $1}')" = "$EXPECTED"
+          git push origin --delete "$BRANCH"
+          test -z "$(git ls-remote --heads origin "refs/heads/${BRANCH}")"
+
+          echo "archived ${BRANCH} at ${TAG} -> ${EXPECTED}" >> "$GITHUB_STEP_SUMMARY"
