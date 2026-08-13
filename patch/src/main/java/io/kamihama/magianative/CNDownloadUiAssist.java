@@ -38,6 +38,12 @@ public final class CNDownloadUiAssist {
     public static final String TAG_CONTENT_ROOT = "cn-download-content-root";
     public static final String TAG_H_SCROLL = "cn-download-content-hscroll";
     public static final String TAG_V_SCROLL = "cn-download-content-vscroll";
+    /**
+     * 资源行里那个「文字进度」。它必须是该行的<b>最后一个</b>孩子——右端与下面
+     * 整宽进度条的右端对齐是原版的视觉基准，见 {@code CNCNDownloadUI.rebuildSlots}。
+     * 「重下」按插到它前面，不能追加到它后面。
+     */
+    public static final String TAG_SLOT_INFO = "cn-download-slot-info";
 
     private static final String LEGACY_TAG = "cn-download-ui-assist";
     private static final String TAG_STAY = "cn-download-stay";
@@ -499,7 +505,12 @@ public final class CNDownloadUiAssist {
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             lp.leftMargin = dp(b, 6);
-            row.addView(b, lp);
+            // 插到「文字进度」之前。追加到行尾等于把文字进度往左顶，它的右端就
+            // 和下面那条整宽进度条错开了——原版这两条右边界是对齐的（TAG_SLOT_INFO）。
+            View info = row.findViewWithTag(TAG_SLOT_INFO);
+            int at = info != null ? row.indexOfChild(info) : row.getChildCount();
+            if (at < 0) at = row.getChildCount();
+            row.addView(b, at, lp);
         }
     }
 

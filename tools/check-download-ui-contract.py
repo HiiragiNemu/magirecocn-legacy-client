@@ -107,6 +107,18 @@ checks = {
     # 「重下」要删离线候选、「用刚导入的包」要留它，同一个清理函数两种语义。
     "离线即时安装不会自删离线候选": "keepOffline" in downloader
         and "cleanupArchiveDownloadState(index, true)" in downloader,
+    # 原版里「文字进度」的右端与下面那条整宽进度条的右端对齐，这条竖线是整块的
+    # 视觉基准。按钮（重试 / 重下）只要排在它后面，一出现就把它往左顶，右边界立刻
+    # 错开——2026-08-13 真机连报两次。所以：文字进度必须是资源行的最后一个孩子，
+    # 重下要**插到它前面**而不是追加到行尾。
+    "文字进度是资源行最后一个孩子":
+        "info.setTag(CNDownloadUiAssist.TAG_SLOT_INFO)" in ui
+        and "headRow.addView(retry, retryLp);" in ui
+        and ui.index("headRow.addView(retry, retryLp);") < ui.index("headRow.addView(info, infoLp);"),
+    "重下插在文字进度之前":
+        "TAG_SLOT_INFO" in assist
+        and "row.findViewWithTag(TAG_SLOT_INFO)" in assist
+        and "row.addView(b, at, lp)" in assist,
     # 权限引导页的宿主固定 decorView，靠布局回调持续置顶。曾按「下载浮层在就挂
     # 进浮层」选宿主，可它由挂载看门狗在 Activity 出现后几毫秒触发，那时下载浮层
     # 还没建出来——判断永远走 decorView，几百毫秒后浮层加进同一个 decorView 把它

@@ -1535,16 +1535,14 @@ public class CNCNDownloadUI {
             headRow.addView(name, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-            TextView info = new TextView(act);
-            info.setText("");
-            info.setTextColor(COLOR_SUB);
-            info.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
-            info.setGravity(Gravity.END);
-            headRow.addView(info, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT));
-
-            // 「重试」按钮：仅在该文件失败（status==3）时可见
+            // 「重试」按钮：仅在该文件失败（status==3）时可见。
+            //
+            // ⚠ 顺序有讲究：按钮一律排在**文字进度之前**。
+            // 原版里文字进度的右端与下面那条整宽进度条的右端是对齐的，这一竖线
+            // 是整块的视觉基准。按钮排在它后面时，「重试」一出现就把文字进度整体
+            // 往左顶，右边界立刻和进度条错开——玩家看到的就是「一失败排版就散」
+            // （2026-08-13 真机连报两次）。让文字进度当这一行的最后一个孩子，
+            // 按钮出现与否都不影响那条右边界。
             TextView retry = new TextView(act);
             retry.setText("重试");
             retry.setTextColor(0xFFFFFFFF);
@@ -1562,6 +1560,21 @@ public class CNCNDownloadUI {
                     ViewGroup.LayoutParams.WRAP_CONTENT);
             retryLp.leftMargin = dp(act, 8);
             headRow.addView(retry, retryLp);
+
+            // 文字进度：这一行的最后一个孩子，右端永远贴着整宽进度条的右端。
+            // 打上 TAG_SLOT_INFO，好让 CNDownloadUiAssist 的「重下」插到它前面
+            // 而不是追加到它后面（追加就等于又把它顶走了）。
+            TextView info = new TextView(act);
+            info.setText("");
+            info.setTextColor(COLOR_SUB);
+            info.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
+            info.setGravity(Gravity.END);
+            info.setTag(CNDownloadUiAssist.TAG_SLOT_INFO);
+            LinearLayout.LayoutParams infoLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            infoLp.leftMargin = dp(act, 8);
+            headRow.addView(info, infoLp);
 
             ProgressBar bar = new ProgressBar(
                     act, null, android.R.attr.progressBarStyleHorizontal);
