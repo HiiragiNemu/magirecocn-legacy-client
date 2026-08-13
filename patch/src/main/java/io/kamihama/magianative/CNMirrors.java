@@ -133,6 +133,9 @@ public final class CNMirrors {
     // 强制启用 aria2 备用引擎（settings.force_aria2，默认关）：云端控制——
     // 自带引擎修不动时服务器一键切备用引擎，不用等客户端发版。
     private static volatile boolean cfgForceAria2 = false;
+    // 强制单线程可靠下载（settings.force_single_thread，默认关）：某条 CDN
+    // 对所有人都炸了时，服务端一改所有人生效，不必等发版。见 CNDownloadMode。
+    private static volatile boolean cfgForceSingleThread = false;
     // 离线包静态站地址（settings.offline_url）：下载引擎不可靠时引导玩家手动取包。
     private static volatile String cfgOfflineUrl = "";
     // 首选镜像竞速：加载线路表后让前两条已启用镜像并发拉取同一探测文件的前
@@ -167,6 +170,15 @@ public final class CNMirrors {
 
     /** 是否强制启用 aria2 备用引擎（settings.force_aria2，默认关）。 */
     public static boolean forceAria2() { return cfgForceAria2; }
+
+    /**
+     * 是否强制单线程可靠下载（settings.force_single_thread，默认关）。
+     *
+     * <p>与 force_aria2 同一个位置、同一套语义：某条 CDN 对所有人都炸了的时候，
+     * 服务端改一下所有人生效，不必等发版。开着时玩家在失败弹窗里关不掉——
+     * 那个场合恰恰是「我们已经知道多线程在这里不行」。
+     */
+    public static boolean forceSingleThread() { return cfgForceSingleThread; }
 
     /** 离线包静态站地址（settings.offline_url，空串=未配置）。 */
     public static String offlineUrl() { return cfgOfflineUrl; }
@@ -919,6 +931,8 @@ public final class CNMirrors {
             cfgThrottleDemoteMs = Math.max(1000L, st.optLong("throttle_demote_ms", cfgThrottleDemoteMs));
             cfgChunksAcrossMirrors = st.optBoolean("chunks_across_mirrors", cfgChunksAcrossMirrors);
             cfgForceAria2 = st.optBoolean("force_aria2", cfgForceAria2);
+            cfgForceSingleThread =
+                    st.optBoolean("force_single_thread", cfgForceSingleThread);
             cfgOfflineUrl = st.optString("offline_url", cfgOfflineUrl).trim();
             cfgMirrorRace = st.optBoolean("mirror_race", cfgMirrorRace);
         }

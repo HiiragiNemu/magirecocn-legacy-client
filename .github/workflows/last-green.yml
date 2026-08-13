@@ -95,7 +95,7 @@ jobs:
                    LogTest BgmLoopTest ThrottleTest FlushTest ChunkHashTest \
                    ManualRedownloadTest ArchiveInstallTxTest DownloadConcurrencyTest \
                    HotUpdateRoutingTest UiAssistStateTest DebugBridgeTest \
-                   PathsTest LogFormatTest; do
+                   PathsTest LogFormatTest DownloadModeTest; do
             java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar $t
           done
           java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar ProxyFetchTest 8791

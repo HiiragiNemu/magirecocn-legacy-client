@@ -163,7 +163,9 @@ public final class CNHotUpdate {
                               String remoteName,
                               CNHotUpdateValidate.VerMeta expected,
                               int restartToken) throws IOException {
-        int wanted = mirror.effectiveChunks();
+        // 单线程可靠模式下热更新也只开一条连接——热更是「进游戏前的最后一关」，
+        // 卡在这里的玩家进不去游戏，所以它必须和基础包走同一个模式判据。
+        int wanted = CNDownloadMode.cap(mirror.effectiveChunks());
         if (wanted > 1) {
             CNChunkedDownload.Probe probe = CNChunkedDownload.probe(url, direct);
             if (expected != null && expected.size > 0 && probe.total != expected.size) {

@@ -245,6 +245,11 @@ public final class CNDownloaderFix {
                         // 紧跟 initEarly：调试开关的首次读取要落在这条后台线程上，
                         // 而不是碰运气落到 UI 线程（见 CNDebugFlags.preload）。
                         CNDebugFlags.preload();
+                        // 紧跟 preload：单线程模式的三层来源里有一层就是调试开关，
+                        // 得等它读完才问得出结果。四处并发里连接闸门与并行文件池
+                        // 是长期对象，必须在这里显式下发一次，否则玩家上次选的
+                        // 单线程要等到第一次切换才生效。
+                        CNDownloadMode.applyNow();
                         // 调试悬浮窗：总闸烧在包里（native 的 DEBUG_OVERLAY_ENABLED），
                         // 关着就什么都不做。它是排查工具，绝不能反过来影响启动，
                         // 所以整条路径静默降级（见 CNDebugBridge.mount）。
@@ -929,7 +934,12 @@ public final class CNDownloaderFix {
         // verified 1.4GB archive and resume extraction instead of downloading it again.
         deleteQuietly(new File(archive.getPath() + ".aria2"));
 
-        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        // 重试上限做成变量：用尽之后要问玩家，玩家选「再试 / 改用单线程」时
+        // 就地续一轮，而不是把整个方法重入一遍（重入会连 marker 检查、离线包
+        // 兜底、aria2 强制分支一起重跑，语义与「继续重试」并不相同）。
+        int maxAttempts = MAX_ATTEMPTS;
+        boolean askedFallback = false;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             if (Thread.currentThread().isInterrupted()) {
                 markFailed(index);
                 return false;
@@ -1048,8 +1058,9 @@ public final class CNDownloaderFix {
                 CNCNDownloadUI.throttledUpdate();
             }
 
-            if (attempt < MAX_ATTEMPTS) {
-                long delay = 2000L << (attempt - 1);
+            if (attempt < maxAttempts) {
+                // 退避按**本轮内**的序号算，续轮后不会一上来就等 16 秒
+                long delay = 2000L << (Math.min(attempt, MAX_ATTEMPTS) - 1);
                 CNLog.i(TAG, "retry-wait file=" + name + " delay_ms=" + delay);
                 try {
                     Thread.sleep(delay);
@@ -1058,12 +1069,66 @@ public final class CNDownloaderFix {
                     markFailed(index);
                     return false;
                 }
+            } else if (!askedFallback) {
+                // 重试用尽：问玩家，而不是闷头放弃。整轮只问一次——第二次问时
+                // 玩家已经没有新信息可给，只会变成反复弹框。
+                askedFallback = true;
+                boolean canAria2 = CNAria2.isAvailable();
+                int choice = awaitDownloadFallbackChoice(name, canAria2);
+                if (choice == CNCNDownloadUI.ARIA2_OFFLINE) {
+                    CNCNDownloadUI.showOfflineImportDialog(RestClient.getCurrentActivity());
+                    markFailed(index);
+                    CNLog.w(TAG, "玩家选择改用离线包，停止网络重试: " + name);
+                    return false;
+                }
+                if (choice == CNCNDownloadUI.ARIA2_RETRY && canAria2) {
+                    int a2 = tryAria2Download(CNMirrors.pick(1), name, archive, index,
+                                              marker, canonicalUrl);
+                    if (a2 == A2_INSTALLED) return true;
+                    if (a2 == A2_OFFLINE) {
+                        markFailed(index);
+                        return false;
+                    }
+                    // aria2 也不行 → 落到下面再给主引擎一轮
+                }
+                // DL_SINGLE 的模式切换已由弹窗完成（见 CNCNDownloadUI.Aria2Choice），
+                // 这里只需要续一轮；ARIA2_CONTINUE=「再试一次」同样续一轮。
+                maxAttempts += MAX_ATTEMPTS;
+                CNLog.w(TAG, "玩家选择继续重试 file=" + name
+                        + " 模式=" + CNDownloadMode.describe()
+                        + " 追加 " + MAX_ATTEMPTS + " 次");
             }
         }
 
         markFailed(index);
         CNLog.e(TAG, "retry-exhausted file=" + name);
         return false;
+    }
+
+    /**
+     * 主引擎/热更失败时的询问。与 {@link #awaitAria2FallbackChoice} 的区别只在
+     * 措辞（弹窗里标题与按钮文案随失败来源变），走的是同一个框。
+     *
+     * @param canAria2 备用引擎在不在，决定给不给「改用备用引擎」这一项
+     */
+    static int awaitDownloadFallbackChoice(String name, boolean canAria2) {
+        return awaitDownloadFallbackChoice(name, canAria2, true);
+    }
+
+    /** @param offerOffline 热更两包传 false——离线导入不覆盖它们。 */
+    static int awaitDownloadFallbackChoice(String name, boolean canAria2,
+                                           boolean offerOffline) {
+        try {
+            Activity act = RestClient.getCurrentActivity();
+            if (act == null) {
+                CNLog.w(TAG, "取不到 Activity，下载失败询问按「继续」: " + name);
+                return CNCNDownloadUI.ARIA2_CONTINUE;
+            }
+            return CNCNDownloadUI.askDownloadFallback(act, name, canAria2, false, offerOffline);
+        } catch (Throwable t) {
+            CNLog.e(TAG, "下载失败询问出错，按「继续」: " + name, t);
+            return CNCNDownloadUI.ARIA2_CONTINUE;
+        }
     }
 
     /**
@@ -1130,6 +1195,8 @@ public final class CNDownloaderFix {
                     CNCNDownloadUI.showOfflineImportDialog(RestClient.getCurrentActivity());
                     return A2_OFFLINE;
                 }
+                // DL_SINGLE 也走这里，且是对的：模式已由弹窗切好，回退主引擎后
+                // 那一轮自然是单线程的。不需要单独一个返回码。
                 return A2_MAIN;
             } catch (Throwable t) {
                 CNLog.w(TAG, "aria2 备用引擎异常: " + name + " : " + t);

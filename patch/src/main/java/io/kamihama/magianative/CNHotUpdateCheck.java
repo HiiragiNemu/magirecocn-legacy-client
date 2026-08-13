@@ -293,6 +293,8 @@ public final class CNHotUpdateCheck {
 
         java.util.concurrent.ScheduledExecutorService watchdog = startWatchdog(act);
         boolean applied = false;
+        // 下载失败询问框整轮只弹一次，见下方 !ok 分支
+        boolean askedHotFallback = false;
         // 任何包处理失败都记下——末尾的「已是最新」不能谎报
         boolean anyFailure = false;
         running = true;
@@ -437,6 +439,33 @@ public final class CNHotUpdateCheck {
                 }
                 processedCount++;
                 if (!ok) {
+                    // 热更是「进游戏前的最后一关」，卡在这里的玩家根本进不去，
+                    // 所以和基础包一样把取舍摆出来，而不是默默跳过。
+                    //
+                    // 整轮只问一次：两个包都失败时问两遍毫无意义——玩家第二次
+                    // 面对同一个框，没有任何新信息可给。
+                    //
+                    // 不给「改用离线包」：离线导入只覆盖 13 个基础包，scenario/js
+                    // 走版本 JSON 通道，给了就是个死路按钮。
+                    if (!askedHotFallback) {
+                        askedHotFallback = true;
+                        int choice = CNDownloaderFix.awaitDownloadFallbackChoice(
+                                pkg.label, CNAria2.isAvailable(), false);
+                        if (choice != CNCNDownloadUI.ARIA2_OFFLINE) {
+                            CNLog.w(TAG, "[" + pkg.label + "] 玩家选择重试，模式="
+                                    + CNDownloadMode.describe());
+                            CNCNDownloadUI.updateSimple("下载热更新",
+                                    pkg.label + "：正在按新设置重试…", 0);
+                            // redownloadPackage 自带「取版本 → 下载 → 校验 → 事务
+                            // 应用 → 记版本号」整条链，成功即本项已完成，不能再
+                            // 落到下面的应用流程里去（tmp 已被它删掉）。
+                            if (redownloadPackage(pkg.slot)) {
+                                applied = true;
+                                deleteQuietly(tmp);
+                                continue;
+                            }
+                        }
+                    }
                     anyFailure = true;
                     CNLog.e(TAG, "[" + pkg.label + "] 下载失败，本项不更新（版本号保持 " + local + "）");
                     CNCNDownloadUI.updateSimple("下载热更新",

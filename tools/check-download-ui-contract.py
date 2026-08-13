@@ -7,6 +7,8 @@ hot_check = Path("patch/src/main/java/io/kamihama/magianative/CNHotUpdateCheck.j
 hot = Path("patch/src/main/java/io/kamihama/magianative/CNHotUpdate.java").read_text(encoding="utf-8")
 downloader = Path("patch/src/main/java/io/kamihama/magianative/CNDownloaderFix.java").read_text(encoding="utf-8")
 manual = Path("patch/src/main/java/io/kamihama/magianative/CNManualRedownload.java").read_text(encoding="utf-8")
+concur = Path("patch/src/main/java/io/kamihama/magianative/CNDownloadConcurrency.java").read_text(encoding="utf-8")
+mode = Path("patch/src/main/java/io/kamihama/magianative/CNDownloadMode.java").read_text(encoding="utf-8")
 chunk = Path("patch/src/main/java/io/kamihama/magianative/CNChunkedDownload.java").read_text(encoding="utf-8")
 log = Path("patch/src/main/java/io/kamihama/magianative/CNLog.java").read_text(encoding="utf-8")
 extract_tx = Path("patch/src/main/java/io/kamihama/magianative/CNArchiveInstallTx.java").read_text(encoding="utf-8")
@@ -53,6 +55,31 @@ checks = {
     "下载中重下会中止并从头开始": "requestActiveRestart" in downloader
         and "manual-restart-active" in downloader
         and "停止当前传输" in manual,
+    # 单线程可靠模式：四处并发必须**全部**过同一个判据 CNDownloadMode.cap()。
+    # 漏掉任何一处的表现都是「选了单线程但并发没降下来」——不报错、不崩，
+    # 只有翻日志数连接数才发现得了，而那时玩家已经认定这个按钮没用。
+    # 四处：分片工作线程、字节分段、全局连接闸门、并行文件数。
+    "单线程模式覆盖分片工作线程与字节分段":
+        "CNDownloadMode.cap(MAX_NETWORK_WORKERS)" in chunk
+        and "CNDownloadMode.cap(MAX_BYTE_SEGMENTS)" in chunk
+        and "Math.min(maxWorkers()" in chunk
+        and "Math.min(maxSegments()" in chunk,
+    "单线程模式覆盖热更新入口": "CNDownloadMode.cap(mirror.effectiveChunks())" in hot,
+    "单线程模式覆盖全局连接闸门": "setCap" in concur and "reducePermits" in concur
+        and "CNDownloadConcurrency.setCap" in mode,
+    "单线程模式覆盖并行文件数": "CNDownloadMode.cap(MAX_PARALLEL_FILES)" in manual
+        and "CNManualRedownload.applyMode()" in mode,
+    # 断点续传的分段布局**不能**跟着模式变：改了等于把已下好的进度作废，
+    # 而玩家恰恰是在「下到一半失败」时切模式的。
+    "切模式不作废已有断点": "resume.segments <= MAX_BYTE_SEGMENTS" in chunk,
+    # 三层来源缺一不可：调试开关（排查）、云端（全员故障）、玩家（弹窗）
+    "单线程有调试开关与云端开关": "USE_SINGLE_THREAD" in mode
+        and "forceSingleThread" in mode,
+    "下载失败弹窗给得出单线程": "DL_SINGLE" in ui and "改用单线程下载" in ui
+        and "CNDownloadMode.setPlayerChoice(true)" in ui,
+    "主引擎与热更失败都会问玩家":
+        "awaitDownloadFallbackChoice" in downloader
+        and "awaitDownloadFallbackChoice" in hot_check,
     # SYSTEM_ALERT_WINDOW 是**原包自带**的权限，不是我们加的。9688f7e7 把它连同
     # MANAGE_EXTERNAL_STORAGE 一起删掉，理由写作「移除无用的悬浮窗权限」，并在这里
     # 立了一条「不许回来」的断言——而维护者对这条改动**完全不知情**。

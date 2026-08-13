@@ -151,6 +151,18 @@ public final class CNDebugFlags {
     // ── useXxx：可选引擎 ──────────────────────────────────────────────
     /** 资源下载改用 libaria2 备用引擎（默认关）。开=先走 aria2，失败回退主引擎。 */
     public static final String USE_ARIA2 = "useAria2";
+    /**
+     * 下载一律走<b>单线程可靠模式</b>（默认关）：分片工作线程、字节分段、全局
+     * 连接闸门、并行文件数全部压到 1。
+     *
+     * <p>与 {@link #USE_ARIA2} 同一类——只换我们自己的下载路径，不碰任何安全
+     * 判定。用来排查「多线程分片在这台设备/这条网上到底是不是失败原因」：开着
+     * 重下一次，成了就说明是并发问题，不必再猜。
+     *
+     * <p>这是三层来源里<b>最高</b>的一层，玩家在弹窗里关不掉（见
+     * {@link CNDownloadMode}）。
+     */
+    public static final String USE_SINGLE_THREAD = "useSingleThread";
 
     /** 注入延迟的时长。比 6 秒总闸长一截，保证一定触发询问框。 */
     public static final long SLOW_INJECT_MS = 9000L;
@@ -171,6 +183,7 @@ public final class CNDebugFlags {
         { FAIL_DOWNLOAD,        "【注入】资源/热更下载一律失败" },
         { FAIL_HOTUPDATE_APPLY, "【注入】热更事务应用到一半失败（验回滚）" },
         { USE_ARIA2,            "资源下载改用 libaria2 备用引擎（默认关）" },
+        { USE_SINGLE_THREAD,    "下载一律单线程可靠模式（并发全部压到 1，默认关）" },
     };
 
     /** 开关名的合法形状：小驼峰，纯 ASCII 字母数字。见 {@link #writeState}。 */

@@ -15,12 +15,50 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class CNDownloadConcurrency {
     private static final int MAX_CONNECTIONS = 8;
-    private static final Semaphore PERMITS = new Semaphore(MAX_CONNECTIONS, true);
+
+    /**
+     * 可缩放的信号量。{@link Semaphore#reducePermits} 是 protected 的，只能这么拿。
+     *
+     * <p>缩容时若许可正被占用，permit 计数会变成负数——这是 {@code reducePermits}
+     * 的既定行为，也正是这里要的：<b>在传的连接不会被掐断</b>，但它们释放之后
+     * 不再发出去，于是并发是逐步收敛到新上限的，而不是把正在传的东西砍掉。
+     */
+    private static final class Gate extends Semaphore {
+        Gate(int permits) { super(permits, true); }
+        void shrink(int n) { reducePermits(n); }
+    }
+
+    private static final Gate PERMITS = new Gate(MAX_CONNECTIONS);
+    /** 当前上限；单线程模式下由 {@link CNDownloadMode#applyNow()} 收到 1。 */
+    private static volatile int cap = MAX_CONNECTIONS;
     private static final AtomicInteger ACTIVE = new AtomicInteger(0);
     private static final AtomicInteger PEAK = new AtomicInteger(0);
     private static final AtomicInteger WAITERS = new AtomicInteger(0);
 
     private CNDownloadConcurrency() {}
+
+    /** 正常（非单线程）上限。 */
+    public static int maxConnections() { return MAX_CONNECTIONS; }
+
+    /** 当前生效的上限。 */
+    public static int currentCap() { return cap; }
+
+    /**
+     * 改上限。夹到 {@code [1, MAX_CONNECTIONS]}；与当前一致时什么都不做。
+     *
+     * <p>由 {@link CNDownloadMode#applyNow()} 调用——这个信号量是四处并发里唯一
+     * <b>长期存在</b>的那个（其余三处都是每次下载开始时现读），所以模式切换必须
+     * 显式下发到这里，否则玩家点完「改用单线程」，连接数还是 8。
+     */
+    public static synchronized void setCap(int wanted) {
+        int target = Math.max(1, Math.min(MAX_CONNECTIONS, wanted));
+        if (target == cap) return;
+        if (target < cap) PERMITS.shrink(cap - target);
+        else PERMITS.release(target - cap);
+        CNLog.i("MagiaCNChunk", "全局连接上限 " + cap + " → " + target
+                + "（" + CNDownloadMode.describe() + "）");
+        cap = target;
+    }
 
     public static Lease acquire(String label, AtomicLong heartbeat) throws IOException {
         long started = System.nanoTime();
@@ -44,7 +82,7 @@ public final class CNDownloadConcurrency {
         long waitedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
         if (waitedMs >= 1000L) {
             CNLog.i("MagiaCNChunk", "全局连接排队 " + waitedMs + "ms label=" + label
-                    + " active=" + now + "/" + MAX_CONNECTIONS);
+                    + " active=" + now + "/" + cap);
         }
         return new Lease(label);
     }

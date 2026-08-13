@@ -45,9 +45,21 @@ public final class CNChunkedDownload {
 
     private static final int CONNECT_TIMEOUT_MS = 15000;
     private static final int READ_TIMEOUT_MS = 30000;
-    /** 大包的校验块可以很多，网络连接数不能随块数膨胀。 */
+    /**
+     * 大包的校验块可以很多，网络连接数不能随块数膨胀。
+     *
+     * <p>这两个是<b>正常模式</b>的上限。实际用的一律走 {@link #maxWorkers()} /
+     * {@link #maxSegments()}——单线程可靠模式下它们是 1（见 {@link CNDownloadMode}）。
+     * 直接引用常量会漏掉那个模式，而漏掉的表现是「明明选了单线程，还是开了 8 条
+     * 连接」，且只有看日志才发现得了。
+     */
     private static final int MAX_NETWORK_WORKERS = 8;
     private static final int MAX_BYTE_SEGMENTS = 16;
+
+    /** 当前允许的分片工作线程数。 */
+    private static int maxWorkers() { return CNDownloadMode.cap(MAX_NETWORK_WORKERS); }
+    /** 当前允许的字节分段数。 */
+    private static int maxSegments() { return CNDownloadMode.cap(MAX_BYTE_SEGMENTS); }
     private static final int MAX_MIRROR_CANDIDATES = 6;
     private static final long META_SAVE_INTERVAL_NS = 2_000_000_000L;
 
@@ -553,7 +565,7 @@ public final class CNChunkedDownload {
         final File part = partFileFor(target);
         final File meta = metaFileFor(target);
         ByteResume resume = readByteResume(meta);
-        int segments = Math.max(1, Math.min(MAX_BYTE_SEGMENTS, requestedSegments));
+        int segments = Math.max(1, Math.min(maxSegments(), requestedSegments));
         if (probe.total < segments) segments = (int) Math.max(1L, probe.total);
         long segmentSize = ceilDiv(probe.total, segments);
         // 无 manifest 时没有内容指纹，断点只能在**同一完整 URL**上复用。
@@ -569,6 +581,16 @@ public final class CNChunkedDownload {
                 && byteResumeBoundsValid(resume);
         long[] resumed = null;
         if (accepted) {
+            // ⚠ 这里刻意用 resume.segments 覆盖上面按当前模式算出的 segments，
+            // 而且 accepted 的判据用的是 MAX_BYTE_SEGMENTS（绝对上限）而不是
+            // maxSegments()（当前模式上限）。两处都不是笔误：
+            //
+            // 分段数决定的是**磁盘上那个半成品的字节布局**。中途改了，已下好的
+            // 区间记录就对不上，等于把断点作废、整包重下——而玩家恰恰是在「下到
+            // 一半失败」的当口切到单线程的，那个时刻把进度清零是最不该发生的事。
+            //
+            // 并发降到 1 靠的是下面的 workers = min(maxWorkers(), …)：还是这
+            // 16 段布局，但同时只有一条连接在推进。这才是「单线程」该有的样子。
             segments = resume.segments;
             segmentSize = resume.segmentSize;
             resumed = resume.done;
@@ -627,7 +649,7 @@ public final class CNChunkedDownload {
             ctx.segmentSize = segmentSize;
             ctx.next = new AtomicInteger(0);
 
-            int workers = Math.min(MAX_NETWORK_WORKERS, Math.min(segments, incomplete));
+            int workers = Math.min(maxWorkers(), Math.min(segments, incomplete));
             ExecutorService pool = Executors.newFixedThreadPool(workers, new DownloadThreadFactory());
             CountDownLatch latch = new CountDownLatch(workers);
             for (int i = 0; i < workers; i++) pool.submit(new ByteWorker(ctx, latch));
@@ -920,7 +942,7 @@ public final class CNChunkedDownload {
 
     private static int clampWorkers(int requested, int pending) {
         int n = requested < 1 ? 1 : requested;
-        n = Math.min(MAX_NETWORK_WORKERS, n);
+        n = Math.min(maxWorkers(), n);
         return Math.max(1, Math.min(n, pending));
     }
 

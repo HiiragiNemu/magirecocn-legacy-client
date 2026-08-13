@@ -35,8 +35,43 @@ public final class CNManualRedownload {
     private static final AtomicInteger RUNNING_COUNT = new AtomicInteger(0);
     private static final AtomicBoolean RESTART_REQUIRED = new AtomicBoolean(false);
     private static final AtomicBoolean ANY_FAILURE = new AtomicBoolean(false);
-    private static final ExecutorService POOL = Executors.newFixedThreadPool(
-            MAX_PARALLEL_FILES, new ManualThreadFactory());
+    /**
+     * 并行文件池。用 ThreadPoolExecutor 而不是 newFixedThreadPool 的返回值，
+     * 是为了能在单线程可靠模式下把上限调到 1（见 {@link #applyMode()}）。
+     */
+    private static final java.util.concurrent.ThreadPoolExecutor POOL =
+            new java.util.concurrent.ThreadPoolExecutor(
+                    MAX_PARALLEL_FILES, MAX_PARALLEL_FILES, 0L,
+                    java.util.concurrent.TimeUnit.MILLISECONDS,
+                    new java.util.concurrent.LinkedBlockingQueue<Runnable>(),
+                    new ManualThreadFactory());
+
+    /**
+     * 把当前下载模式下发到并行文件数。
+     *
+     * <p>只影响<b>还没开始</b>的任务：已经在跑的不会被掐断（ThreadPoolExecutor
+     * 缩容的既定行为），与连接闸门那边一致——玩家切模式是为了让下载成功，不是
+     * 为了把正在传的东西砍掉。
+     *
+     * <p>缩容要先 core 后 max、扩容要先 max 后 core，反过来会撞
+     * IllegalArgumentException（max 必须 &gt;= core）。
+     */
+    static void applyMode() {
+        try {
+            int want = CNDownloadMode.cap(MAX_PARALLEL_FILES);
+            if (want == POOL.getMaximumPoolSize()) return;
+            if (want < POOL.getCorePoolSize()) {
+                POOL.setCorePoolSize(want);
+                POOL.setMaximumPoolSize(want);
+            } else {
+                POOL.setMaximumPoolSize(want);
+                POOL.setCorePoolSize(want);
+            }
+            CNLog.i(TAG, "并行文件数 → " + want + "（" + CNDownloadMode.describe() + "）");
+        } catch (Throwable t) {
+            CNLog.w(TAG, "调整并行文件数失败（沿用原值）: " + t);
+        }
+    }
 
     private CNManualRedownload() {}
 
@@ -142,7 +177,9 @@ public final class CNManualRedownload {
                 CNLog.initEarly();
                 recoverCompletedRequest();
                 CNCNDownloadUI.updateSimple("手动重新下载",
-                        name + "：正在下载（可同时处理其他文件）", 0);
+                        name + (CNDownloadMode.singleThread()
+                                ? "：单线程可靠下载中（其它文件排队）"
+                                : "：正在下载（可同时处理其他文件）"), 0);
                 if (index == CNDownloaderFix.HOT_SLOT_SCENARIO
                         || index == CNDownloaderFix.HOT_SLOT_JS) {
                     ok = CNHotUpdateCheck.redownloadPackage(index);

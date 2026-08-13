@@ -2515,6 +2515,13 @@ public class CNCNDownloadUI {
     public static final int ARIA2_CONTINUE = 2;
     /** 返回值：玩家选了「改用离线包」。 */
     public static final int ARIA2_OFFLINE  = 3;
+    /**
+     * 返回值：玩家选了「改用单线程下载」。调用方应当已经由本框把
+     * {@link CNDownloadMode} 切好，接着<b>重试</b>即可。
+     */
+    public static final int DL_SINGLE      = 4;
+    /** 返回值：玩家选了「改回多线程下载」。同样已切好，调用方只管重试。 */
+    public static final int DL_MULTI       = 5;
 
     /** 询问结果的信箱。用数组是为了让具名内部类能写回去（不能捕获非 final 局部量）。 */
     private static final class Aria2Answer {
@@ -2542,17 +2549,45 @@ public class CNCNDownloadUI {
      */
     public static int askAria2Fallback(final Activity act, final String fileName,
                                        final boolean canRetry) {
+        return askDownloadFallback(act, fileName, canRetry, true);
+    }
+
+    /**
+     * 下载失败时<b>问玩家</b>接下来怎么办的通用入口。三个失败点共用它：
+     * 备用引擎失败、主引擎重试用尽、热更新包下载失败。
+     *
+     * <p>比起闷头重试，把取舍摆到台面上更对——玩家是唯一知道「现在这条网到底
+     * 怎么了」的人。而且这三处的可选项本来就是同一组：换引擎、降并发、拿离线包。
+     *
+     * @param aria2Failed true=失败的是备用引擎（aria2），false=失败的是主引擎/热更
+     */
+    public static int askDownloadFallback(final Activity act, final String fileName,
+                                          final boolean canRetry,
+                                          final boolean aria2Failed) {
+        return askDownloadFallback(act, fileName, canRetry, aria2Failed, true);
+    }
+
+    /**
+     * @param offerOffline 给不给「改用离线包」这一项。热更两包（scenario/js）走
+     *     版本 JSON 通道，<b>离线导入根本不覆盖它们</b>——给了就是个死路按钮，
+     *     玩家点进去发现列表里没有这个包，只会更慌。
+     */
+    public static int askDownloadFallback(final Activity act, final String fileName,
+                                          final boolean canRetry,
+                                          final boolean aria2Failed,
+                                          final boolean offerOffline) {
         if (act == null || overlayView == null) {
-            CNLog.w(TAG, "[aria2询问] 浮层不在，按「继续用主引擎」处理：" + fileName);
+            CNLog.w(TAG, "[下载询问] 浮层不在，按「继续用主引擎」处理：" + fileName);
             return ARIA2_CONTINUE;
         }
         if (Looper.myLooper() == Looper.getMainLooper()) {
-            CNLog.e(TAG, "[aria2询问] 被在 UI 线程上调用，会死锁；按「继续用主引擎」处理");
+            CNLog.e(TAG, "[下载询问] 被在 UI 线程上调用，会死锁；按「继续用主引擎」处理");
             return ARIA2_CONTINUE;
         }
         final Aria2Answer ans = new Aria2Answer();
         try {
-            act.runOnUiThread(new Aria2Build(act, fileName, canRetry, ans));
+            act.runOnUiThread(new Aria2Build(act, fileName, canRetry, aria2Failed,
+                    offerOffline, ans));
             if (!ans.latch.await(60, java.util.concurrent.TimeUnit.SECONDS)) {
                 CNLog.w(TAG, "[aria2询问] 60 秒未选择，按「继续用主引擎」处理：" + fileName);
             }
@@ -2571,12 +2606,16 @@ public class CNCNDownloadUI {
         private final Activity act;
         private final String fileName;
         private final boolean canRetry;
+        private final boolean aria2Failed;
+        private final boolean offerOffline;
         private final Aria2Answer ans;
-        Aria2Build(Activity act, String fileName, boolean canRetry, Aria2Answer ans) {
-            this.act = act; this.fileName = fileName; this.canRetry = canRetry; this.ans = ans;
+        Aria2Build(Activity act, String fileName, boolean canRetry,
+                   boolean aria2Failed, boolean offerOffline, Aria2Answer ans) {
+            this.act = act; this.fileName = fileName; this.canRetry = canRetry;
+            this.aria2Failed = aria2Failed; this.offerOffline = offerOffline; this.ans = ans;
         }
         @Override public void run() {
-            try { buildAria2Dialog(act, fileName, canRetry, ans); }
+            try { buildAria2Dialog(act, fileName, canRetry, aria2Failed, offerOffline, ans); }
             catch (Throwable t) {
                 CNLog.e(TAG, "[aria2询问] 构建失败，按「继续用主引擎」处理", t);
                 ans.latch.countDown();
@@ -2586,7 +2625,8 @@ public class CNCNDownloadUI {
 
     /** 与慢网/教程询问框同一套样式：同样的调色板、圆角、按钮，宿主是引擎 Activity。 */
     private static void buildAria2Dialog(final Activity act, String fileName,
-                                         boolean canRetry, Aria2Answer ans) {
+                                         boolean canRetry, boolean aria2Failed,
+                                         boolean offerOffline, Aria2Answer ans) {
         FrameLayout host = overlayView;
         if (host == null || aria2AskModal != null) {   // 浮层没了 / 已开着一个询问
             ans.latch.countDown();
@@ -2610,35 +2650,93 @@ public class CNCNDownloadUI {
         panelLp.leftMargin = panelLp.rightMargin = dp(act, 20);
         modal.addView(panel, panelLp);
 
+        // 单线程已经开着（或被调试开关/云端强制）时不再给这一项——给了也没用，
+        // 只会让人点完发现「还是一样失败」，然后不再相信这个框里的任何按钮。
+        final boolean offerSingle = !CNDownloadMode.singleThread();
+        // 已经在单线程、且是玩家自己选的 → 给回头路。被调试开关/云端强制时不给：
+        // 那两层玩家关不掉，摆个关不掉的按钮只会让人以为按钮坏了。
+        final boolean offerMulti = CNDownloadMode.singleThread()
+                && !CNDownloadMode.forcedOn();
+
         TextView title = new TextView(act);
-        title.setText("备用引擎下载失败");
+        title.setText(aria2Failed ? "备用引擎下载失败" : "下载失败");
         title.setTextColor(COLOR_ACCENT);
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f);
         title.setTypeface(title.getTypeface(), Typeface.BOLD);
         panel.addView(title, lpRow(0, dp(act, 10)));
 
+        StringBuilder body = new StringBuilder();
+        body.append(aria2Failed
+                ? "备用下载引擎（aria2）下载「" + fileName + "」失败。\n\n"
+                : "「" + fileName + "」多次下载失败。\n\n");
+        body.append("接下来怎么办：\n");
+        body.append(aria2Failed
+                ? "· 「继续用主引擎下载」：改用分块下载引擎重新下载。\n"
+                : "· 「再试一次」：换条线路重新下载。\n");
+        if (offerSingle) {
+            // 这一项要说清楚「为什么会有用」。玩家看不出「单线程」和「重试」
+            // 的区别时，只会当成又一个重试按钮，那它就白加了。
+            body.append("· 「改用单线程下载」：只开一条连接，慢但稳。"
+                      + "运营商限并发、老路由器、公共 Wi-Fi 上多线程会一直失败，"
+                      + "这时只有它管用。\n");
+        }
+        if (canRetry) {
+            body.append(aria2Failed
+                    ? "· 「重试备用引擎」：可能只是临时故障，再试一次。\n"
+                    : "· 「改用备用引擎」：换 aria2 引擎试试。\n");
+        }
+        if (offerOffline) {
+            body.append("· 「改用离线包」：打开离线包页面，手动下载后导入。\n");
+        }
+        if (offerMulti) {
+            body.append("· 「改回多线程下载」：当前是单线程；网络已经好转的话可以换回来。\n");
+        }
+        if (!offerSingle) {
+            body.append("\n（当前下载模式：" + CNDownloadMode.describe() + "）");
+        }
+        body.append("\n\n");
+        body.append("都不会损坏存档，也不影响账号。");
+
         TextView msg = new TextView(act);
-        msg.setText("备用下载引擎（aria2）下载「" + fileName + "」失败。\n\n"
-                  + "接下来怎么办：\n"
-                  + "· 「继续用主引擎下载」：改用分块下载引擎重新下载。\n"
-                  + "· 「重试备用引擎」：可能只是临时故障，再试一次。\n"
-                  + "· 「改用离线包」：打开离线包页面，手动下载后导入。\n\n"
-                  + "都不会损坏存档，也不影响账号。");
+        msg.setText(body.toString());
         msg.setTextColor(COLOR_LOG_PANEL_TEXT);
         msg.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
         msg.setLineSpacing(dp(act, 2), 1f);
         panel.addView(msg, lpRow(0, dp(act, 18)));
 
-        // 三选一（重试用尽时只有两项），纵向全宽排布，主引擎为实心主钮
-        TextView cont = dialogButton(act, "继续用主引擎下载", 0xFFFFFFFF, COLOR_ACCENT, false);
+        // 纵向全宽排布，主钮实心。项数随可用性变化（1～4 项）
+        TextView cont = dialogButton(act,
+                aria2Failed ? "继续用主引擎下载" : "再试一次",
+                0xFFFFFFFF, COLOR_ACCENT, false);
         LinearLayout.LayoutParams contLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         contLp.topMargin = dp(act, 18);
         panel.addView(cont, contLp);
         cont.setOnClickListener(new Aria2Choice(ARIA2_CONTINUE, ans));
 
+        if (offerSingle) {
+            TextView single = dialogButton(act, "改用单线程下载（慢但稳）",
+                    COLOR_LOG_PANEL_TEXT, 0x00000000, true);
+            LinearLayout.LayoutParams singleLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            singleLp.topMargin = dp(act, 10);
+            panel.addView(single, singleLp);
+            single.setOnClickListener(new Aria2Choice(DL_SINGLE, ans));
+        }
+
+        if (offerMulti) {
+            TextView multi = dialogButton(act, "改回多线程下载",
+                    COLOR_LOG_PANEL_TEXT, 0x00000000, true);
+            LinearLayout.LayoutParams multiLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            multiLp.topMargin = dp(act, 10);
+            panel.addView(multi, multiLp);
+            multi.setOnClickListener(new Aria2Choice(DL_MULTI, ans));
+        }
+
         if (canRetry) {
-            TextView retry = dialogButton(act, "重试备用引擎",
+            TextView retry = dialogButton(act,
+                    aria2Failed ? "重试备用引擎" : "改用备用引擎",
                     COLOR_LOG_PANEL_TEXT, 0x00000000, true);
             LinearLayout.LayoutParams retryLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -2647,13 +2745,15 @@ public class CNCNDownloadUI {
             retry.setOnClickListener(new Aria2Choice(ARIA2_RETRY, ans));
         }
 
-        TextView offline = dialogButton(act, "改用离线包",
-                COLOR_LOG_PANEL_TEXT, 0x00000000, true);
-        LinearLayout.LayoutParams offLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        offLp.topMargin = dp(act, 10);
-        panel.addView(offline, offLp);
-        offline.setOnClickListener(new Aria2Choice(ARIA2_OFFLINE, ans));
+        if (offerOffline) {
+            TextView offline = dialogButton(act, "改用离线包",
+                    COLOR_LOG_PANEL_TEXT, 0x00000000, true);
+            LinearLayout.LayoutParams offLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            offLp.topMargin = dp(act, 10);
+            panel.addView(offline, offLp);
+            offline.setOnClickListener(new Aria2Choice(ARIA2_OFFLINE, ans));
+        }
 
         host.addView(modal, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -2668,9 +2768,15 @@ public class CNCNDownloadUI {
         @Override public void onClick(View v) {
             try {
                 ans.choice[0] = choice;
-                CNLog.i(TAG, "[aria2询问] 玩家选择："
-                        + (choice == ARIA2_RETRY ? "重试备用引擎"
-                           : choice == ARIA2_OFFLINE ? "改用离线包" : "继续用主引擎"));
+                CNLog.i(TAG, "[下载询问] 玩家选择："
+                        + (choice == ARIA2_RETRY ? "备用引擎"
+                           : choice == ARIA2_OFFLINE ? "改用离线包"
+                           : choice == DL_SINGLE ? "改用单线程下载"
+                           : choice == DL_MULTI ? "改回多线程下载" : "继续用主引擎"));
+                // 模式在**这里**切，不留给每个调用方各切一次：三个失败点都要用
+                // 这一项，分散写迟早会漏掉一个，而漏掉的表现是「点了没反应」。
+                if (choice == DL_SINGLE) CNDownloadMode.setPlayerChoice(true);
+                else if (choice == DL_MULTI) CNDownloadMode.setPlayerChoice(false);
                 closeAria2AskDialog();
             } catch (Throwable t) {
                 CNLog.e(TAG, "[aria2询问] 处理选择失败", t);
