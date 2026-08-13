@@ -179,10 +179,11 @@ namespace cocos2d {
 // /data/user/0 的兼容软链——正规设备都有，但非标准容器/深度定制 ROM 可能
 // 没建这个软链。真碰到时引擎没事（走 Context.getFilesDir()），补丁层全瘫：
 // FINAL_FLAG 永远读不到 → 每次启动都判定「未安装」→ 反复全量重下。
-// 统一改成：读 /proc/self/cmdline 拿包名（不依赖 JNI 就绪时机），按
-// /data/user/0 → /data/data 的顺序探测真实存在的目录。与 Java 侧 CNPaths
-// 同一套算法——两边共享一批 flag 文件（安装标记、引擎闸门、序章标记），
-// 必须解析出同一个目录，改算法时两边一起改。
+// 统一改成：读 /proc/self/cmdline 拿包名（不依赖 JNI 就绪时机）、getuid()
+// 拿用户号，按 /data/user/<用户号> → /data/data → /data/user/0 的顺序探测，
+// **取第一个可写的**。与 Java 侧 CNPaths 同一套算法——两边共享一批 flag 文件
+// （安装标记、引擎闸门、序章标记），必须解析出同一个目录，改算法时两边一起改。
+// Java 那边 uid 读 /proc/self/status 的 Uid: 行，与 getuid() 是同一个数。
 static std::string resolvePrivDir() {
     std::string pkg = "io.kamihama.totentanz";
     FILE* f = ::fopen("/proc/self/cmdline", "rb");
@@ -196,13 +197,38 @@ static std::string resolvePrivDir() {
             if (!s.empty() && s.find('/') == std::string::npos) pkg = s;
         }
     }
-    const std::string userDir = "/data/user/0/" + pkg;
-    const std::string dataDir = "/data/data/" + pkg;
+    // 🔴 用户号不能写死 0。用户号 = uid / 100000（UserHandle.PER_USER_RANGE）。
+    // 主用户是 0，但工作资料 / 系统分身 / 厂商应用多开不是——真机上见过 10 和 999。
+    //
+    // 写死 0 的坑比「路径不存在」更隐蔽：分身进程去 stat /data/user/0/<pkg> 时，
+    // /data、/data/user、/data/user/0 一路都是 711，**stat 会成功**——于是这里
+    // 高高兴兴返回了**主用户**的目录，而本进程（另一个 uid）对它没有任何读写
+    // 权限。表现是补丁层「写了没生效 / 读不到自己刚写的东西」，哪一层都不报错。
+    //
+    // 判据也因此改成**可写**（access W_OK）而不是「是个目录」：别人的目录照样
+    // 是目录，但那对我们没用——要的是能落 flag 的地方，不是能看见的地方。
+    char userBuf[32];
+    ::snprintf(userBuf, sizeof(userBuf), "%lu",
+               (unsigned long)::getuid() / 100000UL);
+    const std::string candidates[] = {
+        // 本进程所属用户的目录。主用户时它就是 /data/user/0/<pkg>。
+        std::string("/data/user/") + userBuf + "/" + pkg,
+        // 每个应用的挂载命名空间里 /data/data 指向自己那一份；
+        // 老设备上它是指向 /data/user/0 的兼容软链。
+        "/data/data/" + pkg,
+        // 历史路径兜底。放最后：写死 0 在分身进程里会指到别人家。
+        "/data/user/0/" + pkg,
+    };
     struct stat st;
-    if (::stat(userDir.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) return userDir;
-    if (::stat(dataDir.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) return dataDir;
-    // 极端环境两个都探测不到：沿用历史路径，让错误暴露在原位。
-    return dataDir;
+    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+        const char* c = candidates[i].c_str();
+        if (::stat(c, &st) == 0 && S_ISDIR(st.st_mode) && ::access(c, W_OK) == 0) {
+            return candidates[i];
+        }
+    }
+    // 一个可写的都没有：退回按本进程用户号拼出来的那个。它是「本该正确」的
+    // 路径，让错误暴露在原位，而不是换去一个更隐蔽的地方。
+    return candidates[0];
 }
 
 // 解析一次缓存：进程内路径不会变，每次 flag 读写都重新 stat 太浪费。
