@@ -55,6 +55,7 @@
     SKIP_MSG_HOOK=1       git push ...   跳过提交信息检查
     SKIP_BRANCH_HOOK=1    git push ...   跳过分支纪律检查
     SKIP_REDLIGHT_HOOK=1  git push ...   跳过红灯闸门
+    SKIP_POLICY_HOOK=1    git push ...   跳过强制约定保全检查（§八）
 
 用它意味着你**明确知道自己在跳过什么**，并且准备好向维护者解释。
 """
@@ -273,6 +274,99 @@ def report_redlight(bad):
                      "  确需跳过: SKIP_REDLIGHT_HOOK=1 git push ...\n\n")
 
 
+# ────────────────────────────────────────────────────────────────
+# 四、强制约定保全（CONTRIBUTING §八 非主线分支发版强制约定）
+#
+# 约定本身「禁止更改」：删掉 §八 / 规则四 / 铁律 7，等于把发版纪律从仓库里
+# 抹掉。ruleset 挡的是 force push / 删分支——那是「推翻整个分支」；这一道挡
+# 「改约定文件内容」：凡本次推送新增的提交改了三个约定文件之一，改动后必须
+# 仍含各自的强制约定标记，否则拦。
+#
+# 判据是「标记必须还在」，不是「内容不许动」——§八 的措辞修正、错别字、
+# 补细节都放行，只有把整段约定删掉/改成非强制才会被拦。
+#
+# 逃生口：SKIP_POLICY_HOOK=1 git push ...（改了约定还硬要推，向维护者交代）
+# ────────────────────────────────────────────────────────────────
+
+# 三个约定文件各自的「强制约定存在」标记：改了文件但标记不在了 = 约定被删。
+# 用「章节标题 + 紧跟其后的禁止措辞」双条件，防只留标题、正文被掏空的写法。
+POLICY_MARKERS = {
+    "CONTRIBUTING.md": (
+        "## 八、非主线分支发版强制约定",
+        "本约定**禁止修改**",
+    ),
+    "AGENTS.md": (
+        "### 规则四：非主线分支发版必须登记「停止支持开关」",
+        "本约定**禁止修改**",
+    ),
+    "CLAUDE.md": (
+        "7. **非主线分支发版强制约定（禁止更改）**",
+        "本约定**禁止修改**",
+    ),
+}
+POLICY_FILES = tuple(POLICY_MARKERS.keys())
+
+
+def file_at(sha, path):
+    """读某提交里一个文件的内容；没有这个文件返回 None。"""
+    r = sh("git", "show", "%s:%s" % (sha, path))
+    if r.returncode != 0:
+        return None
+    return r.stdout
+
+
+def check_policy(refs):
+    """检查本次推送新增提交有没有删掉/弱化强制约定标记。返回问题列表。"""
+    bad, seen = [], set()
+    for local_sha, branch, remote_sha in refs:
+        for sha in new_commits(local_sha, remote_sha):
+            if sha in seen:
+                continue
+            seen.add(sha)
+            # 该提交动了哪个约定文件？
+            r = sh("git", "diff-tree", "--no-commit-id", "--name-only",
+                   "-r", sha, "--", *POLICY_FILES)
+            if r.returncode != 0:
+                continue
+            touched = r.stdout.split()
+            if not touched:
+                continue
+            # 改动前（父提交）与改动后都要有强制约定标记；父提交里本来就没有
+            # 的（老分支首次补约定），只要求改后必须有。
+            parent = sh("git", "rev-parse", "%s^" % sha)
+            parent = parent.stdout.strip() if parent.returncode == 0 else ""
+            for path in touched:
+                after = file_at(sha, path)
+                if after is None:
+                    continue                        # 把整个文件删了也拦
+                if not markers_present(path, after):
+                    before = file_at(parent, path) if parent else None
+                    # 文件是本次新建且标记齐全 → 放行；否则报
+                    if before is not None and markers_present(path, before):
+                        bad.append((sha[:8], branch, path))
+    return bad
+
+
+def markers_present(path, content):
+    markers = POLICY_MARKERS[path]
+    return all(m in content for m in markers)
+
+
+def report_policy(bad):
+    sys.stderr.write("\n✘ push 被 pre-push 钩子拦下：%d 个提交删除了强制约定\n\n"
+                     % len(bad))
+    for sha, branch, path in bad:
+        sys.stderr.write("  %s (%s)  动了 %s，改动后强制约定标记不在了\n"
+                         % (sha, branch, path))
+    sys.stderr.write("\n  被删的约定：CONTRIBUTING.md §八「非主线分支发版强制约定」\n"
+                     "  （AGENTS.md 规则四 / CLAUDE.md 铁律 7 同源）——\n"
+                     "  非主线分支版本独立发版必须先登记 config.json 停止支持开关，\n"
+                     "  主线跟上后关开关并强制推送主线最新版下载链接。\n"
+                     "  本约定**禁止更改**，受 branch ruleset 保护。\n\n")
+    sys.stderr.write("  规则出处: CONTRIBUTING.md §八\n"
+                     "  确需跳过: SKIP_POLICY_HOOK=1 git push ...\n\n")
+
+
 def main():
     refs = parse_stdin()
     if not refs:
@@ -302,6 +396,18 @@ def main():
             red_bad = []                             # fail-open
         if red_bad:
             report_redlight(red_bad)
+            rc = 1
+
+    # ── 四、强制约定保全（CONTRIBUTING §八 非主线分支发版约定）──
+    if os.environ.get("SKIP_POLICY_HOOK"):
+        sys.stderr.write("pre-push: SKIP_POLICY_HOOK=1，跳过强制约定检查\n")
+    else:
+        try:
+            pol_bad = check_policy(refs)
+        except Exception:
+            pol_bad = []                             # fail-open
+        if pol_bad:
+            report_policy(pol_bad)
             rc = 1
 
     # ── 二、分支纪律（§0）────────────────────────────────────

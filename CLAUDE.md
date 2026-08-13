@@ -57,6 +57,14 @@
    移动 `last-green` tag）——允许 push 触发。它们是守门用的，不产出对外
    产物；`last-green` tag 是内部稳定锚点，不是发版。见 CONTRIBUTING.md §四。
 
+7. **非主线分支发版强制约定（禁止更改）**。任何**非 `main` 分支**构建、独立
+   对外发版（可安装 APK 分发）的客户端版本（如单线程版
+   `surgery/single-thread-*`），**必须先**在线上 config.json 登记
+   `branch_versions` 停止支持开关再发版；主线版本功能覆盖后关闭开关并
+   **强制推送主线最新版下载链接**（`mainline_apk_url`），分支版随即退役。
+   细节与字段见 CONTRIBUTING.md §八。本约定**禁止修改**（受 branch ruleset
+   保护），任何改动必须经维护者批准后提 `main`，再推送全部分支。
+
 ## 提交约定
 
 - commit 信息用 **Conventional Commits 前缀 + 中文描述**（2026-08-09 起，

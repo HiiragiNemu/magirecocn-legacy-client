@@ -129,3 +129,63 @@ push 到 main
   「🗄️ 归档分支为 tag」CI；
 - CLAUDE.md 铁律 6 修订为：「不做自动发版——APK 构建/Release 只手动；
   检查类 workflow（main-checks / last-green）允许 push 触发」。
+
+## 八、非主线分支发版强制约定（禁止更改）
+
+> 🔒 **本约定是硬规则，禁止修改**。受仓库 branch ruleset 保护（禁 force
+> push / 禁删除分支），任何改动必须经维护者批准后提 `main`，再推送全部分支。
+
+### 适用范围
+
+所有**非 `main` 分支**构建、独立对外发版（可安装 APK 分发）的客户端版本，
+包括但不限于 `surgery/single-thread-reliable-20260813`（单线程版）等
+`hotfix/*` / `surgery/*` 分支产物。`main` 分支构建的版本不受本约定约束。
+
+### 规则一：独立发版必须登记「停止支持开关」
+
+非主线分支版本**只要对外发版**，发布动作里必须同步更新线上
+`config.json`（<https://api.example.test/legacy/config.json>，仓库根
+`config.json` 是快照，改线上那份），在 `client` 段旁登记该分支版本并
+加「停止支持开关」：
+
+```json
+"branch_versions": {
+  "single-thread": {
+    "supported": true,
+    "mainline_apk_url": "https://assets.example/magireco-latest-legacy-client.apk"
+  }
+}
+```
+
+- `supported: true` = 该分支版本仍在分发、仍受支持（发版时必须为 true）；
+- `mainline_apk_url` = 主线（`main` 分支）最新版 APK 的下载链接；
+- 条目缺失或 `supported: false` = 该分支版本已停止支持。
+
+发版顺序：**先登记开关再分发**。忘了登记就发版 = 违反本约定，按红灯协议
+处理。
+
+### 规则二：主线跟上后关闭开关，强制推送主线最新版
+
+当 `main` 分支版本的功能**覆盖**该分支版本（主线已包含其改进，玩家无需
+再装分支版）后，发布负责人必须：
+
+1. 把 `config.json` 里该分支的 `supported` 改为 `false`（或移除条目）；
+2. **强制推送主线最新版本下载链接**——`mainline_apk_url` 指向主线最新
+   APK（保持与 `client.apk_url` 一致），分支版客户端因此被引导升级到
+   主线版本；
+3. 分支版本按 §一 走「归档分支为 tag」流程退役。
+
+开关关闭后，分支版客户端不得再收到该分支的新构建分发；再次分发即违反
+本约定。
+
+### 违反的后果
+
+- 非主线分支版本未登记开关即发版 → 视为发布事故，发布者负责回滚/补登记，
+  按 §五 红灯协议追责；
+- 修改本约定 → 被 ruleset 拒绝（force push / 删分支），且破坏约定本身
+  比破坏任何功能代码都严重。
+
+### 生效范围
+
+本约定随本文件推送到全部活跃分支（含 `main`）。分支内容与该分支无关的
+场景（如一次性 research 分支）也须保留本约定章节，不得删除。

@@ -71,7 +71,31 @@ git push -u origin main
 这条不接受任何理由。"上一条脏了"、"这次是不同的事"、"名字不好听"——
 都不是开第二条的理由。
 
-### 这三条是可执行的，别靠自觉
+### 规则四：非主线分支发版必须登记「停止支持开关」（禁止更改）
+
+任何**非 `main` 分支**构建、独立对外发版（可安装 APK 分发）的客户端版本
+（如单线程版 `surgery/single-thread-*`），发版动作里**必须**同步更新线上
+`config.json`（<https://api.example.test/legacy/config.json>）的
+`branch_versions` 段，登记该分支的「停止支持开关」：
+
+```json
+"branch_versions": {
+  "single-thread": {
+    "supported": true,
+    "mainline_apk_url": "https://assets.example/magireco-latest-legacy-client.apk"
+  }
+}
+```
+
+- **先登记再发版**：`supported: true` 登记完成才允许分发；没登记就发版
+  违反本约定；
+- **主线跟上后关闭开关**：`main` 版本功能覆盖该分支后，把 `supported`
+  改为 `false`，并让 `mainline_apk_url` 与 `client.apk_url` 一致（强制推送
+  主线最新版下载链接），分支版随即按 §0 退役归档；
+- 本约定**禁止修改**（受 branch ruleset 保护），改动需维护者批准后提 `main`。
+  细节见 CONTRIBUTING.md §八。
+
+### 这些规则是可执行的，别靠自觉
 
 **开任何分支之前，先跑：**
 
