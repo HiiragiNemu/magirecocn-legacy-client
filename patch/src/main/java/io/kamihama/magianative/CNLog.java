@@ -706,6 +706,38 @@ public final class CNLog {
         return sb.toString();
     }
 
+    /**
+     * 一条日志的来源与原文。
+     *
+     * <p>{@link #tail(int)} 把整个缓冲拍平成一个大字符串，来源在那一步就丢了
+     * ——面板要按来源分色、按级别标红，就必须拿得到 {@code src}。
+     */
+    public static final class Line {
+        public final int src;
+        public final String text;
+        Line(int src, String text) { this.src = src; this.text = text; }
+    }
+
+    /**
+     * 同 {@link #tail(int)}，但保留每条的来源，供面板做结构化渲染。
+     *
+     * <p>与 {@code tail} 并存而不是取代它：「复制全部 / 分享日志」要的是原样文本，
+     * 那条路不该被渲染需求牵着走。
+     */
+    public static java.util.List<Line> tailRows(int n) {
+        java.util.ArrayList<Line> keep = new java.util.ArrayList<Line>();
+        synchronized (BUFFER) {
+            Iterator<Entry> it = BUFFER.iterator();
+            while (it.hasNext()) {
+                Entry e = it.next();
+                if (visible(e.src)) keep.add(new Line(e.src, e.line));
+            }
+        }
+        int skip = keep.size() - n;
+        if (skip <= 0) return keep;
+        return new java.util.ArrayList<Line>(keep.subList(skip, keep.size()));
+    }
+
     /** 当前开关下可见的条数（面板上「共 N 行」用）。 */
     public static int visibleSize() {
         int n = 0;

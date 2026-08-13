@@ -185,6 +185,13 @@ public class CNCNDownloadUI {
     private static int COLOR_DIM;
     private static int COLOR_LOG_PANEL_BG;
     private static int COLOR_LOG_PANEL_TEXT;
+    // LOG 面板的结构化渲染用色（来源徽章 / 时刻 / 级别），见 composeLogSpans
+    private static int COLOR_LOG_BADGE_APP;
+    private static int COLOR_LOG_BADGE_LOGCAT;
+    private static int COLOR_LOG_BADGE_NATIVE;
+    private static int COLOR_LOG_TIME;
+    private static int COLOR_LOG_WARN;
+    private static int COLOR_LOG_ERROR;
     private static int COLOR_LINK;      // 链接文字色（克制，不用强调粉）
     private static int COLOR_GLASS;
     private static int COLOR_GLASS_STK;
@@ -202,6 +209,12 @@ public class CNCNDownloadUI {
             COLOR_DIM            = 0xAA000000;
             COLOR_LOG_PANEL_BG   = 0xFF1B1029;
             COLOR_LOG_PANEL_TEXT = 0xFFF5ECFB;
+            COLOR_LOG_BADGE_APP    = 0xFFB87FE0;  // 自家日志＝紫，与浮层同族
+            COLOR_LOG_BADGE_LOGCAT = 0xFF6E7C99;  // 系统/框架＝灰蓝，刻意不抢眼
+            COLOR_LOG_BADGE_NATIVE = 0xFF2FA69B;  // native/引擎＝青
+            COLOR_LOG_TIME         = 0xFF8E7BA0;
+            COLOR_LOG_WARN         = 0xFFF2B45A;
+            COLOR_LOG_ERROR        = 0xFFFF6B6B;
             COLOR_LINK           = 0xFF8FC6F0;   // 夜间：浅蓝
             COLOR_GLASS          = 0xCC18112A;
             COLOR_GLASS_STK      = 0x44FF80C0;
@@ -216,6 +229,12 @@ public class CNCNDownloadUI {
             COLOR_DIM            = 0x88000000;
             COLOR_LOG_PANEL_BG   = 0xFFFFFFFF;
             COLOR_LOG_PANEL_TEXT = 0xFF2A1A3B;
+            COLOR_LOG_BADGE_APP    = 0xFF9C5BC2;
+            COLOR_LOG_BADGE_LOGCAT = 0xFF77839B;
+            COLOR_LOG_BADGE_NATIVE = 0xFF1C8C82;
+            COLOR_LOG_TIME         = 0xFF8A7A96;
+            COLOR_LOG_WARN         = 0xFFB86E00;
+            COLOR_LOG_ERROR        = 0xFFD03030;
             COLOR_LINK           = 0xFF2C6BA8;   // 亮色：沉稳蓝
             COLOR_GLASS          = 0xCCFFFFFF;
             COLOR_GLASS_STK      = 0x33B53C8C;
@@ -2991,11 +3010,98 @@ public class CNCNDownloadUI {
         return sb.toString();
     }
 
+    /**
+     * 面板里渲染成「来源徽章 + 时刻 + 正文」，级别高的上色。
+     *
+     * <h3>为什么不再是原样文本</h3>
+     *
+     * 原先把 {@link #composeLogText} 拼出来的一大坨直接 setText。真机上 logcat
+     * 一秒能灌几百行，看到的就是<b>满屏等宽字在飞</b>——开发的人也只能靠肉眼扫
+     * 有没有红字，普通玩家更是只看得见字在动。而这个面板的用途恰恰是「把现场
+     * 发给客服」，看不懂就等于没有。
+     *
+     * <h3>为什么是 Spannable，不是一行一个 View</h3>
+     *
+     * 一行一个 View 更接近设计稿（能画真圆角徽章），但 300 行 × 3 个 View = 900 个
+     * View 每 250ms 重排一次，必炸。这个面板<b>已经因为渲染太重卡死过一次</b>
+     * （见 {@link #LOG_REFRESH_MS} 上方那段注释），不能再来一遍。
+     *
+     * <p>所以走单个 TextView + span：布局开销与原来的纯文本同量级，只多了每行
+     * 三四个 span。徽章的「内边距」用空格凑，等宽字体下够齐。
+     */
+    private static CharSequence composeLogSpans() {
+        android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder();
+        if (showStatusBlock) {
+            sb.append(buildStatusText());
+            sb.append("\n──────── 运行日志 ────────\n");
+        }
+        java.util.List<CNLog.Line> rows = CNLog.tailRows(PANEL_LOG_LINES);
+        if (rows.isEmpty()) {
+            sb.append("（暂无日志；若已关闭 logcat 与原生日志，这里只会有本补丁自己的记录）\n");
+            return sb;
+        }
+        int vis = CNLog.visibleSize();
+        if (vis > PANEL_LOG_LINES) {
+            sb.append("（仅显示最近 ").append(String.valueOf(PANEL_LOG_LINES))
+              .append(" 行，共 ").append(String.valueOf(vis))
+              .append(" 行；「复制全部」可取完整日志）\n");
+        }
+        for (int i = 0; i < rows.size(); i++) {
+            CNLog.Line row = rows.get(i);
+            appendLogRow(sb, CNLogFormat.parse(row.src, row.text));
+        }
+        return sb;
+    }
+
+    /** 渲染一行。span 数量刻意压到最少——每行多一个，300 行就是多 300 个。 */
+    private static void appendLogRow(android.text.SpannableStringBuilder sb,
+                                     CNLogFormat.Parsed p) {
+        int badgeStart = sb.length();
+        sb.append(' ').append(p.badge).append(' ');
+        sb.setSpan(new android.text.style.BackgroundColorSpan(badgeColor(p.badge)),
+                badgeStart, sb.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        sb.setSpan(new android.text.style.ForegroundColorSpan(0xFFFFFFFF),
+                badgeStart, sb.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+
+        if (p.time.length() > 0) {
+            int t0 = sb.length();
+            sb.append(' ').append(p.time);
+            sb.setSpan(new android.text.style.ForegroundColorSpan(COLOR_LOG_TIME),
+                    t0, sb.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+
+        int textStart = sb.length();
+        sb.append(' ');
+        // 组件名只在本补丁自己的日志里显示：logcat 的 tag 大多是噪音
+        // （chromium、ActivityManager…），占了宽度又帮不上忙。
+        if (CNLogFormat.BADGE_APP.equals(p.badge) && p.comp.length() > 0) {
+            sb.append(p.comp).append(": ");
+        }
+        sb.append(p.text.length() > 0 ? p.text : "(空行)");
+        if (CNLogFormat.isBad(p.level)) {
+            int color = CNLogFormat.isFatal(p.level) ? COLOR_LOG_ERROR : COLOR_LOG_WARN;
+            sb.setSpan(new android.text.style.ForegroundColorSpan(color),
+                    textStart, sb.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        sb.append('\n');
+    }
+
+    private static int badgeColor(String badge) {
+        if (CNLogFormat.BADGE_APP.equals(badge)) return COLOR_LOG_BADGE_APP;
+        if (CNLogFormat.BADGE_NATIVE.equals(badge)) return COLOR_LOG_BADGE_NATIVE;
+        return COLOR_LOG_BADGE_LOGCAT;
+    }
+
     /** 把最新内容刷进面板；仅在面板可见时做，避免无谓的字符串拼接。 */
     private static void renderLogModal() {
         if (logModal == null || tvLog == null) return;
         if (logModal.getVisibility() != View.VISIBLE) return;
-        tvLog.setText(composeLogText(false));
+        // 渲染出错也不能让面板空着——退回原样文本，起码内容还在
+        try {
+            tvLog.setText(composeLogSpans());
+        } catch (Throwable t) {
+            tvLog.setText(composeLogText(false));
+        }
     }
 
     private static void openLogModal() {
