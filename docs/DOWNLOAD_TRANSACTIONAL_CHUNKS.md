@@ -50,6 +50,16 @@
 
 `cn_base_03.zip` 等静态包继续使用固定块哈希事务；`cn_scenario_update.zip` 与 `cn_js_update.zip` 是动态对象，可能出现同尺寸不同内容。动态包使用稳定的 `version-size-md5` 查询身份隔离 CDN 缓存，Range 只负责传输与断点，可信提交由整包 MD5 决定。其可见进度按收到的字节即时增长，不再等完整 16 MiB 块通过后才从 0 MB 跳动。
 
+这条边界对**所有**取这两包的路径成立，不只是热更新那一轮：
+
+- 热更新轮（`CNHotUpdateCheck` → `CNHotUpdate`）：按 `version_*.json` 下载并校验；
+- 离线导入（`CNOfflineImport`）：直接拒收这两包，只管 13 个基础包；
+- **首次安装器**（`CNDownloaderFix.fetchArchive`）：这两包被排在下载队列最前，走的仍是基础包那条路。它同样**不读**基础包 `manifest.json`，下载完工后按 `version_*.json` 的 size + 整包 MD5 核对（`verifyHotIdentity`）；版本 json 取不到时只做 ZIP 结构预检并放行，交由随后的热更新轮按版本号再核对——不因一个几十字节的冷 json 超时把整个安装卡死。
+
+`manifest.json` 只在基础包整批出包时重算，热更两包却由热更流水线单独重发。二者脱节时清单里的块指纹指向上一版内容，而 `size` 常常不变（同结构 ZIP 重打包尺寸一致），于是 §v5 状态模型第 4 条那道「同大小但内容不同的清单不能复用」的闸<b>照样放行</b>，随后**每一块**都校验失败，四条线路轮完只剩红条重试。
+
+> 2026-08-13 真机：`cn_scenario_update.zip` 的块 0 在 edge / esa / gh-proxy v4 / gh-proxy 四条线路上得到同一个 `bb4e7df4…`，而清单期望 `acb43c47…`。四个镜像众口一词说明文件没坏，是清单旧了；同日核对 `cn_js_update.zip` 的整包 MD5 与 `version_js.json` 完全一致，而清单里那一块同样对不上。
+
 ## 回归合同
 
 `ChunkHashIntegrationTest` 必须覆盖：
@@ -65,7 +75,7 @@
 
 `DownloadConcurrencyTest` 必须证明第九条连接在全局上限处等待，释放许可后继续，峰值不超过 8。
 
-`HotUpdateRoutingTest` 必须钉住动态热更新不读取基础包 manifest、身份查询键稳定，以及“一个成功 + 一个失败”只能显示“部分更新完成”。
+`HotUpdateRoutingTest` 必须钉住动态热更新不读取基础包 manifest、身份查询键稳定，以及“一个成功 + 一个失败”只能显示“部分更新完成”。还必须钉住**首次安装器**同样不给这两包套 manifest，且反向钉住 13 个静态基础包继续走块指纹事务——把判据写宽能让红条消失，代价是整批基础包退回只剩 ZIP 结构预检。
 
 `UiAssistStateTest` 必须覆盖：显式停留、一次性进入游戏请求与浮层销毁后的状态清零。
 `check-download-ui-contract.py` 必须拒绝 decorView 外挂、整屏平移、缺失的横纵滚动容器、教程“否”触发重启，以及缺失的热更新版本复位。

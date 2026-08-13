@@ -32,6 +32,24 @@ checks = {
     "基础包旧 marker 保留到新包成功": "FORCE_REDOWNLOAD" in downloader and "manual-force-redownload" in downloader,
     "手动逐项补齐后可提交总完成标记": "commitFinalFlagIfComplete" in downloader and "commitFinalFlagIfComplete" in manual,
     "动态热更新不使用基础包 manifest": "usesChunkManifestForHotUpdateForTest() { return false; }" in hot and "true, null" in hot,
+    # 上一条只管热更**那一轮**。首次安装器把热更两包排在下载队列最前，走的却是
+    # 基础包那条路，于是照样套 manifest.json 的块指纹——而 manifest 只在基础包
+    # 整批出包时重算，热更包由流水线单独重发。脱节时块指纹指向上一版，偏偏 size
+    # 常常不变（同结构 ZIP 重打包尺寸一致），「清单与文件是否同一身份」那道闸照样
+    # 放行，随后每一块都失败，四条线路轮完只剩红条重试（2026-08-13 真机：四个镜像
+    # 众口一词给出同一实得值，只有清单对不上）。
+    "首次安装器不给热更两包套基础包 manifest":
+        "final boolean useManifest = usesChunkManifest(name);" in downloader
+        and "useManifest ? ChunkManifest.forFile(name) : null" in downloader
+        and "return !CNOfflineImport.isHotUpdateFile(name);" in downloader,
+    # 去掉清单不能等于不校验：热更包的权威身份是 version json 的 size + 整包 MD5。
+    # 少了这一步就只剩 ZIP 结构预检，而缓存里的旧包结构完好、照样通过——
+    # 那正是「下完了却是旧台词」。
+    "热更两包按 version json 身份完工校验":
+        "verifyHotIdentity" in downloader
+        and "CNHotUpdateCheck.metaForSlot(slot)" in downloader
+        and "CNHotUpdateValidate.verifyZip(archive, meta)" in downloader
+        and "static CNHotUpdateValidate.VerMeta metaForSlot(int slot)" in hot_check,
     "动态热更新绑定 version-size-md5": "cnv_hot=" in hot and "hotIdentity" in hot and "verifyZip(dest, expected)" in hot,
     "版本 JSON 与 ZIP 均绕过旧 CDN 缓存": "cnv_version=" in hot_check and "Cache-Control" in hot_check and "cnv_hot=" in hot,
     "热更新校验或应用失败会把槽位标红": "markHotFailed(pkg.slot)" in hot_check,

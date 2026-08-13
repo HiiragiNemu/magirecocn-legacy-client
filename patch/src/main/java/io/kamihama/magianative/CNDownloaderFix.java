@@ -1069,6 +1069,11 @@ public final class CNDownloaderFix {
                 deleteQuietly(CNChunkedDownload.metaFileFor(archive));
                 CNArchiveInstallTx.clearState(
                         CNArchiveInstallTx.stateFile(new File(STATE_ROOT), name));
+            } catch (HotIdentityMismatch e) {
+                // 传输是好的，只是这条线路手里那份旧了：换线重来，别记冷却
+                // （理由见 HotIdentityMismatch 的说明）。断点已由抛出方清干净。
+                CNLog.w(TAG, "hot-identity-stale file=" + name + " attempt=" + attempt
+                        + " mirror=" + mirror.name + " → 换线重下：" + e.getMessage());
             } catch (IOException e) {
                 if (CNDownloadRestart.changed(index, restartToken)) {
                     CNLog.i(TAG, "manual-restart-active file=" + name
@@ -1296,6 +1301,26 @@ public final class CNDownloaderFix {
 
     /**
      * 在指定线路上取回压缩包：优先多线程分片，不满足条件时退回单线程续传。
+     *
+     * <p><b>热更两包不套基础包 manifest</b>。{@code cn_scenario_update.zip} 与
+     * {@code cn_js_update.zip} 是动态对象：它们由热更流水线单独重新发布，而
+     * {@code manifest.json} 只在基础包整批出包时重算。二者一旦脱节，清单里的块
+     * 指纹就指向上一版内容——偏偏 {@code size} 常常不变（同结构 ZIP 重打包尺寸
+     * 一致），于是 {@code validateManifest} 的「清单与文件是否同一身份」那道闸
+     * 照样放行，随后<b>每一块</b>都校验失败，四条线路轮完只剩红条重试。
+     *
+     * <p>2026-08-13 真机就是这样：四个镜像给出同一个实得值 {@code bb4e7df4…}，
+     * 而清单期望 {@code acb43c47…}。众口一词说明文件没坏，是清单旧了；同日核对
+     * {@code cn_js_update.zip} 的整包 MD5 与 {@code version_js.json} 完全一致，
+     * 而清单里那一块对不上——服务端发的文件是对的。
+     *
+     * <p>规则本身早就写在 {@code docs/DOWNLOAD_TRANSACTIONAL_CHUNKS.md}
+     * 「动态热更新与静态分块的边界」里，也已在 {@link CNHotUpdate} 与
+     * {@link CNOfflineImport} 落地；漏的只有首次安装器这一条路——而这两包恰恰
+     * 被排在下载队列最前面，所以新玩家第一眼看到的就是它。
+     *
+     * <p>去掉清单不等于不校验：热更包的权威身份是 {@code version_*.json} 的
+     * size + 整包 MD5，下载完工后按它核对（见 {@link #verifyHotIdentity}）。
      */
     private static DownloadMetadata fetchArchive(CNMirrors.Mirror mirror, String name,
                                                  File archive, int index, boolean direct,
@@ -1309,6 +1334,7 @@ public final class CNDownloaderFix {
 
         String url = mirror.urlFor(name);
         int wanted = mirror.effectiveChunks();
+        final boolean useManifest = usesChunkManifest(name);
 
         if (wanted > 1) {
             CNChunkedDownload.Probe probe = CNChunkedDownload.probe(url, direct);
@@ -1324,18 +1350,68 @@ public final class CNDownloaderFix {
                             + " chunks=" + chunks + " bytes=" + probe.total + " direct=" + direct);
                     updateSize(index, probe.total);
                     updateProgress(index, 0L, probe.total);
-                    CNChunkedDownload.ChunkHashes hashes = ChunkManifest.forFile(name);
+                    CNChunkedDownload.ChunkHashes hashes =
+                            useManifest ? ChunkManifest.forFile(name) : null;
                     CNChunkedDownload.Result r = CNChunkedDownload.download(
                             url, archive, chunks, direct, probe,
                             new ArchiveSink(index, restartToken),
                             mirror, name, true, hashes);
+                    verifyHotIdentity(name, archive);
                     return new DownloadMetadata(r.totalBytes, r.etag);
                 }
             }
             CNLog.i(TAG, "range-unsupported-or-small file=" + name + " mirror=" + mirror.name
                     + " → 单线程续传");
         }
-        return downloadOnce(url, archive, index, direct, restartToken);
+        DownloadMetadata single = downloadOnce(url, archive, index, direct, restartToken);
+        verifyHotIdentity(name, archive);
+        return single;
+    }
+
+    /**
+     * 首次安装器是否给这个包套基础包 {@code manifest.json} 的块指纹。
+     *
+     * <p>13 个静态基础包用；{@code cn_scenario_update.zip} 与
+     * {@code cn_js_update.zip} 不用——理由见 {@link #fetchArchive} 的说明。
+     * 单列成判据是为了让回归测试钉住的是<b>安装器真正走的那条判断</b>，
+     * 而不是另写一份同义的声明。
+     */
+    public static boolean usesChunkManifest(String name) {
+        return !CNOfflineImport.isHotUpdateFile(name);
+    }
+
+    /**
+     * 热更两包的完工校验：按 {@code version_*.json} 的 size + 整包 MD5 核对。
+     *
+     * <p>基础包由 manifest 的块指纹逐块认证，热更包没有那一层，所以这一步是它们
+     * <b>唯一</b>的内容认证。不做的话就只剩 ZIP 结构预检，缓存里的旧包结构完好、
+     * 一样能通过——那正是「下完了却是旧台词」的老毛病。
+     *
+     * <p>取不到版本 json 时<b>不阻断</b>：这两包紧接着还会走热更那一轮，届时会按
+     * 版本号重新比对；此刻卡住安装只会把「服务端某个小 json 冷启动超时」升级成
+     * 「装不上游戏」。核对不上则删包抛错，交给上层换线重试。
+     */
+    private static void verifyHotIdentity(String name, File archive) throws IOException {
+        if (usesChunkManifest(name) || archive == null || !archive.isFile()) return;
+        int slot = indexOfArchive(name);
+        CNHotUpdateValidate.VerMeta meta = CNHotUpdateCheck.metaForSlot(slot);
+        if (meta == null) {
+            CNLog.w(TAG, "热更包取不到版本身份，本次只做结构预检 file=" + name
+                    + "（热更那一轮会再按版本号核对）");
+            return;
+        }
+        String err = CNHotUpdateValidate.verifyZip(archive, meta);
+        if (err == null) {
+            CNLog.i(TAG, "热更包身份校验通过 file=" + name + " version=" + meta.version);
+            return;
+        }
+        deleteQuietly(archive);
+        deleteQuietly(new File(archive.getPath() + ".part"));
+        deleteQuietly(new File(archive.getPath() + ".part.meta"));
+        deleteQuietly(CNChunkedDownload.partFileFor(archive));
+        deleteQuietly(CNChunkedDownload.metaFileFor(archive));
+        throw new HotIdentityMismatch("热更包身份校验失败 file=" + name
+                + " version=" + meta.version + " 原因=" + err);
     }
 
     /** 把分片下载的进度接到既有的 UI/看门狗上。 */
@@ -2143,6 +2219,22 @@ public final class CNDownloaderFix {
     static final class ResetRequired extends IOException {
         private static final long serialVersionUID = 1;
         ResetRequired(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * 热更包传输完好、但内容与 version json 的身份对不上。
+     *
+     * <p>单列一类是为了<b>不调</b> {@code CNMirrors.reportFailure}。这条线路刚把
+     * 一两百兆稳稳传完，它不慢也不坏，只是手里那份是旧的；按「线路故障」记冷却
+     * 会把健康线路一条条打进 60 秒冷却，而源站要是真的旧了，四条全灭之后连别的
+     * 包都没线路可用。换线由 {@code CNMirrors.pick(attempt)} 逐轮轮换完成，本来
+     * 就不需要冷却表配合——与上面 ZipException 那支同一个道理。
+     */
+    static final class HotIdentityMismatch extends IOException {
+        private static final long serialVersionUID = 1L;
+        HotIdentityMismatch(String message) {
             super(message);
         }
     }

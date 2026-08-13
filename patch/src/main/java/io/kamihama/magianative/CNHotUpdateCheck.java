@@ -643,6 +643,32 @@ public final class CNHotUpdateCheck {
         }
     }
 
+    /**
+     * 供<b>首次安装器</b>用：按槽位取热更包的权威身份（version json 的
+     * version/size/md5）。
+     *
+     * <p>首次安装器把这两包排在下载队列最前，走的却是基础包那条路；基础包靠
+     * {@code manifest.json} 的块指纹认证内容，而热更包的清单会滞后于流水线单独
+     * 重发的 ZIP（{@code docs/DOWNLOAD_TRANSACTIONAL_CHUNKS.md}「动态热更新与
+     * 静态分块的边界」）。安装器改成不读清单之后，得从这里拿回真正的身份。
+     *
+     * <p>取不到返回 null，由调用方决定是否放行——不在这里抛，热更那一轮还会
+     * 按版本号再核对一次。
+     */
+    static CNHotUpdateValidate.VerMeta metaForSlot(int slot) {
+        for (int i = 0; i < PACKAGES.length; i++) {
+            if (PACKAGES[i].slot != slot) continue;
+            try {
+                return fetchMeta(PACKAGES[i].versionUrl);
+            } catch (Throwable t) {
+                CNLog.w(TAG, "取热更包版本身份失败 slot=" + slot
+                        + " (" + PACKAGES[i].label + "): " + t);
+                return null;
+            }
+        }
+        return null;
+    }
+
     // ==================================================================
     // 浮层
     // ==================================================================
