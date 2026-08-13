@@ -84,6 +84,25 @@
 
 解压后的大小在下载前就能知道：ZIP 的中央目录在文件末尾，每条记录都写着该条目的未压缩长度，两次 Range 请求即可（03 的中央目录 1.7 MB）。花两兆搞清楚要不要下 1.3 GB。算不出来时返回 `UNKNOWN` 并放行——它是提前量，不是关卡。
 
+### 备用引擎（aria2）不是平行宇宙（2026-08-13）
+
+线上 `config.json` 里 `force_aria2: true`，也就是说 **aria2c 是默认路径**：每个玩家的每个文件都先走它，失败才回退主引擎。而它此前绕开了主引擎那侧的全部验收与策略：
+
+| | 主引擎 | aria2（修复前） |
+|---|---|---|
+| 内容认证 | 逐块 MD5 对 `manifest.json` | 仅 ZIP 结构预检 + 「至少有一个条目」 |
+| 热更两包身份 | `version_*.json` 的 size + 整包 MD5 | 无 |
+| 空间预检 | 下载前按安装峰值、解压前按 `totalBytes` | 无 |
+| 单线程模式 | `CNDownloadMode.cap()` 管四处并发 | 硬编码 16 连接 |
+| 换线 | `CNMirrors.pick(attempt)` 逐轮换 | 固定 `pick(1)`，三次全钉在同一条 |
+| 解压 | `CNArchiveInstallTx.extract`（断点续解压 + 逐条目 size/CRC） | `extractChecked` |
+
+这直接决定了排查方式：**只盯主引擎的日志，看到的不是玩家实际走的那条路**。2026-08-13 那轮下载问题排查之所以久久收敛不了，根因就在这里。
+
+现已并线：aria2 的连接数过 `CNDownloadMode.cap(16)`；按 `attempt` 逐轮换线；产物同样过 `verifyHotIdentity`；解压改用 `CNArchiveInstallTx.extract`；空间不足在这条路上也走 `reportNoSpace` 而不是被当成「引擎失败」去问玩家（换引擎、换线路都不会让磁盘长出来）。判据在 `check-download-ui-contract.py` 里钉住。
+
+> 需要临时回到纯主引擎时，把云端 `settings.force_aria2` 置 false 即可，不用发版。
+
 ## 回归合同
 
 `ChunkHashIntegrationTest` 必须覆盖：

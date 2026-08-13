@@ -947,16 +947,24 @@ public final class CNDownloaderFix {
             }
         }
 
-        // 备用引擎（默认关）：cloud=config.json 的 settings.force_aria2 强制启用；
-        // 本地=debug 开关 CNDebugFlags.useAria2。任一打开就先用首选线路的 aria2
-        // 拉一把，装好即返回；失败清掉 aria2 的半截产物（目标文件 + .aria2
-        // 控制文件），走下面的主引擎整份重下。
+        // 备用引擎：cloud=config.json 的 settings.force_aria2 强制启用；
+        // 本地=debug 开关 CNDebugFlags.useAria2。任一打开就先用 aria2 拉一把，
+        // 装好即返回；失败清掉 aria2 的半截产物（目标文件 + .aria2 控制文件），
+        // 走下面的主引擎整份重下。
+        //
+        // ⚠ 「默认关」这句话在 2026-08-13 之前就已经不成立了：线上 config.json
+        // 里 force_aria2=true，也就是说**每个玩家的每个文件都先走这条路**。而这
+        // 条路曾经是个平行宇宙——主引擎那边的验收与策略（分块清单、热更身份、
+        // 空间预检、单线程模式、逐轮换线）它一条都不过。排查下载问题时如果只盯
+        // 着主引擎的日志，看到的根本不是玩家实际走的那条路。
+        //
+        // 线路不在这里挑：交给 tryAria2Download 按 attempt 逐轮换（原先固定
+        // pick(1)，三次尝试全钉在同一条线路上）。
         boolean aria2Forced = CNMirrors.forceAria2()
                 || CNDebugFlags.isOn(CNDebugFlags.USE_ARIA2);
         if (aria2Forced && FORCE_REDOWNLOAD.get(index) == 0
                 && CNAria2.isAvailable()) {
-            int a2 = tryAria2Download(CNMirrors.pick(1), name, archive, index,
-                                      marker, canonicalUrl);
+            int a2 = tryAria2Download(name, archive, index, marker, canonicalUrl);
             if (a2 == A2_INSTALLED) return true;
             if (a2 == A2_OFFLINE) {
                 // 玩家选改用离线包：清掉 aria2 半截产物，跳过主引擎重试，交给
@@ -1147,7 +1155,7 @@ public final class CNDownloaderFix {
                     return false;
                 }
                 if (choice == CNCNDownloadUI.ARIA2_RETRY && canAria2) {
-                    int a2 = tryAria2Download(CNMirrors.pick(1), name, archive, index,
+                    int a2 = tryAria2Download(name, archive, index,
                                               marker, canonicalUrl);
                     if (a2 == A2_INSTALLED) return true;
                     if (a2 == A2_OFFLINE) {
@@ -1208,10 +1216,12 @@ public final class CNDownloaderFix {
      * @return {@link #A2_INSTALLED} 装好了；{@link #A2_MAIN} 走主引擎重试；
      *         {@link #A2_OFFLINE} 玩家选改用离线包（跳过主引擎，走手动导入）。
      */
-    private static int tryAria2Download(CNMirrors.Mirror mirror, String name,
-                                        File archive, int index, File marker,
-                                        String canonicalUrl) {
+    private static int tryAria2Download(String name, File archive, int index,
+                                        File marker, String canonicalUrl) {
         for (int attempt = 1; attempt <= A2_MAX_ATTEMPTS; attempt++) {
+            // 每轮换一条线路。原先固定 CNMirrors.pick(1)：第一条线路对这个文件
+            // 不行时，三次尝试全废在同一条上，然后才回退主引擎。
+            CNMirrors.Mirror mirror = CNMirrors.pick(attempt);
             try {
                 final int idx = index;
                 CNAria2.Progress progress = new CNAria2.Progress() {
@@ -1232,14 +1242,28 @@ public final class CNDownloaderFix {
                 };
 
                 String url = mirror.urlFor(name);
+                // 连接数过同一个判据。CNDownloadMode.cap() 原先只管主引擎那四处，
+                // aria2 这里硬编码 16——于是玩家在失败弹窗里选了「改用单线程
+                // 下载」之后，下一个文件照样先走 aria2、照样 16 条连接，正好是
+                // 他要求的反面。而 force_aria2 开着时这是默认路径。
+                int conns = Math.max(1, CNDownloadMode.cap(16));
                 CNLog.i(TAG, "aria2 备用引擎下载 file=" + name + " url=" + url
-                        + " 连接数=16 attempt=" + attempt + "/" + A2_MAX_ATTEMPTS);
+                        + " 线路=" + mirror.name + " 连接数=" + conns
+                        + " attempt=" + attempt + "/" + A2_MAX_ATTEMPTS);
                 int rv = CNAria2.download(url, FILE_ROOT, name,
-                        CNUserAgent.get(), null, null, 16, null, progress, cancel);
+                        CNUserAgent.get(), null, null, conns, null, progress, cancel);
                 if (rv == CNAria2.OK && archive.isFile() && archive.length() > 0
                         && isAria2ArchiveUsable(archive, name)) {
+                    // 热更两包的权威身份是 version json 的 size + 整包 MD5。
+                    // 这一步原先只在 fetchArchive 里，aria2 这条路完全绕过——
+                    // force_aria2 开着时，那个修复对这两个包等于没做。
+                    verifyHotIdentity(name, archive);
+                    // 解压统一走 CNArchiveInstallTx.extract：它带空间预检、逐条目
+                    // size/CRC 与断点续解压。原先这里用 extractChecked，那套都没有。
+                    File a2State = CNArchiveInstallTx.stateFile(new File(STATE_ROOT), name);
                     synchronized (EXTRACT_LOCK) {
-                        extractChecked(archive, new File(INSTALL_ROOT));
+                        CNArchiveInstallTx.extract(archive, new File(INSTALL_ROOT),
+                                a2State, null, null);
                     }
                     writeMarker(marker, name, canonicalUrl,
                             new DownloadMetadata(archive.length(), "aria2"));
@@ -1263,7 +1287,17 @@ public final class CNDownloaderFix {
                 // DL_SINGLE 也走这里，且是对的：模式已由弹窗切好，回退主引擎后
                 // 那一轮自然是单线程的。不需要单独一个返回码。
                 return A2_MAIN;
+            } catch (CNDiskSpace.NotEnoughSpace e) {
+                // 装不下不是引擎的问题，换个引擎/换条线路都没用。断点与已解压
+                // 内容保留，直接把还差多少告诉玩家（与主引擎那条同一个出口）。
+                reportNoSpace(index, name, e.getMessage());
+                return A2_OFFLINE;      // 别再回退主引擎白下一遍
             } catch (Throwable t) {
+                if (CNDiskSpace.isOutOfSpace(t)) {
+                    reportNoSpace(index, name, CNDiskSpace.shortfall(
+                            name, 0L, CNDiskSpace.usableBytes(archive)));
+                    return A2_OFFLINE;
+                }
                 CNLog.w(TAG, "aria2 备用引擎异常: " + name + " : " + t);
                 deleteQuietly(archive);
                 deleteQuietly(new File(archive.getPath() + ".aria2"));

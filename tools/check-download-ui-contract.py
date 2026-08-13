@@ -156,6 +156,25 @@ checks = {
     # 反射读它们取色，读到 0 就把文字画成透明——面板上开关名、说明、「已激活」
     # 标签全消失，只剩硬编码白色的主按钮还在，且时有时无（取决于这次启动有没有
     # 建过下载浮层）。两道：类加载时兜底 + 取色时把 alpha=0 当「没取到」。
+    # aria2 曾是条平行宇宙：线上 force_aria2=true，也就是**每个玩家的每个文件都先走
+    # 它**，而主引擎那边的验收与策略它一条都不过——分块清单、热更身份、空间预检、
+    # 单线程模式、逐轮换线，全绕开。排查下载问题时只盯主引擎日志，看到的根本不是
+    # 玩家实际走的那条路（2026-08-13）。四条一并并线，并在此钉住。
+    "aria2 连接数过单线程判据":
+        "CNDownloadMode.cap(16)" in downloader
+        and "CNAria2.download(url, FILE_ROOT, name," in downloader
+        and "null, null, conns, null, progress, cancel)" in downloader,
+    "aria2 逐轮换线而不是钉死第一条":
+        "CNMirrors.pick(attempt)" in downloader
+        and "tryAria2Download(CNMirrors.pick(1)" not in downloader,
+    "aria2 产物同样过热更身份校验":
+        "verifyHotIdentity(name, archive);\n                    // 解压统一走" in downloader,
+    "aria2 解压走同一套事务（带空间预检与逐条目校验）":
+        "CNArchiveInstallTx.extract(archive, new File(INSTALL_ROOT)," in downloader
+        and "a2State" in downloader,
+    "aria2 路径上的空间不足也不当引擎故障":
+        "catch (CNDiskSpace.NotEnoughSpace e)" in downloader
+        and downloader.count("reportNoSpace") >= 4,
     # 「重下」胶囊与左右分界线拖动已按维护者要求整体撤回（2026-08-13）。下面两条是
     # **反向**断言：谁再把它们加回来，CI 当场红。撤回的理由不是实现有 bug，是维护者
     # 不要这两个特性——判据因此钉在「不存在」，而不是「实现得对不对」。
