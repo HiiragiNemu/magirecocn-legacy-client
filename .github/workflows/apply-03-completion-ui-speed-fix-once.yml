@@ -40,9 +40,12 @@ jobs:
           """
           fn_new = """def replace_once(text: str, old: str, new: str, label: str) -> str:
               n = text.count(old)
-              if n < 1:
-                  raise SystemExit(f'{label}: expected at least 1 match, got {n}')
+              zero_match_labels = {'active confirm text'}
               first_match_labels = {'hot fetch signature'}
+              if n < 1:
+                  if label in zero_match_labels:
+                      return text
+                  raise SystemExit(f'{label}: expected at least 1 match, got {n}')
               if n > 1 and label in first_match_labels:
                   return text.replace(old, new, 1)
               if n != 1:
@@ -71,6 +74,29 @@ jobs:
           PY
           python3 -m py_compile /tmp/apply-fix.py
           python3 /tmp/apply-fix.py
+
+          # The source contains Java string escape sequences (\n\n). The compressed
+          # Python migration intentionally skipped this one block because a normal
+          # Python triple-quoted matcher would decode them into literal newlines.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('patch/src/main/java/io/kamihama/magianative/CNDownloadUiAssist.java')
+          text = p.read_text(encoding='utf-8')
+          old = r'''        String extra = index < 2
+                  ? "\n\n该包属于热更新通道；安装器完成后还会按版本清单补齐最新版本。"
+                  : "";'''
+          new = r'''        int[] status = CNCNDownloadUI.fileStatus;
+          boolean activeNow = status != null && index < status.length
+                  && status[index] == CNCNDownloadUI.ST_RUNNING;
+          String extra = activeNow
+                  ? "\n\n该文件当前正在处理。确认后会停止本文件当前传输、清除本文件断点并从头重下；其它文件不受影响。"
+                  : (index < 2
+                      ? "\n\n该包属于热更新通道；安装器完成后还会按版本清单补齐最新版本。"
+                      : "");'''
+          if text.count(old) != 1:
+              raise SystemExit('active confirm source baseline not found exactly once')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
           git diff --check
 
       - name: Compile Java patch and focused regressions
