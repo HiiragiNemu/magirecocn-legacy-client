@@ -12,6 +12,7 @@ mode = Path("patch/src/main/java/io/kamihama/magianative/CNDownloadMode.java").r
 chunk = Path("patch/src/main/java/io/kamihama/magianative/CNChunkedDownload.java").read_text(encoding="utf-8")
 log = Path("patch/src/main/java/io/kamihama/magianative/CNLog.java").read_text(encoding="utf-8")
 extract_tx = Path("patch/src/main/java/io/kamihama/magianative/CNArchiveInstallTx.java").read_text(encoding="utf-8")
+overlay = Path("patch/src/main/java/io/kamihama/magianative/CNDebugOverlay.java").read_text(encoding="utf-8")
 manifest = Path("AndroidManifest.xml").read_text(encoding="utf-8")
 
 checks = {
@@ -106,6 +107,18 @@ checks = {
     # 「重下」要删离线候选、「用刚导入的包」要留它，同一个清理函数两种语义。
     "离线即时安装不会自删离线候选": "keepOffline" in downloader
         and "cleanupArchiveDownloadState(index, true)" in downloader,
+    # 权限引导页的宿主固定 decorView，靠布局回调持续置顶。曾按「下载浮层在就挂
+    # 进浮层」选宿主，可它由挂载看门狗在 Activity 出现后几毫秒触发，那时下载浮层
+    # 还没建出来——判断永远走 decorView，几百毫秒后浮层加进同一个 decorView 把它
+    # 盖住，玩家看到的还是「什么都没发生」。
+    "权限引导页随布局持续置顶":
+        "keepGuideOnTop" in overlay
+        and "OnGlobalLayoutListener" in overlay
+        and "removeOnGlobalLayoutListener" in overlay,
+    # 授权没有截止时间，轮询也不该有：原先 5 秒 × 120 之后彻底停下，玩家在系统
+    # 设置里慢一步回来就永远等不到小球，日志里只有一句「等待超时」。
+    "等待悬浮窗权限的轮询不会彻底停下":
+        "PERM_POLL_SLOW_MS" in overlay and "PERM_POLL_MAX" not in overlay,
     # SYSTEM_ALERT_WINDOW 是**原包自带**的权限，不是我们加的。9688f7e7 把它连同
     # MANAGE_EXTERNAL_STORAGE 一起删掉，理由写作「移除无用的悬浮窗权限」，并在这里
     # 立了一条「不许回来」的断言——而维护者对这条改动**完全不知情**。

@@ -341,6 +341,10 @@ public final class CNDownloaderFix {
             // 可能在日志上完全无法区分，只能靠读代码猜——这种事不该有第二次。
             long started = System.currentTimeMillis();
             long deadline = started + DEBUG_OVERLAY_WAIT_MS;
+            // 进门就留一行。没有它，「这条线程压根没起来」与「起来了但一直
+            // 等不到」在日志上是同一个样子——都是一片空白。
+            CNLog.i(TAG, "调试悬浮窗：开始等 Activity 与总闸（最多 "
+                    + (DEBUG_OVERLAY_WAIT_MS / 1000L) + "秒）");
             while (System.currentTimeMillis() < deadline) {
                 try {
                     // 要等的是**两件事同时成立**：Activity 出现了，且总闸给出了

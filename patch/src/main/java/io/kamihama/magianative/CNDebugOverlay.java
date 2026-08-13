@@ -13,6 +13,7 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -118,6 +119,8 @@ public final class CNDebugOverlay {
     private static LinearLayout pageContent;
     private static LinearLayout bottomBar;
     private static FrameLayout permGuide;      // 挂在 decorView 上（没权限时还没有自己的窗口）
+    private static ViewTreeObserver.OnGlobalLayoutListener guideRaise;  // 见 keepGuideOnTop
+    private static ViewGroup guideHost;        // 摘监听要用同一个宿主
     private static TextView hintView;          // 首次引导气泡（独立小窗）
     private static FrameLayout modalView;      // 面板内的确认/结果弹窗
 
@@ -408,16 +411,19 @@ public final class CNDebugOverlay {
     private static void showPermissionGuide(final Activity act) {
         try {
             dismissPermissionGuide();
-            // 🔴 宿主要选**当前最上层**的那个，不能一律用 decorView。
+            // 🔴 「谁在最上层」是会变的，所以不能只在挂的这一刻选一次宿主。
             //
-            // CNCNDownloadUI 的下载浮层也挂在 decorView 上、全屏、且它和本引导页
-            // 是同一秒建出来的。挂在 decorView 上时引导页在它**下面**——玩家看到
-            // 的是「什么都没发生」，而日志里同样什么都没有（2026-08-13 真机）。
+            // CNCNDownloadUI 的下载浮层也挂在 decorView 上、全屏。上一版写的是
+            // 「浮层在就挂进浮层，不在才退回 decorView」——判断本身没错，错在
+            // **问的时机**：本引导页由 mountDebugOverlay 的看门狗触发，而它在
+            // Activity 出现后几毫秒就就绪了，那时下载浮层还没建出来。于是这个
+            // 三元表达式实际上永远走 decorView 那一支，几百毫秒后下载浮层被加进
+            // 同一个 decorView，稳稳盖在引导页上面——玩家看到的还是「什么都没
+            // 发生」，和 2026-08-13 第一次排查时一模一样。
             //
-            // 浮层在就挂进浮层，它自己就在 decorView 顶上；浮层不在才退回 decorView。
-            ViewGroup decor = CNCNDownloadUI.overlayView != null
-                    ? CNCNDownloadUI.overlayView
-                    : (ViewGroup) act.getWindow().getDecorView();
+            // 所以宿主固定选 decorView（它一定在、也不会被换掉），改为在每次
+            // 布局后把引导页重新抬到最前。谁后加进来都盖不住它。
+            ViewGroup decor = (ViewGroup) act.getWindow().getDecorView();
             FrameLayout mask = new FrameLayout(act);
             mask.setBackgroundColor(color("COLOR_DIM", 0x88000000));
             mask.setClickable(true);
@@ -459,10 +465,38 @@ public final class CNDebugOverlay {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             mask.bringToFront();
             permGuide = mask;
-            CNLog.i(TAG, "权限引导页已显示（宿主="
-                    + (decor == CNCNDownloadUI.overlayView ? "下载浮层" : "decorView") + "）");
+            keepGuideOnTop(decor);
+            CNLog.i(TAG, "权限引导页已显示（宿主=decorView，随布局持续置顶）");
         } catch (Throwable t) {
             CNLog.w(TAG, "权限引导页没挂出来: " + t);
+        }
+    }
+
+    /**
+     * 让引导页在后来者加入后仍留在最上层。
+     *
+     * <p>只在**真的被盖住时**才抬（判据：它不是宿主的最后一个孩子）。无条件
+     * 每帧 bringToFront 会让宿主每次布局都重排一次子视图，等于给下载页白白加了
+     * 一份持续开销。
+     */
+    private static void keepGuideOnTop(final ViewGroup host) {
+        if (host == null) return;
+        GuideRaise r = new GuideRaise(host);
+        host.getViewTreeObserver().addOnGlobalLayoutListener(r);
+        guideRaise = r;
+        guideHost = host;
+    }
+
+    private static final class GuideRaise
+            implements ViewTreeObserver.OnGlobalLayoutListener {
+        private final ViewGroup host;
+        GuideRaise(ViewGroup host) { this.host = host; }
+        @Override public void onGlobalLayout() {
+            try {
+                View g = permGuide;
+                if (g == null || g.getParent() != host) return;
+                if (host.getChildAt(host.getChildCount() - 1) != g) g.bringToFront();
+            } catch (Throwable ignore) {}
         }
     }
 
@@ -492,8 +526,17 @@ public final class CNDebugOverlay {
      * 系统设置里开掉（2026-08-13 就是这么试的），甚至根本没看见引导页。
      * 只要权限到手就挂上，挂上即停。
      */
-    private static final long PERM_POLL_MS  = 5000L;
-    private static final int  PERM_POLL_MAX = 120;      // 约 10 分钟后放弃
+    private static final long PERM_POLL_MS      = 5000L;
+    private static final long PERM_POLL_SLOW_MS = 30000L;
+    /**
+     * 快节奏轮询的次数（5 秒 × 24 ≈ 2 分钟），之后转 30 秒一次的慢节奏。
+     *
+     * <p>原先是 5 秒 × 120 然后<b>彻底停下</b>。玩家去系统设置里翻「显示在其他
+     * 应用上层」这一项，慢一点、或者中途被别的事打断，回来就已经过了那 10 分钟：
+     * 权限明明开好了，小球还是不出现，而日志里只有一句「等待超时」——看起来就
+     * 像功能坏了。授权这件事没有截止时间，轮询也不该有。
+     */
+    private static final int  PERM_POLL_FAST = 24;
     private static int permPolls;
 
     private static void startPermPoll(Activity act) {
@@ -508,16 +551,19 @@ public final class CNDebugOverlay {
         @Override public void run() {
             try {
                 if (ballView != null) return;                 // 已经挂上了
+                if (act.isFinishing()) return;                // Activity 没了，别再拿着它
                 if (CNDebugBridge.canDrawOverlays(act)) {
-                    CNLog.i(TAG, "检测到悬浮窗权限已授予，挂载小球");
+                    CNLog.i(TAG, "检测到悬浮窗权限已授予，挂载小球（等了 "
+                            + permPolls + " 轮）");
                     mount(act);
                     return;
                 }
-                if (++permPolls >= PERM_POLL_MAX) {
-                    CNLog.i(TAG, "等待悬浮窗权限超时，停止轮询（下次启动会再问一次）");
-                    return;
+                permPolls++;
+                if (permPolls == PERM_POLL_FAST) {
+                    CNLog.i(TAG, "悬浮窗权限仍未授予，轮询转为 30 秒一次（不再停）");
                 }
-                if (ui != null) ui.postDelayed(new PermPoll(act), PERM_POLL_MS);
+                long next = permPolls < PERM_POLL_FAST ? PERM_POLL_MS : PERM_POLL_SLOW_MS;
+                if (ui != null) ui.postDelayed(new PermPoll(act), next);
             } catch (Throwable ignore) {}
         }
     }
@@ -538,6 +584,16 @@ public final class CNDebugOverlay {
         if (v != null && v.getParent() instanceof ViewGroup) {
             ((ViewGroup) v.getParent()).removeView(v);
         }
+        // 置顶监听跟着一起摘掉：留着的话每次布局都要多跑一遍判断，
+        // 而且它持着宿主 ViewGroup 的强引用。
+        try {
+            if (guideRaise != null && guideHost != null) {
+                guideHost.getViewTreeObserver()
+                        .removeOnGlobalLayoutListener(guideRaise);
+            }
+        } catch (Throwable ignore) {}
+        guideRaise = null;
+        guideHost = null;
     }
 
     // ══ 面板窗口 ═══════════════════════════════════════════════════════
