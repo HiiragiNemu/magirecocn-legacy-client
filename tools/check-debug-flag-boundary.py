@@ -83,7 +83,11 @@ PROTECTED = [
     (N,                          "proxySnapshot",      "native 侧代理配置快照"),
 ]
 
-BANNED = re.compile(r"CNDebugFlags|g_dbg[A-Z]")
+# CNDebugBridge / CNDebugOverlay 是调试悬浮窗——这些开关的**另一个写入口**。
+# 它们不改变开关本身能做什么，所以上面 7 个保护区的判据一条都不用动；但它们
+# 必须和 CNDebugFlags 一样被挡在保护区外，否则等于开了一条「界面上点一下就能
+# 碰安全判据」的路，而且是比文件更好点的那种。
+BANNED = re.compile(r"CNDebugFlags|CNDebugBridge|CNDebugOverlay|g_dbg[A-Z]")
 
 
 # ── 检查二用：跨 JNI 必须指向同一个文件的路径常量 ────────────────────

@@ -127,6 +127,7 @@ static jclass gClsRestClient      = nullptr; // io.kamihama.magianative.RestClie
 static jclass gClsTutorialPrompt  = nullptr; // io.kamihama.magianative.CNTutorialPrompt
 static jclass gClsVersionCheck    = nullptr; // io.kamihama.magianative.CNVersionCheck
 static jclass gClsCNMirrors       = nullptr; // io.kamihama.magianative.CNMirrors
+static jclass gClsDebugBridge     = nullptr; // io.kamihama.magianative.CNDebugBridge
 
 namespace cocos2d {
     struct Data { unsigned char* _bytes; ssize_t _size; };
@@ -151,9 +152,13 @@ namespace cocos2d {
 //
 // ## 为什么放在 app 私有目录
 //
-// 公测包开了 android:debuggable（公测期方便抓日志，`run-as` 免 root 可用），
-// 能碰到这个目录的人变多了——所以安全边界不靠目录的隐蔽性，而靠下面这条：
-// 开关只退功能，绝不退防线。正式发布时收回 debuggable。
+// 现状（e2c00727 起）：包里没有 android:debuggable，`run-as` 用不了，这个目录
+// 只有能直写应用私有目录的环境（root/su、模拟器）碰得到。公测期曾短暂打开过
+// debuggable（2de18e15），两天后又收了回去——不是因为收紧，而是这条路根本送不到
+// 人：要用它得会 adb 或 Termux，实际会用的人几乎没有。
+//
+// 安全边界从来不靠目录的隐蔽性，而靠下面这条：开关只退功能，绝不退防线。
+// debuggable 开着还是关着，这条都不变——变的只是有多少人够得到。
 //
 // ## 边界：只关我们自己加的东西
 //
@@ -1214,6 +1219,93 @@ static const char* CLIENT_VERSION = "1.0.0";
 // 经 RegisterNatives 绑给 CNVersionCheck.nativeClientVersion()。
 static jstring nativeClientVersion(JNIEnv* env, jclass) {
     return env->NewStringUTF(CLIENT_VERSION);
+}
+
+// ═══ 调试悬浮窗的总闸：烧在包里的一个布尔 ═══════════════════════════
+//
+// 决定 CNDebugBridge 允不允许挂调试悬浮窗（以及允不允许由应用自己写调试开关
+// 文件）。**不是**运行时开关，没有任何文件/配置能改它——收回调试权限就是把
+// 下面这个 1 改成 0 再出包，一步，不依赖任何人在设备上做什么。
+//
+// ## 为什么门槛必须烧在包里，而不是「先建一个文件自举」
+//
+// 自举方案（先用 su 建 <priv>/debug/enableOverlay，之后其余开关免 su）看起来
+// 守住了分界，实际上把门槛正好架在了目标受众面前：
+//
+//   能建出那个文件的人 = 会 adb/Termux 的人 = 本来就能直接 touch 开关的人；
+//   真正需要悬浮窗的人 = 建不出那个文件的人。
+//
+// 挡住的正好是要服务的那批，放进来的正好是不需要它的那批。这不是假想——
+// android:debuggable 就是这么白开了两天又收回去的（2de18e15 → e2c00727）：
+// 那条路要求会用 Termux，而实际会用的人几乎没有。同一个错误不该犯第二次。
+//
+// ## 公测结束怎么收
+//
+// 把 MAGIA_DEBUG_OVERLAY 的默认值改成 0 出包即可。内部测试包不受影响：
+// 编译时传 -DMAGIA_DEBUG_OVERLAY=1 覆盖（tools/build-local.sh 可加）。
+// 这样「对外收回」与「内部保留」是两条独立的开关，不用维护两份源码。
+#ifndef MAGIA_DEBUG_OVERLAY
+#define MAGIA_DEBUG_OVERLAY 1     // 公测期：所有人可用
+#endif
+static const bool DEBUG_OVERLAY_ENABLED = (MAGIA_DEBUG_OVERLAY != 0);
+
+// 经 RegisterNatives 绑给 CNDebugBridge.nativeDebugOverlayEnabled()。
+static jboolean nativeDebugOverlayEnabled(JNIEnv*, jclass) {
+    return DEBUG_OVERLAY_ENABLED ? JNI_TRUE : JNI_FALSE;
+}
+
+// 经 RegisterNatives 绑给 CNDebugBridge.nativeDebugFlagTable()。
+//
+// 把 kDebugFlags 交给 Java 侧，让调试悬浮窗的列表能**从表生成**，而不是在界面
+// 里硬编码一份副本。副本一定会过期：本文件加一个开关，界面上不会有；界面上删
+// 一行，native 侧照跑不误——而两边不一致时，人只会得出「这个开关坏了」这个错
+// 结论，恰恰是这套开关最不该造成的效果。
+//
+// 返回**扁平三元组** String[3N]：{名字, 说明, 当前是否生效("1"/"0")}。
+// 不用 String[][]：二维数组要先 FindClass("[Ljava/lang/String;") 再逐行建，
+// 多一层出错点，而这里的结构简单到不值得。Java 侧按 3 取模拆开。
+//
+// 第三列是**本进程启动时**读到的值，也就是当前真正在生效的那份，直接取 slot
+// 指针。磁盘上「下次启动会生效」的那份由 Java 侧扫同一个目录得到——两者可以
+// 不同（勾了还没重启），这个区别 Java 侧要留着，别在这里合并掉。
+//
+// 任何一步失败一律返回 nullptr：Java 侧据此只列自己那 16 个开关，不崩。
+static jobjectArray nativeDebugFlagTable(JNIEnv* env, jclass) {
+    const size_t n = sizeof(kDebugFlags) / sizeof(kDebugFlags[0]);
+    jclass strCls = env->FindClass("java/lang/String");
+    if (!strCls) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
+    jobjectArray out = env->NewObjectArray((jsize)(n * 3), strCls, nullptr);
+    if (!out) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(strCls);
+        return nullptr;
+    }
+    for (size_t i = 0; i < n; i++) {
+        const DebugFlagDef& f = kDebugFlags[i];
+        const char* cells[3] = {
+            f.name ? f.name : "",
+            f.desc ? f.desc : "",
+            (f.slot && *f.slot) ? "1" : "0",
+        };
+        for (size_t c = 0; c < 3; c++) {
+            jstring s = env->NewStringUTF(cells[c]);
+            if (!s) {
+                if (env->ExceptionCheck()) env->ExceptionClear();
+                env->DeleteLocalRef(out);
+                env->DeleteLocalRef(strCls);
+                return nullptr;
+            }
+            env->SetObjectArrayElement(out, (jsize)(i * 3 + c), s);
+            // 局部引用有上限（默认 512 个）。19 个开关 × 3 列虽然还没到顶，
+            // 但这里是循环建引用，逐个放掉是这类代码唯一不用算数的写法。
+            env->DeleteLocalRef(s);
+        }
+    }
+    env->DeleteLocalRef(strCls);
+    return out;
 }
 
 // ═══ 【已停用 · v1】setURI 改写 —— 当前没有任何 H() 安装 setURI_hook ═══
@@ -2434,6 +2526,7 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
             { "io/kamihama/magianative/CNTutorialPrompt",  &gClsTutorialPrompt },
             { "io/kamihama/magianative/CNVersionCheck",    &gClsVersionCheck   },
             { "io/kamihama/magianative/CNMirrors",         &gClsCNMirrors      },
+            { "io/kamihama/magianative/CNDebugBridge",     &gClsDebugBridge    },
         };
         for (size_t i = 0; i < sizeof(want) / sizeof(want[0]); i++) {
             jclass local = env->FindClass(want[i].name);
@@ -2487,6 +2580,24 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
                 LOGE("[JNI] RegisterNatives(CNMirrors.nativeSetProxyConfig) 失败——代理将不生效");
             }
         }
+        // 调试悬浮窗要按表列出 native 侧的开关。绑不上不影响任何功能：
+        // Java 侧收到 UnsatisfiedLinkError 后只列自己那份表（见 CNDebugBridge）。
+        if (gClsDebugBridge) {
+            JNINativeMethod m[] = {
+                { (char*)"nativeDebugOverlayEnabled", (char*)"()Z",
+                  (void*)nativeDebugOverlayEnabled },
+                { (char*)"nativeDebugFlagTable", (char*)"()[Ljava/lang/String;",
+                  (void*)nativeDebugFlagTable },
+            };
+            if (env->RegisterNatives(gClsDebugBridge, m, 2) != 0) {
+                if (env->ExceptionCheck()) env->ExceptionClear();
+                // Java 侧收到 UnsatisfiedLinkError 一律按「不允许」处理（见
+                // CNDebugBridge.overlayAllowed），所以这里失败=悬浮窗不出现。
+                LOGE("[JNI] RegisterNatives(CNDebugBridge) 失败——调试悬浮窗将不可用");
+            }
+        }
+        LOGI("[DEBUG] 调试悬浮窗总闸: %s（烧在包里，运行时改不了）",
+             DEBUG_OVERLAY_ENABLED ? "开" : "关");
     }
 
     const char* LIB = "libmadomagi_native.so";

@@ -10,9 +10,14 @@ import java.io.File;
  *     &lt;应用数据目录&gt;/debug/&lt;开关名&gt;
  * </pre>
  *
- * 数据目录经 {@link CNPaths#privDir()} 解析（正规设备上即
- * {@code /data/data/io.kamihama.totentanz}，与 native 侧同一套算法）。
- * 建一个同名空文件就是打开该开关，删掉就是关闭，<b>重启游戏生效</b>。
+ * 数据目录<b>一律经 {@link CNPaths#privDir()} 解析</b>，与 native 侧同一套算法。
+ * <b>不要照抄任何绝对路径</b>：它按 {@code /data/user/0/<包名>} →
+ * {@code /data/data/<包名>} 的顺序探测，前者才是 4.2+ 上的真实目录，后者只是
+ * 兼容软链——非标准容器 / 深度定制 ROM 上可能根本没有，为此翻过一次车
+ * （详见 {@link CNPaths} 的类注释）。要看真实落点就读启动日志里那行
+ * {@code [DEBUG] 调试开关目录: …}。
+ *
+ * <p>建一个同名空文件就是打开该开关，删掉就是关闭，<b>重启游戏生效</b>。
  * 开关名一律**小驼峰**，两侧同一风格。
  *
  * <h3>为什么做成这个形状</h3>
@@ -37,9 +42,17 @@ import java.io.File;
  *
  * <h3>为什么放在 app 私有目录</h3>
  *
- * 公测包开了 {@code android:debuggable}（公测期方便抓日志，{@code run-as}
- * 免 root 可用），能碰到这个目录的人变多了——所以安全边界不靠目录的
- * 隐蔽性，而靠下面这条：开关只退功能，绝不退防线。正式发布时收回 debuggable。
+ * <b>现状（{@code e2c00727} 起）：包里没有 {@code android:debuggable}，
+ * {@code run-as} 用不了</b>，所以这个目录只有能直写<b>应用私有目录</b>的环境
+ * （root/su、模拟器）碰得到。
+ *
+ * <p>公测期曾短暂打开过 debuggable（{@code 2de18e15}，为的是让人免 root 抓日志
+ * 和改开关），两天后又收了回去——不是因为收紧，而是<b>这条路根本送不到人</b>：
+ * 要用它得会 adb 或 Termux，而实际会用的人几乎没有。这件事直接决定了
+ * {@link CNDebugBridge} 那个悬浮窗存在的理由，改这段之前先读它。
+ *
+ * <p>安全边界从来不靠目录的隐蔽性，而靠下面这条：开关只退功能，绝不退防线。
+ * debuggable 开着还是关着，这条都不变——变的只是有多少人够得到。
  *
  * <h3>🔴 边界：只关我们自己加的东西，只注入我们自己处理的故障</h3>
  *
@@ -55,11 +68,29 @@ import java.io.File;
  *
  * <h3>用法</h3>
  *
+ * 包不再 debuggable，{@code run-as} 会直接报
+ * {@code package not debuggable}，只能走 root。<b>目录从日志里取，别硬敲</b>
+ * ——理由见本类开头：{@code /data/data} 在某些设备上不存在。
+ *
  * <pre>
- *   adb shell "run-as io.kamihama.totentanz mkdir -p debug"
- *   adb shell "run-as io.kamihama.totentanz touch debug/skipHotUpdate"
- *   # 重启游戏；logcat 里 [DEBUG] 会把全表和当前生效的开关列出来
+ *   # 1) 先从启动日志拿到真实目录（两侧都会打这一行）
+ *   adb logcat -d | grep -m1 '调试开关目录'
+ *   #   I/CNDebugFlags: [DEBUG] 调试开关目录: /data/user/0/&lt;包名&gt;/debug
+ *
+ *   # 2) 用打出来的那个路径，别用这里的示例
+ *   D=&lt;上一步打出来的路径&gt;
+ *   adb shell "su -c 'mkdir -p $D &amp;&amp; touch $D/skipHotUpdate'"
+ *   adb shell "su -c 'chown -R $(dirname $D | xargs stat -c %u):$(dirname $D | xargs stat -c %g) $D'"
+ *
+ *   # 3) 重启游戏；logcat 里 [DEBUG] 会把全表和当前生效的开关列出来
  * </pre>
+ *
+ * <p>⚠ 第二条命令里的 {@code chown} 不能省：用 su 建出来的文件<b>属主是
+ * root</b>，应用改不动也删不掉。{@code log/.seq} 就这么卡死过一次
+ * （启动序号永远不变），排查绕了大半天。
+ *
+ * <p>要么就干脆用 {@link CNDebugBridge} 的调试悬浮窗改——由应用自己写，
+ * 属主天然是对的，这一整类问题不存在。
  */
 public final class CNDebugFlags {
 
@@ -142,6 +173,10 @@ public final class CNDebugFlags {
         { USE_ARIA2,            "资源下载改用 libaria2 备用引擎（默认关）" },
     };
 
+    /** 开关名的合法形状：小驼峰，纯 ASCII 字母数字。见 {@link #writeState}。 */
+    private static final java.util.regex.Pattern NAME_OK =
+            java.util.regex.Pattern.compile("[A-Za-z][A-Za-z0-9]*");
+
     /** 只在首次查询时扫一遍目录：这些开关会在热路径上被问到，不能每次都碰磁盘。 */
     private static volatile boolean loaded;
     private static volatile java.util.HashSet<String> on;
@@ -186,6 +221,117 @@ public final class CNDebugFlags {
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    // ══ 以下三个给 CNDebugBridge（调试悬浮窗）用 ═══════════════════════
+    //
+    // 悬浮窗只是这些开关的**另一个写入口**，不改变开关本身能做什么，所以它
+    // 不碰上面那条「只退功能、不退防线」的边界。CI 的
+    // tools/check-debug-flag-boundary.py 另有一条规则禁止 CNDebugBridge /
+    // CNDebugOverlay 出现在任何安全判据里。
+
+    /** 全表的只读副本：{名字, 说明}。纯静态数据，<b>不触发读盘</b>。 */
+    public static String[][] knownTable() {
+        String[][] copy = new String[KNOWN.length][];
+        for (int i = 0; i < KNOWN.length; i++) {
+            copy[i] = new String[] { KNOWN[i][0], KNOWN[i][1] };
+        }
+        return copy;
+    }
+
+    /**
+     * <b>现在磁盘上</b>有哪些开关文件——每次调用都真去读一遍目录。
+     *
+     * <p>与 {@link #isOn} 是两回事，这个区别必须留着：{@code isOn} 报的是
+     * <b>本次进程启动时</b>的状态（缓存，也正是当前真正在生效的那份），而这里
+     * 报的是<b>下次启动会生效</b>的状态。悬浮窗里勾了、保存了但还没重启时，
+     * 两者就会不一样——把它们混成一个，界面上就会出现「明明勾上了却说没生效」
+     * 或者反过来的错觉，而这套开关存在的意义恰恰是不让人误判。
+     *
+     * <p>读不到目录一律返回空集合（与 {@code isOn} 同样的「异常按关处理」）。
+     */
+    public static java.util.HashSet<String> onDisk() {
+        java.util.HashSet<String> found = new java.util.HashSet<String>();
+        try {
+            String[] names = new File(DEBUG_DIR).list();
+            if (names != null) {
+                for (int i = 0; i < names.length; i++) found.add(names[i]);
+            }
+        } catch (Throwable ignore) {}
+        return found;
+    }
+
+    /**
+     * 按 {@code desired} 把 {@code universe} 里每个开关的文件建出来 / 删掉。
+     * 返回实际改动的条数，失败返回 -1（并已打日志）。
+     *
+     * <h3>为什么写入口在这里，而不是在悬浮窗里</h3>
+     *
+     * 三条限制必须和目录常量待在同一处，否则迟早会有第二个写入口绕开它们：
+     *
+     * <ul>
+     *   <li><b>要求包里的调试总闸是开的</b>（{@link CNDebugBridge#overlayAllowed}，
+     *       烧在 native 里的一个布尔）。分界写在代码里，而不是只写在界面上——
+     *       不然任何一处调用都能凭空打开开关。</li>
+     *   <li><b>只认 {@code universe} 里的名字，且名字必须是小驼峰 ASCII。</b>
+     *       这个目录不是通用文件柜：没有这条，界面上的一个 bug 就能在应用私有
+     *       目录里建出任意路径的文件（{@code ../} 之类）。</li>
+     *   <li><b>不碰缓存。</b>开关只在进程启动时读一次，两侧都是——写完当场
+     *       「生效」是做不到的（native 那几个 {@code noXxxHook} 决定的是钩子装
+     *       不装，{@code JNI_OnLoad} 跑完就定死了）。假装生效比不生效更坏。</li>
+     * </ul>
+     *
+     * <p>顺带解决一个实打实踩过的坑：用 su 建出来的文件属主是 root，应用写不动
+     * （{@code log/.seq} 卡在同一个值那次绕了大半天）。由应用自己写，属主天然
+     * 正确，这一整类问题直接消失。
+     */
+    public static int writeState(java.util.Set<String> desired,
+                                 java.util.Collection<String> universe) {
+        if (!CNDebugBridge.overlayAllowed()) {
+            CNLog.w(TAG, "[DEBUG] 拒绝写开关：本包的调试总闸是关的");
+            return -1;
+        }
+        if (universe == null) return -1;
+        int changed = 0;
+        try {
+            File dir = new File(DEBUG_DIR);
+            if (!dir.isDirectory() && !dir.mkdirs() && !dir.isDirectory()) {
+                CNLog.w(TAG, "[DEBUG] 建不出开关目录: " + DEBUG_DIR);
+                return -1;
+            }
+            for (java.util.Iterator<String> it = universe.iterator(); it.hasNext(); ) {
+                String name = it.next();
+                if (name == null || !NAME_OK.matcher(name).matches()) {
+                    CNLog.w(TAG, "[DEBUG] 跳过形状不合法的开关名: " + name);
+                    continue;
+                }
+                File f = new File(dir, name);
+                boolean want = desired != null && desired.contains(name);
+                boolean has = f.exists();
+                if (want == has) continue;
+                boolean ok = want ? createEmpty(f) : f.delete();
+                if (ok) changed++;
+                else CNLog.w(TAG, "[DEBUG] " + (want ? "建不出 " : "删不掉 ") + f);
+            }
+            CNLog.i(TAG, "[DEBUG] 已写入开关状态，改动 " + changed + " 项（重启后生效）");
+            return changed;
+        } catch (Throwable t) {
+            CNLog.w(TAG, "[DEBUG] 写开关状态失败: " + t);
+            return -1;
+        }
+    }
+
+    private static boolean createEmpty(File f) {
+        try {
+            return f.createNewFile() || f.exists();
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** 反面用例用：只验名字形状这一条。 */
+    public static boolean nameShapeOkForTest(String name) {
+        return name != null && NAME_OK.matcher(name).matches();
     }
 
     private static synchronized void ensureLoaded() {

@@ -245,6 +245,10 @@ public final class CNDownloaderFix {
                         // 紧跟 initEarly：调试开关的首次读取要落在这条后台线程上，
                         // 而不是碰运气落到 UI 线程（见 CNDebugFlags.preload）。
                         CNDebugFlags.preload();
+                        // 调试悬浮窗：总闸烧在包里（native 的 DEBUG_OVERLAY_ENABLED），
+                        // 关着就什么都不做。它是排查工具，绝不能反过来影响启动，
+                        // 所以整条路径静默降级（见 CNDebugBridge.mount）。
+                        mountDebugOverlay();
 
                         // WebView 拦截层代理：放在分支**之前**，两条路都覆盖得到。
                         //
@@ -292,6 +296,63 @@ public final class CNDownloaderFix {
             try { android.util.Log.e(TAG, "triggerInstaller 启动失败", t); }
             catch (Throwable ignore) {}
         }
+    }
+
+    /** 等 Activity 的上限。等不到就放弃，别让守护线程一直空转。 */
+    private static final long DEBUG_OVERLAY_WAIT_MS = 60_000L;
+
+    /**
+     * 起一条守护线程等 Activity 出现，然后在 UI 线程上挂调试悬浮窗。
+     *
+     * <p>要等，是因为本方法跑在 {@code Application.onCreate} 拉起的后台线程上，
+     * 那时引擎的 Activity 往往还没建出来；不能在这里同步等，那会拖住整条启动链。
+     *
+     * <p>总闸关着（正式发布包）时一条线程都不起——这条判断必须在最前面，
+     * 不然「收回调试权限」就变成了「功能还在，只是不显示」。
+     */
+    private static void mountDebugOverlay() {
+        try {
+            if (!CNDebugBridge.overlayAllowed()) return;
+            Thread t = new Thread(new MountDebugOverlay(), "cnv-debug-overlay-mount");
+            t.setDaemon(true);
+            t.start();
+        } catch (Throwable t) {
+            CNLog.w(TAG, "调试悬浮窗挂载线程起不来（忽略）: " + t);
+        }
+    }
+
+    /** 见 {@link #mountDebugOverlay()}。static 嵌套类，理由同 AfterVersionCheck。 */
+    private static final class MountDebugOverlay implements Runnable {
+        @Override public void run() {
+            long deadline = System.currentTimeMillis() + DEBUG_OVERLAY_WAIT_MS;
+            while (System.currentTimeMillis() < deadline) {
+                try {
+                    Activity act = RestClient.getCurrentActivity();
+                    if (act != null) {
+                        // WindowManager 只能在 UI 线程上碰。
+                        act.runOnUiThread(new MountOnUi(act));
+                        return;
+                    }
+                } catch (Throwable t) {
+                    CNLog.w(TAG, "调试悬浮窗挂载出错（忽略）: " + t);
+                    return;
+                }
+                try {
+                    Thread.sleep(500L);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+            CNLog.i(TAG, "调试悬浮窗：等不到 Activity，本次不挂（不影响游戏）");
+        }
+    }
+
+    /** 见 {@link #mountDebugOverlay()}。 */
+    private static final class MountOnUi implements Runnable {
+        private final Activity act;
+        MountOnUi(Activity act) { this.act = act; }
+        @Override public void run() { CNDebugBridge.mount(act); }
     }
 
     /**

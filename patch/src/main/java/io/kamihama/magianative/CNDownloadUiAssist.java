@@ -283,9 +283,32 @@ public final class CNDownloadUiAssist {
                 ? (LinearLayout) log.getParent() : null;
     }
 
+    /**
+     * 调试悬浮窗<b>真的挂在屏幕上</b>时，浮层不再重复摆同一颗按钮。
+     *
+     * <p>判据用 {@link CNDebugBridge#isActive()}（真挂上了）而不是
+     * 「允许挂」：本体没实现、权限没授予、挂载抛异常——任何一种情况下这些
+     * 按钮都得原样留着。「停留」和「重下」是玩家卡住时自救的手段，不能因为
+     * 另一处入口<b>可能</b>存在就先撤掉。
+     */
+    private static boolean overlayTookOver() {
+        try { return CNDebugBridge.isActive(); }
+        catch (Throwable t) { return false; }
+    }
+
+    private static void dropChip(LinearLayout row, String tag) {
+        View old = row.findViewWithTag(tag);
+        if (old != null) row.removeView(old);
+    }
+
     private static void installStay(View root) {
         LinearLayout row = findTopLeftRow(root);
         if (row == null) return;
+        if (overlayTookOver()) {
+            dropChip(row, TAG_STAY);
+            stayChip = null;
+            return;
+        }
         View existing = row.findViewWithTag(TAG_STAY);
         if (existing instanceof TextView) {
             stayChip = (TextView) existing;
@@ -396,15 +419,22 @@ public final class CNDownloadUiAssist {
         v.setBackground(bg);
     }
 
-    /** 把“重下”直接放进原资源行，不另造资源管理悬浮窗。 */
+    /**
+     * 把“重下”直接放进原资源行，不另造资源管理悬浮窗。
+     *
+     * <p>调试悬浮窗挂上时改由它接管，这里把已经加过的收掉——判据见
+     * {@link #overlayTookOver()}。
+     */
     private static void installReloads(View root) {
         String[] names = CNCNDownloadUI.FILE_NAMES;
         if (names == null) return;
+        boolean tookOver = overlayTookOver();
         for (int i = 0; i < names.length; i++) {
             TextView name = findText(root, (i + 1) + ". " + names[i]);
             if (name == null || !(name.getParent() instanceof LinearLayout)) continue;
             LinearLayout row = (LinearLayout) name.getParent();
             String tag = TAG_RELOAD + i;
+            if (tookOver) { dropChip(row, tag); continue; }
             if (row.findViewWithTag(tag) != null) continue;
             TextView b = new TextView(row.getContext());
             b.setTag(tag);

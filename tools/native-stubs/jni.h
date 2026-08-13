@@ -30,6 +30,8 @@ struct JNIEnv {
   jobject CallObjectMethod(jobject,jmethodID,...);
   jsize GetArrayLength(jobjectArray);
   jobject GetObjectArrayElement(jobjectArray, jsize);
+  jobjectArray NewObjectArray(jsize, jclass, jobject);
+  void SetObjectArrayElement(jobjectArray, jsize, jobject);
   jint RegisterNatives(jclass,const JNINativeMethod*,jint);
 };
 struct JavaVM { jint GetEnv(void**,jint); jint AttachCurrentThread(JNIEnv**,void*); jint DetachCurrentThread(); };

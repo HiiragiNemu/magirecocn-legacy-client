@@ -89,7 +89,8 @@ jobs:
           for t in HotUpdateTxTest SafeLinkTest WebProxyTest ConfigGuardTest \
                    LogTest BgmLoopTest ThrottleTest FlushTest ChunkHashTest \
                    ManualRedownloadTest ArchiveInstallTxTest DownloadConcurrencyTest \
-                   HotUpdateRoutingTest UiAssistStateTest; do
+                   HotUpdateRoutingTest UiAssistStateTest DebugBridgeTest \
+                   PathsTest; do
             java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar $t
           done
           java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar ProxyFetchTest 8791

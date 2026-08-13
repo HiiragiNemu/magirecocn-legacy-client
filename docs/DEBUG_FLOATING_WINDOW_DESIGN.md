@@ -1,6 +1,18 @@
 # 调试悬浮窗方案
 
-> 状态：**方案，未实现**。写在动手之前，因为它碰到一条既有边界，值得先把判据定死。
+> 状态：**接线已实现，悬浮窗本体未实现**。
+>
+> 已落地：native 总闸 + 开关表 JNI 导出、`CNDebugBridge` 接线层、
+> 浮层让位逻辑、边界检查、回归测试。缺的只有 `CNDebugOverlay`（界面本体）。
+>
+> ⚠ **本文档 v1 有两处硬错，已在下文改正**，列在这里免得有人只读了旧版：
+>
+> 1. 曾写「权限门槛已经没有了，原包 manifest 里本来就有 `SYSTEM_ALERT_WINDOW`」
+>    ——写这句时它已经被 `9688f7e7` 删掉 15 分钟了，并且同一个提交还在
+>    `check-download-ui-contract.py` 里立了「不许回来」的断言。该删除**维护者
+>    并不知情**，已回退，断言也反了过来（现在断言它必须在）。
+> 2. 曾把入口设计成「先用 su 建 `<priv>/debug/enableOverlay` 自举」。
+>    **这个方案是错的**，理由见下方「入口」一节——已改成烧在包里的一个布尔。
 
 ## 一句话
 
@@ -35,7 +47,7 @@ JNI_OnLoad → loadDebugFlags();   // 进程一起就定死
 
 | 现状 | 有了悬浮窗 |
 |---|---|
-| 要 root（`run-as` 对正式包无效，只能 `su`） | 不要 |
+| 要 root（`e2c00727` 收回 debuggable 后 `run-as` 也没了，只能 `su`） | 不要 |
 | 要电脑 + adb | 不要 |
 | 34 个开关靠记名字手敲 `touch` | 列表勾选 |
 | `su` 建的文件属主是 root | app 自己写，属主天然正确 |
@@ -60,14 +72,21 @@ JNI_OnLoad → loadDebugFlags();   // 进程一起就定死
 系统悬浮窗是独立 window，与 `decorView` 无关：上面三条一条都不需要，任何时刻
 都够得到。
 
-### 权限门槛已经没有了
+### 权限
 
-```xml
-<!-- 原包 AndroidManifest.xml 里本来就有 -->
-android.permission.SYSTEM_ALERT_WINDOW
-```
+`SYSTEM_ALERT_WINDOW` 是**原包自带**的权限，不是我们加的。
 
-不用改 manifest、不用新增权限。窗口类型按版本分叉：
+`9688f7e7`（2026-08-13 00:26）把它连同 `MANAGE_EXTERNAL_STORAGE` 和
+`android:requestLegacyExternalStorage` 一起删掉，提交信息写作「移除无用的全盘和
+悬浮窗权限」，并在 `check-download-ui-contract.py` 里立了一条「不许回来」的断言。
+**维护者对这条改动完全不知情**，且它并不「无用」——悬浮窗正是靠它挂
+`WindowManager` 窗口。已回退，并把那条断言**反过来**：现在 CI 断言这个权限必须在，
+谁再静默删掉当场红灯。
+
+> `MANAGE_EXTERNAL_STORAGE` 与 `requestLegacyExternalStorage` 尚未恢复，
+> 待维护者决定——它们同属那次未知情的改动，但和悬浮窗无关。
+
+窗口类型按版本分叉：
 
 ```
 API ≥ 26   TYPE_APPLICATION_OVERLAY
@@ -79,61 +98,102 @@ API 23+ 仍需用户在系统设置里手动授予（`Settings.ACTION_MANAGE_OVE
 
 ---
 
-## 🔴 边界：入口必须自举，不能对所有玩家可见
+## 🔴 入口：烧在包里的一个布尔
 
-`CNDebugFlags` 的类注释写着现有分界：
+### 先说被否掉的方案（v1 写的就是它）
 
-> 这里在非 root 的正式包上**玩家碰不到**（`run-as` 只对 debuggable 包有效），
-> 所以不构成面向普通玩家的风险面；而有能力自查的人拿 root 或 debuggable 包就能用。
-> 这正是想要的分界。
+v1 定的判据是**自举**：悬浮窗只在 `<priv>/debug/enableOverlay` 存在时启用，
+想要它就先用 `su` 建一次这个文件，之后其余开关都不用 `su`。理由是「分界一点没变
+——能建第一个文件的人本来就能建全部」。
 
-**悬浮窗会把这条分界拆掉。** 虽然开关的边界规则保证了它们「只能把客户端退回更接近
-原包的行为，绝不能关掉任何一道安全判定」，所以不构成**安全**风险——但
-`skipInstaller`、`failDownload`、`failHotUpdateApply` 足以让玩家把自己的安装搞坏，
-然后来报「装不上」。那是支持成本，不是安全问题，但一样要避免。
+**这个推理成立，结论却没用。** 它漏掉了一个问题：分界该架在哪儿？
 
-### 定下的判据：用现有机制自举
+> 能建出 `enableOverlay` 的人 = 会 adb/Termux 的人 = **本来就能直接
+> `touch debug/skipHotUpdate` 的人**；
+> 真正需要悬浮窗的人 = **建不出那个文件的人**。
 
-**悬浮窗只在 `<priv>/debug/enableOverlay` 存在时才启用。**
+门槛正好挡住了要服务的那批，放进来的正好是不需要它的那批。这不是假想——
+`android:debuggable` 就是这么白开了两天又收回去的（`2de18e15` → `e2c00727`）：
+开它是为了让人免 root 抓日志和改开关，收它是因为**这条路根本送不到人**，
+要用它得会 Termux，而实际会用的人几乎没有。同一个错误不该犯第二次。
 
-想要悬浮窗，先用 `su` 建一次这个文件；建完之后，其余 34 个开关就都不用 `su` 了。
+### 定下的判据：编译期常量
 
-- 分界**一点没变**：能建第一个文件的人，本来就能建全部 34 个；
-- 痛点**解决了**：那 34 次重复操作降到 1 次；
-- 判据与现有机制**同构**：还是「debug 目录里有没有这个文件」，不引入第二套概念。
+```cpp
+// MagiaLegacy.cpp
+#ifndef MAGIA_DEBUG_OVERLAY
+#define MAGIA_DEBUG_OVERLAY 1     // 公测期：所有人可用
+#endif
+static const bool DEBUG_OVERLAY_ENABLED = (MAGIA_DEBUG_OVERLAY != 0);
+```
 
-> 不选「长按 LOG 胶囊 5 秒 + 连点版本号 7 次」这类彩蛋式入口：它把分界从
-> 「有没有 root」换成了「知不知道咒语」，而咒语一定会传出去。
+经 JNI 交给 `CNDebugBridge.overlayAllowed()`，**没有任何运行时手段能改它**。
+
+- **公测期**：`1`，所有人都够得到——这正是它存在的意义；
+- **公测结束**：把 `1` 改成 `0` 出包，一步收回，不依赖任何人在设备上做什么；
+- **内部测试包**：编译时传 `-DMAGIA_DEBUG_OVERLAY=1` 覆盖，不受对外收回影响。
+
+取不到（native 没起来 / `RegisterNatives` 失败）一律按**关**处理：这是道分界，
+宁可少给功能，不能多给。`CNDebugFlags.writeState` 也查这同一个闸——分界写在代码里，
+不是只写在界面上，不然收回之后「功能还在，只是不显示」。
+
+### 那支持成本怎么办
+
+开关的边界规则保证它们「只能把客户端退回更接近原包的行为，绝不关掉任何一道安全
+判定」，所以不构成**安全**风险。但 `skipInstaller`、`failDownload`、
+`failHotUpdateApply` 足以让玩家把自己的安装搞坏，然后来报「装不上」——那是支持
+成本，一样要避免。
+
+**对策不是把入口藏起来，而是把状态摆出来**：生效中的开关以小字**常驻在所有页面
+之上**（`CNDebugBridge.hudText()`）。
+
+- 玩家自己看得见「我现在处在调试模式」，不会莫名其妙地以为游戏坏了；
+- 他截图报错时**我们**也看得见，省掉「你是不是开了什么开关」这一整轮问答；
+- 开关只在启动时读一次，所以小字里还要标出「有改动待重启」——勾了没重启是最容易
+  让人误判「开关坏了」的时刻。
+
+小字**不跟随悬浮窗的显示与否**：窗收起来了，字照旧。它是保障，不是装饰。
 
 ---
 
 ## 形态
 
-一个可拖动小球，点开是一页列表：
+常驻两样东西：**一行小字**（永远在，见上）和**一个可拖动小球**（点开是面板）。
 
 ```
-┌─ 调试开关 ────────────────── ✕ ─┐
-│  Java 侧 (15)                    │
-│    ☐ skipWebProxy                │
-│    ☑ skipHotUpdate               │
-│    …                             │
-│  native 侧 (19)                  │
-│    ☐ noI18nLabel                 │
-│    ☑ logI18nMissAll              │
-│    …                             │
-├──────────────────────────────────┤
-│  [ 保存并重启 ]   [ 全部关闭 ]    │
-│  [ 分享日志 ]     [ 日志尾巴 ]    │
-└──────────────────────────────────┘
+   调试模式：skipHotUpdate · noI18nLabel +2（有改动待重启）   ← 常驻小字，所有页面
+                                                                
+┌─ 调试 ───────────────────────── ✕ ─┐
+│  ▸ 资源            重下 / 停留      │   ← 从下载浮层搬过来的
+│      1. …zip                [重下]  │
+│      …                              │
+│      [ 停留本页 / 进入游戏 ]        │
+│  ▸ 开关                             │
+│      Java 侧 (15)                   │
+│        ☐ skipWebProxy               │
+│        ☑ skipHotUpdate      (待重启)│
+│      native 侧 (19)                 │
+│        ☐ noI18nLabel                │
+│        ☑ logI18nMissAll             │
+├─────────────────────────────────────┤
+│  [ 保存并重启 ]   [ 全部关闭 ]      │
+│  [ 分享日志 ]     [ 日志尾巴 ]      │
+└─────────────────────────────────────┘
 ```
 
 要点：
 
 - **勾选只改内存，点「保存并重启」才落盘**——避免手滑一勾就写文件；
-- 列表**从两侧的开关表生成**，不硬编码。Java 侧读 `CNDebugFlags.KNOWN`；
-  native 侧的 19 个需要一份可读的表（见下「要动的地方」）；
-- 「分享日志」直接复用现成的 `CNLogBundle` / `CNLogShareProvider`；
-- 「日志尾巴」复用 `CNLog` 的环形缓冲，只读不写；
+- 每行要同时显示「磁盘上」与「正在生效」两个状态（`COL_ON_DISK` / `COL_ON_BOOT`）。
+  这两列**不能合并**：勾了没重启时它们不一样，而那正是最容易让人误判
+  「这个开关坏了」的时刻；
+- 列表**从两侧的开关表生成**，不硬编码——`CNDebugBridge.flagTable()` 已经把
+  Java 的 15 个与 native 的 19 个合好了。硬编码一份副本一定会过期，而两边不一致时
+  人只会得出「开关坏了」这个错结论；
+- **「重下」「停留」从下载浮层搬进来，不留冗余按钮**。浮层那边由
+  `CNDownloadUiAssist.overlayTookOver()` 自动让位，判据是「悬浮窗真的挂上了」；
+- 「分享日志」「日志尾巴」复用现成的 `CNLogBundle` / `CNLogShareProvider` / `CNLog`
+  环形缓冲，接线已在 `CNDebugBridge.shareLog()`；
 - 小球默认贴边、半透明；窗口带 `FLAG_NOT_FOCUSABLE`，不抢游戏输入。
 
 ---
@@ -152,32 +212,56 @@ API 23+ 仍需用户在系统设置里手动授予（`Settings.ACTION_MANAGE_OVE
 
 ---
 
-## 要动的地方
+## 落地情况
 
-| 位置 | 改什么 |
-|---|---|
-| 新增 `CNDebugOverlay.java` | 悬浮窗本体：`WindowManager` 挂载、拖动、列表、落盘、重启 |
-| `CNDebugFlags` | 开放一个只读的「全表 + 当前状态」查询；新增 `ENABLE_OVERLAY` 常量 |
-| `MagiaLegacy.cpp` | 把 `kDebugFlags` 的名字与描述经 JNI 暴露给 Java（现在只打日志） |
-| `CNDownloaderFix.triggerInstaller` | 启动时若 `enableOverlay` 存在，挂上小球 |
-| `tools/check-debug-flag-boundary.py` | 保护区列表加上 `CNDebugOverlay`：**悬浮窗自身不得出现在任何安全判据里** |
+| 位置 | 改什么 | 状态 |
+|---|---|---|
+| `MagiaLegacy.cpp` | `DEBUG_OVERLAY_ENABLED` 总闸；`nativeDebugOverlayEnabled` / `nativeDebugFlagTable` 两个 JNI 导出（`kDebugFlags` 原先只打日志） | ✅ |
+| 新增 `CNDebugBridge.java` | 接线层：总闸、合并全表、落盘+重启、HUD 文案、停留/重下/日志转接 | ✅ |
+| `CNDebugFlags` | `knownTable()` / `onDisk()` / `writeState()`；写入口查总闸 + 名字白名单 | ✅ |
+| `CNDownloadUiAssist` | 悬浮窗**真的挂上**时撤掉浮层里的「停留」「重下」，否则原样留着 | ✅ |
+| `CNDownloaderFix.triggerInstaller` | 总闸开着才起线程等 Activity，然后在 UI 线程挂载 | ✅ |
+| `AndroidManifest.xml` | 恢复被静默删掉的 `SYSTEM_ALERT_WINDOW` | ✅ |
+| `check-debug-flag-boundary.py` | 保护区禁止 `CNDebugBridge` / `CNDebugOverlay` | ✅ |
+| `check-download-ui-contract.py` | 断言 `SYSTEM_ALERT_WINDOW` **必须在**（原断言是反的） | ✅ |
+| `tools/DebugBridgeTest.java` | 27 条：总闸 fail-closed、接管判据、HUD 排版、名字白名单 | ✅ |
+| 新增 `CNDebugOverlay.java` | **悬浮窗本体**：`WindowManager` 挂载、拖动、列表、常驻小字 | ❌ 未做 |
+
+### 本体接进来时要做的两件事
+
+1. 提供 `public static boolean mount(Activity)`——`CNDebugBridge.mount()` 用反射找它
+   （接线先于本体落地，直接引用编译不过；反射还顺带挡住「类漏进 dex 分组」那种
+   静默缺席，见 `CNBgm` 那次）。
+2. 挂上/摘掉时调 `CNDebugBridge.setActive(true/false)`。浮层靠这个判据让位——
+   判据是「**真的挂上了**」而不是「允许挂」：本体没实现、权限没授予、挂载抛异常，
+   任何一种情况下浮层里的「停留」「重下」都必须原样留着，否则玩家卡住时会连自救
+   手段一起失去。
 
 ### 与边界检查的对齐
 
-`check-debug-flag-boundary.py` 现在断言「7 个保护区内不出现 `CNDebugFlags` /
+`check-debug-flag-boundary.py` 原先断言「7 个保护区内不出现 `CNDebugFlags` /
 `g_dbg*`」。悬浮窗只是这些开关的**另一个写入口**，不改变开关本身能做什么，所以
-现有 7 个保护区的判据不用动。
-
-但要**新增一条**：`CNDebugOverlay` 不得出现在保护区内——否则等于开了一条
-「界面上点一下就能碰安全判据」的路。加进同一张表即可，形状与现有条目一致。
+现有 7 个保护区的判据没动，只是把 `CNDebugBridge` / `CNDebugOverlay` 加进同一条
+禁止名单——否则等于开了一条「界面上点一下就能碰安全判据」的路，而且是比建文件更
+好点的那种。（已用反面用例验过：往 `CNSafeLink` 里塞一行 `CNDebugBridge` 会被拦下。）
 
 ---
 
 ## 验收
 
-- 无 `enableOverlay` 时：小球不出现，行为与现在**逐行一致**；
-- 有 `enableOverlay` 但未授予悬浮窗权限：引导到系统设置，**不崩、不卡**；
+接线部分（已可验）：
+
+- 总闸关（`-DMAGIA_DEBUG_OVERLAY=0`）时：不起线程、不挂窗、`writeState` 拒绝写盘，
+  行为与现在**逐行一致**；
+- native 库没起来 / `RegisterNatives` 失败时：按「关」处理，不崩；
+- `DebugBridgeTest` / `PathsTest` / `check-debug-flag-boundary.py` /
+  `check-download-ui-contract.py` 全过。
+
+本体接进来后要验（需真机）：
+
+- 未授予悬浮窗权限：引导到系统设置，**不崩、不卡**；
 - 勾选后不点保存就退出：磁盘无变化；
-- 保存并重启：34 个开关文件的存在与否与勾选状态一致，且**属主是应用**；
+- 保存并重启：开关文件的存在与否与勾选状态一致，且**属主是应用**（不是 root）；
 - 战斗中能拖出小球，不抢游戏触摸；
-- `check-debug-flag-boundary.py` 通过（含新增的那条）。
+- 悬浮窗挂上后，下载浮层里不再有重复的「停留」「重下」；摘掉后它们回来；
+- 有开关生效时，小字在**所有页面**（含战斗）都在；勾了没重启时标出「有改动待重启」。
