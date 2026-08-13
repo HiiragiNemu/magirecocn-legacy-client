@@ -92,6 +92,12 @@ public final class CNArchiveInstallTx {
                 if (!entry.isDirectory() && entry.getSize() > 0) totalBytes += entry.getSize();
             }
             if (entries.isEmpty()) throw new ZipException("Archive contains no entries: " + archive);
+            // 膨胀比上限 200x，判据与阈值和 CNDownloaderFix.EXTRACT_MAX_RATIO 保持一致
+            // （两条路：这里是首次安装器，那边是离线导入与热更新）。
+            //
+            // 别按「游戏资源膨胀比接近 1」去收紧：实测 cn_base_03.zip 是 2.11x
+            // （1.32 → 2.79 GiB），15 个包里唯一真正会膨胀的。收到 2x 以下就等于
+            // 把它判成 zip 炸弹，每次装到一半整包作废重下。表见 EXTRACT_MAX_RATIO。
             if (totalBytes >= 256L * 1024L * 1024L
                     && archive.length() > 0
                     && totalBytes / archive.length() > 200L) {

@@ -146,6 +146,17 @@ checks = {
     "解压后大小算不出时按未知放行":
         "UNKNOWN" in zipplan and "return UNKNOWN;" in zipplan
         and "extract != CNZipPlan.UNKNOWN" in downloader,
+    # 膨胀比上限必须留在 200x，且两条解压路径（首次安装器 / 离线导入与热更新）
+    # 用同一个数。诱惑在于「游戏资源膨胀比接近 1，收紧一点更安全」——那句话对 14 个包
+    # 成立，对 cn_base_03.zip 不成立：它 2.11x（1.32→2.79 GiB），是唯一真正会膨胀的。
+    # 收到 2x 以下就等于把它判成 zip 炸弹，每次装到一半整包作废重下。
+    "解压膨胀比上限保持 200x 且两处一致":
+        "EXTRACT_MAX_RATIO = 200L" in downloader
+        and "totalBytes / archive.length() > 200L" in extract_tx,
+    # 依据要跟着阈值走：只留一个数字，下一个人还是会照「接近 1」去拍。
+    "膨胀比阈值旁边留着实测表":
+        "2.11x" in downloader and "cn_base_03.zip" in downloader
+        and "2.11x" in extract_tx,
     # 权限引导页的宿主固定 decorView，靠布局回调持续置顶。曾按「下载浮层在就挂
     # 进浮层」选宿主，可它由挂载看门狗在 Activity 出现后几毫秒触发，那时下载浮层
     # 还没建出来——判断永远走 decorView，几百毫秒后浮层加进同一个 decorView 把它
