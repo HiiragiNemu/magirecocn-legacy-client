@@ -27,6 +27,26 @@ jobs:
         run: |
           set -euo pipefail
           cat .github/patch-payload/03-completion-*.gzpart | gzip -dc > /tmp/apply-fix.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('/tmp/apply-fix.py')
+          text = p.read_text(encoding='utf-8')
+          old = """s = replace_once(s,
+          '''            monitor(latch, pool, abort, open, firstErr, lastMoveNs, networkBytes,
+                              probe.total, sink);''',
+          '''            monitor(latch, pool, abort, open, firstErr, lastMoveNs, networkBytes,
+                              committed, probe.total, sink);''',
+          'chunk verified monitor call')"""
+          new = """s = s.replace(
+          '''            monitor(latch, pool, abort, open, firstErr, lastMoveNs, networkBytes,
+                              probe.total, sink);''',
+          '''            monitor(latch, pool, abort, open, firstErr, lastMoveNs, networkBytes,
+                              committed, probe.total, sink);''',
+          1)"""
+          if text.count(old) != 1:
+              raise SystemExit('speed call migration baseline not found exactly once')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
           python3 -m py_compile /tmp/apply-fix.py
           python3 /tmp/apply-fix.py
           git diff --check
