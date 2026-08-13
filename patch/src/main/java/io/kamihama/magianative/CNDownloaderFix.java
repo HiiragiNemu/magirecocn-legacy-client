@@ -79,8 +79,12 @@ public final class CNDownloaderFix {
     private static final int A2_MAIN      = 0;
     /** {@link #tryAria2Download} 的返回：玩家选改用离线包，跳过主引擎重试。 */
     private static final int A2_OFFLINE   = -1;
-    /** aria2 备用引擎单文件最多尝试次数（初次 + 至多 2 次玩家点的「重试备用」）。 */
-    private static final int A2_MAX_ATTEMPTS = 3;
+    /**
+     * aria2 单文件最多尝试次数。与主引擎的 {@link #MAX_ATTEMPTS} 对齐，好让
+     * {@code CNMirrors.pick(attempt)} 有机会把线路表轮一遍——线路只有轮得完，
+     * 「换线」才叫换线。
+     */
+    private static final int A2_MAX_ATTEMPTS = 4;
     private static final int    MAX_DOWNLOADS = 4;
     private static final int    MIN_SNAA_VERSION = 128;
     private static final String NO_RESTART_FLAG = FILE_ROOT + "/madomagi/magica/.cn_installer/r128-downloader-v1/no_restart";
@@ -1219,8 +1223,10 @@ public final class CNDownloaderFix {
     private static int tryAria2Download(String name, File archive, int index,
                                         File marker, String canonicalUrl) {
         for (int attempt = 1; attempt <= A2_MAX_ATTEMPTS; attempt++) {
-            // 每轮换一条线路。原先固定 CNMirrors.pick(1)：第一条线路对这个文件
-            // 不行时，三次尝试全废在同一条上，然后才回退主引擎。
+            // 换线走**与主引擎同一套**机制，不是简化版：逐轮 pick(attempt) 轮换，
+            // 成败都回报给 CNMirrors 的健康表（失败记冷却、成功清计数）。原先
+            // 固定 pick(1) 且从不回报——第一条线路对这个文件不行时三次全废在同
+            // 一条上，而且它有多不行，健康表一无所知，主引擎回退后照样先挑它。
             CNMirrors.Mirror mirror = CNMirrors.pick(attempt);
             try {
                 final int idx = index;
@@ -1254,17 +1260,25 @@ public final class CNDownloaderFix {
                         CNUserAgent.get(), null, null, conns, null, progress, cancel);
                 if (rv == CNAria2.OK && archive.isFile() && archive.length() > 0
                         && isAria2ArchiveUsable(archive, name)) {
-                    // 热更两包的权威身份是 version json 的 size + 整包 MD5。
-                    // 这一步原先只在 fetchArchive 里，aria2 这条路完全绕过——
-                    // force_aria2 开着时，那个修复对这两个包等于没做。
-                    verifyHotIdentity(name, archive);
-                    // 解压统一走 CNArchiveInstallTx.extract：它带空间预检、逐条目
-                    // size/CRC 与断点续解压。原先这里用 extractChecked，那套都没有。
+                    // ⚠ aria2 模式下**不叠加**额外的内容校验（维护者决定，2026-08-13）：
+                    // 不套基础包 manifest 的块指纹，也不做热更两包的 version json
+                    // size/MD5 比对。判据是 ZIP 自带的完整性——没下全的包结构就不合法，
+                    // 逐条目的 size/CRC 也会在解压时把它拦下来，压根打不开。
+                    //
+                    // 说清楚这条**换来了什么、放弃了什么**：拦得住「没下全 / 传坏了」，
+                    // 拦不住「下全了但是旧的」——CDN 上一份结构完好的过期副本能一路
+                    // 通过。今天 cn_scenario_update.zip 正是这种（尺寸一样、内容是上
+                    // 一版）。这条路上它只能靠随后的热更新轮按版本号发现并补下。
+                    //
+                    // 解压仍走 CNArchiveInstallTx.extract 而不是 extractChecked：它给的
+                    // 是空间预检与断点续解压，那不是「内容校验」，去掉只会让 03 那类
+                    // 大包白解压半天再翻车。
                     File a2State = CNArchiveInstallTx.stateFile(new File(STATE_ROOT), name);
                     synchronized (EXTRACT_LOCK) {
                         CNArchiveInstallTx.extract(archive, new File(INSTALL_ROOT),
                                 a2State, null, null);
                     }
+                    CNMirrors.reportSuccess(mirror);
                     writeMarker(marker, name, canonicalUrl,
                             new DownloadMetadata(archive.length(), "aria2"));
                     if (!archive.delete() && archive.exists()) {
@@ -1275,10 +1289,14 @@ public final class CNDownloaderFix {
                     return A2_INSTALLED;
                 }
                 CNLog.w(TAG, "aria2 备用引擎失败 code=" + rv + " attempt=" + attempt
-                        + "，询问玩家: " + name);
+                        + "/" + A2_MAX_ATTEMPTS + " 线路=" + mirror.name + " file=" + name);
+                CNMirrors.reportFailure(mirror, "aria2 code=" + rv);
                 deleteQuietly(archive);
                 deleteQuietly(new File(archive.getPath() + ".aria2"));
-                int choice = awaitAria2FallbackChoice(name, attempt < A2_MAX_ATTEMPTS);
+                // 没轮完就自己换下一条线，不打断玩家。原先每失败一次就弹一次框，
+                // 三条线路要问三遍——而他能给的信息，前两遍就已经给完了。
+                if (attempt < A2_MAX_ATTEMPTS) continue;
+                int choice = awaitAria2FallbackChoice(name, false);
                 if (choice == CNCNDownloadUI.ARIA2_RETRY) continue;
                 if (choice == CNCNDownloadUI.ARIA2_OFFLINE) {
                     CNCNDownloadUI.showOfflineImportDialog(RestClient.getCurrentActivity());
@@ -1298,10 +1316,13 @@ public final class CNDownloaderFix {
                             name, 0L, CNDiskSpace.usableBytes(archive)));
                     return A2_OFFLINE;
                 }
-                CNLog.w(TAG, "aria2 备用引擎异常: " + name + " : " + t);
+                CNLog.w(TAG, "aria2 备用引擎异常 attempt=" + attempt + "/" + A2_MAX_ATTEMPTS
+                        + " file=" + name + " : " + t);
+                CNMirrors.reportFailure(mirror, "aria2 异常:" + t);
                 deleteQuietly(archive);
                 deleteQuietly(new File(archive.getPath() + ".aria2"));
-                int choice = awaitAria2FallbackChoice(name, attempt < A2_MAX_ATTEMPTS);
+                if (attempt < A2_MAX_ATTEMPTS) continue;
+                int choice = awaitAria2FallbackChoice(name, false);
                 if (choice == CNCNDownloadUI.ARIA2_RETRY) continue;
                 if (choice == CNCNDownloadUI.ARIA2_OFFLINE) {
                     CNCNDownloadUI.showOfflineImportDialog(RestClient.getCurrentActivity());

@@ -96,13 +96,38 @@ public class DownloadModeTest {
                 CNDownloadConcurrency.currentCap() == max);
         CNDownloadConcurrency.setCap(max);   // 复位，别影响后面的套件
 
-        // ── [3] 落盘位置 ────────────────────────────────────────────
-        // 只验形状：真正的读写要应用私有目录，JVM 上碰不到。
-        String flag = CNDownloadMode.flagPathForTest();
-        check("[3a] 标记路径是绝对路径", flag != null && flag.startsWith("/"));
-        check("[3b] 标记不在 files/ 下（那是热更解压根，会被按前缀清理）",
-                !flag.contains("/files/"));
-        check("[3c] 标记名可辨认", new File(flag).getName().contains("single_thread"));
+        // ── [3] 优先级与「不落盘」（2026-08-13 维护者要求）─────────────
+        //
+        // 玩家的选择压过云端。求或的写法在这里是错的：云端一开，玩家就再也关不掉，
+        // 而坐在那台设备前面的是他。所以「没表态」与「选了多线程」必须分得开——
+        // 合成一个 boolean 就没法表达前者。
+        CNDownloadMode.resetCacheForTest();
+        check("[3a] 新进程起手是「还没表态」", !CNDownloadMode.playerDecided()
+                && !CNDownloadMode.playerWants());
+
+        CNDownloadMode.setPlayerChoice(true);
+        check("[3b] 选了单线程即生效", CNDownloadMode.playerDecided()
+                && CNDownloadMode.playerWants() && CNDownloadMode.singleThread()
+                && CNDownloadMode.cap(8) == 1);
+
+        CNDownloadMode.setPlayerChoice(false);
+        check("[3c] 选回多线程也算表过态（不是退回未表态）",
+                CNDownloadMode.playerDecided() && !CNDownloadMode.playerWants());
+        check("[3d] 选了多线程就不再单线程", !CNDownloadMode.singleThread()
+                && CNDownloadMode.cap(8) == 8);
+
+        // 云端那层在 JVM 上取不到（CNMirrors 未加载配置），恒为 false；这里能钉的是
+        // 「玩家表过态时压根不去问云端」这条短路——它由 singleThread() 的顺序保证。
+        check("[3e] 强制层只剩调试开关，云端不再算强制",
+                !CNDownloadMode.forcedOn());
+
+        // 不落盘：本次选择不该留到下次启动。resetCacheForTest 模拟的就是重启，
+        // 若还有文件兜底，这里会读回 true——「一次慢次次慢」正是这么来的。
+        CNDownloadMode.setPlayerChoice(true);
+        CNDownloadMode.resetCacheForTest();
+        check("[3f] 重启后回到未表态（玩家选择不落盘）",
+                !CNDownloadMode.playerDecided() && !CNDownloadMode.playerWants());
+        CNDownloadMode.applyNow();   // 复位闸门，别影响后面的套件
 
         System.out.println("通过 " + pass + " / 失败 " + fail);
         if (fail > 0) System.exit(1);

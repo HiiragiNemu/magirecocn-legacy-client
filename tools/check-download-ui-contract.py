@@ -164,17 +164,40 @@ checks = {
         "CNDownloadMode.cap(16)" in downloader
         and "CNAria2.download(url, FILE_ROOT, name," in downloader
         and "null, null, conns, null, progress, cancel)" in downloader,
-    "aria2 逐轮换线而不是钉死第一条":
+    # 完整换线机制，不是简化版：逐轮 pick(attempt) + 成败都回报 CNMirrors 健康表
+    # （失败记冷却、成功清计数），尝试次数与主引擎对齐好让线路表轮得完。原先固定
+    # pick(1) 且从不回报——线路有多不行，健康表一无所知，主引擎回退后照样先挑它。
+    "aria2 接入完整换线机制":
         "CNMirrors.pick(attempt)" in downloader
-        and "tryAria2Download(CNMirrors.pick(1)" not in downloader,
-    "aria2 产物同样过热更身份校验":
-        "verifyHotIdentity(name, archive);\n                    // 解压统一走" in downloader,
+        and "tryAria2Download(CNMirrors.pick(1)" not in downloader
+        and 'CNMirrors.reportFailure(mirror, "aria2 code=" + rv)' in downloader
+        and "A2_MAX_ATTEMPTS = 4" in downloader
+        and downloader.count("CNMirrors.reportSuccess(mirror)") >= 2,
+    # 维护者决定（2026-08-13）：aria2 模式下不叠加额外内容校验，判据是 ZIP 自带的
+    # 完整性。所以这里是**反向**断言——这条路上不许再冒出 manifest 块指纹或热更
+    # version json 的比对。代价写在代码注释里：拦得住「没下全」，拦不住「下全了但
+    # 是旧的」，后者交给随后的热更新轮按版本号发现。
+    "aria2 模式旁路额外内容校验":
+        downloader.count("verifyHotIdentity(name, archive)") == 2
+        and "isAria2ArchiveUsable(archive, name)" in downloader,
     "aria2 解压走同一套事务（带空间预检与逐条目校验）":
         "CNArchiveInstallTx.extract(archive, new File(INSTALL_ROOT)," in downloader
         and "a2State" in downloader,
     "aria2 路径上的空间不足也不当引擎故障":
         "catch (CNDiskSpace.NotEnoughSpace e)" in downloader
         and downloader.count("reportNoSpace") >= 4,
+    # 玩家的选择压过云端，且**不落盘**（2026-08-13 维护者要求）。求或的写法会让
+    # 云端一开玩家就再也关不掉，而坐在设备前面的是他；落盘则是「一次慢次次慢」——
+    # 他为一次网络抖动选的降级路线会跟着他到永远，还没有任何地方提示他开着。
+    "单线程优先级：调试 > 玩家 > 云端":
+        "Boolean p = playerChoice;" in mode
+        and "if (p != null) return p.booleanValue();" in mode
+        and "return CNMirrors.forceSingleThread();" in mode,
+    "玩家的单线程选择不落盘":
+        "cn_single_thread.flag" not in mode and "FLAG_PATH" not in mode
+        and "playerDecided" in mode,
+    "云端不再算玩家关不掉的强制层":
+        "CNMirrors.forceSingleThread()" not in mode.split("public static boolean forcedOn()")[1].split("}")[0],
     # 「重下」胶囊与左右分界线拖动已按维护者要求整体撤回（2026-08-13）。下面两条是
     # **反向**断言：谁再把它们加回来，CI 当场红。撤回的理由不是实现有 bug，是维护者
     # 不要这两个特性——判据因此钉在「不存在」，而不是「实现得对不对」。

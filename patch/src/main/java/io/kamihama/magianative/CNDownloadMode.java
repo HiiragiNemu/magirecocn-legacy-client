@@ -1,7 +1,5 @@
 package io.kamihama.magianative;
 
-import java.io.File;
-
 /**
  * 下载引擎的<b>单线程可靠模式</b>开关。
  *
@@ -19,23 +17,24 @@ import java.io.File;
  *
  * <ol>
  *   <li><b>调试开关</b> {@link CNDebugFlags#USE_SINGLE_THREAD}——排查时强制打开，
- *       玩家在弹窗里关不掉。与 {@code useAria2} 同一类（{@code useXxx}：可选
- *       引擎），只换我们自己的下载路径，不碰任何安全判定。</li>
- *   <li><b>云端</b> {@code settings.force_single_thread}——某条 CDN 对所有人都
- *       炸了的时候，服务端一改所有人生效，不必等发版。与 {@code force_aria2}
- *       同一个位置、同一套语义。</li>
- *   <li><b>玩家自己选的</b>——下载失败弹窗里点「改用单线程下载」，落盘持久化。</li>
+ *       玩家关不掉。它要的就是「无论如何按单线程跑一遍」。</li>
+ *   <li><b>玩家自己选的</b>——下载失败弹窗里的选择。<b>压过云端</b>：坐在那台设备
+ *       前面的是他，云端那条是给「所有人都炸了」准备的粗判断，不该反过来把一个
+ *       明确表过态的人按住。他选多线程就是多线程。</li>
+ *   <li><b>云端</b> {@code settings.force_single_thread}——只在玩家<b>没表过态</b>
+ *       时兜底。某条 CDN 对所有人都炸了的时候，服务端一改即刻生效，不必等发版。</li>
  * </ol>
  *
- * <p>前两层是<b>强制打开</b>，不是「默认值」：它们在时玩家关不掉，因为那两层
- * 存在的场合恰恰是「我们知道多线程在这里不行」。
+ * <p>所以「玩家没表态」与「玩家选了多线程」必须分得开——用 {@code Boolean} 的
+ * null / FALSE 两态表示。合成一个 boolean 的话，云端一开，玩家就再也关不掉了。
  *
- * <h3>为什么用标记文件而不是 SharedPreferences</h3>
+ * <h3>玩家那一层<b>不落盘</b></h3>
  *
- * 下载线程由 {@code Application.onCreate} 拉起，那时 Activity 未必已经建出来，
- * 而 {@code getSharedPreferences} 要 Context。{@link CNPaths} 的解析器本来就
- * 不依赖 Context（读 {@code /proc/self/cmdline}），与 {@code cn_base_done.flag}
- * 那批标记同一套做法，任何线程任何时机都能读。
+ * 只活在本次进程里，下次启动回到「没表态」。玩家是在「这个包刚下失败」的当口
+ * 选的单线程——那多半是当时那条网络的一次性状况。把它持久化下去，就是<b>一次慢、
+ * 次次慢</b>：网络早好了，他却要一直用着为最差情况准备的降级路线，而且没有任何
+ * 地方提示他「你还开着这个」。要长期生效的场合有云端开关和调试开关，那两层本来
+ * 就是干这个的。
  *
  * <h3>与单线程分支的关系</h3>
  *
@@ -48,20 +47,24 @@ public final class CNDownloadMode {
 
     private static final String TAG = "CNDownloadMode";
 
-    /** 玩家选择的落盘位置。存在 = 玩家选了单线程。 */
-    private static final String FLAG_PATH = CNPaths.privDir() + "/cn_single_thread.flag";
-
-    /** 玩家那一层的缓存；null = 还没读过盘。 */
+    /**
+     * 玩家这一层：{@code null} = 本次启动还没表过态，{@code TRUE/FALSE} = 明确选了。
+     * <b>只在内存里</b>，不落盘（理由见类注释「玩家那一层不落盘」）。
+     */
     private static volatile Boolean playerChoice;
 
     private CNDownloadMode() {}
 
-    /** 当前是否走单线程。三层任一成立即为真。 */
+    /**
+     * 当前是否走单线程。<b>按优先级短路</b>，不是三层求或——求或的话玩家永远
+     * 关不掉云端那条。
+     */
     public static boolean singleThread() {
         try {
             if (CNDebugFlags.isOn(CNDebugFlags.USE_SINGLE_THREAD)) return true;
-            if (CNMirrors.forceSingleThread()) return true;
-            return playerWants();
+            Boolean p = playerChoice;
+            if (p != null) return p.booleanValue();   // 玩家表过态：以他为准
+            return CNMirrors.forceSingleThread();     // 没表态才轮到云端
         } catch (Throwable t) {
             // 取不到一律按「不开」：单线程是降级路线，不该因为读取出错就把所有人
             // 拖进慢速模式。
@@ -69,33 +72,34 @@ public final class CNDownloadMode {
         }
     }
 
-    /** 玩家是不是<b>自己</b>选了单线程（不含调试开关与云端强制）。 */
+    /** 玩家是不是<b>自己</b>选了单线程（没表过态算否）。 */
     public static boolean playerWants() {
         Boolean c = playerChoice;
-        if (c != null) return c.booleanValue();
-        boolean on = false;
-        try {
-            on = new File(FLAG_PATH).isFile();
-        } catch (Throwable ignore) {}
-        playerChoice = Boolean.valueOf(on);
-        return on;
+        return c != null && c.booleanValue();
+    }
+
+    /** 玩家本次启动有没有表过态。云端那层只在这个为 false 时才轮得到。 */
+    public static boolean playerDecided() {
+        return playerChoice != null;
     }
 
     /**
-     * 上面那两层是不是<b>强制</b>状态。为真时弹窗不该再给「改回多线程」——
+     * 是不是<b>玩家关不掉</b>的强制状态。为真时弹窗不该再给「改回多线程」——
      * 给了也关不掉，只会让人以为按钮坏了。
+     *
+     * <p>只剩调试开关这一层。云端那条<b>不再</b>算强制：玩家的选择压过它，
+     * 所以按钮给了就是有用的。
      */
     public static boolean forcedOn() {
         try {
-            return CNDebugFlags.isOn(CNDebugFlags.USE_SINGLE_THREAD)
-                    || CNMirrors.forceSingleThread();
+            return CNDebugFlags.isOn(CNDebugFlags.USE_SINGLE_THREAD);
         } catch (Throwable t) {
             return false;
         }
     }
 
     /**
-     * 玩家侧的切换：落盘 + <b>立刻</b>把全局连接闸门收到 1（或放回去）。
+     * 玩家侧的切换：记在内存里 + <b>立刻</b>把全局连接闸门收到 1（或放回去）。
      *
      * <p>立刻生效是必须的——玩家是在「这个包刚下失败」的当口选的，如果要等
      * 重启才生效，他下一次重试还是会以同样的方式失败，然后得出「这个按钮没用」
@@ -105,20 +109,6 @@ public final class CNDownloadMode {
      * @return 切换后的实际状态（强制打开时，传 false 也仍然是 true）
      */
     public static boolean setPlayerChoice(boolean on) {
-        try {
-            File f = new File(FLAG_PATH);
-            if (on) {
-                File parent = f.getParentFile();
-                if (parent != null && !parent.isDirectory()) parent.mkdirs();
-                if (!f.isFile() && !f.createNewFile() && !f.isFile()) {
-                    CNLog.w(TAG, "写不出单线程标记，本次仅内存生效: " + FLAG_PATH);
-                }
-            } else if (f.isFile() && !f.delete() && f.isFile()) {
-                CNLog.w(TAG, "删不掉单线程标记: " + FLAG_PATH);
-            }
-        } catch (Throwable t) {
-            CNLog.w(TAG, "切换单线程标记失败（本次仅内存生效）: " + t);
-        }
         playerChoice = Boolean.valueOf(on);
         boolean effective = singleThread();
         applyNow();
@@ -162,11 +152,11 @@ public final class CNDownloadMode {
     public static String describe() {
         if (!singleThread()) return "多线程分片";
         if (CNDebugFlags.isOn(CNDebugFlags.USE_SINGLE_THREAD)) return "单线程（调试开关强制）";
-        if (CNMirrors.forceSingleThread()) return "单线程（云端强制）";
-        return "单线程（你选的）";
+        if (playerWants()) return "单线程（你选的，仅本次启动）";
+        return "单线程（云端）";
     }
 
     // ---- JVM 回归测试入口 ----
-    public static String flagPathForTest() { return FLAG_PATH; }
+    /** 回到「本次启动还没表过态」。真机上每次启动本来就是这个状态。 */
     public static void resetCacheForTest() { playerChoice = null; }
 }
