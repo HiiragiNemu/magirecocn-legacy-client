@@ -73,6 +73,25 @@ public final class CNDebugBridge {
     /** native 表是扁平三元组：名字, 说明, 当前是否生效。 */
     private static final int NATIVE_COLS = 3;
 
+    /**
+     * 不进面板的「断同步」开关（设计理念 §2-P7）。
+     *
+     * <p>这三个开关的效果是「让远端配置/更新对这台客户端失效」：版本检查、热更、
+     * 线路配置（换线、proxy 模式、force_aria2 都走 config.json）。客户端版本号烧在
+     * native 里，APK 外观完全一样——玩家一旦切断下发通道，没有任何外部信号能发现
+     * 他已掉队，图标、版本号全都正常，只是我们再也推不动他。所以它们<b>一律不进
+     * 面板</b>，只保留给维护者 su 手动排障用。
+     *
+     * <p>过滤只在面板视图（{@link #flagTable} / {@link #allFlagNames}）出口做：
+     * {@link #activeFlags} / {@link #hudText} / {@link #hasPendingChanges}
+     * <b>不过滤</b>——维护者手动打开时 HUD 照常列出，开发者看截图依然能发现。
+     * 过滤名单放在接线层而不是界面层，是为了出错风险归一到一处（§11-6d）。
+     */
+    private static final Set<String> PANEL_HIDDEN = new HashSet<String>(java.util.Arrays.asList(
+            "skipVersionCheck",
+            "skipHotUpdate",
+            "skipMirrorConfig"));
+
     private static volatile Boolean allowedCache;
     private static volatile boolean active;
 
@@ -126,11 +145,12 @@ public final class CNDebugBridge {
     /**
      * 唯一的挂载入口：允许就把悬浮窗本体叫起来。任何情况下都不抛。
      *
-     * <p>用反射找本体，是因为<b>接线先于本体落地</b>：这一版只有接线，
-     * {@code CNDebugOverlay} 还不存在，直接引用连编译都过不去。反射还顺带挡住
-     * 另一种事故——本仓库的 dex 分组是按文件名排除法分的，某个类漏进任何一组
-     * 就会「编译得出 .class 却进不了 dex」，真机上直接 NoClassDefFoundError
-     * （CNBgm 撞过一次）。反射路径下那种情况只是悬浮窗不出现，游戏照跑。
+     * <p>用反射找本体。<b>最初</b>的理由是接线先于本体落地——那时
+     * {@code CNDebugOverlay} 还不存在，直接引用连编译都过不去。本体现在已经有了，
+     * 但反射<b>保留</b>，因为第二个理由一直成立：本仓库的 dex 分组是按文件名
+     * 排除法分的，某个类漏进任何一组就会「编译得出 .class 却进不了 dex」，真机上
+     * 直接 NoClassDefFoundError（{@code CNBgm} 撞过一次，静态检查一律看不见）。
+     * 走反射时那种事故只是悬浮窗不出现，游戏照跑；直接引用则是整条安装线炸掉。
      */
     public static boolean mount(Activity act) {
         if (act == null || !overlayAllowed()) return false;
@@ -139,7 +159,10 @@ public final class CNDebugBridge {
             Object r = body.getMethod("mount", Activity.class).invoke(null, act);
             return (r instanceof Boolean) && ((Boolean) r).booleanValue();
         } catch (ClassNotFoundException e) {
-            CNLog.i(TAG, "调试总闸是开的，但悬浮窗本体尚未实现（接线已就绪）");
+            // 本体本该在（已随接线一起入库）。走到这里说明它没进 dex——
+            // 见上方注释里那条 dex 分组的坑，日志要说得出这个可能性。
+            CNLog.w(TAG, "调试总闸是开的，但找不到 CNDebugOverlay"
+                    + "（多半是它没进任何一组 dex，见 build-apk.yml 的分组）");
             return false;
         } catch (Throwable t) {
             CNLog.w(TAG, "调试悬浮窗挂载失败（不影响游戏）: " + t);
@@ -158,12 +181,23 @@ public final class CNDebugBridge {
      * native 侧取不到（库没起来/没绑上）就只回 Java 侧那份，不抛。
      */
     public static String[][] flagTable() {
+        return flagTable(true);
+    }
+
+    /**
+     * {@link #flagTable()} 的不过滤版本与过滤版本的公共实现。
+     * {@code forPanel} 为 true 时剔除 {@link #PANEL_HIDDEN}（P7）；
+     * activeFlags / hasPendingChanges 走 false 那条，维护者手动开的断同步开关
+     * 照样能被 HUD 看见。
+     */
+    private static String[][] flagTable(boolean forPanel) {
         Set<String> disk = CNDebugFlags.onDisk();
         List<String[]> rows = new ArrayList<String[]>();
 
         String[][] java = CNDebugFlags.knownTable();
         for (int i = 0; i < java.length; i++) {
             String name = java[i][0];
+            if (forPanel && PANEL_HIDDEN.contains(name)) continue;
             rows.add(row(name, java[i][1], "java",
                     disk.contains(name), CNDebugFlags.isOn(name)));
         }
@@ -172,6 +206,7 @@ public final class CNDebugBridge {
         for (int i = 0; nat != null && i + NATIVE_COLS <= nat.length; i += NATIVE_COLS) {
             String name = nat[i];
             if (name == null || name.length() == 0) continue;
+            if (forPanel && PANEL_HIDDEN.contains(name)) continue;
             rows.add(row(name, nat[i + 1], "native",
                     disk.contains(name), "1".equals(nat[i + 2])));
         }
@@ -237,19 +272,34 @@ public final class CNDebugBridge {
      * 这个行为」，而不是「下次启动会怎样」。勾了没重启的那些属于后者。
      */
     public static List<String> activeFlags() {
-        String[][] table = flagTable();
+        // 不过滤（P7）：维护者 su 手动打开的断同步开关也必须在这里看得见。
+        return activeFlagsOf(flagTable(false));
+    }
+
+    /**
+     * {@link #activeFlags} 的纯函数部分：给定全表，挑出「正在生效」的名字。
+     * 与 {@link #formatHud} 同一个拆法——测试若照抄一份，测的就是副本不是真代码。
+     */
+    public static List<String> activeFlagsOf(String[][] table) {
         List<String> on = new ArrayList<String>();
-        for (int i = 0; i < table.length; i++) {
-            if ("1".equals(table[i][COL_ON_BOOT])) on.add(table[i][COL_NAME]);
+        for (int i = 0; table != null && i < table.length; i++) {
+            if (table[i] != null && table[i].length >= COLS
+                    && "1".equals(table[i][COL_ON_BOOT])) on.add(table[i][COL_NAME]);
         }
         return on;
     }
 
     /** 磁盘上与正在生效的不一致——即「改了还没重启」。 */
     public static boolean hasPendingChanges() {
-        String[][] table = flagTable();
-        for (int i = 0; i < table.length; i++) {
-            if (!table[i][COL_ON_DISK].equals(table[i][COL_ON_BOOT])) return true;
+        // 不过滤，理由同 activeFlags。
+        return pendingIn(flagTable(false));
+    }
+
+    /** {@link #hasPendingChanges} 的纯函数部分。 */
+    public static boolean pendingIn(String[][] table) {
+        for (int i = 0; table != null && i < table.length; i++) {
+            if (table[i] != null && table[i].length >= COLS
+                    && !table[i][COL_ON_DISK].equals(table[i][COL_ON_BOOT])) return true;
         }
         return false;
     }
@@ -435,4 +485,8 @@ public final class CNDebugBridge {
     }
     public static int hudMaxNamesForTest() { return HUD_MAX_NAMES; }
     public static Set<String> newSetForTest() { return new HashSet<String>(); }
+    /** 不过滤（P7）的全表：给「维护者手动开的开关仍出现在 activeFlags」用例用。 */
+    public static String[][] rawFlagTableForTest() { return flagTable(false); }
+    /** P7 过滤名单的只读校验口：名单长什么样由本类说了算。 */
+    public static boolean panelHidesForTest(String name) { return PANEL_HIDDEN.contains(name); }
 }

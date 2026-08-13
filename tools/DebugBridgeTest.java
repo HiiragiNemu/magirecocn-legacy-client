@@ -101,6 +101,53 @@ public class DebugBridgeTest {
         }
         check("[5d] 不再有 enableOverlay 自举开关", !hasEnableOverlay);
 
+        // ── [5e] P7：断同步开关不进面板，但 HUD 照常看得见 ───────────
+        // skipVersionCheck / skipHotUpdate / skipMirrorConfig 会切断服务器→客户端的
+        // 下发通道（设计理念 §2-P7），一律不进面板；过滤做在接线层出口（§11-6d），
+        // 不抄进界面层。但维护者 su 手动打开时，activeFlags/HUD 必须照常列出——
+        // 开发者看截图依然能发现。
+        check("[5e] P7 过滤名单正是那三个断同步开关",
+                CNDebugBridge.panelHidesForTest("skipVersionCheck")
+                && CNDebugBridge.panelHidesForTest("skipHotUpdate")
+                && CNDebugBridge.panelHidesForTest("skipMirrorConfig")
+                && !CNDebugBridge.panelHidesForTest("skipInstaller"));
+
+        String[][] panel = CNDebugBridge.flagTable();
+        boolean leaked = false;
+        for (int i = 0; i < panel.length; i++) {
+            String n = panel[i][CNDebugBridge.COL_NAME];
+            if ("skipVersionCheck".equals(n) || "skipHotUpdate".equals(n)
+                    || "skipMirrorConfig".equals(n)) leaked = true;
+        }
+        check("[5f] 三开关不出现在 flagTable（面板视图）", !leaked && panel.length > 0);
+
+        boolean namesLeak = false;
+        List<String> all = CNDebugBridge.allFlagNames();
+        for (int i = 0; i < all.size(); i++) {
+            String n = all.get(i);
+            if ("skipVersionCheck".equals(n) || "skipHotUpdate".equals(n)
+                    || "skipMirrorConfig".equals(n)) namesLeak = true;
+        }
+        check("[5g] 三开关也不出现在 allFlagNames", !namesLeak);
+
+        // 不过滤的全表里它们还在（JVM 上只有 Java 侧 15 行，三个都是 Java 侧开关），
+        // 把 skipHotUpdate 标成「正在生效」后，activeFlags 的纯函数必须挑出它——
+        // 这正是维护者手动打开时 HUD 会显示它的那条路。
+        String[][] raw = CNDebugBridge.rawFlagTableForTest();
+        boolean rawHas = false;
+        boolean activeHas = false;
+        for (int i = 0; i < raw.length; i++) {
+            if ("skipHotUpdate".equals(raw[i][CNDebugBridge.COL_NAME])) {
+                rawHas = true;
+                raw[i][CNDebugBridge.COL_ON_BOOT] = "1";   // 模拟维护者手动打开并重启后
+            }
+        }
+        List<String> active = CNDebugBridge.activeFlagsOf(raw);
+        for (int i = 0; i < active.size(); i++) {
+            if ("skipHotUpdate".equals(active.get(i))) activeHas = true;
+        }
+        check("[5h] 开着的 skipHotUpdate 仍出现在 activeFlags（不过滤）", rawHas && activeHas);
+
         // ── [6] 总闸关时拒绝写盘 ────────────────────────────────────
         // 分界写在代码里，不是只写在界面上：正式发布包翻了那个布尔之后，
         // 任何一处调用都不该还能写进调试目录。

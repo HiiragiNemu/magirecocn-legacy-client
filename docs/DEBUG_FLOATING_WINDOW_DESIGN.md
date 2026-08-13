@@ -1,9 +1,11 @@
 # 调试悬浮窗方案
 
-> 状态：**接线已实现，悬浮窗本体未实现**。
+> 状态：**已全部落地**。native 总闸 + 开关表 JNI 导出、`CNDebugBridge` 接线层、
+> `CNDebugOverlay` 界面本体、浮层让位逻辑、边界检查、回归测试。
 >
-> 已落地：native 总闸 + 开关表 JNI 导出、`CNDebugBridge` 接线层、
-> 浮层让位逻辑、边界检查、回归测试。缺的只有 `CNDebugOverlay`（界面本体）。
+> 界面的取舍与文案规则另见 [`DEBUG_OVERLAY_DESIGN_PRINCIPLES.md`](./DEBUG_OVERLAY_DESIGN_PRINCIPLES.md)
+> ——那份是界面的事实来源（用户画像、六条设计原则、开关分类与白话文案），
+> 本文管的是「为什么这么立项」与接线层的判据。
 >
 > ⚠ **本文档 v1 有两处硬错，已在下文改正**，列在这里免得有人只读了旧版：
 >
@@ -225,7 +227,7 @@ static const bool DEBUG_OVERLAY_ENABLED = (MAGIA_DEBUG_OVERLAY != 0);
 | `check-debug-flag-boundary.py` | 保护区禁止 `CNDebugBridge` / `CNDebugOverlay` | ✅ |
 | `check-download-ui-contract.py` | 断言 `SYSTEM_ALERT_WINDOW` **必须在**（原断言是反的） | ✅ |
 | `tools/DebugBridgeTest.java` | 27 条：总闸 fail-closed、接管判据、HUD 排版、名字白名单 | ✅ |
-| 新增 `CNDebugOverlay.java` | **悬浮窗本体**：`WindowManager` 挂载、拖动、列表、常驻小字 | ❌ 未做 |
+| 新增 `CNDebugOverlay.java` | **悬浮窗本体**：`WindowManager` 挂载、拖动、页面树、常驻小字、权限引导 | ✅ |
 
 ### 本体接进来时要做的两件事
 
