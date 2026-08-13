@@ -692,52 +692,23 @@ public class CNCNDownloadUI {
         mainRow.addView(leftCol, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.MATCH_PARENT, 0.38f));
 
-        LinearLayout brandRow = new LinearLayout(act);
-        brandRow.setOrientation(LinearLayout.HORIZONTAL);
-        brandRow.setGravity(Gravity.CENTER_VERTICAL);
-        leftCol.addView(brandRow, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 66)));
-
+        // Logo 整幅在上、贡献者列表在下。9688f7e7 曾改成「Logo 122dp 靠左 +
+        // 右侧三行品牌文字」，观感上不成立，已退回。那三行文字也一并去掉：
+        // MadeInMagius / PhotonFlow 在下方贡献者列表与底部署名条里都已经有，
+        // 品牌区再写一遍是重复，不是信息。
         ImageView logoView = new ImageView(act);
         logoView.setScaleType(ImageView.ScaleType.FIT_CENTER);
         loadBitmapFromAssets(act, LOGO_ASSET, logoView);
         LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(
-                dp(act, 122), dp(act, 64));
-        logoLp.rightMargin = dp(act, 8);
-        brandRow.addView(logoView, logoLp);
-
-        LinearLayout brandText = new LinearLayout(act);
-        brandText.setOrientation(LinearLayout.VERTICAL);
-        brandText.setGravity(Gravity.CENTER_VERTICAL);
-        brandRow.addView(brandText, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
-        TextView brandTitle = new TextView(act);
-        brandTitle.setText("魔法纪录Totentanz中文化");
-        brandTitle.setTextColor(COLOR_ACCENT);
-        brandTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f);
-        brandTitle.setTypeface(brandTitle.getTypeface(), Typeface.BOLD);
-        brandText.addView(brandTitle);
-        TextView brandCore = new TextView(act);
-        brandCore.setText("核心逆向开发：MadeInMagius");
-        brandCore.setTextColor(COLOR_TEXT);
-        brandCore.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f);
-        brandCore.setSingleLine(true);
-        brandCore.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        brandText.addView(brandCore);
-        TextView brandAuto = new TextView(act);
-        brandAuto.setText("补丁与自动化：PhotonFlow");
-        brandAuto.setTextColor(COLOR_TEXT);
-        brandAuto.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f);
-        brandAuto.setSingleLine(true);
-        brandAuto.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        brandText.addView(brandAuto);
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 64));
+        logoLp.bottomMargin = dp(act, 8);
+        leftCol.addView(logoView, logoLp);
 
         View divider = new View(act);
         divider.setBackgroundColor(COLOR_CARD_STK);
         LinearLayout.LayoutParams divLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 1));
-        divLp.topMargin = dp(act, 3);
-        divLp.bottomMargin = dp(act, 3);
+        divLp.bottomMargin = dp(act, 8);
         leftCol.addView(divider, divLp);
 
         ScrollView contribScroll = new ScrollView(act);
@@ -762,7 +733,7 @@ public class CNCNDownloadUI {
         LinearLayout headRow = new LinearLayout(act);
         headRow.setOrientation(LinearLayout.HORIZONTAL);
         headRow.setGravity(Gravity.CENTER_VERTICAL);
-        rightCol.addView(headRow, lpRow(0, dp(act, 1)));
+        rightCol.addView(headRow, lpRow(0, dp(act, 4)));
 
         vPhase = new TextView(act);
         vPhase.setText(phaseText);
@@ -787,10 +758,13 @@ public class CNCNDownloadUI {
         vStatus.setText(detailText);
         vStatus.setTextColor(COLOR_TEXT);
         vStatus.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
-        vStatus.setMinLines(1);
+        // 固定两行：首屏那句要交代「热更新内容已排到最前」，一行放不下。
+        // min=max=2 是为了让这一行的高度恒定——否则文案在一行/两行之间变动时，
+        // 下面的文件列表会跟着上下跳。
+        vStatus.setMinLines(2);
         vStatus.setMaxLines(2);
         vStatus.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        rightCol.addView(vStatus, lpRow(0, dp(act, 2)));
+        rightCol.addView(vStatus, lpRow(0, dp(act, 6)));
 
         ScrollView slotScroll = new ScrollView(act);
         slotScroll.setTag(CNDownloadUiAssist.TAG_V_SCROLL);
@@ -812,7 +786,7 @@ public class CNCNDownloadUI {
         LinearLayout totalRow = new LinearLayout(act);
         totalRow.setOrientation(LinearLayout.HORIZONTAL);
         totalRow.setGravity(Gravity.CENTER_VERTICAL);
-        rightCol.addView(totalRow, lpRow(dp(act, 4), dp(act, 1)));
+        rightCol.addView(totalRow, lpRow(dp(act, 8), dp(act, 2)));
 
         vOverallText = new TextView(act);
         vOverallText.setText("总进度");
@@ -835,15 +809,8 @@ public class CNCNDownloadUI {
         progressBarOverall.setMax(100);
         progressBarOverall.setProgress(0);
         tintBar(progressBarOverall, COLOR_ACCENT);
-        LinearLayout overallBarRow = new LinearLayout(act);
-        overallBarRow.setOrientation(LinearLayout.HORIZONTAL);
-        rightCol.addView(overallBarRow, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 11)));
-        overallBarRow.addView(progressBarOverall, new LinearLayout.LayoutParams(
-                0, dp(act, 11), 3f));
-        View overallSpacer = new View(act);
-        overallBarRow.addView(overallSpacer, new LinearLayout.LayoutParams(
-                0, dp(act, 1), 1f));
+        rightCol.addView(progressBarOverall, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 10)));
 
         // ── 第 3 层：左上角 LOG 胶囊 ──
         logPillBg = new GradientDrawable();
