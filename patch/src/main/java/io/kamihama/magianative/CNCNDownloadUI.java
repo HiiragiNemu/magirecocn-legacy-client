@@ -612,13 +612,31 @@ public class CNCNDownloadUI {
                 Bitmap bm;
                 InputStream is = act.getAssets().open(assetPath);
                 try {
-                    bm = BitmapFactory.decodeStream(is);
+                    // inScaled=false：assets 下的图没有密度限定目录，默认解码会按
+                    // 设备 densityDpi 把它放大（这台 3392×2400 的机器上 1024² 会被
+                    // 放成 2688²），白白吃内存，而且解码失败时下面那个 catch 会把
+                    // OOM 一声不响地吞掉——表现就是「背景盖不全 / 只剩兜底色」。
+                    //
+                    // 缩放交给 ImageView 的 CENTER_CROP 去做：它是绘制时的矩阵变换，
+                    // 不额外占内存，且按定义一定盖满，与屏幕多大无关。
+                    BitmapFactory.Options opts = new BitmapFactory.Options();
+                    opts.inScaled = false;
+                    bm = BitmapFactory.decodeStream(is, null, opts);
                 } finally {
                     try { is.close(); } catch (Throwable ignore) {}
                 }
-                if (bm == null) return;
+                if (bm == null) {
+                    CNLog.w(TAG, "背景图解码失败（将只剩兜底底色）: " + assetPath);
+                    return;
+                }
+                CNLog.i(TAG, "背景图已解码 " + assetPath
+                        + " " + bm.getWidth() + "x" + bm.getHeight());
                 act.runOnUiThread(new ApplyBitmap(target, bm));
-            } catch (Throwable ignore) {}
+            } catch (Throwable t) {
+                // 以前这里是 catch (Throwable ignore) {}。OOM 被吞掉之后，
+                // 「背景盖不全」在日志上没有任何痕迹（2026-08-13 真机）。
+                CNLog.w(TAG, "背景图加载失败（将只剩兜底底色）: " + assetPath + " : " + t);
+            }
         }
     }
 
@@ -1550,15 +1568,16 @@ public class CNCNDownloadUI {
             bar.setMax(100);
             bar.setProgress(0);
             tintBar(bar, 0x55888888);
-            LinearLayout barRow = new LinearLayout(act);
-            barRow.setOrientation(LinearLayout.HORIZONTAL);
-            LinearLayout.LayoutParams barRowLp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 8));
-            barRowLp.topMargin = dp(act, 1);
-            row.addView(barRow, barRowLp);
-            barRow.addView(bar, new LinearLayout.LayoutParams(0, dp(act, 8), 3f));
-            View barSpacer = new View(act);
-            barRow.addView(barSpacer, new LinearLayout.LayoutParams(0, dp(act, 1), 1f));
+            // 整宽，与上一行右对齐的「文字进度」右端对齐。
+            //
+            // 9688f7e7 曾把它塞进一个 3:1 的横排里（条占 3、右边留 1 份空白），
+            // 于是进度条在 75% 处就断了，而同一行右上角的文字进度仍然顶到最右——
+            // 两条右边界对不上，整块就散了。总进度条那个同款 spacer 已在
+            // 0788a801 退掉，这里是漏网的第二处。
+            LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 6));
+            barLp.topMargin = dp(act, 2);
+            row.addView(bar, barLp);
 
             View div = new View(act);
             div.setBackgroundColor(darkMode ? 0x22FFFFFF : 0x18000000);
