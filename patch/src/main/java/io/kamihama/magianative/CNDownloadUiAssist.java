@@ -78,7 +78,6 @@ public final class CNDownloadUiAssist {
     private static FrameLayout confirmModal;
     private static FrameLayout displayModal;
     private static View splitHandle;
-    private static TextView splitLabel;
     private static SharedPreferences prefs;
     private static int scalePct = 100;
     private static int splitPct = SPLIT_DEFAULT;
@@ -213,7 +212,6 @@ public final class CNDownloadUiAssist {
             confirmModal = null;
             displayModal = null;
             splitHandle = null;
-            splitLabel = null;
             baseContentWidth = 0;
             BASE_TEXT_PX.clear();
             loadPrefs(overlay.getContext());
@@ -245,8 +243,10 @@ public final class CNDownloadUiAssist {
         if (prefs == null && context != null) {
             prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         }
+        if (prefs != null) scalePct = clamp(prefs.getInt(PREF_SCALE, 100), 75, 150);
+        // 分开写而不是并进上一行：字号那条一个字都不动，改分界线时不该连带
+        // 出现在它的 diff 里。
         if (prefs != null) {
-            scalePct = clamp(prefs.getInt(PREF_SCALE, 100), 75, 150);
             splitPct = clamp(prefs.getInt(PREF_SPLIT, SPLIT_DEFAULT),
                     SPLIT_MIN, SPLIT_MAX);
         }
@@ -276,7 +276,6 @@ public final class CNDownloadUiAssist {
         confirmModal = null;
         displayModal = null;
         splitHandle = null;
-        splitLabel = null;
         baseContentWidth = 0;
         BASE_TEXT_PX.clear();
     }
@@ -359,11 +358,6 @@ public final class CNDownloadUiAssist {
         }
         TextView chip = createTopChip(row, TAG_DISPLAY);
         chip.setOnClickListener(new DisplayClick());
-        // 点开弹窗（细调）与长按拖动（粗调）并存，见 DisplayDrag 的注释
-        DisplayDrag drag = new DisplayDrag();
-        chip.setLongClickable(true);
-        chip.setOnLongClickListener(drag);
-        chip.setOnTouchListener(drag);
         row.addView(chip, topChipLp(chip));
         displayChip = chip;
     }
@@ -657,34 +651,6 @@ String extra = activeNow
         plusLp.leftMargin = dp(plus, 8);
         controls.addView(plus, plusLp);
 
-        // ── 左右分界线 ──
-        // 拖动本身在分界线上做（那里才看得见效果，弹窗会盖住内容），这里只放
-        // 说明和复位：拖歪了要能一键回到 38/62，不然只能靠手感往回蹭。
-        TextView splitTitle = text(act, "左右分界线", 14f,
-                color("COLOR_ACCENT", 0xFFD63384));
-        splitTitle.setTypeface(splitTitle.getTypeface(), Typeface.BOLD);
-        LinearLayout.LayoutParams splitTitleLp = rowLp(splitTitle, 14, 4);
-        panel.addView(splitTitle, splitTitleLp);
-
-        TextView splitHint = text(act,
-                "长按左右两列中间那根竖线，然后左右拖动即可调整宽度分配。",
-                12.5f, color("COLOR_LOG_PANEL_TEXT", 0xFF2A1A3B));
-        splitHint.setLineSpacing(dp(splitHint, 2), 1f);
-        panel.addView(splitHint, rowLp(splitHint, 0, 8));
-
-        LinearLayout splitCtl = new LinearLayout(act);
-        splitCtl.setOrientation(LinearLayout.HORIZONTAL);
-        splitCtl.setGravity(Gravity.CENTER_VERTICAL);
-        panel.addView(splitCtl, rowLp(splitCtl, 0, 14));
-        splitLabel = text(act, "左右分界 " + splitPct + "% / " + (100 - splitPct) + "%",
-                13f, color("COLOR_ACCENT2", 0xFF9C5BC2));
-        splitLabel.setTypeface(splitLabel.getTypeface(), Typeface.BOLD);
-        splitCtl.addView(splitLabel, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView splitReset = dialogButton(act, "复位 " + SPLIT_DEFAULT + "%", false);
-        splitReset.setOnClickListener(new SplitResetClick());
-        splitCtl.addView(splitReset);
-
         TextView done = dialogButton(act, "完成", true);
         done.setOnClickListener(new CloseDisplayClick());
         LinearLayout.LayoutParams doneLp = new LinearLayout.LayoutParams(
@@ -712,14 +678,6 @@ String extra = activeNow
 
     private static final class ScaleResetClick implements View.OnClickListener {
         @Override public void onClick(View v) { setScale(100); }
-    }
-
-    private static final class SplitResetClick implements View.OnClickListener {
-        @Override public void onClick(View v) {
-            setSplit(SPLIT_DEFAULT);
-            if (prefs != null) prefs.edit().putInt(PREF_SPLIT, splitPct).apply();
-            CNCNDownloadUI.noteInteraction();
-        }
     }
 
     private static void setScale(int value) {
@@ -888,8 +846,6 @@ String extra = activeNow
         setWeight(left, splitPct / 100f);
         setWeight(right, (100 - splitPct) / 100f);
         row.requestLayout();
-        if (splitLabel != null) splitLabel.setText("左右分界 " + splitPct + "% / "
-                + (100 - splitPct) + "%");
     }
 
     private static boolean weighted(View v) {
@@ -933,6 +889,7 @@ String extra = activeNow
         private boolean dragging;
         private float startX;
         private int startPct;
+        private long lastTapAt;
 
         @Override public boolean onLongClick(View v) {
             dragging = true;
@@ -944,7 +901,7 @@ String extra = activeNow
             styleSplit(true);
             CNCNDownloadUI.noteInteraction();
             CNCNDownloadUI.toast(RestClient.getCurrentActivity(),
-                    "左右拖动调整分界；松手保存");
+                    "左右拖动调整分界；松手保存，双击复位");
             return true;
         }
 
@@ -967,17 +924,51 @@ String extra = activeNow
                 }
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
-                    if (!dragging) return false;
+                    if (!dragging) {
+                        if (e.getActionMasked() == MotionEvent.ACTION_UP) checkDoubleTap(v, e);
+                        return false;
+                    }
                     dragging = false;
                     grabGesture(v, false);
                     styleSplit(false);
-                    if (prefs != null) prefs.edit().putInt(PREF_SPLIT, splitPct).apply();
+                    persistSplit();
                     CNCNDownloadUI.noteInteraction();
                     return true;
                 default:
                     return false;
             }
         }
+
+        /**
+         * 双击分界线复位到默认。
+         *
+         * <p>复位入口放在分界线自己身上，而不是借「显示大小」弹窗的地儿：那个
+         * 弹窗是字号的，不该塞进别的功能。双击也不跟长按抢——长按走的是
+         * {@code dragging} 那条路，到不了这里。
+         */
+        private void checkDoubleTap(View v, MotionEvent e) {
+            int slop = android.view.ViewConfiguration.get(v.getContext())
+                    .getScaledTouchSlop();
+            long now = android.os.SystemClock.uptimeMillis();
+            boolean moved = Math.abs(e.getRawX() - startX) > slop;
+            if (!moved && lastTapAt != 0L
+                    && now - lastTapAt <= android.view.ViewConfiguration.getDoubleTapTimeout()) {
+                lastTapAt = 0L;
+                setSplit(SPLIT_DEFAULT);
+                persistSplit();
+                try { v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS); }
+                catch (Throwable ignore) {}
+                CNCNDownloadUI.noteInteraction();
+                CNCNDownloadUI.toast(RestClient.getCurrentActivity(),
+                        "分界已复位到 " + SPLIT_DEFAULT + "%");
+            } else {
+                lastTapAt = moved ? 0L : now;
+            }
+        }
+    }
+
+    private static void persistSplit() {
+        if (prefs != null) prefs.edit().putInt(PREF_SPLIT, splitPct).apply();
     }
 
     /**
@@ -991,60 +982,6 @@ String extra = activeNow
             android.view.ViewParent p = v.getParent();
             if (p != null) p.requestDisallowInterceptTouchEvent(grab);
         } catch (Throwable ignore) {}
-    }
-
-    // ══ 字号胶囊：点开弹窗（原有），长按后横向拖动直接调（新增）══════════
-    //
-    // 不动原来的点击行为——弹窗里有滑块、A−/A+、恢复 100%，那些还得留着。
-    // 加长按拖动是因为「调字号」这件事本身要反复试，每次都开一次弹窗、
-    // 弹窗又盖住了要看的内容，试到第三次就烦了。手势与分界线保持一致。
-
-    private static final class DisplayDrag
-            implements View.OnTouchListener, View.OnLongClickListener {
-        private boolean dragging;
-        private float startX;
-        private int startPct;
-
-        @Override public boolean onLongClick(View v) {
-            dragging = true;
-            startPct = scalePct;
-            grabGesture(v, true);
-            try { v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS); }
-            catch (Throwable ignore) {}
-            CNCNDownloadUI.noteInteraction();
-            CNCNDownloadUI.toast(RestClient.getCurrentActivity(),
-                    "左右拖动调整字号；松手保存");
-            return true;
-        }
-
-        @Override public boolean onTouch(View v, MotionEvent e) {
-            switch (e.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN:
-                    startX = e.getRawX();
-                    startPct = scalePct;
-                    dragging = false;
-                    return false;
-                case MotionEvent.ACTION_MOVE: {
-                    if (!dragging) return false;
-                    // 一屏宽 ≈ 满量程（75–150）。比分界线灵敏度低一档：
-                    // 字号每一步都会重排整页，太灵敏会拖得满屏乱跳。
-                    int span = Math.max(1, v.getResources()
-                            .getDisplayMetrics().widthPixels);
-                    float delta = e.getRawX() - startX;
-                    setScale(startPct + Math.round(delta * 75f / span));
-                    return true;
-                }
-                case MotionEvent.ACTION_UP:
-                case MotionEvent.ACTION_CANCEL:
-                    if (!dragging) return false;
-                    dragging = false;
-                    grabGesture(v, false);
-                    CNCNDownloadUI.noteInteraction();
-                    return true;
-                default:
-                    return false;
-            }
-        }
     }
 
     /** 弹窗宽度永远不超过当前逻辑屏幕减 40dp，覆盖窄屏、分屏和高 DPI。 */
@@ -1110,7 +1047,6 @@ String extra = activeNow
         displayModal = null;
         scaleLabel = null;
         scaleSeek = null;
-        splitLabel = null;
         if (m != null && m.getParent() instanceof ViewGroup) {
             ((ViewGroup) m.getParent()).removeView(m);
         }
