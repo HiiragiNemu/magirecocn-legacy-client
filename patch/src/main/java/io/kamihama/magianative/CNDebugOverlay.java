@@ -51,10 +51,12 @@ import java.util.concurrent.Executors;
  * 线程 sleep，两个都不许在 UI 线程跑——都走 {@link #bgExecutor} 这个单线程
  * 执行器（起的是线程池工作线程，本体自己不维护任何后台循环）。
  *
- * <h2>常驻 HUD 不随小球收起</h2>
+ * <h2>常驻提示条已搬走</h2>
  *
- * HUD 是独立小窗（{@link #hudView}），内容 null 时整窗隐藏，非 null 时永远浮在
- * 屏幕上——它是开发者看截图时的第一信息源（设计 §7）。
+ * 屏幕上缘那行「调试模式：…」小字现在归 {@link CNDebugHud} 管，挂在 Activity 的
+ * decorView 上、不需要悬浮窗权限、也不看 native 总闸。理由见那边的类注释：它是
+ * <b>监测</b>用的，而原先它同时被总闸和悬浮窗权限两道闸挡着——某人开了开关又撤掉
+ * 权限，开关照旧生效、提示却没了，恰好在最需要它的时候失效。
  *
  * <p>挂载入口是经反射调的 {@link #mount(Activity)}（见 {@link CNDebugBridge#mount}，
  * 反射的理由写在它那里）。本类任何公开路径都不抛异常：悬浮窗出问题最坏应该是
@@ -112,8 +114,6 @@ public final class CNDebugOverlay {
 
     private static TextView ballView;
     private static WindowManager.LayoutParams ballParams;
-    private static TextView hudView;
-    private static WindowManager.LayoutParams hudParams;
     private static FrameLayout panelRoot;
     private static TextView pageTitleView;
     private static LinearLayout pageContent;
@@ -181,7 +181,6 @@ public final class CNDebugOverlay {
             if (ui == null) ui = new Handler(Looper.getMainLooper());
             if (prefs == null) prefs = act.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
             createBall(act);
-            createHud(act);
             CNDebugBridge.setActive(true);          // 只调一次（见上）
             CNLog.i(TAG, "调试悬浮窗本体已挂载");
             return true;
@@ -374,42 +373,7 @@ public final class CNDebugOverlay {
 
     // ══ 常驻 HUD（独立小窗，不随小球收起；null 时整窗隐藏）═══════════════
 
-    private static void createHud(Activity act) {
-        TextView hud = new TextView(act);
-        hud.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f);
-        hud.setTextColor(0xFFFFFFFF);
-        hud.setPadding(dp(act, 10), dp(act, 4), dp(act, 10), dp(act, 4));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0xB0000000);
-        bg.setCornerRadius(dp(act, 10));
-        hud.setBackground(bg);
-        WindowManager.LayoutParams lp = overlayParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        // 纯展示：绝不拦截任何触摸。
-        lp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-        lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-        lp.y = dp(act, 4);
-        hud.setVisibility(View.GONE);
-        wm.addView(hud, lp);
-        hudView = hud;
-        hudParams = lp;
-        refreshHud();   // 挂载即读一次，让 HUD 从启动起就在（此后开面板/保存后再读）
-    }
 
-    /** 唯一会调 {@link CNDebugBridge#hudText()}（读盘）的地方之外壳；时机见类注释。 */
-    private static void refreshHud() {
-        TextView hud = hudView;
-        if (hud == null) return;
-        String text;
-        try { text = CNDebugBridge.hudText(); }
-        catch (Throwable t) { text = null; }
-        if (text == null) {
-            hud.setVisibility(View.GONE);
-        } else {
-            hud.setText(text);
-            hud.setVisibility(View.VISIBLE);
-        }
-    }
 
     // ══ 权限引导页（设计 §3：没授权时替代一切，挂在 decorView 上）═════════
 
@@ -617,7 +581,7 @@ public final class CNDebugOverlay {
         if (act == null || wm == null || panelRoot != null) return;
         try {
             loadFlags();
-            refreshHud();
+            CNDebugHud.refresh();
             refreshBallColor(act);   // 小球底色只在挂载时取过一次，借开面板重取一次
 
             FrameLayout root = new FrameLayout(act);
@@ -1140,7 +1104,17 @@ public final class CNDebugOverlay {
         tail.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
         tail.setTypeface(Typeface.MONOSPACE);
         tail.setTextColor(color("COLOR_LOG_PANEL_TEXT", 0xFF2A1A3B));
-        tail.setTextIsSelectable(true);
+        // ⚠ 绝不能设 setTextIsSelectable(true)。
+        //
+        // 它会给 TextView 装上 ArrowKeyMovementMethod —— 那本身就是一个**可滚动
+        // 且吃触摸**的实现。上一版明明已经把内层 ScrollView 撤了，玩家仍然反馈
+        // 「内外两层滑动条打架」，剩下的那一层就是它：手指落在预览框上时，
+        // TextView 自己先把竖直手势消费掉，外层页面 ScrollView 抢不到。
+        //
+        // 要复制日志有「打包并分享日志」，以及下载浮层 LOG 面板里的「复制全部」，
+        // 不必为此在这里留一个会抢手势的选中态。
+        tail.setTextIsSelectable(false);
+        tail.setMovementMethod(null);
         tail.setPadding(dp(act, 10), dp(act, 8), dp(act, 10), dp(act, 8));
         GradientDrawable tailBg = new GradientDrawable();
         tailBg.setColor(color("COLOR_LOG_PANEL_BG", 0xFFFFFFFF));
@@ -1171,8 +1145,9 @@ public final class CNDebugOverlay {
         if (myLogListener == null) prevLogListener = displaced;
         myLogListener = mine;
         // 进页面就停在最新那一行：这一页存在的理由就是看最后几行。
-        View pageScroll = panelRoot == null ? null : panelRoot.findViewWithTag("pagescroll");
-        if (pageScroll instanceof ScrollView) stickToBottom((ScrollView) pageScroll);
+        // 页面内容是本方法一路加进去的，post 一次未必赶得上最终布局（分享按钮
+        // 还在后面加），所以补一次延时的——两次都只是 fullScroll，重复无害。
+        stickPageToBottom();
 
         TextView share = dialogButton(act, "打包并分享日志", true, false);
         share.setOnClickListener(new ShareLogClick());
@@ -1224,7 +1199,7 @@ public final class CNDebugOverlay {
             // 一来就把他拽回底部，那比不自动滚还难用。
             boolean atBottom = sc instanceof ScrollView && isAtBottom((ScrollView) sc);
             tail.setText(composeTail());
-            if (atBottom) stickToBottom((ScrollView) sc);
+            if (atBottom) stickPageToBottom();
         }
     }
 
@@ -1258,6 +1233,15 @@ public final class CNDebugOverlay {
             // 解析出任何岔子都退回裸文本：日志面板本身不能因为格式化而看不成
             return CNLog.tail(200);
         }
+    }
+
+    /** 把日志页滚到底。分两次：布局这一帧一次，稳定之后再一次。 */
+    private static void stickPageToBottom() {
+        View sc = panelRoot == null ? null : panelRoot.findViewWithTag("pagescroll");
+        if (!(sc instanceof ScrollView)) return;
+        final ScrollView sv = (ScrollView) sc;
+        stickToBottom(sv);
+        if (ui != null) ui.postDelayed(new ScrollBottom(sv), 160L);
     }
 
     private static boolean isAtBottom(ScrollView sv) {
@@ -1334,13 +1318,33 @@ public final class CNDebugOverlay {
 
     // ══ 排查开关 ═══════════════════════════════════════════════════════
 
-    /** 两个读盘时机之一（另一个是打开面板）：快照 + 内存勾选态初始化。 */
+    /**
+     * 两个读盘时机之一（另一个是保存之后）：刷新快照；勾选态<b>只在没有未应用
+     * 改动时</b>才从盘上重置。
+     *
+     * <p>原先无条件 {@code desired.clear()} 再从盘上填。于是：勾了几个开关 →
+     * 顺手退出面板看一眼别的 → 回来发现全没了。玩家会以为自己没点上，或者
+     * 以为这个面板坏了；而他刚才那几下恰恰是在照着排查教程一条条勾。
+     *
+     * <p>现在未应用的改动跨面板开关一直留着，直到「应用并重启」或「放弃改动」。
+     * 没有未应用改动时照旧从盘上重置——那条路要的是「反映磁盘现状」。
+     */
     private static void loadFlags() {
+        boolean keep = dirty();
         try {
             flagSnapshot = CNDebugBridge.flagTable();
         } catch (Throwable t) {
             flagSnapshot = new String[0][];
         }
+        if (keep) {
+            CNLog.i(TAG, "面板重开：保留 " + countUnapplied() + " 项未应用的改动");
+            return;
+        }
+        resetDesiredFromDisk();
+    }
+
+    /** 把内存勾选态对齐到磁盘现状。 */
+    private static void resetDesiredFromDisk() {
         desired.clear();
         for (int i = 0; i < flagSnapshot.length; i++) {
             if ("1".equals(flagSnapshot[i][CNDebugBridge.COL_ON_DISK])) {
@@ -1348,6 +1352,32 @@ public final class CNDebugOverlay {
             }
         }
     }
+
+    /**
+     * 勾选态与磁盘不一致的开关数——也就是「改了但还没点应用」。
+     *
+     * <p>与 {@link #countPending} 是**两件不同的事**，别混：
+     * <ul>
+     *   <li>{@code countUnapplied()}：内存 ≠ 磁盘 —— 还没保存，点「应用并重启」才落盘；</li>
+     *   <li>{@code countPending()}：磁盘 ≠ 本次启动生效值 —— 已保存但要重启才算数。</li>
+     * </ul>
+     * 面板原先只提示后者，于是「勾了没保存」这件事在界面上完全没有痕迹（反馈：
+     * 「调试开关显示窗口不会提示未应用开关」）。
+     */
+    static int countUnapplied() {
+        if (flagSnapshot == null) return 0;
+        int n = 0;
+        for (int i = 0; i < flagSnapshot.length; i++) {
+            String[] row = flagSnapshot[i];
+            if (row == null || row.length < CNDebugBridge.COLS) continue;
+            boolean onDisk = "1".equals(row[CNDebugBridge.COL_ON_DISK]);
+            if (desired.contains(row[CNDebugBridge.COL_NAME]) != onDisk) n++;
+        }
+        return n;
+    }
+
+    /** 有没有未应用的改动。 */
+    static boolean dirty() { return countUnapplied() > 0; }
 
     // ── 分类总览：警告横幅 + 待重启提醒条 + 六分类入口 ─────────────────
 
@@ -1375,9 +1405,13 @@ public final class CNDebugOverlay {
         warn.setBackground(warnBg);
         content.addView(warn, rowLp(act, 0, 10));
 
-        // 待重启三级露出之二：总览提醒条（带「去重启」）
+        // 提醒条要覆盖**两件不同的事**，原先只提后者：
+        //   未应用（内存 ≠ 磁盘）：勾了还没保存，退出面板就白勾——最容易被误以为
+        //                          「点不上」，而它此前在界面上一点痕迹都没有；
+        //   待重启（磁盘 ≠ 生效值）：已保存，重启一次才算数。
+        int unapplied = countUnapplied();
         int pending = countPending(flagSnapshot);
-        if (pending > 0) {
+        if (unapplied > 0 || pending > 0) {
             LinearLayout strip = new LinearLayout(act);
             strip.setOrientation(LinearLayout.HORIZONTAL);
             strip.setGravity(Gravity.CENTER_VERTICAL);
@@ -1387,11 +1421,20 @@ public final class CNDebugOverlay {
             stripBg.setCornerRadius(dp(act, 12));
             stripBg.setStroke(dp(act, 1), C_AMBER);
             strip.setBackground(stripBg);
-            TextView msg = text(act, "有 " + pending + " 个改动还没生效，重启一次游戏才会算数。",
-                    12f, C_AMBER, true);
+            String what;
+            if (unapplied > 0 && pending > 0) {
+                what = "有 " + unapplied + " 个改动还没保存，另有 " + pending
+                        + " 个已保存但要重启才算数。";
+            } else if (unapplied > 0) {
+                what = "有 " + unapplied + " 个改动还没保存——现在退出面板就白勾了。";
+            } else {
+                what = "有 " + pending + " 个改动还没生效，重启一次游戏才会算数。";
+            }
+            TextView msg = text(act, what, 12f, C_AMBER, true);
+            msg.setLineSpacing(dp(act, 2), 1f);
             strip.addView(msg, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            TextView go = dialogButton(act, "去重启", true, false);
+            TextView go = dialogButton(act, unapplied > 0 ? "保存并重启" : "去重启", true, false);
             go.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
             go.setOnClickListener(new ApplyClick());
             strip.addView(go, new LinearLayout.LayoutParams(
@@ -1408,6 +1451,34 @@ public final class CNDebugOverlay {
             int pend = countPendingInGroup(flagSnapshot, def.id);
             if (pend > 0) sub = sub + "（" + pend + " 项待重启）";
             addEntry(content, title, sub, PAGE_CAT_PREFIX + def.id);
+        }
+
+        // 总览页也要有「应用并重启」。原先它只在分类子页底部——而玩家常常是在
+        // 几个分类之间来回勾，勾完自然退回总览，然后在这一页找不到任何提交入口
+        // （反馈：「开关总页面下没有重启按钮」）。同一个 ApplyClick，不是第二套逻辑。
+        LinearLayout ops = new LinearLayout(act);
+        ops.setOrientation(LinearLayout.HORIZONTAL);
+        ops.setGravity(Gravity.END);
+        TextView discard = dialogButton(act, "放弃改动", false, false);
+        discard.setOnClickListener(new DiscardClick());
+        discard.setVisibility(unapplied > 0 ? View.VISIBLE : View.GONE);
+        ops.addView(discard);
+        TextView apply = dialogButton(act, "应用并重启", true, false);
+        apply.setOnClickListener(new ApplyClick());
+        LinearLayout.LayoutParams applyLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        applyLp.leftMargin = dp(act, 10);
+        ops.addView(apply, applyLp);
+        content.addView(ops, rowLp(act, 14, 0));
+    }
+
+    /** 放弃未应用的改动：把勾选态对齐回磁盘现状。 */
+    private static final class DiscardClick implements View.OnClickListener {
+        @Override public void onClick(View v) {
+            resetDesiredFromDisk();
+            CNLog.i(TAG, "已放弃未应用的调试开关改动");
+            toast("已放弃未保存的改动");
+            render();
         }
     }
 
@@ -1806,7 +1877,7 @@ public final class CNDebugOverlay {
         @Override public void run() {
             if (ok) {
                 loadFlags();
-                refreshHud();
+                CNDebugHud.refresh();
                 showResult("已经帮你记好了",
                         "改动要重启一次游戏才会生效。马上会自动重开；没重开的话，手动关掉再打开就行。");
             } else {

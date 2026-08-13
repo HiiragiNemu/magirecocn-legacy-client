@@ -308,6 +308,9 @@ public final class CNDownloaderFix {
     /** 等 Activity 的上限。等不到就放弃，别让守护线程一直空转。 */
     private static final long DEBUG_OVERLAY_WAIT_MS = 60_000L;
 
+    /** 调试提示条只挂一次；它与悬浮窗总闸无关，见 CNDebugHud。 */
+    private static volatile boolean hudMounted;
+
     /**
      * 起一条守护线程等 Activity 出现，然后在 UI 线程上挂调试悬浮窗。
      *
@@ -361,6 +364,17 @@ public final class CNDownloaderFix {
                     // overlayGate() 的 null 表示「还问不到」，与「明确是关」分开，
                     // 这里才能选择继续等而不是放弃。
                     Activity act = RestClient.getCurrentActivity();
+                    // 提示条**先于总闸**挂上，而且完全不等它。
+                    //
+                    // 它归 CNDebugHud 管，挂在 decorView 上、不要悬浮窗权限、也不看
+                    // native 总闸——因为它是「有开关正在生效就得说出来」，与「能不能
+                    // 改开关」是两件事。公测结束后总闸关掉，某台设备上若还留着 flag
+                    // 文件，这行字照样要出现（2026-08-13 维护者提出）。
+                    // 没有开关生效时它自己隐藏，成本为零。
+                    if (act != null && !hudMounted) {
+                        hudMounted = true;
+                        CNDebugHud.mount(act);
+                    }
                     Boolean gate = CNDebugBridge.overlayGate();
                     if (act != null && gate != null) {
                         CNLog.i(TAG, "调试悬浮窗：就绪（等了 "
@@ -382,6 +396,14 @@ public final class CNDownloaderFix {
                     return;
                 }
             }
+            // 等不到总闸也要把提示条挂上——它跟总闸无关。
+            try {
+                Activity late = RestClient.getCurrentActivity();
+                if (late != null && !hudMounted) {
+                    hudMounted = true;
+                    CNDebugHud.mount(late);
+                }
+            } catch (Throwable ignore) {}
             // 超时要说清楚缺的是哪一样，否则又回到「四种可能长得一样」那种局面。
             CNLog.i(TAG, "调试悬浮窗：等超时，本次不挂（不影响游戏）。Activity="
                     + (RestClient.getCurrentActivity() != null ? "有" : "无")

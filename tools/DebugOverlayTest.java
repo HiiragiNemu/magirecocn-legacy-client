@@ -1,4 +1,5 @@
 import io.kamihama.magianative.CNDebugBridge;
+import io.kamihama.magianative.CNDebugHud;
 import io.kamihama.magianative.CNDebugOverlay;
 
 import java.util.ArrayList;
@@ -189,6 +190,31 @@ public class DebugOverlayTest {
         check("[8c] 扫到了成组的 COLOR_* 字段", scanned >= 10);
         check("[8d] 类加载后没有一个 COLOR_* 是全透明的"
                 + (firstBad == null ? "" : "（第一个: " + firstBad + "）"), zeroAlpha == 0);
+
+        // ── 9. 「调试模式已开」那行字与悬浮窗的关系 ────────────────────
+        //
+        // 它是**监测**用的：存在的全部意义是让任何人在任何一张截图上一眼看出
+        // 「这台设备开着调试开关」。原先它是悬浮窗的一个 WindowManager 小窗，
+        // 于是同时被 native 总闸和「显示在其他应用上层」权限挡着——而开关本身
+        // 是读文件生效的，压根不依赖悬浮窗。某人开了开关又回收了悬浮窗权限，
+        // 开关照旧生效、提示却没了，恰好在最需要它的时候失效。
+        //
+        // 判据钉在这里：本类的静态形状（挂 decorView、不看闸、零权限）是被
+        // 一个 public 常量函数声明出来的，谁改回悬浮窗都得先改这个声明。
+        check("[9a] 提示条不受悬浮窗权限与总闸约束",
+                !CNDebugHud.gatedByOverlayForTest());
+        // 反过来也要成立：悬浮窗本体仍然归总闸管。两者不是「一起放开」，
+        // 是「管的事情不同」——总闸管能不能**改**开关，提示条管有开关在生效
+        // 就得说出来。把两者压成同一个布尔量正是上一版的缺陷。
+        // JVM 上没有 native，总闸永远是「问不到」（null）。这正好把两条路的差别
+        // 摆出来：悬浮窗本体走 overlayAllowed()，问不到就不挂；提示条不问它，
+        // 因此在同一台「总闸问不到」的机器上照样该显示。
+        check("[9b] 悬浮窗本体仍归总闸管：问不到时不放行",
+                CNDebugBridge.overlayGate() == null && !CNDebugBridge.overlayAllowed());
+        // 没有任何开关生效时整行隐藏——提示条常驻不等于常显，否则它就成了
+        // 一块永远盖在游戏画面上的黑条。
+        check("[9c] 无开关无待改时提示条没有内容",
+                CNDebugBridge.formatHud(new ArrayList<String>(), false) == null);
 
         System.out.println("通过 " + pass + " / 失败 " + fail);
         if (fail > 0) System.exit(1);

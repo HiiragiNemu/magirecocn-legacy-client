@@ -376,6 +376,46 @@ checks = {
     #    栏宽由权重算但滚动位置没归位。applyScale 收尾必须重新布局并复位滚动条。
     "改字号后重新布局并复位滚动状态":
         followed_by(assist, "root.requestLayout();", "styleScrollbars();"),
+    # 5. 日志预览曾用 setTextIsSelectable(true)——那会顺带装上 ArrowKeyMovementMethod，
+    #    把 TextView 变成一个吃触摸的滚动器，于是它和外层页面滚动容器抢同一个竖直
+    #    手势：吸底吸的是内层，玩家看到的是外层没动。一页只留一个滚动容器。
+    "日志预览不自带滚动器":
+        "tail.setTextIsSelectable(false)" in overlay
+        and "tail.setMovementMethod(null)" in overlay
+        and "setTextIsSelectable(true)" not in code(overlay),
+    # 6+7. 面板重开会把内存里改了还没保存的开关冲掉（改半天关一次全没了），
+    #    且总览页不提示「有未应用的开关」。两种 pending 语义不同，不能压成一个：
+    #    未应用 = 内存 ≠ 磁盘（还没保存）；待重启 = 磁盘 ≠ 启动值（保存了没生效）。
+    "未应用的开关改动跨面板重开保留":
+        "boolean keep = dirty();" in overlay
+        and "if (keep)" in overlay
+        and "resetDesiredFromDisk();" in overlay,
+    "总览同时提示未应用与待重启":
+        "int unapplied = countUnapplied();" in overlay
+        and "static int countUnapplied()" in overlay
+        and "static boolean dirty()" in overlay,
+    # 8. 总览页只能进分组才有重启按钮，改完开关的人在最外层找不到出口。
+    "开关总览页自带应用与丢弃按钮":
+        "DiscardClick" in overlay and "class ApplyClick" in overlay,
+    # 9. 【设计缺陷】「调试模式已开」那行字原先也是 WindowManager 悬浮窗，于是同时
+    #    被 native 总闸和「显示在其他应用上层」权限挡着。可开关本身是**读文件**生效
+    #    的，不依赖悬浮窗——某人开了调试开关又回收了悬浮窗权限，开关照旧生效、提示
+    #    却没了，恰好在最需要它的时候失效。改挂 decorView（应用自己的窗口，零权限），
+    #    并且**不看总闸**：总闸管「能不能改开关」，「有开关正在生效就得说出来」与之无关。
+    "调试提示条不要悬浮窗权限也不看总闸":
+        "gatedByOverlayForTest() { return false; }" in hud
+        and "decor.addView(tv, lp)" in hud
+        and "WindowManager" not in code(hud)
+        and "overlayGate" not in code(hud),
+    "调试提示条已彻底移出悬浮窗":
+        "hudView" not in code(overlay) and "createHud" not in code(overlay)
+        and "refreshHud" not in code(overlay) and "CNDebugHud.refresh()" in overlay,
+    # 挂载顺序也是判据的一部分：先无条件挂提示条，再去问总闸。反过来写的话
+    # 「总闸问不到」这一支会顺带把提示条也吞掉，等于把缺陷原样搬了个家。
+    "提示条的挂载早于并独立于总闸":
+        "CNDebugHud.mount(act);" in downloader
+        and downloader.index("CNDebugHud.mount(act);")
+            < downloader.index("Boolean gate = CNDebugBridge.overlayGate();"),
     "原包自带的悬浮窗权限必须保留": "SYSTEM_ALERT_WINDOW" in manifest,
     "不主动申请全盘存储权限": "MANAGE_EXTERNAL_STORAGE" not in manifest,
 }

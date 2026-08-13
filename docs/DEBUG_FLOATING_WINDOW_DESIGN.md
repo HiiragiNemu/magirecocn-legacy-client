@@ -156,6 +156,37 @@ static const bool DEBUG_OVERLAY_ENABLED = (MAGIA_DEBUG_OVERLAY != 0);
 
 小字**不跟随悬浮窗的显示与否**：窗收起来了，字照旧。它是保障，不是装饰。
 
+#### 它已经从悬浮窗里搬出去了（2026-08-13）
+
+上面那句「不跟随悬浮窗」原先只做到一半：小字虽然独立于「窗收没收起来」，实现上
+却仍是悬浮窗的一个 `WindowManager` 小窗，于是同时被两道闸挡着——native 总闸关掉
+就不挂，玩家/开发者撤掉「显示在其他应用上层」权限就挂不上。
+
+第二条尤其致命：**某人开了调试开关，之后顺手回收了悬浮窗权限**。开关是读
+`CNDebugFlags` 的**文件**生效的，根本不依赖悬浮窗，所以它照旧生效；只有提示没了。
+这不是「功能一起没了」，是「功能还在，指示灯灭了」——恰好在最需要提示的时候失效，
+而这正是这行字存在的全部理由。开发者也有忘事的时候。
+
+所以它被拆成独立的 `CNDebugHud`，挂在 Activity 的 `decorView` 上：那是应用自己的
+窗口，**不需要任何权限**。代价是它只覆盖本应用画面（悬浮窗能盖住整个屏幕），而这
+正好够用——要监测的是这个游戏的行为，截图截的也是这个游戏。
+
+与总闸的关系也随之反过来：**`CNDebugHud` 不看总闸**。总闸管的是「能不能**改**
+开关、能不能开面板」，而「有开关正在生效就得说出来」跟能不能改无关。公测结束后
+总闸关掉，若某台设备上还留着 flag 文件，这行字照样要出现。
+
+判据钉在三处，谁改回悬浮窗都会当场红灯：
+
+- `CNDebugHud.gatedByOverlayForTest()` 恒为 `false`（`DebugOverlayTest` [9a]）；
+- `tools/check-download-ui-contract.py`：`CNDebugHud` 代码里不得出现
+  `WindowManager` / `overlayGate`，`CNDebugOverlay` 里不得留下 HUD 的残骸；
+- 同一份守卫还钉住**挂载顺序**——先无条件挂提示条，再去问总闸。反过来写的话，
+  「总闸问不到」那一支会顺带把提示条也吞掉，等于把缺陷原样搬了个家。
+
+摆不下时的取舍也在这一版定了：开关名是英文小驼峰，开几个就能连成横跨整屏的一长条
+（真机反馈原话是「大型滚木」）。限宽到屏宽 3/4、最多两行、超出省略——宁可看不全也
+不让它糊住游戏画面，要看全的话面板里有完整列表。
+
 ---
 
 ## 形态
@@ -198,6 +229,39 @@ static const bool DEBUG_OVERLAY_ENABLED = (MAGIA_DEBUG_OVERLAY != 0);
   环形缓冲，接线已在 `CNDebugBridge.shareLog()`；
 - 小球默认贴边、半透明；窗口带 `FLAG_NOT_FOCUSABLE`，不抢游戏输入。
 
+### 两种「pending」不是一回事（2026-08-13 补）
+
+上面第一条说「勾选只改内存」，第二条说「勾了没重启要标出来」——这是**两种不同的
+未完成态**，压成一个就会同时误导两边的人：
+
+| | 判据 | 出口 | 面板措辞 |
+|---|---|---|---|
+| **未应用** | 内存 ≠ 磁盘 | 点「保存并重启」才落盘 | `countUnapplied()` |
+| **待重启** | 磁盘 ≠ 启动值 | 已经落盘了，重启就生效 | `countPending()` |
+
+由此定下的三条行为：
+
+- **未应用的改动跨面板重开保留**。原先重开一次面板就 `loadFlags()` 覆盖内存，
+  改了半天关一次全没了。现在先看 `dirty()`：有未应用的改动就不覆盖，并记一行日志
+  说明保留了几项；
+- **总览页同时提示两种 pending**，不是只提示待重启——「我明明勾了」和
+  「我明明保存了」是两种不同的困惑；
+- **总览页自带「应用并重启」和「丢弃」**。原先要进分组才有重启按钮，在最外层改完
+  开关的人找不到出口。同一个 `ApplyClick`，不是第二套逻辑。
+
+### 日志预览：一页只留一个滚动容器
+
+`setTextIsSelectable(true)` 会顺带给 TextView 装上 `ArrowKeyMovementMethod`——那本身
+就是一个**可滚动且吃触摸**的实现。于是手指落在预览框上时它先把竖直手势消费掉，
+外层页面 `ScrollView` 抢不到：真机反馈的「内外两层滑动条打架、吸底不管用」，吸的是
+内层、看到的是外层没动。
+
+现在预览框既不可选中也不带 `MovementMethod`，整页只有 `pagescroll` 一个滚动容器，
+吸底也吸它。要复制日志有「打包并分享日志」和下载浮层 LOG 面板里的「复制全部」，
+不必为此在这里留一个会抢手势的选中态。守卫 `check-download-ui-contract.py` 钉了
+「`CNDebugOverlay` 的**代码**里不得出现 `setTextIsSelectable(true)`」——注释里为了
+讲清楚原样引用了这个写法，所以那条判据先剥注释再比对。
+
 ---
 
 ## 明确不做
@@ -227,7 +291,10 @@ static const bool DEBUG_OVERLAY_ENABLED = (MAGIA_DEBUG_OVERLAY != 0);
 | `check-debug-flag-boundary.py` | 保护区禁止 `CNDebugBridge` / `CNDebugOverlay` | ✅ |
 | `check-download-ui-contract.py` | 断言 `SYSTEM_ALERT_WINDOW` **必须在**（原断言是反的） | ✅ |
 | `tools/DebugBridgeTest.java` | 27 条：总闸 fail-closed、接管判据、HUD 排版、名字白名单 | ✅ |
-| 新增 `CNDebugOverlay.java` | **悬浮窗本体**：`WindowManager` 挂载、拖动、页面树、常驻小字、权限引导 | ✅ |
+| 新增 `CNDebugOverlay.java` | **悬浮窗本体**：`WindowManager` 挂载、拖动、页面树、权限引导（常驻小字已迁出，见下一行） | ✅ |
+| 新增 `CNDebugHud.java` | **常驻小字**：挂 `decorView`、零权限、**不看总闸**；从悬浮窗里拆出来的理由见「那支持成本怎么办」一节 | ✅ |
+| `CNDownloaderFix` | 提示条**无条件**挂一次（`hudMounted`），且在问总闸**之前**——顺序反了就等于把缺陷搬了个家 | ✅ |
+| `tools/DebugOverlayTest.java` | [9a–9c]：提示条不受权限/总闸约束、悬浮窗本体仍归总闸管、无开关时整行隐藏 | ✅ |
 
 ### 本体接进来时要做的两件事
 
