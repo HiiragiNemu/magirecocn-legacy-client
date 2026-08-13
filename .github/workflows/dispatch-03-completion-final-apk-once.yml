@@ -1,0 +1,29 @@
+name: one-shot-dispatch-03-completion-final-apk
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/dispatch-03-completion-final-apk-once.yml
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Wait for cleanup commit, then dispatch official release
+        env:
+          : ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 30
+          gh workflow run build-apk.yml \
+            --repo "${GITHUB_REPOSITORY}" \
+            --ref main \
+            -f verify_only=false
+          echo "official build-apk.yml dispatched from clean main" >> "$GITHUB_STEP_SUMMARY"
