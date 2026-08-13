@@ -343,16 +343,24 @@ public final class CNDownloaderFix {
             long deadline = started + DEBUG_OVERLAY_WAIT_MS;
             while (System.currentTimeMillis() < deadline) {
                 try {
+                    // 要等的是**两件事同时成立**：Activity 出现了，且总闸给出了
+                    // 确定答案。
+                    //
+                    // 上一版只等 Activity，理由是「加载 libMagiaLegacy 的就是这个
+                    // Activity，所以等到它库就好了」——错的，差一毫秒：
+                    // getCurrentActivity() 在 onCreate 里比 System.loadLibrary
+                    // 更早被设上。真机日志里是「等到 Activity（1ms），总闸=关」，
+                    // 而 1ms 后库才加载完、总闸其实是开的（2026-08-13 第二次）。
+                    //
+                    // overlayGate() 的 null 表示「还问不到」，与「明确是关」分开，
+                    // 这里才能选择继续等而不是放弃。
                     Activity act = RestClient.getCurrentActivity();
-                    if (act != null) {
-                        // 到这里 libMagiaLegacy 必然已加载（加载它的就是这个
-                        // Activity），总闸这时才问得到真话——理由见
-                        // mountDebugOverlay 的注释。
-                        boolean allowed = CNDebugBridge.overlayAllowed();
-                        CNLog.i(TAG, "调试悬浮窗：等到 Activity（"
+                    Boolean gate = CNDebugBridge.overlayGate();
+                    if (act != null && gate != null) {
+                        CNLog.i(TAG, "调试悬浮窗：就绪（等了 "
                                 + (System.currentTimeMillis() - started) + "ms），总闸="
-                                + (allowed ? "开" : "关"));
-                        if (!allowed) return;
+                                + (gate.booleanValue() ? "开" : "关"));
+                        if (!gate.booleanValue()) return;
                         // WindowManager 只能在 UI 线程上碰。
                         act.runOnUiThread(new MountOnUi(act));
                         return;
@@ -368,7 +376,10 @@ public final class CNDownloaderFix {
                     return;
                 }
             }
-            CNLog.i(TAG, "调试悬浮窗：等不到 Activity，本次不挂（不影响游戏）");
+            // 超时要说清楚缺的是哪一样，否则又回到「四种可能长得一样」那种局面。
+            CNLog.i(TAG, "调试悬浮窗：等超时，本次不挂（不影响游戏）。Activity="
+                    + (RestClient.getCurrentActivity() != null ? "有" : "无")
+                    + " 总闸=" + (CNDebugBridge.overlayGate() == null ? "问不到" : "已知"));
         }
     }
 

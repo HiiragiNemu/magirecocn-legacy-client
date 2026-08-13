@@ -36,9 +36,19 @@ public class DebugBridgeTest {
         // JVM 上没有 native 库，这里走的正是那条抛异常的路。
         check("[1c] 问不到总闸时**不缓存**，下次还会重试",
                 CNDebugBridge.cachedForTest() == null);
+        // [1c2] 2026-08-13 第二次真机失败：看门狗把「问不到」当成「明确是关」，
+        // 于是在库加载前 1 毫秒放弃。三态是这条的唯一防线——问不到必须是 null，
+        // 而不是 FALSE，否则调用方无从选择「继续等」。
+        check("[1c2] 问不到时 overlayGate() 是 null，不是 FALSE",
+                CNDebugBridge.overlayGate() == null);
         CNDebugBridge.setAllowedForTest(true);
         check("[1d] 稍后问到了就认这个答案", CNDebugBridge.overlayAllowed()
                 && Boolean.TRUE.equals(CNDebugBridge.cachedForTest()));
+        check("[1d2] 问到之后 overlayGate() 给出确定答案",
+                Boolean.TRUE.equals(CNDebugBridge.overlayGate()));
+        CNDebugBridge.setAllowedForTest(false);
+        check("[1e] 明确是关时 overlayGate() 是 FALSE（可据此放弃，与 null 不同）",
+                Boolean.FALSE.equals(CNDebugBridge.overlayGate()));
         CNDebugBridge.resetForTest();
 
         // ── [2] 接管判据：允许挂 ≠ 已经挂上 ─────────────────────────

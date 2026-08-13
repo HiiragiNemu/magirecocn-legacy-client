@@ -100,41 +100,54 @@ public final class CNDebugBridge {
     // ══ 总闸 ═════════════════════════════════════════════════════════
 
     /**
-     * 本包允不允许调试悬浮窗。取 native 烧进去的常量。
+     * 本包允不允许调试悬浮窗。<b>问不到时返回 false</b>。
      *
-     * <p><b>问不到时按「不允许」，但绝不缓存这个「不允许」。</b>这两句必须分开，
-     * 否则就是 2026-08-13 那个真机 bug：
-     *
-     * <pre>
-     *   libMagiaLegacy.so 在 Cocos2dxActivity 里链式加载（引擎库之后），
-     *   而 CNDownloaderFix.triggerInstaller 跑在 Application.onCreate 拉起的
-     *   线程上——**比 Activity 早**。第一次问总闸时库还没加载，
-     *   nativeDebugOverlayEnabled 抛 UnsatisfiedLinkError。
-     * </pre>
-     *
-     * 早先的实现把这个失败缓存成 {@code false}，于是整个会话再也不重试：悬浮窗
-     * 永不出现，连权限提示都到不了，日志里也只有一行「取不到调试总闸」——症状
-     * 看起来像「功能没做进去」，而不是「问早了」。
-     *
-     * <p>所以只缓存<b>真正问到的答案</b>：native 说 false 才是 false（那是正式
-     * 发布包翻了那个布尔），抛异常只说明「现在还问不到」。
+     * <p>要区分「问不到」和「明确是关」的调用方（挂载看门狗就是）必须用
+     * {@link #overlayGate()}，别用这个——把两者压成一个 false 已经害过一次，
+     * 见那边的注释。
      */
     public static boolean overlayAllowed() {
+        Boolean gate = overlayGate();
+        return gate != null && gate.booleanValue();
+    }
+
+    /**
+     * 总闸的<b>三态</b>：{@code TRUE}/{@code FALSE} = native 明确答复；
+     * {@code null} = <b>现在还问不到</b>（库没加载）。
+     *
+     * <h3>为什么必须是三态</h3>
+     *
+     * 「问不到」和「明确是关」压成同一个 false，就是 2026-08-13 第二次真机失败：
+     *
+     * <pre>
+     *   16:15:33.521  UnsatisfiedLinkError（库还没加载）
+     *   16:15:33      调试悬浮窗：等到 Activity（1ms），总闸=关   ← 据此放弃
+     *   16:15:33.522  Load libMagiaLegacy.so … ok
+     *   16:15:33.522  [DEBUG] 调试悬浮窗总闸: 开
+     * </pre>
+     *
+     * 相差<b>一毫秒</b>。当时的挂载看门狗以为「等到 Activity 就说明库加载好了」
+     * ——错的：{@code RestClient.getCurrentActivity()} 在 {@code onCreate} 里
+     * 比 {@code System.loadLibrary} 更早被设上。
+     *
+     * <p>看门狗要等的从来不是 Activity，而是<b>一个确定的答案</b>。有了三态，
+     * 它可以「继续等」而不是「据此放弃」。
+     */
+    public static Boolean overlayGate() {
         Boolean cached = allowedCache;
-        if (cached != null) return cached.booleanValue();
+        if (cached != null) return cached;
         try {
             boolean ok = nativeDebugOverlayEnabled();
             allowedCache = Boolean.valueOf(ok);
-            return ok;
+            return allowedCache;
         } catch (Throwable t) {
             // 库还没加载（UnsatisfiedLinkError）。**不缓存**，下次再问。
             // 只记一次，免得 HUD 每秒刷新时刷屏。
             if (!warnedNoNative) {
                 warnedNoNative = true;
-                CNLog.i(TAG, "暂时取不到调试总闸（native 库还没加载？）"
-                        + "，本次按「关」处理，稍后重试: " + t);
+                CNLog.i(TAG, "暂时取不到调试总闸（native 库还没加载），稍后重试: " + t);
             }
-            return false;
+            return null;
         }
     }
 
