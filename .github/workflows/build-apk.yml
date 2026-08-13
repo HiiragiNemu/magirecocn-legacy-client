@@ -491,11 +491,59 @@ jobs:
           UP_REPO=（外部发布渠道）
           DOWN_REPO=（外部发布渠道）
 
-          # preflight：token 必须能对发布仓库 release 读写（ 需为本仓库
-          # 可用的 secret，且有 （外部发布渠道） 的 contents 权限），
-          # 否则公测站留下的是 404 死链——宁可构建红掉也不发死链
-          gh api "repos/$UP_REPO/releases/tags/latest" --jq '.tag_name' >/dev/null \
-            || { echo "::error:: 缺失或无上游 $UP_REPO 权限，无法发布公测直链"; exit 1; }
+          # preflight：token 必须能对发布仓库 release 读写，否则公测站留下的是 404
+          # 死链——宁可构建红掉也不发死链。
+          #
+          # ⚠ 报错必须分清是哪一种。原先三种情况共用一句「 缺失或无权限」，
+          # 于是 2026-08-13 那次 401（token 本身失效）把维护者送去查权限设置——
+          # 而权限一直是对的，过期的是 token。三者的处理办法完全不同：
+          #
+          #   secret 为空 → 去仓库 Settings 配上
+          #   401         → token 已过期/被撤销/粘进了空白，重新签发一枚
+          #   403 / 404   → token 有效，但够不着发布仓库（细粒度 PAT 只能访问
+          #                 其所属账户的仓库，而发布仓库属于另一个账户）
+          if [ -z "${:-}" ]; then
+            echo "::error:: secret 未配置或为空（Settings → Secrets and variables → Actions）"
+            exit 1
+          fi
+
+          # 先问 token 自己是谁，顺带把有效期打出来——过期是这条路最常见的
+          # 死法，而它到期前一天和到期后一天在配置界面上长得一模一样。
+          WHO=$(curl -sS -o /tmp/who.json -D /tmp/who.hdr -w '%{http_code}' \
+                -H "Authorization: Bearer ${}" \
+                -H "Accept: application/vnd.github+json" \
+                https://api.github.com/user || echo 000)
+          if [ "$WHO" = "401" ]; then
+            echo "::error:: 无效（HTTP 401 Bad credentials）。这不是权限问题——token 已过期、被撤销，或写进 secret 时混入了换行/空格。请重新签发一枚并更新 secret。"
+            exit 1
+          fi
+          if [ "$WHO" != "200" ]; then
+            echo "::error::校验  时 GitHub 返回 HTTP $WHO，无法确认凭据"
+            exit 1
+          fi
+          echo " 身份：$(grep -o '"login"[^,]*' /tmp/who.json | head -1)"
+          EXP=$(tr -d '\r' < /tmp/who.hdr \
+                | grep -i '^github-authentication-token-expiration:' | cut -d' ' -f2- || true)
+          # 写成 if 而不是 `[ -n "$EXP" ] && echo ...`。后者在 EXP 为空时整条
+          # 返回 1；只要它后面还有别的命令，set -e 并不会中止（实测确认），
+          # 但只要哪天它被挪到脚本末尾，这一步就会以 exit 1 收场——一个纯提示
+          # 把发布搞挂。if 形式没有这个位置依赖。
+          if [ -n "$EXP" ]; then
+            echo "::notice:: 有效期至 ${EXP}（到期后本步骤会以 401 失败）"
+          fi
+
+          # 再确认够得着发布仓库。403 与 404 分开报：私有仓库无权限时 GitHub
+          # 回的是 404，不写清楚会让人以为 release 被删了。
+          UP=$(curl -sS -o /dev/null -w '%{http_code}' \
+               -H "Authorization: Bearer ${}" \
+               -H "Accept: application/vnd.github+json" \
+               "https://api.github.com/repos/$UP_REPO/releases/tags/latest" || echo 000)
+          case "$UP" in
+            200) echo "上游 $UP_REPO latest release 可读，继续发布" ;;
+            403) echo "::error::token 有效但无权访问 $UP_REPO（HTTP 403）。细粒度 PAT 只能访问其所属账户的仓库，而发布仓库属于另一个账户；classic PAT 则需要 token 持有者本人对该仓库有写权限。"; exit 1 ;;
+            404) echo "::error::看不到 $UP_REPO 的 latest release（HTTP 404）。私有仓库在无权限时同样返回 404，所以这既可能是权限不够，也可能是 latest tag 真的不在了。"; exit 1 ;;
+            *)   echo "::error::读取 $UP_REPO latest release 返回 HTTP $UP，无法发布公测直链"; exit 1 ;;
+          esac
 
           cp "$SRC" "$NAME"
           gh release upload latest "$NAME" --repo "$UP_REPO" --clobber
