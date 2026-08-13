@@ -1439,9 +1439,20 @@ public class CNCNDownloadUI {
         }
     }
 
-    static void toast(Activity act, String msg) {
+    /**
+     * 参数是 {@link Context} 而不是 {@link Activity}：调用方常写
+     * {@code toast(RestClient.getCurrentActivity(), …)}，而那个方法完全可能返回
+     * null——此时 {@code Toast.makeText(null, …)} 抛 NPE，被下面这个 catch 悄悄
+     * 吞掉，玩家一个字都看不到。把入口放宽到 Context，控件就能传自己的
+     * {@code getContext()}（永远非 null），提示不再取决于「此刻有没有 Activity」。
+     */
+    static void toast(Context ctx, String msg) {
         try {
-            Toast.makeText(act, msg, Toast.LENGTH_LONG).show();
+            if (ctx == null) {
+                CNLog.w("界面", "toast 没有 Context，丢弃：" + msg);
+                return;
+            }
+            Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show();
         } catch (Throwable ignore) {}
     }
 

@@ -1015,8 +1015,14 @@ String extra = activeNow
             catch (Throwable ignore) {}
             styleSplit(true);
             CNCNDownloadUI.noteInteraction();
-            CNCNDownloadUI.toast(RestClient.getCurrentActivity(),
+            // 用把手自己的 Context，不要 RestClient.getCurrentActivity()：后者可能
+            // 是 null，那样 Toast 会在 CNCNDownloadUI.toast 里被 catch 悄悄吞掉，
+            // 玩家长按之后毫无反馈——看起来就是「这条线根本拖不动」。
+            CNCNDownloadUI.toast(v.getContext(),
                     "左右拖动调整分界；松手保存，双击复位");
+            // 这条线一直查不出「到底有没有进拖动态」，留个痕：真机日志里能直接
+            // 分出「长按压根没触发」和「触发了但没换算出位移」。
+            CNLog.i("界面", "分界线：进入拖动态 起始=" + startPct + "%");
             return true;
         }
 
@@ -1036,6 +1042,12 @@ String extra = activeNow
                     if (w > 0) {
                         float delta = e.getRawX() - startX;
                         setSplit(startPct + Math.round(delta * 100f / w));
+                    } else {
+                        // 换算不出位移就等于「拖了没反应」，而且不留痕。宽度取不到
+                        // 只有两种可能：contentRoot 没找着，或视口算出 0——两种都
+                        // 是布局出了问题，不该被当成手势失败。
+                        CNLog.w("界面", "分界线：拖动中取不到内容宽度，本次位移被丢弃"
+                                + "（row=" + (row == null ? "null" : "有") + "）");
                     }
                     return true;
                 }
@@ -1076,7 +1088,7 @@ String extra = activeNow
                 try { v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS); }
                 catch (Throwable ignore) {}
                 CNCNDownloadUI.noteInteraction();
-                CNCNDownloadUI.toast(RestClient.getCurrentActivity(),
+                CNCNDownloadUI.toast(v.getContext(),
                         "分界已复位到 " + SPLIT_DEFAULT + "%");
             } else {
                 lastTapAt = moved ? 0L : now;
