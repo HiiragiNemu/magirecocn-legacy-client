@@ -51,6 +51,12 @@ TERMS
      keeps them as a re-buildable archive and adds the GPL-licensed patch
      layer on top; the two layers are independent in both code and license.
 
+     This repository does NOT grant any rights on that third-party
+     material on the copyright holders' behalf. Whether any particular
+     use (including commercial use) is permitted is determined solely by
+     the copyright holders' own terms; where they prohibit or demand
+     removal, that governs.
+
   4. (MIT-licensed upstream — Rayshift / MagiaTranslate)
 
      Some of the smali patches and build scaffolding in this repository
