@@ -48,14 +48,33 @@ import android.widget.TextView;
 public final class CNDebugHud {
     private static final String TAG = "CNDebugHud";
 
-    /** 定期复查的周期。开关是**读文件**生效的，可能被 su 在运行期间改动。 */
-    private static final long REFRESH_MS = 5000L;
+    /**
+     * 定期复查的周期。开关是**读文件**生效的，可能被 su 在运行期间改动。
+     *
+     * <p>两档：屏幕上已经有字时 5 秒（这台设备正在被调试，值得跟紧），什么都没
+     * 有时 30 秒。区别不在省那几次 syscall，而在于**这行字现在挂在所有人机器上**
+     * ——它不再受总闸和权限约束，正式包里也一直在跑。发布包上的答案永远是「一个
+     * 开关都没开」，用不着每 5 秒确认一次。
+     */
+    private static final long REFRESH_ACTIVE_MS = 5000L;
+    private static final long REFRESH_IDLE_MS = 30000L;
 
     private static TextView view;
     private static ViewGroup host;
+    /**
+     * 当前宿主 Activity 的<b>弱</b>引用。
+     *
+     * <p>强引用会把一个已经 destroy 的 Activity 连同它整棵视图树钉在静态字段上。
+     * 主 Activity 是 {@code singleTask} 且 {@code configChanges} 盖了旋转/键盘，
+     * 但**没盖** locale / uiMode / density / smallestScreenSize——切深色模式、改
+     * 系统字体大小、进分屏都会在**同一个进程里**重建它。那时旧的 decorView 就成了
+     * 泄漏，而这行字挂在旧窗口上，玩家一眼看去是「提示消失了」。
+     */
+    private static java.lang.ref.WeakReference<Activity> hostRef;
     private static ViewTreeObserver.OnGlobalLayoutListener raise;
     private static Handler ui;
-    private static Runnable ticker;
+    private static Thread poller;
+    private static volatile boolean polling;
 
     private CNDebugHud() {}
 
@@ -99,9 +118,9 @@ public final class CNDebugHud {
             // 纯展示：绝不吃触摸，否则它会在游戏画面顶上开一个死区。
             tv.setClickable(false);
             tv.setFocusable(false);
-            // 「大型滚木」的防线（2026-08-13 反馈）：开关名是英文小驼峰，开几个
-            // 就能连成横跨整屏的一长条。限宽 + 最多两行 + 省略号，宁可看不全也
-            // 不让它糊住游戏画面——要看全的话面板里有完整列表。
+            // 限宽 + 最多两行 + 省略号。文案那侧已经按 HUD_MAX_NAMES 折成「+N」，
+            // 这里只是兜底：万一开关名以后变长，宁可看不全也不让它糊住游戏画面
+            // ——要看全的话面板里有完整列表。
             int maxW = Math.max(dp(act, 160),
                     act.getResources().getDisplayMetrics().widthPixels * 3 / 4);
             tv.setMaxWidth(maxW);
@@ -117,14 +136,15 @@ public final class CNDebugHud {
             decor.addView(tv, lp);
             view = tv;
             host = decor;
+            hostRef = new java.lang.ref.WeakReference<Activity>(act);
 
             // 后加进 decorView 的东西（下载浮层、权限引导页）会盖住它，所以布局
             // 变化时把它抬回最前——只在真被盖住时抬，不无条件每帧重排。
             raise = new Raise();
             decor.getViewTreeObserver().addOnGlobalLayoutListener(raise);
 
+            startPoller();
             refresh();
-            startTicker();
             CNLog.i(TAG, "调试提示条已挂载（decorView，不需要悬浮窗权限）");
         } catch (Throwable t) {
             CNLog.w(TAG, "调试提示条挂载失败（不影响游戏）: " + t);
@@ -144,41 +164,74 @@ public final class CNDebugHud {
     }
 
     /**
-     * 重读当前生效的开关并刷新这行字。
+     * 催一次复查。<b>立即返回</b>，实际的读盘在轮询线程上做。
      *
-     * <p>读盘，所以不是每帧调：挂载时一次、定期一次、以及调试面板保存之后一次。
+     * <p>这里不能直接读：{@link CNDebugBridge#hudText()} 会走两趟
+     * {@code File.list()} 加两次 JNI 取表，而本方法的调用方全在 UI 线程上
+     * （挂载时、调试面板保存之后）。这行字现在挂在**所有人**的机器上——不再受
+     * 总闸和权限约束——所以「每几秒在 UI 线程上碰一次文件系统」不再是开发者
+     * 自己承担的成本，而是每个玩家每一局都在付。
      */
     public static void refresh() {
-        TextView v = view;
-        if (v == null) return;
-        String text;
-        try {
-            text = CNDebugBridge.hudText();
-        } catch (Throwable t) {
-            text = null;
-        }
-        if (text == null || text.length() == 0) {
-            v.setVisibility(View.GONE);
-        } else {
-            v.setText(text);
-            v.setVisibility(View.VISIBLE);
-            v.bringToFront();
+        Thread p = poller;
+        if (p != null) p.interrupt();
+    }
+
+    /** 轮询线程（幂等）。守护线程，进程退出不拦着。 */
+    private static void startPoller() {
+        if (polling && poller != null && poller.isAlive()) return;
+        polling = true;
+        Thread t = new Thread(new Poll(), "cnv-debug-hud");
+        t.setDaemon(true);
+        poller = t;
+        t.start();
+    }
+
+    private static final class Poll implements Runnable {
+        @Override public void run() {
+            while (polling) {
+                String text;
+                try {
+                    text = CNDebugBridge.hudText();
+                } catch (Throwable t) {
+                    text = null;
+                }
+                Handler h = ui;
+                if (h != null) h.post(new Apply(text));
+                long wait = (text == null || text.length() == 0)
+                        ? REFRESH_IDLE_MS : REFRESH_ACTIVE_MS;
+                try {
+                    Thread.sleep(wait);
+                } catch (InterruptedException e) {
+                    // refresh() 催的，立刻再读一轮。不复位中断标志——本线程
+                    // 只在这一处等，没有别的代码会看这个标志。
+                }
+            }
         }
     }
 
-    private static void startTicker() {
-        if (ui == null) return;
-        if (ticker != null) ui.removeCallbacks(ticker);
-        ticker = new Ticker();
-        ui.postDelayed(ticker, REFRESH_MS);
-    }
-
-    private static final class Ticker implements Runnable {
+    /** 把读到的文案贴上去，顺带确认这行字还挂在**当前**那个窗口上。 */
+    private static final class Apply implements Runnable {
+        private final String text;
+        Apply(String text) { this.text = text; }
         @Override public void run() {
             try {
-                if (view == null) return;
-                refresh();
-                if (ui != null) ui.postDelayed(this, REFRESH_MS);
+                // Activity 被重建过的话，view 还挂在旧 decorView 上：那既是泄漏，
+                // 玩家看到的也是「提示消失了」。发现宿主换人就整体重挂——重挂会
+                // 再催一次 refresh，下一轮才贴文案，所以这里直接返回。
+                Activity cur = RestClient.getCurrentActivity();
+                Activity known = hostRef == null ? null : hostRef.get();
+                if (cur != null && cur != known) { mountOnUi(cur); return; }
+
+                TextView v = view;
+                if (v == null) return;
+                if (text == null || text.length() == 0) {
+                    v.setVisibility(View.GONE);
+                } else {
+                    v.setText(text);
+                    v.setVisibility(View.VISIBLE);
+                    v.bringToFront();
+                }
             } catch (Throwable ignore) {}
         }
     }
@@ -199,10 +252,12 @@ public final class CNDebugHud {
     }
 
     private static void detachOnUi() {
+        polling = false;
         try {
-            if (ui != null && ticker != null) ui.removeCallbacks(ticker);
+            Thread p = poller;
+            if (p != null) p.interrupt();
         } catch (Throwable ignore) {}
-        ticker = null;
+        poller = null;
         try {
             if (host != null && raise != null) {
                 host.getViewTreeObserver().removeOnGlobalLayoutListener(raise);
@@ -217,6 +272,7 @@ public final class CNDebugHud {
         } catch (Throwable ignore) {}
         view = null;
         host = null;
+        hostRef = null;
     }
 
     private static int dp(android.content.Context ctx, int value) {

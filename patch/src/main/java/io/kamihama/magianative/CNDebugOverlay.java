@@ -1602,7 +1602,13 @@ public final class CNDebugOverlay {
         nameLp.leftMargin = dp(act, 10);
         head.addView(nameView, nameLp);
 
-        if (onBoot) head.addView(dot(act), wrapLp(act, 4));
+        // ⚠ 绿点必须走 dotLp()，不能用 wrapLp()。
+        //
+        // dot() 是一个**裸 View**（背景是个圆形 GradientDrawable，没有内容），
+        // 裸 View 在 WRAP_CONTENT 下测出来就是 0×0——而 addView(child, lp) 会把
+        // dot() 自己设好的 8dp×8dp 覆盖掉。结果是图例里写着「小绿点 = 现在生效
+        // 中」，却指着一个永远画不出来的点：面板上根本看不出哪个开关正在生效。
+        if (onBoot) head.addView(dot(act), dotLp(act, 4));
         if (pending) head.addView(badge(act, "待重启"), wrapLp(act, 6));
         box.addView(head, rowLp(act, 0, 0));
 
@@ -1640,6 +1646,14 @@ public final class CNDebugOverlay {
         box.setOnClickListener(danger ? new DangerToggle(name, want) : new FlagToggle(name));
         box.setLayoutParams(boxLp);
         return box;
+    }
+
+    /** 绿点专用：显式给出 8dp×8dp，见 {@link #dot} 与 checkView 里的那条警告。 */
+    private static LinearLayout.LayoutParams dotLp(Activity act, int leftMargin) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(act, 8), dp(act, 8));
+        lp.leftMargin = dp(act, leftMargin);
+        lp.gravity = Gravity.CENTER_VERTICAL;
+        return lp;
     }
 
     private static LinearLayout.LayoutParams wrapLp(Activity act, int leftMargin) {
@@ -1752,14 +1766,21 @@ public final class CNDebugOverlay {
                 color("COLOR_LOG_PANEL_TEXT", 0xFF2A1A3B), true);
         head.addView(title, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        // 勾选控件那侧「现在生效中」有绿点，单选这侧原先什么都没有：整个 D 类
+        // （序章跳段 9 个开关）不管开没开，看上去都一模一样。
+        if (bootOption > 0) head.addView(dot(act), dotLp(act, 4));
         if (pending) head.addView(badge(act, "待重启"), wrapLp(act, 6));
         TextView arrow = text(act, expanded ? "▲" : "▼", 11f,
                 color("COLOR_SUB", 0xFF6E5276), false);
         head.addView(arrow, wrapLp(act, 8));
         box.addView(head, rowLp(act, 0, 0));
 
-        TextView current = text(act, "当前：" + rg.optionLabels[shownOption], 12f,
-                color("COLOR_ACCENT2", 0xFF9C5BC2), false);
+        // 折叠状态下也要看得见英文名——展不展开都是同一个问题：屏幕上那行小字
+        // 报的是英文名，面板里必须找得到它。
+        String shownFlag = flagOfOption(rg, shownOption);
+        TextView current = text(act, "当前：" + rg.optionLabels[shownOption]
+                        + (shownFlag == null ? "" : "（" + shownFlag + "）"),
+                12f, color("COLOR_ACCENT2", 0xFF9C5BC2), false);
         box.addView(current, rowLp(act, 4, 0));
         if (rg.blurb != null && rg.blurb.length() > 0) {
             TextView blurb = text(act, rg.blurb, 11.5f, color("COLOR_SUB", 0xFF6E5276), false);
@@ -1785,14 +1806,53 @@ public final class CNDebugOverlay {
         return box;
     }
 
+    /**
+     * 单选控件的一个选项。
+     *
+     * <h3>为什么这里必须把英文开关名写出来</h3>
+     *
+     * 单选控件是把好几个开关合并成一件（C 类 7→6、D 类 9→4，设计 §4.2），合并
+     * 之后界面上只剩中文选项标签——于是这些开关的**英文名在整个面板里一次都不
+     * 出现**。而常驻小字报的恰恰是英文名：屏幕上写着「调试模式：logI18nMissAll」，
+     * 人回到面板里按这个词找，一个字都搜不到，跟这个开关不存在一样。
+     *
+     * <p>勾选控件那侧本来就把英文名摆在第一行（P2 第一层），这里补齐，两种控件
+     * 的口径才一致。
+     */
     private static View radioOption(Activity act, RadioGroup rg, int option, boolean selected) {
-        TextView row = text(act, (selected ? "● " : "○ ") + rg.optionLabels[option], 12.5f,
-                selected ? color("COLOR_ACCENT", 0xFFD63384)
-                         : color("COLOR_LOG_PANEL_TEXT", 0xFF2A1A3B), selected);
-        row.setLineSpacing(dp(act, 2), 1f);
+        int fg = selected ? color("COLOR_ACCENT", 0xFFD63384)
+                          : color("COLOR_LOG_PANEL_TEXT", 0xFF2A1A3B);
+        LinearLayout row = new LinearLayout(act);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(act, 8), dp(act, 6), dp(act, 8), dp(act, 6));
+
+        TextView label = text(act, (selected ? "● " : "○ ") + rg.optionLabels[option],
+                12.5f, fg, selected);
+        label.setLineSpacing(dp(act, 2), 1f);
+        row.addView(label, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        String flag = flagOfOption(rg, option);
+        if (flag != null) {
+            TextView code = text(act, flag, 10.5f, color("COLOR_SUB", 0xFF6E5276), false);
+            code.setTypeface(Typeface.MONOSPACE);
+            row.addView(code, wrapLp(act, 8));
+        }
+
         row.setOnClickListener(new RadioOptionClick(rg, option));
         return row;
+    }
+
+    /**
+     * 选项下标 → 它写的那个开关名；第 0 项是「都不写」的默认，没有对应开关。
+     *
+     * <p>{@code optionLabels.length == flagsInOrder.length + 1}，所以偏移是 1。
+     */
+    static String flagOfOption(RadioGroup rg, int option) {
+        if (rg == null || option <= 0) return null;
+        if (option - 1 >= rg.flagsInOrder.length) return null;
+        return rg.flagsInOrder[option - 1];
     }
 
     private static final class RadioExpandClick implements View.OnClickListener {
