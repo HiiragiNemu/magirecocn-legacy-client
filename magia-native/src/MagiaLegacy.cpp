@@ -169,7 +169,7 @@ namespace cocos2d {
 // ## 用法
 //
 //     adb shell "run-as io.kamihama.totentanz mkdir -p debug"
-//     adb shell "run-as io.kamihama.totentanz touch debug/noFontHook"
+//     adb shell "run-as io.kamihama.totentanz touch debug/noI18nLabel"
 //     # 重启游戏；logcat 里 [DEBUG] 会把当前生效的开关列出来
 //
 // 启动时无论开没开都会打印全表，所以「有哪些开关」看一眼日志就知道，
@@ -246,7 +246,6 @@ static std::string filesDir() { return privDir() + "/files"; }
 static const std::string DEBUG_DIR = privDir() + "/debug";
 
 // 开关名用**小驼峰**，与 Java 侧保持一致（同一个目录，两边名字风格不该分裂）。
-static bool g_dbgNoFontHook      = false;
 static bool g_dbgNoI18nLabel     = false;
 static bool g_dbgNoI18nSetString = false;
 static bool g_dbgNoTutorialGuard = false;
@@ -293,7 +292,6 @@ static const DebugFlagDef kDebugFlags[] = {
     { "noTutorialGuard", &g_dbgNoTutorialGuard, "序章期间不起 WebView 看门狗" },
     { "noProxyEndpoint", &g_dbgNoProxyEndpoint, "UrlConfig::api/chat 只观测不重写（直连）" },
     // ── 关掉渲染/文案改动 ──
-    { "noFontHook",      &g_dbgNoFontHook,      "不重定向字体路径（UI 字体回原包 MTF4a5kp）" },
     { "noI18nLabel",     &g_dbgNoI18nLabel,     "initLabel 不替换文案（引擎侧标签回日文）" },
     { "noI18nSetString", &g_dbgNoI18nSetString, "setString 系不替换文案" },
     // ── 关掉从 libuwasa 移植的两条性能/音频改动 ──
@@ -2459,7 +2457,6 @@ static void fontPathOverwrite(void* strObj, const char* nv, size_t n) {
 //     UI 跟着用之后两处字形一致，且引擎少加载一个 8MB 字体。
 //   · 更安全——见下面那段关于长度的说明。
 static void fontPathFix(void* strObj, const char* tag) {
-    if (g_dbgNoFontHook) return;       // 调试开关：完全不碰字体路径
     static const char kFrom[] = "fonts/MTF4a5kp.ttf";        // 18 字符
     static const char kTo[]   = "fonts/mbm_20160902.ttf";    // 22 字符
     // ⚠ ARM64 的短串上限是 22，kFrom=18、kTo=22，二者都走内联；ARMv7 的

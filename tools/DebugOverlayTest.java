@@ -79,22 +79,22 @@ public class DebugOverlayTest {
         // ── [3] 单选控件：选项 → 写回集合映射 ───────────────────────
         // 选一项就只写哪个，同组其余清掉；组外开关不动。
         Set<String> desired = set("tutorialSkipToBattle1", "tutorialSkipAfterBattle2",
-                "noFontHook");
+                "noTtfHooks");
         Set<String> wrote = CNDebugOverlay.radioDesired(flags, 3, desired);
         check("[3a] 多文件时选一项后清掉多余",
                 wrote.contains("tutorialSkipToBattle2")
                 && !wrote.contains("tutorialSkipToBattle1")
                 && !wrote.contains("tutorialSkipAfterBattle2"));
-        check("[3b] 写回不动组外开关", wrote.contains("noFontHook") && wrote.size() == 2);
+        check("[3b] 写回不动组外开关", wrote.contains("noTtfHooks") && wrote.size() == 2);
         check("[3c] 选默认项 → 组内全清",
                 CNDebugOverlay.radioDesired(flags, 0, set("tutorialSkipToBattle3")).isEmpty());
         check("[3d] 越界下标不炸也不写",
-                CNDebugOverlay.radioDesired(flags, 99, set("noFontHook")).equals(set("noFontHook"))
+                CNDebugOverlay.radioDesired(flags, 99, set("noTtfHooks")).equals(set("noTtfHooks"))
                 && CNDebugOverlay.radioDesired(flags, -1, set()).isEmpty());
 
         // ── [4] 分组映射 ────────────────────────────────────────────
         check("[4a] 已知开关进对组",
-                "C".equals(CNDebugOverlay.groupIdOf("noFontHook"))
+                "C".equals(CNDebugOverlay.groupIdOf("noTtfHooks"))
                 && "A".equals(CNDebugOverlay.groupIdOf("skipInstaller"))
                 && "B".equals(CNDebugOverlay.groupIdOf("useAria2"))
                 && "D".equals(CNDebugOverlay.groupIdOf("tutorialSkipAfterBattle3"))
@@ -104,14 +104,15 @@ public class DebugOverlayTest {
                 "OTHER".equals(CNDebugOverlay.groupIdOf("brandNewFlag"))
                 && "OTHER".equals(CNDebugOverlay.groupIdOf(null)));
 
-        // 设计 §4.2：31 个面板开关 → 25 个控件（C 7→6，D 9→4）
+        // 设计 §4.2：30 个面板开关 → 24 个控件（C 6→5，D 9→4）
+        // （noFontHook 已随字体重定向定型而撤除，2026-08-14）
         String[][] full = syntheticFullTable();
         int totalControls = 0;
         for (String g : new String[] {"A", "B", "C", "D", "E", "F", "OTHER"}) {
             List<CNDebugOverlay.Control> cs = CNDebugOverlay.controlsFor(full, g);
             totalControls += cs.size();
             if ("C".equals(g)) {
-                check("[4c] C 类 7 开关合并成 6 个控件", cs.size() == 6);
+                check("[4c] C 类 6 开关合并成 5 个控件", cs.size() == 5);
             }
             if ("D".equals(g)) {
                 int radios = 0;
@@ -122,10 +123,10 @@ public class DebugOverlayTest {
                         cs.size() == 4 && radios == 1);
             }
         }
-        check("[4e] 全表 31 开关 → 25 个控件", totalControls == 25);
+        check("[4e] 全表 30 开关 → 24 个控件", totalControls == 24);
 
         // ── [5] 注释表 ──────────────────────────────────────────────
-        CNDebugOverlay.Note note = CNDebugOverlay.noteFor("noFontHook");
+        CNDebugOverlay.Note note = CNDebugOverlay.noteFor("noTtfHooks");
         check("[5a] 有注释的开关拿得到白话说明", note != null
                 && note.plain != null && note.plain.length() > 0);
         check("[5b] 缺名降级为 null（界面只显示官方说明）",
@@ -235,7 +236,7 @@ public class DebugOverlayTest {
     }
 
     /**
-     * 设计 §4.3 的 31 个面板可见开关（P7 已剔除 3 个）。测试自己拼这张表，
+     * 设计 §4.3 的 30 个面板可见开关（P7 已剔除 3 个）。测试自己拼这张表，
      * 因为 JVM 上没有 native 侧 19 行；控件合并逻辑吃的是表而不是常量名单。
      */
     private static String[][] syntheticFullTable() {
@@ -244,9 +245,9 @@ public class DebugOverlayTest {
                 "skipInstaller", "skipOverlay", "skipRestart", "skipSlowAsk", "noOverlayGate",
                 // B 4
                 "useAria2", "skipWebProxy", "noProxyEndpoint", "noHttp2Bump",
-                // C 7
+                // C 6
                 "logI18nMiss", "logI18nMissAll", "noI18nLabel", "noI18nSetString",
-                "noFontHook", "noInitLabelHook", "noTtfHooks",
+                "noInitLabelHook", "noTtfHooks",
                 // D 9
                 "skipTutorialPrompt", "noTutorialForce", "noTutorialGuard",
                 "tutorialSkipToBattle1", "tutorialSkipAfterBattle1",

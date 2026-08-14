@@ -18,20 +18,34 @@
 
 ## 一个必须写下来的事实：国服自己就是直替做的
 
-`assets/fonts/` 里有三个文件**字节完全相同**：
+`assets/fonts/` 曾有四个**北京腾祥**的商业字体（约 58 MB），2026-08-14 清理掉了。
 
-    MTF4a5kp.ttf         17507340B   内部名 Tensentype JiaLiDaYuanGB18030
-    TTDaYuanGB3.ttf      17507340B   内部名 Tensentype JiaLiDaYuanGB18030
-    koruri-semibold.ttf  17507340B   内部名 Tensentype JiaLiDaYuanGB18030
+清理判据是「引擎到底请不请求它」，不是观感也不是许可偏好——在
+`libmadomagi_native.so` 里查字符串：
 
-`MTF4a5kp` 与 `koruri-semibold` 都是**日文**字体的文件名，内容却是中文的
-「腾祥嘉丽大圆」。这不是本仓库造成的——它们在**根提交**（导入 APK 那一刻）
-就已经是这样，也就是说**国服官方的汉化手段本身就是把日文字体文件内容换掉**。
+    MTF4a5kp        有 —— 引擎按这个路径请求
+    mbm_20160902    有 —— 重定向的目标
+    TTDaYuanGB3     无
+    koruri-semibold 无
+    TTZhiHeiGB3-W4  无（只在 MagiaLegacy.cpp 的两行注释里，是废弃的旧重定向目标）
 
-这条事实很容易被误读成「仓库被污染了，得从国服 APK 恢复原始字体」。恰恰相反：
-**当前状态就是国服的权威状态**，要钉住的正是它。同理，现行的
-`MTF4a5kp → mbm_20160902` 路径重定向并不是「日文换中文」——后者国服早就
-做完了——而是把 UI 汇到覆盖最好的那个字体上。
+后三个引擎一次都不会请求，代码也不引用（只出现在 `original/META-INF/` 的原包
+签名清单里，那是文件列表不是运行时引用），于是直接删掉 —— 41.4 MB 死重量，
+其中 33.4 MB 还是同一个字体存了三份。
+
+`MTF4a5kp.ttf` 也删了（2B）。引擎确实会按这个名字请求，但 `fontPathFix` 无条件把它
+改指 `mbm_20160902.ttf`——**而且 `noFontHook` 那个能绕过重定向的调试开关已经一并撤除**，
+所以重定向成了唯一路径，不存在"绕过后找不到文件"的情形。留着一个永远不被打开的
+16.7 MB 商业字体没有意义。
+
+> 这两件事是配套的，别只做一半：先撤开关再删文件才安全，反过来则会给
+> `noFontHook` 留下一条必然失败的路径。
+
+> 历史提醒：`koruri-semibold.ttf` 这个文件名是**误导性**的。Koruri 是 Apache-2.0
+> 的日文开源字体，而那个文件的内容是腾祥嘉丽大圆——按文件名做合规审计会看走眼。
+> 这不是本仓库造成的（根提交就这样，是国服官方汉化时替换文件内容留下的），
+> 但清理时正好把这个雷一起拆了。同理，现行的 `MTF4a5kp → mbm_20160902` 重定向
+> 并不是「日文换中文」——后者国服早就做完了——而是把 UI 汇到覆盖最好的字体上。
 
 ## 判据
 
@@ -55,32 +69,6 @@ FONT_DIR = "assets/fonts"
 # 文件名 -> (大小, SHA-256, 内部家族名, 这个文件是干什么的)
 # 家族名为 None 表示不是 TTF（位图字体的 .fnt/.png），只校验哈希。
 EXPECTED = {
-    "MTF4a5kp.ttf": (
-        17507340,
-        "01bbb65b3b21f8d445fe15412fc3b5864425033f534464be26de0aa7ed8150c0",
-        "Tensentype JiaLiDaYuanGB18030",
-        "引擎 UI 主字体。文件名是日文原版的，内容已被国服换成大圆；"
-        "native 侧再把加载路径重定向到 mbm_20160902.ttf",
-    ),
-    "TTDaYuanGB3.ttf": (
-        17507340,
-        "01bbb65b3b21f8d445fe15412fc3b5864425033f534464be26de0aa7ed8150c0",
-        "Tensentype JiaLiDaYuanGB18030",
-        "大圆本体，与 MTF4a5kp.ttf 字节相同",
-    ),
-    "koruri-semibold.ttf": (
-        17507340,
-        "01bbb65b3b21f8d445fe15412fc3b5864425033f534464be26de0aa7ed8150c0",
-        "Tensentype JiaLiDaYuanGB18030",
-        "文件名是日文 Koruri，内容同样已被国服换成大圆",
-    ),
-    "TTZhiHeiGB3-W4.ttf": (
-        8367096,
-        "01a4be2e5fca489c30219b3bec5edac0b7c98128c5fa629c34a0208ed5b0ba34",
-        "Tensentype ZhiHeiGB18030-W4",
-        "GB 标准黑体。曾是路径重定向的目标（3348273b），现已改指 mbm；"
-        "留着是因为引擎/前端可能仍有引用，且它是可用的回退选项",
-    ),
     "mbm_20160902.ttf": (
         9070328,
         "51383ac04bf0835445a0de382c07e6467f43991c6a51cf13a4327cad51f58b03",

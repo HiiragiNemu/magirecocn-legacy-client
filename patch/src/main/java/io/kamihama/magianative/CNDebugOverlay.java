@@ -2129,7 +2129,6 @@ public final class CNDebugOverlay {
             { "logI18nMissAll", GROUP_C },
             { "noI18nLabel", GROUP_C },
             { "noI18nSetString", GROUP_C },
-            { "noFontHook", GROUP_C },
             { "noInitLabelHook", GROUP_C },
             { "noTtfHooks", GROUP_C },
             // D 教程与序章（9）
@@ -2391,9 +2390,6 @@ public final class CNDebugOverlay {
             { "noI18nSetString",
               "同上，但管游戏内大段文本。",
               ADVICE_KEEP_OFF, "开着时大片文本回日文。" },
-            { "noFontHook",
-              "我们给游戏换了副眼镜（字体）；这个开关 = 摘掉用原装的。字变方块、缺字时排查用。",
-              ADVICE_KEEP_OFF, "开着时界面字体回到游戏原包那一套。" },
             { "noInitLabelHook",
               "普通开关是「关掉改装件的功能」，这个是把整套改装件从引擎上卸下来——用来判断问题"
               + "是不是改装件本身造成的。",
