@@ -189,7 +189,11 @@ public final class CNDebugHud {
 
     private static final class Poll implements Runnable {
         @Override public void run() {
-            while (polling) {
+            // 退出判据是「polling 还开着 **且 poller 还是我**」，不能只看 polling。
+            // Activity 被重建时走的是 detachOnUi(polling=false) → startPoller
+            // (polling=true)：旧线程正睡着，醒来时标志已经被重新打开，于是它接着
+            // 跑——每重建一次 Activity 就多一条线程、多一份读盘。
+            while (polling && poller == Thread.currentThread()) {
                 String text;
                 try {
                     text = CNDebugBridge.hudText();
