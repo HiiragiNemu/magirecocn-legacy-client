@@ -75,6 +75,25 @@ public class BgmLoopTest {
         }
         check("5 圈长度恒定且无越界", same && first==le, "每圈 "+first+" 帧");
 
+        // 曲名表：编号 → 曲名。编号在 tools/convert-bgm.py 的 TRACKS 里显式写死，
+        // 所以按编号绑是安全的；这里守的是**边界**——越界必须回落成 null，让界面
+        // 只报编号。将来加了曲子而曲名表没跟上时，宁可少报也不能张冠李戴。
+        check("越界与非法编号一律没有曲名",
+                io.kamihama.magianative.CNBgm.title(0) == null
+                && io.kamihama.magianative.CNBgm.title(-1) == null
+                && io.kamihama.magianative.CNBgm.title(
+                        io.kamihama.magianative.CNBgm.titleCountForTest() + 1) == null, "");
+        String t1 = io.kamihama.magianative.CNBgm.title(1);
+        String t2 = io.kamihama.magianative.CNBgm.title(2);
+        check("两首都有曲名且署了演唱者",
+                t1 != null && t2 != null
+                && t1.contains("TrySail") && t2.contains("TrySail")
+                && !t1.equals(t2), t1 + " / " + t2);
+        // 最容易写错的一处：1 号是手游第一部主题曲「かかわり」，不是 TV 动画 OP
+        // 「ごまかし」——后者同样四假名、同样 TrySail，混起来毫无违和感。
+        check("1 号不是 TV 动画 OP", t1.startsWith("かかわり") && !t1.contains("ごまかし"), t1);
+        check("2 号是第二部主题曲", t2.startsWith("うつろい"), t2);
+
         System.out.println("\n通过 "+pass+" / 失败 "+fail);
         if(fail>0) System.exit(1);
     }

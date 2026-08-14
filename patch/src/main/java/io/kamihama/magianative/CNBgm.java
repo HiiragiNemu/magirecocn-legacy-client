@@ -118,6 +118,59 @@ public final class CNBgm {
         try { return tracks(ctx).length; } catch (Throwable t) { return 0; }
     }
 
+    /**
+     * 曲名表，下标即胶囊上的编号（1 起）。
+     *
+     * <h3>为什么敢按编号绑</h3>
+     *
+     * 编号不是「文件排序排出来的」，而是在 {@code tools/convert-bgm.py} 的
+     * {@code TRACKS} 里<b>显式写死</b>的：
+     *
+     * <pre>
+     * TRACKS = [
+     *     (1, "bgm00_system01_hca.hca"),
+     *     (2, "bgm00_system02_hca.hca"),
+     * ]
+     * </pre>
+     *
+     * 所以「1 号是哪首」有唯一出处，不会因为文件改名或目录顺序变化而漂。
+     * <b>改那张表就必须同步改这里</b>——它决定的是玩家看到的曲名。
+     *
+     * <h3>曲目考据</h3>
+     *
+     * 两首都是 TrySail 唱的手游<b>主线</b>主题曲，作词作曲渡辺翔：
+     *
+     * <ul>
+     *   <li>1 =「かかわり」——第一部主题曲（2017）；</li>
+     *   <li>2 =「うつろい」——第二部主题曲（2021，与「ごまかし」同单曲发行）。</li>
+     * </ul>
+     *
+     * ⚠ 最容易写错的是把 1 号写成「ごまかし」：那是 2020 年 <b>TV 动画</b>的 OP，
+     * 同样四假名、同样 TrySail、同样出现在「マギアレコード」名下，但不是手游主线的
+     * 主题曲。三处来源交叉核对过才落的笔。
+     */
+    private static final String[] TITLES = {
+            "かかわり",
+            "うつろい",
+    };
+
+    /** 演唱者。两首同一位，单独抽出来免得曲名表里重复三遍。 */
+    private static final String ARTIST = "TrySail";
+
+    /**
+     * 某个编号的曲名，形如 {@code かかわり ／ TrySail}。
+     *
+     * <p>查不到返回 {@code null}，调用方回落到只显示编号——将来若加进第三首而这张
+     * 表没跟上，<b>宁可只报编号，也不能张冠李戴</b>。
+     */
+    public static String title(int id) {
+        if (id < 1 || id > TITLES.length) return null;
+        return TITLES[id - 1] + " ／ " + ARTIST;
+    }
+
+    // ---- JVM 回归测试入口 ----
+    public static int titleCountForTest() { return TITLES.length; }
+
     // ==================================================================
     // 播放控制
     // ==================================================================

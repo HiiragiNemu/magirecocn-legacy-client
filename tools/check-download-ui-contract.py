@@ -19,6 +19,8 @@ offline = Path("patch/src/main/java/io/kamihama/magianative/CNOfflineImport.java
 hot_tx = Path("patch/src/main/java/io/kamihama/magianative/CNHotUpdateTx.java").read_text(encoding="utf-8")
 hud = Path("patch/src/main/java/io/kamihama/magianative/CNDebugHud.java").read_text(encoding="utf-8")
 aria2 = Path("patch/src/main/java/io/kamihama/magianative/CNAria2.java").read_text(encoding="utf-8")
+bgm = Path("patch/src/main/java/io/kamihama/magianative/CNBgm.java").read_text(encoding="utf-8")
+bgm_gen = Path("tools/convert-bgm.py").read_text(encoding="utf-8")
 manifest = Path("AndroidManifest.xml").read_text(encoding="utf-8")
 
 
@@ -527,6 +529,17 @@ checks = {
         "CNDebugHud.mount(act);" in downloader
         and downloader.index("CNDebugHud.mount(act);")
             < downloader.index("Boolean gate = CNDebugBridge.overlayGate();"),
+    # BGM 胶囊的曲名：编号 → 曲名。编号在 convert-bgm.py 的 TRACKS 里**显式写死**
+    # （不是按文件排序推的），所以按编号绑安全；但两张表得一样长，否则加了曲子而
+    # 曲名表没跟上，界面就会悄悄少报一首的名字。
+    "曲名表与曲目表同长":
+        len(re.findall(r'^\s*\(\d+,\s*"', bgm_gen, re.M))
+            == len(re.findall(r'^\s{12}"[^"]+",', bgm, re.M)) > 0,
+    # 1 号最容易被写成「ごまかし」——那是 TV 动画 OP，同样四假名同样 TrySail，
+    # 但不是手游主线主题曲。反向钉住。
+    "曲名没把动画 OP 当成手游主题曲":
+        '"かかわり"' in bgm and '"うつろい"' in bgm
+        and "ごまかし" not in code(bgm),
     "原包自带的悬浮窗权限必须保留": "SYSTEM_ALERT_WINDOW" in manifest,
     "不主动申请全盘存储权限": "MANAGE_EXTERNAL_STORAGE" not in manifest,
 }

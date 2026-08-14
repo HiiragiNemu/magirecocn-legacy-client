@@ -1763,7 +1763,12 @@ public class CNCNDownloadUI {
                 if (next > n) next = 0;          // 越过最后一首就回到关闭
                 CNBgm.select(act, next);
                 styleBgmPill(act);
-                toast(act, next <= 0 ? "BGM 已关闭" : ("BGM " + next));
+                // 顺带把曲名报出来：胶囊上只摆得下「BGM 1」，而玩家想知道的是这是
+                // 哪一首。查不到曲名（将来加了曲子而曲名表没跟上）就只报编号，不猜。
+                String song = CNBgm.title(next);
+                toast(act, next <= 0 ? "BGM 已关闭"
+                        : (song == null ? "BGM " + next
+                                        : "BGM " + next + " ・ " + song));
             } catch (Throwable t) {
                 CNLog.w("界面", "切换 BGM 失败", t);
             }
