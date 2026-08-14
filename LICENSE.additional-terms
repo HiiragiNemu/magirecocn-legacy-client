@@ -46,10 +46,10 @@ TERMS
         - the reference copies under `original/`.
 
      Those come from a third-party commercial APK (base package signed
-     `io.kamihama.totentanz`; original authors are credited in README,
-     section 「原始署名」). This repository keeps them as a
-     re-buildable archive and adds the GPL-licensed patch layer on top;
-     the two layers are independent in both code and license.
+     `io.kamihama.totentanz`; original copyright holders and disclaimer
+     are in README, section 「原始署名与免责声明」). This repository
+     keeps them as a re-buildable archive and adds the GPL-licensed patch
+     layer on top; the two layers are independent in both code and license.
 
 
 SCOPE
