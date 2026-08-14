@@ -2,11 +2,12 @@
   "_": "基线与补丁的唯一事实来源。改动请先读 tools/baseline.py 顶部的说明。",
   "apk": {
     "version": "1.2.0-r1_r129",
-    "url": "https://github.com/Puella-Care/client-apk/releases/download/1.2.0-r1/totentanz-1.2.0-r1_r129.apk",
     "sha256": "04dd3f78f12a07b92d8c03d6a4ed4806d0ef89e2ddff5707d35e0b4662da78f1",
-    "why": "上游 Puella-Care 公开发行的整包。我们一份原包都不自己存，构建时现取现解。",
+    "why": "上游公开发行的整包。我们一份原包都不自己存，构建时现取现解。",
     "tree_fingerprint": "ae69c81aa36bcd39069a433d0637db0811272743381b2cb9c0b1d986c2882784",
-    "tree_fingerprint_why": "整棵重建树的指纹（每个文件的「路径 + sha256」排序后再哈希；apktool.yml 除外，它带 apkFileName，不是 APK 内容的纯函数）。单文件 hash 只能发现「这个文件变了」，指纹能发现「这棵树和当初那棵不是同一棵」——包括多了/少了文件。重建工具链一漂移就在 fetch 那步炸，而不是等某个没打补丁的文件在 verify 里冒出来。"
+    "tree_fingerprint_why": "整棵重建树的指纹（每个文件的「路径 + sha256」排序后再哈希；apktool.yml 除外，它带 apkFileName，不是 APK 内容的纯函数）。单文件 hash 只能发现「这个文件变了」，指纹能发现「这棵树和当初那棵不是同一棵」——包括多了/少了文件。重建工具链一漂移就在 fetch 那步炸，而不是等某个没打补丁的文件在 verify 里冒出来。",
+    "url_env": "BASELINE_APK_URL",
+    "url_env_why": "基线整包的下载地址由环境变量给，本文件里不写死——它点明了我们派生自哪个上游项目，而架构随时可能换源。**这不影响可复现性**：包的身份由下面的 sha256 与整棵重建树的 tree_fingerprint 钉死，地址只决定「去哪拿」，拿错了当场就对不上。CI 里由 secrets 注入。"
   },
   "apktool": {
     "version": "2.9.3",

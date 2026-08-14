@@ -5,7 +5,7 @@
 ## 这个工具解决什么问题
 
 本仓库长期以来是一整棵 apktool 重建树入库：入库文件里，只有 ~60 个是我们
-写的，其余全是构建链重建产物。上游 Puella-Care/client-apk 走的是另一条路——
+写的，其余全是构建链重建产物。上游项目 走的是另一条路——
 仓库正文只放补丁，整包放 Release。我们做得更干净：**连原包都不自己存**，
 构建时直接从Totentanz 公开 Release 取。2026-08-14 起那棵树已从仓库删除。
 
@@ -192,9 +192,15 @@ def cmd_fetch(args):
         if os.path.isfile(dst) and sha256_file(dst) == spec["sha256"]:
             print("已有且校验通过：%s" % name)
             return dst
-        print("下载 %s\n  ← %s" % (name, spec["url"]))
+        url = spec.get("url") or os.environ.get(spec.get("url_env", ""), "")
+        if not url:
+            raise SystemExit(
+                "没有 %s：下载地址由环境变量给，本仓库里不写死。CI 里由 secrets 注入。\n"
+                "  （包的身份由 sha256 与 tree_fingerprint 钉死，地址只决定去哪拿）"
+                % spec.get("url_env", "（未声明 url_env）"))
+        print("下载 %s" % name)
         tmp = dst + ".part"
-        with urllib.request.urlopen(spec["url"]) as r, open(tmp, "wb") as f:
+        with urllib.request.urlopen(url) as r, open(tmp, "wb") as f:
             shutil.copyfileobj(r, f)
         got = sha256_file(tmp)
         if got != spec["sha256"]:

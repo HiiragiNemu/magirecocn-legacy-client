@@ -72,8 +72,13 @@ def run(conf_path=None, quiet=False):
     # ── 钉死项 ────────────────────────────────────────────────────────────
     for key in ("apk", "apktool"):
         spec = conf.get(key) or {}
-        if not str(spec.get("url", "")).startswith("https://"):
-            bad("%s.url 不是 https" % key)
+        # 地址要么直接写 https，要么声明由哪个环境变量给（CI 从 secrets 注入）。
+        # 两者都没有就是拿不到东西；两者都有反而含糊，也拦下。
+        has_url = str(spec.get("url", "")).startswith("https://")
+        has_env = bool(spec.get("url_env"))
+        if has_url == has_env:
+            bad("%s：url（https）与 url_env 必须二选一，现在是%s"
+                % (key, "两个都有" if has_url else "两个都没有"))
         if not HEX64.match(str(spec.get("sha256", ""))):
             bad("%s.sha256 不是 64 位小写十六进制" % key)
         if not spec.get("version"):

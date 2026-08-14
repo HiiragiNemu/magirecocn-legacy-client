@@ -49,7 +49,7 @@ public class SafeLinkTest {
         // 深层子域也必须放行：自有域下的加速镜像随时可能新开一个前缀
         ok("https://cdn1.assets.example.test/g/m/pkg/legacy-client.apk");
         ok("https://cdn1.assets.example.test/version_js.json");
-        ok("https://github.com/magirecocn-revival-project/legacy-client");
+        ok("（本仓库）");
         // right_pill 的「支持我们」跳爱发电；两个域名是同一个站
         ok("https://afdian.com/a/magireco");
         ok("https://ifdian.net/a/magireco");

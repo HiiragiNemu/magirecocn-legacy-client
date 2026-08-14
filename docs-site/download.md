@@ -4,8 +4,8 @@
 
 客户端发布在 GitHub Releases：
 
-- **最新版（推荐）**：[Releases · latest](https://github.com/MagirecoCN-Revival-Project/legacy-client/releases/latest)
-- 全部历史版本：[Releases 列表](https://github.com/MagirecoCN-Revival-Project/legacy-client/releases)
+- **最新版（推荐）**：[Releases · latest](https://（本仓库）/releases/latest)
+- 全部历史版本：[Releases 列表](https://（本仓库）/releases)
 
 APK 文件名形如 `legacy-client-1.0.<构建号>.apk`，构建号单调递增，
 数字越大越新。

@@ -7,7 +7,7 @@
 #                 是净损害。只有两个 hook 值得留，已在本文件对应的源码里重写。
 #   libcn_hook.so 资源下载流水线（无源码）。
 #
-# 实现照搬 （旧客户端仓库） 的 （旧 native 层）/（同一个 3.1.9 引擎上验证过），
+# 实现照搬 另一个客户端仓库 的 （旧 native 层）/（同一个 3.1.9 引擎上验证过），
 # 去掉其中 cnv 专有的部分（setURI 代理后端、强制新手教程）。
 #
 # 设计为 Android NDK 单独驱动：
@@ -26,6 +26,27 @@
 
 cmake_minimum_required(VERSION 3.18)
 project(MagiaLegacy C CXX)
+
+# ── 把构建路径从产物里抹掉 ────────────────────────────────────────────────
+# 编译器会把源文件的**绝对路径**编进 .so（assert/__FILE__、调试信息、汇编的
+# .file 指示）。实测发出去的包里能直接 strings 出：
+#
+#   /home/runner/work/<仓库名>/<仓库名>/magia-native/src/MagiaLegacy.cpp
+#   …/_deps/shadowhook-src/…
+#
+# 也就是说仓库名、CI 路径、连第三方依赖的取用方式，全都随每个 APK 发出去了
+# ——仓库正文里怎么清理都盖不住这一处。-ffile-prefix-map 把前缀重写成一个
+# 中性根，__FILE__ 与调试信息里就只剩相对路径。
+#
+# 三个 flag 的关系：-ffile-prefix-map 同时管调试信息与 __FILE__（Clang 10+、
+# GCC 8+），另外两个是老工具链的分别版本，一并给上不冲突。
+# 顺带的好处：构建可复现——换一台机器、换一个目录，产出的 .so 不再因为路径
+# 不同而字节不同。
+foreach(_pfx "${CMAKE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
+    add_compile_options("-ffile-prefix-map=${_pfx}=.")
+    add_compile_options("-fdebug-prefix-map=${_pfx}=.")
+    add_compile_options("-fmacro-prefix-map=${_pfx}=.")
+endforeach()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

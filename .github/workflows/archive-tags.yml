@@ -7,15 +7,15 @@ name: 🗄️ 备份存档 tag
 # ║ 干什么                                                              ║
 # ║ ─────                                                              ║
 # ║   把 origin 上全部 15 个 tag（archive/* 与几个 *-latest）打成一个    ║
-# ║   git bundle，连同可读索引传到**外部发布渠道**的 latest Release。    ║
-# ║   之后顺既有链路（网盘同步脚本读 releases/latest）同步到   ║
-# ║   网盘，不需要另开一条上传通道。                                 ║
+# ║   git bundle，连同可读索引传到**外部发布渠道**的 latest Release，     ║
+# ║   之后顺既有链路（网盘同步脚本读 releases/latest）镜像到网盘，      ║
+# ║   不必另开一条上传通道。地址由 secrets 给。                        ║
 # ║                                                                    ║
 # ║ 为什么放 CI 而不是本地跑                                            ║
 # ║ ───────────────────                                                ║
 # ║   ▸ 120 MB 从境内机器传到 GitHub 是整条路上最慢最不稳的一段；        ║
 # ║     runner 上传 Release 全程在 GitHub 内网。                        ║
-# ║   ▸ token 已经在仓库 Secrets 里，不必让 PAT 落到谁的机器上。         ║
+# ║   ▸ token 与目标地址都在仓库 Secrets 里，不必落到谁的机器上。        ║
 # ║   ▸ 全新克隆没有「本地 tag 过期」的问题——那个坑本地真踩到了两次      ║
 # ║     （last-green 每次 push 都被 last-green.yml 移动，而 git fetch    ║
 # ║     默认不强制更新已存在的 tag）。                                   ║
@@ -47,14 +47,15 @@ jobs:
     timeout-minutes: 45
 
     steps:
-      - name: 🛡️ 安全护栏（校验仓库白名单）
+      # 防止 fork 出去的副本拿本工作流产出「看起来官方」的包。
+      # 判据从「仓库名等于某个写死的值」换成「这份检出是不是 fork」——
+      # 想拦的本来就是 fork，直接问这件事既更准，又不必把仓库名写进文件。
+      # 仓库改名、迁移、换 owner 时这里都不用动。
+      - name: 🛡️ 安全护栏（fork 不得构建）
+        if: ${{ github.event.repository.fork }}
         run: |
-          set -euo pipefail
-          ALLOWED="magirecocn-revival-project/legacy-client"
-          if [ "${GITHUB_REPOSITORY,,}" != "${ALLOWED,,}" ]; then
-            echo "::error::本工作流仅允许在 ${ALLOWED} 内运行，当前为 ${GITHUB_REPOSITORY}"
-            exit 1
-          fi
+          echo "::error::这是一个 fork，不允许用本工作流产出对外产物"
+          exit 1
 
       # fetch-depth: 0 是硬要求：要打的是**全部历史**，而且索引里「在 main 上」
       # 那一列要拿 origin/main 比。浅克隆下这列会整列写错而不报错——脚本里
@@ -102,6 +103,7 @@ jobs:
         if: ${{ inputs.upload }}
         env:
           : ${{ secrets. }}
+          TARGET_REPO: ${{ secrets.TARGET_REPO }}
         run: python3 tools/archive-tags.py upload
 
       # 「传上去了」和「传完整了」是两回事：下回来逐个校 sha256。
@@ -110,6 +112,7 @@ jobs:
         if: ${{ inputs.upload }}
         env:
           : ${{ secrets. }}
+          TARGET_REPO: ${{ secrets.TARGET_REPO }}
         run: python3 tools/archive-tags.py verify
 
       # 索引与校验和很小，永远留一份在 artifact 里，方便事后查「当时备份了什么」。
@@ -139,7 +142,7 @@ jobs:
             echo
             echo "### 接下来"
             echo
-            echo "1. 资产已在上游 \`latest\` Release，等外部发布渠道的同步 workflow 跑一次即可镜像到 网盘"
+            echo "1. 资产已在目标 \`latest\` Release，等那边的同步 workflow 跑一次即可镜像到网盘"
             echo "2. 确认镜像到位后再删 tag：\`git push origin --delete refs/tags/<名字>\`"
             echo "3. **删完记得把本工作流文件一并删掉**——它是一次性的"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -38,7 +38,7 @@ GitHub 内网；token 与目标地址也都已经在仓库 Secrets 里，不必�
 
 本地跑（调试或 CI 不可用时）：
 
-    export =... UPSTREAM_OWNER=... UPSTREAM_REPO=...
+    export =... TARGET_REPO=owner/repo
     git fetch --force origin 'refs/tags/*:refs/tags/*'
     python3 tools/archive-tags.py pack        # 打包 + 生成索引，落在 work/archive/
     python3 tools/archive-tags.py upload      # 传到发布仓库 Release（同名资产先删后传）
@@ -65,16 +65,17 @@ BASENAME = "legacy-client-archive-tags"
 
 # 归档资产传到哪：地址不写死在仓库里，由环境变量给（CI 从 secrets 注入）。
 # 那边的同步链路会读它的 releases/latest 再往外镜像。
-UPSTREAM_OWNER = os.environ.get("UPSTREAM_OWNER", "")
-UPSTREAM_REPO = os.environ.get("UPSTREAM_REPO", "")
+# 形如 owner/repo，与发版步骤用的是同一个 secret——同一件事只该有一个来源，
+# 拆成 owner 与 name 两个变量只会多一处能改错的地方。
+TARGET = os.environ.get("TARGET_REPO", "").strip().strip("/")
 RELEASE_TAG = os.environ.get("UPSTREAM_RELEASE_TAG", "latest")
 
 
 def require_target():
-    if not UPSTREAM_OWNER or not UPSTREAM_REPO:
+    if TARGET.count("/") != 1 or not all(TARGET.split("/")):
         raise SystemExit(
-            "没有 UPSTREAM_OWNER / UPSTREAM_REPO：目标地址由环境变量给，"
-            "本仓库里不写死。CI 里由 secrets 注入。")
+            "TARGET_REPO 没设或形状不对（要 owner/repo，实得 %r）："
+            "目标地址由环境变量给，本仓库里不写死。CI 里由 secrets 注入。" % TARGET)
 
 API = "https://api.github.com"
 UPLOADS = "https://uploads.github.com"
@@ -296,11 +297,9 @@ def cmd_upload(args):
     if not files:
         raise SystemExit("%s 里没有产物，先跑 pack" % OUT_DIR)
 
-    rel = api("/repos/%s/%s/releases/tags/%s" % (UPSTREAM_OWNER, UPSTREAM_REPO, RELEASE_TAG),
-              token)
+    rel = api("/repos/%s/releases/tags/%s" % (TARGET, RELEASE_TAG), token)
     rid = rel["id"]
-    print("发布仓库 Release：%s/%s @ %s（id %s）"
-          % (UPSTREAM_OWNER, UPSTREAM_REPO, RELEASE_TAG, rid))
+    print("目标 Release：%s @ %s（id %s）" % (TARGET, RELEASE_TAG, rid))
 
     existing = {a["name"]: a["id"] for a in rel.get("assets", [])}
     for path in files:
@@ -308,13 +307,13 @@ def cmd_upload(args):
         size = os.path.getsize(path)
         if name in existing:
             print("同名资产已存在，先删：%s" % name)
-            api("/repos/%s/%s/releases/assets/%d" % (UPSTREAM_OWNER, UPSTREAM_REPO,
-                                                     existing[name]), token, method="DELETE")
+            api("/repos/%s/releases/assets/%d" % (TARGET, existing[name]),
+                token, method="DELETE")
         print("上传 %s（%.1f MB）…" % (name, size / 1e6))
         with open(path, "rb") as f:
             data = f.read()
-        api("/repos/%s/%s/releases/%d/assets?name=%s"
-            % (UPSTREAM_OWNER, UPSTREAM_REPO, rid, urllib.parse.quote(name)),
+        api("/repos/%s/releases/%d/assets?name=%s"
+            % (TARGET, rid, urllib.parse.quote(name)),
             token, method="POST", data=data,
             headers={"Content-Type": "application/octet-stream",
                      "Content-Length": str(size)},
@@ -339,8 +338,7 @@ def cmd_verify(args):
         if name:
             want[name] = digest
 
-    rel = api("/repos/%s/%s/releases/tags/%s" % (UPSTREAM_OWNER, UPSTREAM_REPO, RELEASE_TAG),
-              token)
+    rel = api("/repos/%s/releases/tags/%s" % (TARGET, RELEASE_TAG), token)
     assets = {a["name"]: a for a in rel.get("assets", [])}
     bad = 0
     tmp = os.path.join(OUT_DIR, ".verify.tmp")

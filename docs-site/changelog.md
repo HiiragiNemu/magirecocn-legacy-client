@@ -3,7 +3,7 @@
 客户端版本以 CI 构建号命名（`1.0.<构建号>`），每个版本对应的
 APK 与改动说明都在 GitHub Releases：
 
-👉 **[Releases · MagirecoCN-Revival-Project/legacy-client](https://github.com/MagirecoCN-Revival-Project/legacy-client/releases)**
+👉 **[Releases · （本仓库）](https://（本仓库）/releases)**
 
 ## 两类更新，两种速度
 
@@ -22,4 +22,4 @@ APK 与改动说明都在 GitHub Releases：
 - **1.0.84+** i18n 前缀匹配与热重载指纹修复
 
 完整提交历史见
-[commits · main](https://github.com/MagirecoCN-Revival-Project/legacy-client/commits/main)。
+[commits · main](https://（本仓库）/commits/main)。

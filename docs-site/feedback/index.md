@@ -13,16 +13,16 @@
 
 统一走 GitHub Issues，按类型选模板：
 
-- 🐞 [报 Bug](https://github.com/MagirecoCN-Revival-Project/legacy-client/issues/new?template=bug_report.yml)——闪退、卡死、黑屏、下载失败、功能异常
-- 🔤 [报误译 / 漏翻](https://github.com/MagirecoCN-Revival-Project/legacy-client/issues/new?template=translation.yml)——日文残留、错别字、语义不通、字体不对
-- 💬 [体验与建议](https://github.com/MagirecoCN-Revival-Project/legacy-client/issues/new?template=feedback.yml)——手感、速度、建议
+- 🐞 [报 Bug](https://（本仓库）/issues/new?template=bug_report.yml)——闪退、卡死、黑屏、下载失败、功能异常
+- 🔤 [报误译 / 漏翻](https://（本仓库）/issues/new?template=translation.yml)——日文残留、错别字、语义不通、字体不对
+- 💬 [体验与建议](https://（本仓库）/issues/new?template=feedback.yml)——手感、速度、建议
 
 没有 GitHub 账号的，可以让有账号的朋友代发；内容与模板一致即可。
 
 ## 提之前先查一下
 
 - [常见问题 FAQ](/faq)——下载慢、日文字体、闪退等高频问题已有答案。
-- [Issues 列表](https://github.com/MagirecoCN-Revival-Project/legacy-client/issues)——搜一下关键词，可能已经有人报过了，在原有 issue 下补充即可。
+- [Issues 列表](https://（本仓库）/issues)——搜一下关键词，可能已经有人报过了，在原有 issue 下补充即可。
 
 ## 什么样的反馈最有用
 

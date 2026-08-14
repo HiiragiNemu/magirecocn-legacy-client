@@ -34,7 +34,7 @@
 ### 翻译质量如何？
 
 以中文 Wiki 名词为准 + 通顺优先。发现误译请用
-[误译模板](https://github.com/MagirecoCN-Revival-Project/legacy-client/issues/new?template=translation.yml) 提交，
+[误译模板](https://（本仓库）/issues/new?template=translation.yml) 提交，
 热更下发修正，不用重装。
 
 ## 崩溃与兼容

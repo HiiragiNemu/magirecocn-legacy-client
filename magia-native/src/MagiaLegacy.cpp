@@ -16,7 +16,7 @@
 // 换行与标签尺寸只会排错；而我们的对话框图集本来就是按中文宽度做的
 // （story_ui_fukidashi 574x178，英文版是 844x198）。
 //
-// （旧客户端仓库） 早就得出同样结论并落地了：它的 （旧 native 层）/ 把 libuwasa
+// 另一个客户端仓库 早就得出同样结论并落地了：它的 （旧 native 层）/ 把 libuwasa
 // 里**唯一值得留的两个 hook** 逆向移植了过去，然后停用整个 libuwasa。见那边
 // 源码里的注释「性能 hook（从 libuwasa 逆向移植，已停用 libuwasa 加载）」。
 // 本文件照搬这个做法。
@@ -119,7 +119,7 @@ static JavaVM* gJvm = nullptr;
 // AttachCurrentThread —— 那里的 FindClass 用**系统 ClassLoader**，看不到 App 类，
 // 只会返回 null 并挂一个 ClassNotFoundException。
 //
-// 这个坑在 （旧客户端仓库） 的 MagiaClient.cpp 里有白纸黑字的警告
+// 这个坑在 另一个客户端仓库 的 MagiaClient.cpp 里有白纸黑字的警告
 // （ProxyBackends 那段），第一版还是照着踩了：真机日志里是
 //     E/MagiaCN_Legacy: [UrlConfig] 找不到 CNDownloaderFix
 static jclass gClsDownloaderFix   = nullptr; // io.kamihama.magianative.CNDownloaderFix
