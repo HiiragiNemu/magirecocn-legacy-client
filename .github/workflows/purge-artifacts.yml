@@ -1,0 +1,112 @@
+name: 🧹 清理旧构建产物
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║   清掉还挂在外面、且带着旧痕迹的构建物                              ║
+# ╠════════════════════════════════════════════════════════════════════╣
+# ║                                                                    ║
+# ║ 为什么需要它                                                        ║
+# ║ ──────                                                             ║
+# ║   仓库正文里已经没有资产源地址、没有旧仓库名、.so 里也不再嵌构建     ║
+# ║   路径。但**此前产出的东西还挂在外面**，每一件都带着那些痕迹：       ║
+# ║                                                                    ║
+# ║     artifact   每次构建的 APK：dex 里两条指向资产源的兜底直链、      ║
+# ║                .so 里 /home/runner/work/<仓库名>/<仓库名>/…         ║
+# ║     run 日志   秘密化之前，发版步骤把目标仓库地址直接 echo 过        ║
+# ║     cache      构建中间物，同样按仓库路径组织                       ║
+# ║     Release    对外发行的 APK，内容同第一行                         ║
+# ║                                                                    ║
+# ║ ⚠ 清掉它们**不等于清干净**：已经装在玩家手机上的包、别人下载过的    ║
+# ║   副本、第三方镜像，都不在射程内。这里能做到的是「不再由我们主动    ║
+# ║   提供」，不是「世界上不存在」。                                    ║
+# ║                                                                    ║
+# ║ 三条安全线（有意为之，别拆）                                        ║
+# ║ ─────────────────                                                  ║
+# ║   1. 默认 dry-run —— 不勾「真的删除」就只列不删                     ║
+# ║   2. Release 资产单独开关，且默认保留当前对外直链那一份             ║
+# ║   3. 保留最近若干次 run —— 全删会让「上次绿灯长什么样」也没了       ║
+# ╚════════════════════════════════════════════════════════════════════╝
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: '真的删除（不勾＝dry-run，只列出会删什么）'
+        type: boolean
+        default: false
+      artifacts:
+        description: 'workflow artifact（旧 APK 就在这里）'
+        type: boolean
+        default: true
+      caches:
+        description: 'Actions cache'
+        type: boolean
+        default: true
+      runs:
+        description: '旧 run 及其日志（日志里 echo 过仓库地址）'
+        type: boolean
+        default: true
+      keep_runs:
+        description: '保留最近几次 run'
+        default: '3'
+      release_assets:
+        description: '⚠ 连对外 Release 上的旧资产一起删（会动玩家的下载链接）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: write          # 删 artifact / cache / run 要它
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # 与其它 workflow 同一套判据：想拦的是 fork，直接问这件事，不写死仓库名。
+      - name: 🛡️ 安全护栏（fork 不得运行）
+        if: ${{ github.event.repository.fork }}
+        run: |
+          echo "::error::这是一个 fork，不允许在这里跑清理"
+          exit 1
+
+      - name: 📦 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 🧹 清理
+        env:
+          # 两个 token 各管各的，别混用：自身仓库的 artifact / cache / run 用内置
+          # token（permissions 已给 actions: write）；Release 资产在别的仓库，
+          # 只有 PAT 够得着。反过来 PAT 未必对本仓库有 actions:write，拿它删
+          # artifact 会 403。
+          : ${{ secrets. }}
+          : ${{ secrets. }}
+          TARGET_REPO: ${{ secrets.TARGET_REPO }}
+        run: |
+          set -euo pipefail
+          # ⚠ 这里必须用 if/fi，不能写成 `[ cond ] && ARGS=...`：条件为假时那一整句
+          # 返回 1，在 set -e 下会直接把这一步杀掉——而「没勾任何开关」恰恰是最
+          # 常见的一次运行（dry-run 看看）。
+          ARGS=""
+          if [ "${{ inputs.apply }}"     = "true" ]; then ARGS="$ARGS --apply";     fi
+          if [ "${{ inputs.artifacts }}" = "true" ]; then ARGS="$ARGS --artifacts"; fi
+          if [ "${{ inputs.caches }}"    = "true" ]; then ARGS="$ARGS --caches";    fi
+          if [ "${{ inputs.runs }}"      = "true" ]; then ARGS="$ARGS --runs";      fi
+          ARGS="$ARGS --keep-runs ${{ inputs.keep_runs }}"
+          # Release 资产：勾了才带上，且把那道二次确认一并给足——真正的闸门是
+          # 这个勾选框本身，脚本里那道是给「本地手滑」用的。
+          if [ "${{ inputs.release_assets }}" = "true" ]; then
+            ARGS="$ARGS --release-assets --yes-delete-release-assets"
+          fi
+          echo "参数：$ARGS"
+          python3 tools/test-purge-artifacts.py     # 先自测：删除工具真跑那次才出错最糟
+          python3 tools/purge-artifacts.py $ARGS
+
+      - name: 📋 没真删时提醒一句
+        if: ${{ !inputs.apply }}
+        run: |
+          {
+            echo
+            echo "> 这次是 **dry-run**，什么都没删。核对上面的清单，确认无误后"
+            echo "> 重新触发并勾上「真的删除」。"
+          } >> "$GITHUB_STEP_SUMMARY"
