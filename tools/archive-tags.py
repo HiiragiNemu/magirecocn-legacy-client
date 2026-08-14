@@ -31,9 +31,16 @@
 runner** 上——境内机传 123云盘直连快，GitHub 官方 runner 跨太平洋 PUT 大文件极慢。
 所以传到发布仓库 Release 就够了，后面顺着既有链路走，不用另写一条上传通道。
 
-## 用法
+## 怎么跑
+
+**优先走 CI**：`.github/workflows/archive-tags.yml`（手动触发）。理由是那 120 MB
+从境内机器传到 GitHub 是整条路上最慢最不稳的一段，而 runner 上传 Release 全程在
+GitHub 内网；token 也已经在仓库 Secrets 里，不必让 PAT 落到谁的机器上。
+
+本地跑（调试或 CI 不可用时）：
 
     export =...                       # 需要能写外部发布渠道的 token
+    git fetch --force origin 'refs/tags/*:refs/tags/*'
     python3 tools/archive-tags.py pack        # 打包 + 生成索引，落在 work/archive/
     python3 tools/archive-tags.py upload      # 传到发布仓库 Release（同名资产先删后传）
     python3 tools/archive-tags.py verify      # 把资产下回来，逐个校 sha256
@@ -131,6 +138,20 @@ def archive_tags():
     return sorted(remote)
 
 
+def require_main():
+    """索引里「在 main 上」那一列要拿 origin/main 比，没有它整列会写成「否」。
+
+    浅克隆正好是这种情况（CI 里 actions/checkout 默认只取一个 ref）：不报错、
+    不缺文件，只是那一列全错——而那列恰恰是「删掉会不会丢东西」的判据。
+    """
+    if subprocess.call(["git", "-C", REPO, "rev-parse", "--verify", "-q", "origin/main"],
+                       stdout=subprocess.DEVNULL) != 0:
+        raise SystemExit(
+            "拿不到 origin/main，索引里「在 main 上」那一列会整列写错。\n"
+            "  浅克隆要先补全：git fetch --unshallow origin，"
+            "或 actions/checkout 时给 fetch-depth: 0")
+
+
 def tag_info(tag):
     fmt = "%H%x00%ad%x00%an%x00%s%x00%b"
     raw = sh("log", "-1", "--date=short", "--format=" + fmt, tag)
@@ -148,6 +169,7 @@ def tag_info(tag):
 
 def cmd_pack(args):
     os.makedirs(OUT_DIR, exist_ok=True)
+    require_main()
     tags = archive_tags()
     print("要备份的 tag：%d 个" % len(tags))
 
