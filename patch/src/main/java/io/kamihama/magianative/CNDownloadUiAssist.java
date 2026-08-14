@@ -28,10 +28,44 @@ import java.lang.reflect.Field;
 import java.util.WeakHashMap;
 
 /**
- * 下载浮层内部的显示、停留和单包重下载入口。
+ * 下载浮层内部的显示辅助层：停留、字号缩放、滚动条、左右分界线。
  *
- * <p>所有可见控件都挂在 {@link CNCNDownloadUI#overlayView} 内；关闭下载页即一起销毁。
- * 本类绝不向 decorView 添加悬浮面板，也绝不平移整个下载浮层或游戏画面。
+ * <p>所有可见控件都挂在 {@link CNCNDownloadUI#overlayView} 内；关闭下载页即一起
+ * 销毁。本类绝不向 decorView 添加悬浮面板，也绝不平移整个下载浮层或游戏画面。
+ *
+ * <h2>宽度模型：读视口，写内容（2026-08-14 重写）</h2>
+ *
+ * 这一层历史上在宽度这件事上翻过两次车，方向相反，所以判据必须写清楚。
+ *
+ * <p><b>第一版：读被自己改的那个 View 的测量宽度。</b>
+ * 上一帧按测得的宽度设了新宽度，下一帧再去测，于是越算越大。真机表现是「反复
+ * 拖左右分界线，左右越变越长」，而且要反复操作才显形。
+ *
+ * <p><b>第二版（修上一版的办法）：干脆不读任何 {@code getWidth()}，改用
+ * {@code widthPixels − 左右边距} 算死一个像素值</b>，建浮层时算一次存进
+ * {@code CNCNDownloadUI.contentBaseWidthPx}，两列再按 weight 去分它。
+ * 这条把反馈环掐断了，代价是那个数**经常不等于真实视口**：分屏、旋转、刘海与
+ * 手势区 inset、面板自身 padding，任何一项对不上，两列就在按错的总宽分家——
+ * 这正是「左右宽度解析有大问题」。而且它只在建浮层那一刻算一次，之后屏幕怎么变
+ * 都不会重算。
+ *
+ * <p><b>现在这版：读<i>视口</i>（{@code hScroll}），写<i>内容</i>
+ * （{@code contentRoot}）。</b>两者是父子关系，父的宽度由**它自己的**父布局决定，
+ * 不受子节点宽度影响——所以没有反馈环，第一版那个毛病不会回来；而它读的是真实
+ * 测量值，第二版那个毛病也不存在。上一版把「不许读 getWidth()」当成了铁律，
+ * 那条规矩下得太宽：出事的从来不是「读测量宽度」，是「读了自己马上要改的那个
+ * View 的测量宽度」。
+ *
+ * <p>由此还得到两个白送的好处：
+ *
+ * <ul>
+ *   <li>100% 及以下时内容宽直接交给 {@code MATCH_PARENT} + 容器的
+ *       {@code setFillViewport(true)}，<b>一个像素都不用自己算</b>。原先那句
+ *       {@code fillViewport(true)} 其实一直是废的：子节点被钉了精确像素宽，
+ *       fillViewport 只对 {@code WRAP_CONTENT}/{@code MATCH_PARENT} 生效；</li>
+ *   <li>视口变了（旋转、分屏、折叠屏展开）由 {@link ViewportWatch} 收到布局回调
+ *       自动重算，不需要谁记得去调一次。</li>
+ * </ul>
  */
 public final class CNDownloadUiAssist {
     /** buildOverlay 给中央内容和两条真实滚动容器使用的稳定标签。 */
@@ -48,21 +82,32 @@ public final class CNDownloadUiAssist {
     private static final String TAG_STAY = "cn-download-stay";
     private static final String TAG_DISPLAY = "cn-download-display";
     private static final String TAG_SPLIT = "cn-download-split";
+
     private static final String PREFS = "cnv_bootstrap_ui_assist";
     private static final String PREF_SCALE = "font_scale_pct";
     private static final String PREF_SPLIT = "split_left_pct";
+    private static final String PREF_SPLIT_HINT = "split_hint_shown";
+
+    /** 玩家可手动调到的字号范围。 */
+    private static final int SCALE_MIN = 75;
+    private static final int SCALE_MAX = 150;
 
     /**
      * 左右分界线可拖到的范围与默认值（左列占比 %）。
      *
-     * <p>默认 38 = {@code CNCNDownloadUI} 建左右两列时给的 0.38f / 0.62f，不改
-     * 原设计，只是让它可调。上下限留得比较紧：两边都还要放得下东西——左列是
-     * Logo + 署名，右列是 15 个槽位行，谁被压到 20% 以下都只剩省略号，那种
-     * 「调得动但没法用」的自由度不如不给。
+     * <p>默认 38 = {@code CNCNDownloadUI} 原本写死的 0.38f / 0.62f，不改原设计，
+     * 只是让它可调。上下限留得紧：两边都还要放得下东西——左列是 Logo + 署名，
+     * 右列是 15 个槽位行，谁被压到 20% 以下都只剩省略号，那种「调得动但没法用」
+     * 的自由度不如不给。
      */
     private static final int SPLIT_MIN = 20;
     private static final int SPLIT_MAX = 70;
     private static final int SPLIT_DEFAULT = 38;
+
+    /** 把手宽度，以及静止/调节两态下可见线的内缩量。 */
+    private static final int HANDLE_DP = 18;
+    private static final int HANDLE_INSET_IDLE = 7;    // → 4dp 可见
+    private static final int HANDLE_INSET_ACTIVE = 6;  // → 6dp 可见
 
     private static final String OLD_LINGER =
             "即将进入游戏；点按浮层（如「教程」胶囊播序章）可稍作停留";
@@ -70,9 +115,15 @@ public final class CNDownloadUiAssist {
             "检查已完成。可查看日志或管理资源；需要停留请使用“停留本页”。";
 
     private static final Object STAY_LOCK = new Object();
+
+    /**
+     * 字号缩放的基准表：缓存<b>第一次见到的</b>字号与图片尺寸。
+     *
+     * <p>每次都从基准重算，而不是在当前值上乘——否则反复调字号会指数级放大，
+     * 和上面那个宽度反馈环是同一类错误。
+     */
     private static final WeakHashMap<TextView, Float> BASE_TEXT_PX =
             new WeakHashMap<TextView, Float>();
-    /** 图片的原始 {宽, 高}（px）。与 BASE_TEXT_PX 同理：永远从基准重算。 */
     private static final WeakHashMap<ImageView, int[]> BASE_IMAGE_PX =
             new WeakHashMap<ImageView, int[]>();
 
@@ -112,10 +163,12 @@ public final class CNDownloadUiAssist {
     private static SeekBar scaleSeek;
     private static FrameLayout displayModal;
     private static View splitHandle;
+    private static ViewportWatch viewportWatch;
     private static SharedPreferences prefs;
+
     private static int scalePct = 100;
     private static int splitPct = SPLIT_DEFAULT;
-    private static int baseContentWidth;
+
     private static volatile boolean stayRequested;
     private static volatile boolean leaveRequested;
     private static volatile Thread stayThread;
@@ -125,6 +178,8 @@ public final class CNDownloadUiAssist {
     private static final Runnable DETACH = new DetachTask();
 
     private CNDownloadUiAssist() {}
+
+    // ══ 生命周期 ═══════════════════════════════════════════════════════
 
     /** 可从任意线程调用；浮层尚未创建时直接返回。 */
     public static void ensureInstalled() {
@@ -142,48 +197,74 @@ public final class CNDownloadUiAssist {
         }
     }
 
-    public static boolean shouldStayOnPage() {
-        return stayRequested;
+    private static final class InstallTask implements Runnable {
+        @Override public void run() { installOnMain(); }
     }
 
-    /** “进入游戏”是一次性动作；热更新停留窗口消费后自动清掉。 */
-    public static boolean consumeLeaveRequest() {
-        synchronized (STAY_LOCK) {
-            if (!leaveRequested) return false;
-            leaveRequested = false;
-            return true;
+    private static final class ApplyTask implements Runnable {
+        @Override public void run() {
+            styleStay();
+            styleDisplay();
+            styleScrollbars();
+            applyScale();
         }
     }
 
-    /** 下载 UI 自己的模态框也必须阻止自动收页。 */
-    public static boolean isModalOpen() {
-        return displayModal != null;
+    private static final class DetachTask implements Runnable {
+        @Override public void run() { detachOnMain(); }
     }
 
-    /** 包内调用：教程“否”、单包重下和顶部胶囊共用同一停留状态。 */
-    public static void setStayOnPage(boolean stay) {
-        synchronized (STAY_LOCK) {
-            stayRequested = stay;
-            leaveRequested = !stay;
-            STAY_LOCK.notifyAll();
+    private static void installOnMain() {
+        FrameLayout overlay = CNCNDownloadUI.overlayView;
+        if (overlay == null) return;
+        removeLegacy();
+        overlay.setTranslationX(0f);
+        overlay.setTranslationY(0f);
+
+        if (attachedOverlay != overlay) {
+            detachRefs();
+            attachedOverlay = overlay;
+            contentRoot = overlay.findViewWithTag(TAG_CONTENT_ROOT);
+            View hs = overlay.findViewWithTag(TAG_H_SCROLL);
+            View vs = overlay.findViewWithTag(TAG_V_SCROLL);
+            hScroll = hs instanceof HorizontalScrollView ? (HorizontalScrollView) hs : null;
+            vScroll = vs instanceof ScrollView ? (ScrollView) vs : null;
+            loadPrefs(overlay.getContext());
+            watchViewport();
         }
-        if (stay) startStayWatchdog();
-        else stopStayWatchdog();
-        postInstall();
+
+        replaceLinger(overlay);
+        installStay(overlay);
+        installDisplay(overlay);
+        installSplit();
+        styleStay();
+        styleDisplay();
+        styleScrollbars();
+        applyScale();
+        try { CNManualRedownload.recoverCompletedRequest(); } catch (Throwable ignore) {}
+
+        // 浮层是分几帧长齐的（槽位行、Logo 图片后到），所以补几次。
+        Handler h = CNCNDownloadUI.uiHandler;
+        if (h != null) {
+            h.removeCallbacks(APPLY);
+            h.postDelayed(APPLY, 120L);
+            h.postDelayed(APPLY, 800L);
+            h.postDelayed(APPLY, 1800L);
+        }
+        if (stayRequested) startStayWatchdog();
     }
 
-    /** 首次安装收尾调用：玩家点了“停留本页”时一直等到其点“进入游戏”。 */
-    public static void awaitReleaseIfRequested() {
-        synchronized (STAY_LOCK) {
-            while (stayRequested) {
-                try {
-                    STAY_LOCK.wait(250L);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-            }
+    private static void loadPrefs(Context context) {
+        if (prefs == null && context != null) {
+            prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         }
+        if (prefs == null) return;
+        // 没调过时用按分辨率算的建议值；调过一次之后一律以玩家的选择为准。
+        // 用 -1 而不是 100 当「没调过」的哨兵：100 是合法选择，分不出
+        // 「玩家特意选了 100%」和「从没动过」。
+        int saved = prefs.getInt(PREF_SCALE, -1);
+        scalePct = saved < 0 ? suggestedScale(context) : clamp(saved, SCALE_MIN, SCALE_MAX);
+        splitPct = clamp(prefs.getInt(PREF_SPLIT, SPLIT_DEFAULT), SPLIT_MIN, SPLIT_MAX);
     }
 
     /** 浮层关闭前调用，终止所有引用和看门狗，保证控件绝不进入游戏主界面。 */
@@ -208,86 +289,6 @@ public final class CNDownloadUiAssist {
         }
     }
 
-    private static final class InstallTask implements Runnable {
-        @Override public void run() { installOnMain(); }
-    }
-
-    private static final class ApplyTask implements Runnable {
-        @Override public void run() {
-            if (attachedOverlay != null && attachedOverlay == CNCNDownloadUI.overlayView
-                    && CNCNDownloadUI.isShowing) {
-                applyScale();
-                styleScrollbars();
-                    }
-        }
-    }
-
-    private static final class DetachTask implements Runnable {
-        @Override public void run() { detachOnMain(); }
-    }
-
-    private static void installOnMain() {
-        FrameLayout overlay = CNCNDownloadUI.overlayView;
-        if (overlay == null) return;
-        removeLegacy();
-        overlay.setTranslationX(0f);
-        overlay.setTranslationY(0f);
-
-        if (attachedOverlay != overlay) {
-            attachedOverlay = overlay;
-            contentRoot = overlay.findViewWithTag(TAG_CONTENT_ROOT);
-            View hs = overlay.findViewWithTag(TAG_H_SCROLL);
-            View vs = overlay.findViewWithTag(TAG_V_SCROLL);
-            hScroll = hs instanceof HorizontalScrollView ? (HorizontalScrollView) hs : null;
-            vScroll = vs instanceof ScrollView ? (ScrollView) vs : null;
-            stayChip = null;
-            displayChip = null;
-            displayModal = null;
-            splitHandle = null;
-            baseContentWidth = 0;
-            BASE_TEXT_PX.clear();
-            loadPrefs(overlay.getContext());
-        }
-
-        replaceLinger(overlay);
-        installStay(overlay);
-        installDisplay(overlay);
-        installSplit();
-        styleStay();
-        styleDisplay();
-        styleScrollbars();
-        applyScale();
-        try { CNManualRedownload.recoverCompletedRequest(); } catch (Throwable ignore) {}
-
-        Handler h = CNCNDownloadUI.uiHandler;
-        if (h != null) {
-            h.removeCallbacks(APPLY);
-            h.postDelayed(APPLY, 120L);
-            h.postDelayed(APPLY, 800L);
-            h.postDelayed(APPLY, 1800L);
-        }
-        if (stayRequested) startStayWatchdog();
-    }
-
-    private static void loadPrefs(Context context) {
-        if (prefs == null && context != null) {
-            prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        }
-        if (prefs != null) {
-            // 没调过时用按分辨率算的建议值；调过一次之后一律以玩家的选择为准。
-            // 用 -1 而不是 100 当「没调过」的哨兵：100 是合法选择，分不出
-            // 「玩家特意选了 100%」和「从没动过」。
-            int saved = prefs.getInt(PREF_SCALE, -1);
-            scalePct = saved < 0 ? suggestedScale(context) : clamp(saved, 75, 150);
-        }
-        // 分开写而不是并进上一行：字号那条一个字都不动，改分界线时不该连带
-        // 出现在它的 diff 里。
-        if (prefs != null) {
-            splitPct = clamp(prefs.getInt(PREF_SPLIT, SPLIT_DEFAULT),
-                    SPLIT_MIN, SPLIT_MAX);
-        }
-    }
-
     private static void detachOnMain() {
         removeLegacy();
         View overlay = attachedOverlay;
@@ -301,6 +302,7 @@ public final class CNDownloadUiAssist {
     }
 
     private static void detachRefs() {
+        unwatchViewport();
         attachedOverlay = null;
         contentRoot = null;
         hScroll = null;
@@ -311,7 +313,6 @@ public final class CNDownloadUiAssist {
         scaleSeek = null;
         displayModal = null;
         splitHandle = null;
-        baseContentWidth = 0;
         BASE_TEXT_PX.clear();
         BASE_IMAGE_PX.clear();
     }
@@ -341,13 +342,266 @@ public final class CNDownloadUiAssist {
         }
     }
 
+    // ══ 宽度模型 ═══════════════════════════════════════════════════════
+
+    /**
+     * 当前**视口**宽度（px）：内容能占多宽由容器说了算。
+     *
+     * <p>读的是 {@code hScroll} 自己的测量宽度。它是 {@code contentRoot} 的父，
+     * 宽度由再上一层决定，不受我们改子节点宽度的影响——所以这里没有反馈环。
+     * 详见类注释「宽度模型」。
+     *
+     * <p>只有首帧之前（还没测量过）才回落到屏幕分辨率推算，那时给个近似值也只是
+     * 为了让「建议字号」有个数可算；真值会在 {@link ViewportWatch} 那一刻补上。
+     */
+    private static int viewportPx(Context ctx) {
+        HorizontalScrollView hs = hScroll;
+        if (hs != null) {
+            int w = hs.getWidth() - hs.getPaddingLeft() - hs.getPaddingRight();
+            if (w > 0) return w;
+            if (ctx == null) ctx = hs.getContext();
+        }
+        View root = contentRoot;
+        if (ctx == null && root != null) ctx = root.getContext();
+        if (ctx == null) return 0;
+        try {
+            android.util.DisplayMetrics m = ctx.getResources().getDisplayMetrics();
+            // 与 buildOverlay 的 mainLp 左右边距一致（各 14+14dp）。这只是首帧兜底。
+            return Math.max(1, m.widthPixels - Math.round(56 * m.density));
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
+
+    /** 视口变了（旋转、分屏、折叠屏展开）就重算内容宽度。 */
+    private static void watchViewport() {
+        HorizontalScrollView hs = hScroll;
+        if (hs == null) return;
+        unwatchViewport();
+        viewportWatch = new ViewportWatch();
+        hs.addOnLayoutChangeListener(viewportWatch);
+    }
+
+    private static void unwatchViewport() {
+        try {
+            HorizontalScrollView hs = hScroll;
+            if (hs != null && viewportWatch != null) {
+                hs.removeOnLayoutChangeListener(viewportWatch);
+            }
+        } catch (Throwable ignore) {}
+        viewportWatch = null;
+    }
+
+    /**
+     * 视口尺寸变化的回调。
+     *
+     * <p>只在**宽度真的变了**时才动手。这一点连同「读父写子」一起保证了不会
+     * 自激：改的是 {@code contentRoot} 的宽，而本回调听的是 {@code hScroll} 的
+     * 布局；后者的宽度由它自己的父布局决定，不会因为前者变宽而变化，所以下一轮
+     * 回调里 {@code now == was}，到此为止。
+     */
+    private static final class ViewportWatch implements View.OnLayoutChangeListener {
+        @Override public void onLayoutChange(View v, int l, int t, int r, int b,
+                                             int oldL, int oldT, int oldR, int oldB) {
+            try {
+                if ((r - l) == (oldR - oldL)) return;
+                applyWidth();
+            } catch (Throwable ignore) {}
+        }
+    }
+
+    /**
+     * 把当前字号换算成内容根该占的宽度。
+     *
+     * <ul>
+     *   <li>≤100%：交给 {@code MATCH_PARENT} + 容器的 {@code fillViewport}——
+     *       内容恰好等于视口，一个像素都不用自己算，横向也就没有可滚的东西；</li>
+     *   <li>&gt;100%：按<b>实测视口</b>放大。放大后比视口宽，横向滚动条才有意义。</li>
+     * </ul>
+     */
+    private static void applyWidth() {
+        View root = contentRoot;
+        if (root == null) return;
+        ViewGroup.LayoutParams lp = root.getLayoutParams();
+        if (lp == null) return;
+        int viewport = viewportPx(root.getContext());
+        int want;
+        if (scalePct <= 100 || viewport <= 0) {
+            want = ViewGroup.LayoutParams.MATCH_PARENT;
+        } else {
+            want = Math.max(viewport, Math.round(viewport * scalePct / 100f));
+        }
+        if (lp.width != want) {
+            lp.width = want;
+            root.setLayoutParams(lp);
+        } else {
+            root.requestLayout();
+        }
+        // 宽度变了就得把横向滚动状态一起归位。少了这一步的表现正是「调大字号后
+        // 两栏被撑大，再调小就回不去」：内容宽度确实缩回去了，但 scrollX 还停在
+        // 原处，而滚动条又已经按「没溢出」关掉——看起来就是两栏歪着且拉不回来。
+        styleScrollbars();
+    }
+
+    // ══ 字号 ═══════════════════════════════════════════════════════════
+
+    /**
+     * 按设备分辨率推荐一个字号。
+     *
+     * <p>只是<b>建议</b>：玩家没自己调过时拿它当默认值，调过之后一律以玩家的
+     * 选择为准。默默覆盖玩家的设置比给个烂默认值更糟。
+     */
+    static int suggestedScale(Context ctx) {
+        try {
+            if (ctx == null) return 100;
+            float density = ctx.getResources().getDisplayMetrics().density;
+            if (density <= 0f) return 100;
+            int viewport = viewportPx(ctx);
+            if (viewport <= 0) return 100;
+            return suggestFromDp(viewport / density);
+        } catch (Throwable t) {
+            return 100;
+        }
+    }
+
+    /**
+     * {@link #suggestedScale} 的纯算术部分：内容区有多少 dp 宽 → 建议百分比。
+     * 抽出来是为了能在 JVM 上直接测——那边 {@code getResources()} 是桩。
+     */
+    static int suggestFromDp(float dpWidth) {
+        if (!(dpWidth > 0f)) return 100;
+        float delta = (dpWidth - DESIGN_WIDTH_DP) / DESIGN_WIDTH_DP;
+        return clamp(Math.round(100f + delta * SUGGEST_SLOPE * 100f),
+                SUGGEST_MIN, SUGGEST_MAX);
+    }
+
+    private static void setScale(int value) {
+        scalePct = clamp(value, SCALE_MIN, SCALE_MAX);
+        if (prefs != null) prefs.edit().putInt(PREF_SCALE, scalePct).apply();
+        if (scaleSeek != null && scaleSeek.getProgress() != scalePct - SCALE_MIN) {
+            scaleSeek.setProgress(scalePct - SCALE_MIN);
+        }
+        if (scaleLabel != null) scaleLabel.setText("字体 " + scalePct + "%");
+        styleDisplay();
+        applyScale();
+        CNCNDownloadUI.noteInteraction();
+    }
+
+    private static void applyScale() {
+        View root = contentRoot;
+        if (root == null) return;
+        applyContentScale(root);
+        applyWidth();
+    }
+
+    /**
+     * 按当前字号缩放内容：文字<b>和图片一起</b>。
+     *
+     * <p>原先只缩文字，Logo 和图标保持原尺寸——字放到 150% 时图还是原来那么大，
+     * 看着就是别扭。图片按同一个百分比缩放它的 LayoutParams，与文字同步。
+     */
+    private static void applyContentScale(View v) {
+        if (v instanceof TextView) {
+            TextView tv = (TextView) v;
+            Float base = BASE_TEXT_PX.get(tv);
+            if (base == null) {
+                base = Float.valueOf(tv.getTextSize());
+                BASE_TEXT_PX.put(tv, base);
+            }
+            tv.setTextSize(TypedValue.COMPLEX_UNIT_PX,
+                    base.floatValue() * scalePct / 100f);
+        } else if (v instanceof ImageView) {
+            scaleImage((ImageView) v);
+        }
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) applyContentScale(g.getChildAt(i));
+        }
+    }
+
+    /** 图片跟着字号走。只动固定尺寸的那一维，MATCH_PARENT / WRAP_CONTENT 不碰。 */
+    private static void scaleImage(ImageView iv) {
+        try {
+            ViewGroup.LayoutParams lp = iv.getLayoutParams();
+            if (lp == null) return;
+            int[] base = BASE_IMAGE_PX.get(iv);
+            if (base == null) {
+                base = new int[] { lp.width, lp.height };
+                BASE_IMAGE_PX.put(iv, base);
+            }
+            boolean changed = false;
+            // 负数是 MATCH_PARENT(-1) / WRAP_CONTENT(-2)，那两种由父布局说了算，
+            // 乘一下只会得出别的负数，把布局搞坏。
+            if (base[0] > 0) {
+                int w = Math.max(1, Math.round(base[0] * scalePct / 100f));
+                if (lp.width != w) { lp.width = w; changed = true; }
+            }
+            if (base[1] > 0) {
+                int h = Math.max(1, Math.round(base[1] * scalePct / 100f));
+                if (lp.height != h) { lp.height = h; changed = true; }
+            }
+            if (changed) iv.setLayoutParams(lp);
+        } catch (Throwable ignore) {}
+    }
+
+    // ══ 滚动条 ═════════════════════════════════════════════════════════
+
+    private static void styleScrollbars() {
+        HorizontalScrollView hs = hScroll;
+        ScrollView vs = vScroll;
+        if (hs != null) {
+            // 只有放大到 >100% 时内容才可能宽过视口——≤100% 那一支是
+            // MATCH_PARENT，内容恰好等于视口，没有可滚的东西。
+            boolean overflow = contentRoot != null && scalePct > 100;
+            hs.setHorizontalScrollBarEnabled(overflow);
+            hs.setScrollbarFadingEnabled(false);
+            if (!overflow) hs.scrollTo(0, 0);
+            hs.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+            hs.setClipToPadding(false);
+            hs.setPadding(hs.getPaddingLeft(), hs.getPaddingTop(),
+                    hs.getPaddingRight(), dp(hs, 5));
+            if (Build.VERSION.SDK_INT >= 29) {
+                hs.setHorizontalScrollbarThumbDrawable(scrollThumb(hs));
+                hs.setHorizontalScrollbarTrackDrawable(scrollTrack(hs));
+            }
+        }
+        if (vs != null) {
+            vs.setVerticalScrollBarEnabled(true);
+            vs.setScrollbarFadingEnabled(false);
+            vs.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+            vs.setClipToPadding(false);
+            vs.setPadding(vs.getPaddingLeft(), vs.getPaddingTop(),
+                    dp(vs, 5), vs.getPaddingBottom());
+            if (Build.VERSION.SDK_INT >= 29) {
+                vs.setVerticalScrollbarThumbDrawable(scrollThumb(vs));
+                vs.setVerticalScrollbarTrackDrawable(scrollTrack(vs));
+            }
+        }
+    }
+
+    private static GradientDrawable scrollThumb(View v) {
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(color("COLOR_ACCENT", 0xFFD63384));
+        d.setCornerRadius(dp(v, 6));
+        d.setSize(dp(v, 6), dp(v, 6));
+        return d;
+    }
+
+    private static GradientDrawable scrollTrack(View v) {
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(color("COLOR_BAR_BG", 0x335B4661));
+        d.setCornerRadius(dp(v, 6));
+        d.setSize(dp(v, 5), dp(v, 5));
+        return d;
+    }
+
+    // ══ 顶部胶囊：停留 / 显示 ═══════════════════════════════════════════
+
     private static LinearLayout findTopLeftRow(View root) {
         TextView log = findText(root, "LOG");
         return log != null && log.getParent() instanceof LinearLayout
                 ? (LinearLayout) log.getParent() : null;
     }
-
-
 
     /**
      * 调试悬浮窗<b>真的挂在屏幕上</b>时，浮层不再重复摆同一颗按钮。
@@ -399,6 +653,7 @@ public final class CNDownloadUiAssist {
         displayChip = chip;
     }
 
+    /** 新胶囊照抄同一行里现成胶囊的字号/字重/内边距，免得看起来是外来的。 */
     private static TextView createTopChip(LinearLayout row, String tag) {
         TextView template = null;
         for (int i = row.getChildCount() - 1; i >= 0; i--) {
@@ -448,8 +703,7 @@ public final class CNDownloadUiAssist {
 
     private static final class DisplayClick implements View.OnClickListener {
         @Override public void onClick(View v) {
-            Activity act = RestClient.getCurrentActivity();
-            openDisplay(act);
+            openDisplay(RestClient.getCurrentActivity());
             CNCNDownloadUI.noteInteraction();
         }
     }
@@ -484,12 +738,97 @@ public final class CNDownloadUiAssist {
         v.setBackground(bg);
     }
 
+    // ══ 停留 ═══════════════════════════════════════════════════════════
 
+    public static boolean shouldStayOnPage() {
+        return stayRequested;
+    }
 
+    /** “进入游戏”是一次性动作；热更新停留窗口消费后自动清掉。 */
+    public static boolean consumeLeaveRequest() {
+        synchronized (STAY_LOCK) {
+            if (!leaveRequested) return false;
+            leaveRequested = false;
+            return true;
+        }
+    }
 
+    /** 下载 UI 自己的模态框也必须阻止自动收页。 */
+    public static boolean isModalOpen() {
+        return displayModal != null;
+    }
 
+    /** 包内调用：教程“否”、单包重下和顶部胶囊共用同一停留状态。 */
+    public static void setStayOnPage(boolean stay) {
+        synchronized (STAY_LOCK) {
+            stayRequested = stay;
+            leaveRequested = !stay;
+            STAY_LOCK.notifyAll();
+        }
+        if (stay) startStayWatchdog();
+        else stopStayWatchdog();
+        postInstall();
+    }
 
+    /** 首次安装收尾调用：玩家点了“停留本页”时一直等到其点“进入游戏”。 */
+    public static void awaitReleaseIfRequested() {
+        synchronized (STAY_LOCK) {
+            while (stayRequested) {
+                try {
+                    STAY_LOCK.wait(250L);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }
+    }
 
+    /** 停留期间浮层可能被别处收起，看门狗负责把它按回来。 */
+    private static void startStayWatchdog() {
+        Thread current = stayThread;
+        if (current != null && current.isAlive()) return;
+        synchronized (CNDownloadUiAssist.class) {
+            current = stayThread;
+            if (current != null && current.isAlive()) return;
+            Thread t = new Thread(new StayLoop(), "cnv-overlay-stay");
+            t.setDaemon(true);
+            stayThread = t;
+            t.start();
+        }
+    }
+
+    private static void stopStayWatchdog() {
+        Thread t = stayThread;
+        stayThread = null;
+        if (t != null) t.interrupt();
+    }
+
+    private static final class StayLoop implements Runnable {
+        @Override public void run() {
+            while (stayRequested && stayThread == Thread.currentThread()) {
+                try {
+                    if (CNCNDownloadUI.overlayView != null) postInstall();
+                    Thread.sleep(1000L);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                } catch (Throwable ignore) {
+                    return;
+                }
+            }
+        }
+    }
+
+    private static void postInstall() {
+        try {
+            Handler h = CNCNDownloadUI.uiHandler;
+            if (h != null) h.post(INSTALL);
+            else ensureInstalled();
+        } catch (Throwable ignore) {}
+    }
+
+    // ══ 显示设置弹窗 ═══════════════════════════════════════════════════
 
     private static void openDisplay(Activity act) {
         FrameLayout host = CNCNDownloadUI.overlayView;
@@ -509,15 +848,14 @@ public final class CNDownloadUiAssist {
         panelLp.leftMargin = panelLp.rightMargin = dp(panel, 20);
         modal.addView(panel, panelLp);
 
-        TextView title = text(act, "显示大小", 16f,
-                color("COLOR_ACCENT", 0xFFD63384));
+        TextView title = text(act, "显示大小", 16f, color("COLOR_ACCENT", 0xFFD63384));
         title.setTypeface(title.getTypeface(), Typeface.BOLD);
         panel.addView(title, rowLp(title, 0, 8));
 
         TextView explain = text(act,
-                "只调整下载页中央内容，图片会跟着一起缩放。面板本身的左右边距按屏幕"
-                + "分辨率固定，不随字号或分界线变动；文字放大后可用右侧纵向滚动条和"
-                + "底部横向滚动条查看超出部分，游戏画面不会移动。",
+                "只调整下载页中央内容，图片会跟着一起缩放。100% 时内容正好占满可用"
+                + "宽度；放大后可用右侧纵向滚动条和底部横向滚动条查看超出部分，"
+                + "游戏画面不会移动。左右两栏的分界线可以长按拖动。",
                 12.5f, color("COLOR_LOG_PANEL_TEXT", 0xFF2A1A3B));
         explain.setLineSpacing(dp(explain, 2), 1f);
         panel.addView(explain, rowLp(explain, 0, 12));
@@ -529,8 +867,8 @@ public final class CNDownloadUiAssist {
         panel.addView(scaleLabel, rowLp(scaleLabel, 0, 4));
 
         scaleSeek = new SeekBar(act);
-        scaleSeek.setMax(75);
-        scaleSeek.setProgress(scalePct - 75);
+        scaleSeek.setMax(SCALE_MAX - SCALE_MIN);
+        scaleSeek.setProgress(scalePct - SCALE_MIN);
         if (Build.VERSION.SDK_INT >= 21) {
             int accent = color("COLOR_ACCENT", 0xFFD63384);
             scaleSeek.setProgressTintList(ColorStateList.valueOf(accent));
@@ -547,8 +885,7 @@ public final class CNDownloadUiAssist {
         controls.setGravity(Gravity.CENTER);
         panel.addView(controls, rowLp(controls, 4, 12));
         TextView minus = dialogButton(act, "A−", false);
-        // 「恢复」给的是**按这台设备算出来的**建议值，不是死的 100%。
-        // 100% 只对参考宽度那种屏幕才是对的；大屏上恢复到 100% 等于恢复成一行蚂蚁。
+        // 「推荐」给的是**按这台设备算出来的**建议值，不是死的 100%。
         int suggest = suggestedScale(act);
         TextView reset = dialogButton(act, "推荐 " + suggest + "%", false);
         TextView plus = dialogButton(act, "A+", false);
@@ -557,26 +894,33 @@ public final class CNDownloadUiAssist {
         plus.setOnClickListener(new ScaleStepClick(5));
         controls.addView(minus);
         LinearLayout.LayoutParams resetLp = topChipLp(reset);
-        resetLp.leftMargin = dp(reset, 8);
         controls.addView(reset, resetLp);
         LinearLayout.LayoutParams plusLp = topChipLp(plus);
-        plusLp.leftMargin = dp(plus, 8);
         controls.addView(plus, plusLp);
 
         TextView done = dialogButton(act, "完成", true);
         done.setOnClickListener(new CloseDisplayClick());
-        LinearLayout.LayoutParams doneLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        panel.addView(done, doneLp);
+        panel.addView(done, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         host.addView(modal, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         displayModal = modal;
     }
 
+    private static void closeDisplay() {
+        FrameLayout m = displayModal;
+        displayModal = null;
+        scaleLabel = null;
+        scaleSeek = null;
+        if (m != null && m.getParent() instanceof ViewGroup) {
+            try { ((ViewGroup) m.getParent()).removeView(m); } catch (Throwable ignore) {}
+        }
+    }
+
     private static final class ScaleSeekListener implements SeekBar.OnSeekBarChangeListener {
         @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
-            if (fromUser) setScale(progress + 75);
+            if (fromUser) setScale(progress + SCALE_MIN);
         }
         @Override public void onStartTrackingTouch(SeekBar bar) {}
         @Override public void onStopTrackingTouch(SeekBar bar) {}
@@ -592,231 +936,26 @@ public final class CNDownloadUiAssist {
         @Override public void onClick(View v) { setScale(suggestedScale(v.getContext())); }
     }
 
-    private static void setScale(int value) {
-        scalePct = clamp(value, 75, 150);
-        if (prefs != null) prefs.edit().putInt(PREF_SCALE, scalePct).apply();
-        if (scaleSeek != null && scaleSeek.getProgress() != scalePct - 75) {
-            scaleSeek.setProgress(scalePct - 75);
-        }
-        if (scaleLabel != null) scaleLabel.setText("字体 " + scalePct + "%");
-        styleDisplay();
-        applyScale();
-        CNCNDownloadUI.noteInteraction();
+    private static final class ConsumeClick implements View.OnClickListener {
+        @Override public void onClick(View v) { /* 吃掉点击，别穿透到遮罩 */ }
     }
 
-    /**
-     * 内容区的基准宽度（px）。<b>只由屏幕分辨率算，绝不读任何 getWidth()。</b>
-     *
-     * <h3>为什么这条是硬规矩</h3>
-     *
-     * 读测量宽度会形成反馈环：这一帧按测得的宽度设了新宽度，下一帧再去测，
-     * 又算出更大的值。真机上的表现是「反复拖左右分界线，左右越变越长」
-     * （2026-08-13）——而且它只在反复操作后才显形，一次两次看不出来。
-     *
-     * <p>权威值由 {@code CNCNDownloadUI.buildOverlay} 用
-     * {@code widthPixels − 左右边距} 算出并存下；这里只在浮层还没建起来时
-     * 用同一个公式兜底。两处必须同一个式子。
-     */
-    private static int contentWidthPx(Context ctx) {
-        int w = CNCNDownloadUI.contentBaseWidthPx;
-        if (w > 0) return w;
-        if (ctx == null) return 1;
-        // 兜底：与 buildOverlay 的 mainLp 左右边距一致（各 14+14dp）
-        android.util.DisplayMetrics m = ctx.getResources().getDisplayMetrics();
-        return Math.max(1, m.widthPixels - Math.round(56 * m.density));
-    }
-
-    /**
-     * 按设备分辨率推荐一个字号。
-     *
-     * <p>依据是「内容区有多少 dp 宽」，与 {@link #DESIGN_WIDTH_DP} 比出一个偏差，
-     * 按半速率折算。这个判据是**粗糙代理**而不是真理，所以量程被刻意收窄——
-     * 理由与实测数字见 {@link #SUGGEST_SLOPE}。
-     *
-     * <p>只是<b>建议</b>：玩家没自己调过时拿它当默认值，调过之后一律以玩家的
-     * 选择为准。默默覆盖玩家的设置比给个烂默认值更糟。
-     */
-    static int suggestedScale(Context ctx) {
-        try {
-            if (ctx == null) return 100;
-            float density = ctx.getResources().getDisplayMetrics().density;
-            if (density <= 0f) return 100;
-            return suggestFromDp(contentWidthPx(ctx) / density);
-        } catch (Throwable t) {
-            return 100;
+    private static final class CloseDisplayClick implements View.OnClickListener {
+        @Override public void onClick(View v) {
+            closeDisplay();
+            CNCNDownloadUI.noteInteraction();
         }
     }
 
-    /**
-     * {@link #suggestedScale} 的纯算术部分：内容区有多少 dp 宽 → 建议百分比。
-     * 抽出来是为了能在 JVM 上直接测——那边 {@code getResources()} 是桩。
-     */
-    static int suggestFromDp(float dpWidth) {
-        if (!(dpWidth > 0f)) return 100;
-        // 相对参考宽度的偏差，按半速率折算成百分比。参考宽度处恰好 100%。
-        float delta = (dpWidth - DESIGN_WIDTH_DP) / DESIGN_WIDTH_DP;
-        return clamp(Math.round(100f + delta * SUGGEST_SLOPE * 100f),
-                SUGGEST_MIN, SUGGEST_MAX);
-    }
-
-    private static void applyScale() {
-        View root = contentRoot;
-        if (root == null) return;
-        applyContentScale(root);
-
-        int viewport = contentWidthPx(root.getContext());
-        ViewGroup.LayoutParams lp = root.getLayoutParams();
-        // The unscaled layout always equals the real viewport. Horizontal scrolling is a
-        // fallback only for zoom >100% or genuinely narrow windows; 75/100% must never start
-        // with half the UI off-screen.
-        baseContentWidth = viewport;
-        int width = scalePct <= 100 ? viewport
-                : Math.max(viewport, Math.round(viewport * scalePct / 100f));
-        if (lp != null && lp.width != width) {
-            lp.width = width;
-            root.setLayoutParams(lp);
-        }
-        root.requestLayout();
-        // 宽度变了就得把横向滚动状态一起归位。
-        //
-        // 少了这一步的表现正是「调大字号后两栏被撑大，再调小就回不去」：在 150%
-        // 上向右滚过之后调回 100%，内容宽度确实缩回去了，但 scrollX 还停在原处，
-        // 而滚动条又已经按「没溢出」关掉——看起来就是左右两栏歪着且拉不回来。
-        // 原先这件事只在下一次 ensureInstalled() 里顺带做，而调字号并不触发它。
-        styleScrollbars();
-    }
-
-    /**
-     * 按当前字号缩放内容：文字<b>和图片一起</b>。
-     *
-     * <p>原先只缩文字，Logo 和图标保持原尺寸——字放到 150% 时图还是原来那么大，
-     * 看着就是别扭（2026-08-13 反馈）。图片按同一个百分比缩放它的 LayoutParams，
-     * 与文字同步。
-     *
-     * <p>两个基准表都缓存<b>第一次见到的</b>尺寸，之后每次都从基准重算而不是在
-     * 当前值上乘——否则反复调字号会指数级放大，和上面那个宽度反馈环是同一类错。
-     */
-    private static void applyContentScale(View v) {
-        if (v instanceof TextView) {
-            TextView tv = (TextView) v;
-            Float base = BASE_TEXT_PX.get(tv);
-            if (base == null) {
-                base = Float.valueOf(tv.getTextSize());
-                BASE_TEXT_PX.put(tv, base);
-            }
-            tv.setTextSize(TypedValue.COMPLEX_UNIT_PX,
-                    base.floatValue() * scalePct / 100f);
-        } else if (v instanceof ImageView) {
-            scaleImage((ImageView) v);
-        }
-        if (v instanceof ViewGroup) {
-            ViewGroup g = (ViewGroup) v;
-            for (int i = 0; i < g.getChildCount(); i++) applyContentScale(g.getChildAt(i));
-        }
-    }
-
-    /** 图片跟着字号走。只动固定尺寸的那一维，MATCH_PARENT / WRAP_CONTENT 不碰。 */
-    private static void scaleImage(ImageView iv) {
-        try {
-            ViewGroup.LayoutParams lp = iv.getLayoutParams();
-            if (lp == null) return;
-            int[] base = BASE_IMAGE_PX.get(iv);
-            if (base == null) {
-                base = new int[] { lp.width, lp.height };
-                BASE_IMAGE_PX.put(iv, base);
-            }
-            boolean changed = false;
-            // 负数是 MATCH_PARENT(-1) / WRAP_CONTENT(-2)，那两种由父布局说了算，
-            // 乘一下只会得出别的负数，把布局搞坏。
-            if (base[0] > 0) {
-                int w = Math.max(1, Math.round(base[0] * scalePct / 100f));
-                if (lp.width != w) { lp.width = w; changed = true; }
-            }
-            if (base[1] > 0) {
-                int h = Math.max(1, Math.round(base[1] * scalePct / 100f));
-                if (lp.height != h) { lp.height = h; changed = true; }
-            }
-            if (changed) iv.setLayoutParams(lp);
-        } catch (Throwable ignore) {}
-    }
-
-    private static void styleScrollbars() {
-        HorizontalScrollView hs = hScroll;
-        ScrollView vs = vScroll;
-        if (hs != null) {
-            // 溢出判据同样不读测量宽度：内容宽度是 applyScale 按分辨率设定的，
-            // 所以「有没有溢出」等价于「字号有没有超过 100%」。
-            boolean overflow = contentRoot != null && scalePct > 100;
-            hs.setHorizontalScrollBarEnabled(overflow);
-            hs.setScrollbarFadingEnabled(false);
-            if (!overflow) hs.scrollTo(0, 0);
-            hs.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
-            hs.setClipToPadding(false);
-            hs.setPadding(hs.getPaddingLeft(), hs.getPaddingTop(), hs.getPaddingRight(), dp(hs, 5));
-            if (Build.VERSION.SDK_INT >= 29) {
-                hs.setHorizontalScrollbarThumbDrawable(scrollThumb(hs));
-                hs.setHorizontalScrollbarTrackDrawable(scrollTrack(hs));
-            }
-        }
-        if (vs != null) {
-            vs.setVerticalScrollBarEnabled(true);
-            vs.setScrollbarFadingEnabled(false);
-            vs.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
-            vs.setClipToPadding(false);
-            vs.setPadding(vs.getPaddingLeft(), vs.getPaddingTop(), dp(vs, 5), vs.getPaddingBottom());
-            if (Build.VERSION.SDK_INT >= 29) {
-                vs.setVerticalScrollbarThumbDrawable(scrollThumb(vs));
-                vs.setVerticalScrollbarTrackDrawable(scrollTrack(vs));
-            }
-        }
-    }
-
-    private static GradientDrawable scrollThumb(View v) {
-        GradientDrawable d = new GradientDrawable();
-        d.setColor(color("COLOR_ACCENT", 0xFFD63384));
-        d.setCornerRadius(dp(v, 6));
-        d.setSize(dp(v, 6), dp(v, 6));
-        return d;
-    }
-
-    private static GradientDrawable scrollTrack(View v) {
-        GradientDrawable d = new GradientDrawable();
-        d.setColor(color("COLOR_BAR_BG", 0x335B4661));
-        d.setCornerRadius(dp(v, 6));
-        d.setSize(dp(v, 5), dp(v, 5));
-        return d;
-    }
-
-
-
-    // ══ 左右分界线：长按进入调节，横向拖动改占比 ═══════════════════════
+    // ══ 左右分界线 ═════════════════════════════════════════════════════
     //
-    // `CNCNDownloadUI` 建的 mainRow 是 [左列 0.38f][右列 0.62f]，两列之间原本
-    // 连条线都没有。这里在中间插一根**可拖**的把手，改的只是两侧的 weight，
-    // 不动任何一列的内部布局——所以对面怎么返工那两列都不受影响。
+    // `CNCNDownloadUI` 建的 mainRow 是 [左列][右列]，两列之间原本连条线都没有。
+    // 这里在中间插一根**可拖**的把手，改的只是两侧的 weight，不动任何一列的
+    // 内部布局——所以对面怎么返工那两列都不受影响。
     //
     // 为什么是「长按之后才拖」而不是直接拖：把手正好落在 mainScroll
-    // （HorizontalScrollView）里，字号放大到 >100% 时那层是要横向滚动的。
-    // 直接拖会和滚动抢同一个手势，误触率高得离谱。长按先确认意图，再
-    // requestDisallowInterceptTouchEvent 把手势从滚动那里要过来。
-
-
-
-
-
-
-
-
-
-
-
-    // `CNCNDownloadUI` 建的 mainRow 是 [左列 0.38f][右列 0.62f]，两列之间原本
-    // 连条线都没有。这里在中间插一根**可拖**的把手，改的只是两侧的 weight，
-    // 不动任何一列的内部布局——所以对面怎么返工那两列都不受影响。
-    //
-    // 为什么是「长按之后才拖」而不是直接拖：把手正好落在 mainScroll
-    // （HorizontalScrollView）里，字号放大到 >100% 时那层是要横向滚动的。
-    // 直接拖会和滚动抢同一个手势，误触率高得离谱。长按先确认意图，再
+    // （HorizontalScrollView）里，字号放大到 >100% 时那层是要横向滚动的。直接拖
+    // 会和滚动抢同一个手势，误触率高得离谱。长按先确认意图，再
     // requestDisallowInterceptTouchEvent 把手势从滚动那里要过来。
 
     private static void installSplit() {
@@ -838,12 +977,28 @@ public final class CNDownloadUiAssist {
         SplitDrag drag = new SplitDrag();
         handle.setOnLongClickListener(drag);
         handle.setOnTouchListener(drag);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                dp(handle, 14), ViewGroup.LayoutParams.MATCH_PARENT);
-        row.addView(handle, 1, lp);               // 夹在两列中间
+        row.addView(handle, 1, new LinearLayout.LayoutParams(
+                dp(handle, HANDLE_DP), ViewGroup.LayoutParams.MATCH_PARENT));
         splitHandle = handle;
         styleSplit(false);
         applySplit();
+        hintSplitOnce(handle);
+    }
+
+    /**
+     * 第一次装出把手时提示一次「可以长按拖」。
+     *
+     * <p>这条不是装饰。把手静止态只是一条竖线，而它的能力（长按后拖动、双击复位）
+     * 在界面上没有任何其它痕迹——2026-08-14 维护者的原话是「分界线没加回来」，
+     * 而当时它就在屏幕上：看不见的入口等于不存在。提示只给一次，记在 prefs 里。
+     */
+    private static void hintSplitOnce(View handle) {
+        try {
+            if (prefs == null || prefs.getBoolean(PREF_SPLIT_HINT, false)) return;
+            prefs.edit().putBoolean(PREF_SPLIT_HINT, true).apply();
+            CNCNDownloadUI.toast(handle.getContext(),
+                    "中间那条线可长按拖动，调整左右两栏宽度；双击复位");
+        } catch (Throwable ignore) {}
     }
 
     /** mainRow：横向的那个内容根。形状不对（对面改了布局）一律返回 null。 */
@@ -884,15 +1039,22 @@ public final class CNDownloadUiAssist {
         v.setLayoutParams(lp);
     }
 
-    /** 平时是一根淡描边线；进入调节模式后加粗并换成强调色。 */
+    /**
+     * 静止是一条<b>看得见</b>的线，进入调节后加粗并换成强调色。
+     *
+     * <p>上一版静止态是 2dp 宽、alpha 0x33（20%）的描边色，压在毛玻璃底板上基本
+     * 等于隐形；加上「必须长按」，玩家看不到线、随手拖又没反应，得出的结论是
+     * 「这个功能没做」。现在静止就有 4dp 宽、60% 不透明的强调色。
+     */
     private static void styleSplit(boolean active) {
         View v = splitHandle;
         if (v == null) return;
+        int accent = color("COLOR_ACCENT", 0xFFD63384);
+        int idle = (color("COLOR_ACCENT2", 0xFF9C5BC2) & 0x00FFFFFF) | 0x99000000;
         GradientDrawable line = new GradientDrawable();
-        line.setColor(active ? color("COLOR_ACCENT", 0xFFD63384)
-                             : color("COLOR_CARD_STK", 0x33B53C8C));
-        line.setCornerRadius(dp(v, 2));
-        int inset = active ? dp(v, 5) : dp(v, 6);   // 14dp 把手 → 4dp / 2dp 可见线
+        line.setColor(active ? accent : idle);
+        line.setCornerRadius(dp(v, 3));
+        int inset = dp(v, active ? HANDLE_INSET_ACTIVE : HANDLE_INSET_IDLE);
         v.setBackground(new InsetDrawable(line, inset, dp(v, 6), inset, dp(v, 6)));
     }
 
@@ -901,11 +1063,28 @@ public final class CNDownloadUiAssist {
         applySplit();
     }
 
+    private static void persistSplit() {
+        if (prefs != null) prefs.edit().putInt(PREF_SPLIT, splitPct).apply();
+    }
+
     /**
-     * 长按进调节、拖动改占比。
+     * 拖动期间把手势从祖先的滚动容器手里要过来（松手时还回去）。
+     *
+     * <p>把手在 {@code HorizontalScrollView} 里，不要过来的话一横向移动就被滚动
+     * 吃掉，长按之后根本拖不动。
+     */
+    private static void grabGesture(View v, boolean grab) {
+        try {
+            android.view.ViewParent p = v.getParent();
+            if (p != null) p.requestDisallowInterceptTouchEvent(grab);
+        } catch (Throwable ignore) {}
+    }
+
+    /**
+     * 长按进调节、拖动改占比、双击复位。
      *
      * <p>static 嵌套类——匿名/非静态内部类会带合成字段 this$0，d8 撞上直接 NPE
-     * （CLAUDE.md 铁律 4，CI 的 check-d8-pitfalls.py 会拦）。
+     * （CLAUDE.md 铁律，CI 的 check-d8-pitfalls.py 会拦）。
      */
     private static final class SplitDrag
             implements View.OnTouchListener, View.OnLongClickListener {
@@ -917,7 +1096,6 @@ public final class CNDownloadUiAssist {
         @Override public boolean onLongClick(View v) {
             dragging = true;
             startPct = splitPct;
-            // 把手势从 HorizontalScrollView 手里要过来，否则一横向移动就被它吃掉
             grabGesture(v, true);
             try { v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS); }
             catch (Throwable ignore) {}
@@ -926,10 +1104,7 @@ public final class CNDownloadUiAssist {
             // 用把手自己的 Context，不要 RestClient.getCurrentActivity()：后者可能
             // 是 null，那样 Toast 会在 CNCNDownloadUI.toast 里被 catch 悄悄吞掉，
             // 玩家长按之后毫无反馈——看起来就是「这条线根本拖不动」。
-            CNCNDownloadUI.toast(v.getContext(),
-                    "左右拖动调整分界；松手保存，双击复位");
-            // 这条线一直查不出「到底有没有进拖动态」，留个痕：真机日志里能直接
-            // 分出「长按压根没触发」和「触发了但没换算出位移」。
+            CNCNDownloadUI.toast(v.getContext(), "左右拖动调整分界；松手保存，双击复位");
             CNLog.i("界面", "分界线：进入拖动态 起始=" + startPct + "%");
             return true;
         }
@@ -943,19 +1118,15 @@ public final class CNDownloadUiAssist {
                     return false;            // 交给 View 自己去产生长按
                 case MotionEvent.ACTION_MOVE: {
                     if (!dragging) return false;
-                    LinearLayout row = splitRow();
-                    // 同样不读 row.getWidth()：那是被 applyScale 设过的值，
-                    // 拿它做换算就是把反馈环接进了手势里。
-                    int w = row == null ? 0 : contentWidthPx(row.getContext());
+                    // 换算用**视口**宽度：拖动改的是两列在视口里的占比。
+                    // 这里读的是 hScroll（父），改的是两列的 weight（孙），
+                    // 同样不构成反馈环，理由见类注释。
+                    int w = viewportPx(v.getContext());
                     if (w > 0) {
                         float delta = e.getRawX() - startX;
                         setSplit(startPct + Math.round(delta * 100f / w));
                     } else {
-                        // 换算不出位移就等于「拖了没反应」，而且不留痕。宽度取不到
-                        // 只有两种可能：contentRoot 没找着，或视口算出 0——两种都
-                        // 是布局出了问题，不该被当成手势失败。
-                        CNLog.w("界面", "分界线：拖动中取不到内容宽度，本次位移被丢弃"
-                                + "（row=" + (row == null ? "null" : "有") + "）");
+                        CNLog.w("界面", "分界线：拖动中取不到视口宽度，本次位移被丢弃");
                     }
                     return true;
                 }
@@ -996,31 +1167,37 @@ public final class CNDownloadUiAssist {
                 try { v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS); }
                 catch (Throwable ignore) {}
                 CNCNDownloadUI.noteInteraction();
-                CNCNDownloadUI.toast(v.getContext(),
-                        "分界已复位到 " + SPLIT_DEFAULT + "%");
+                CNCNDownloadUI.toast(v.getContext(), "分界已复位到 " + SPLIT_DEFAULT + "%");
             } else {
                 lastTapAt = moved ? 0L : now;
             }
         }
     }
 
-    private static void persistSplit() {
-        if (prefs != null) prefs.edit().putInt(PREF_SPLIT, splitPct).apply();
-    }
+    // ══ 建浮层时的列宽 ═════════════════════════════════════════════════
 
     /**
-     * 拖动期间把手势从祖先的滚动容器手里要过来（松手时还回去）。
+     * 建浮层时左列该占的 weight。
      *
-     * <p>两个把手都在 `HorizontalScrollView` / `ScrollView` 里，不要过来的话
-     * 一横向移动就被滚动吃掉，长按之后根本拖不动。
+     * <p><b>浮层必须<i>建出来就是</i>玩家调好的比例</b>，而不是先按硬编码的
+     * 38/62 建好、再由 {@link #applySplit()} 改回去。写死的话每次重建浮层
+     * （切主题、看门狗发现它掉出视图树）都会先闪回默认比例，而 installSplit 要等
+     * ensureInstalled 那一轮才跑——中间那段就是玩家看到的「刷新一下比例被重置了」。
+     *
+     * <p>参数带 Context 是因为这可能是本进程第一次碰它：prefs 还没打开过时得先把
+     * 玩家存的值读进来，否则又是一个「默认值假装成玩家的选择」。
      */
-    private static void grabGesture(View v, boolean grab) {
-        try {
-            android.view.ViewParent p = v.getParent();
-            if (p != null) p.requestDisallowInterceptTouchEvent(grab);
-        } catch (Throwable ignore) {}
+    public static float leftWeight(Context ctx) {
+        loadPrefs(ctx);
+        return splitPct / 100f;
     }
 
+    /** 见 {@link #leftWeight(Context)}。两个加起来恒为 1。 */
+    public static float rightWeight(Context ctx) {
+        return 1f - leftWeight(ctx);
+    }
+
+    // ══ 小工具 ═════════════════════════════════════════════════════════
 
     /** 弹窗宽度永远不超过当前逻辑屏幕减 40dp，覆盖窄屏、分屏和高 DPI。 */
     private static int adaptiveDialogWidth(View v) {
@@ -1032,105 +1209,35 @@ public final class CNDownloadUiAssist {
         LinearLayout panel = new LinearLayout(act);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(panel, 22), dp(panel, 20), dp(panel, 22), dp(panel, 18));
-        panel.setClickable(true);
         GradientDrawable bg = new GradientDrawable();
         bg.setColor(color("COLOR_LOG_PANEL_BG", 0xFFFFFFFF));
-        bg.setCornerRadius(dp(panel, 16));
+        bg.setCornerRadius(dp(panel, 18));
         bg.setStroke(dp(panel, 1), color("COLOR_CARD_STK", 0x33B53C8C));
         panel.setBackground(bg);
         return panel;
     }
 
     private static TextView dialogButton(Activity act, String label, boolean primary) {
-        TextView v = text(act, label, 12f, primary ? 0xFFFFFFFF
-                : color("COLOR_LOG_PANEL_TEXT", 0xFF2A1A3B));
-        v.setGravity(Gravity.CENTER);
-        v.setPadding(dp(v, 18), dp(v, 8), dp(v, 18), dp(v, 8));
-        v.setClickable(true);
-        v.setFocusable(true);
+        TextView b = new TextView(act);
+        b.setText(label);
+        b.setGravity(Gravity.CENTER);
+        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
+        b.setTypeface(b.getTypeface(), Typeface.BOLD);
+        b.setPadding(dp(b, 18), dp(b, 10), dp(b, 18), dp(b, 10));
         GradientDrawable bg = new GradientDrawable();
-        bg.setCornerRadius(dp(v, 10));
-        if (primary) bg.setColor(color("COLOR_ACCENT", 0xFFD63384));
-        else {
+        bg.setCornerRadius(dp(b, 20));
+        if (primary) {
+            bg.setColor(color("COLOR_ACCENT", 0xFFD63384));
+            b.setTextColor(0xFFFFFFFF);
+        } else {
             bg.setColor(0x00000000);
-            bg.setStroke(dp(v, 1), color("COLOR_CARD_STK", 0x33B53C8C));
+            bg.setStroke(dp(b, 1), color("COLOR_ACCENT2", 0xFF9C5BC2));
+            b.setTextColor(color("COLOR_ACCENT2", 0xFF9C5BC2));
         }
-        v.setBackground(bg);
-        return v;
-    }
-
-    private static final class ConsumeClick implements View.OnClickListener {
-        @Override public void onClick(View v) {}
-    }
-
-
-    private static final class CloseDisplayClick implements View.OnClickListener {
-        @Override public void onClick(View v) { closeDisplay(); }
-    }
-
-
-    private static void closeDisplay() {
-        FrameLayout m = displayModal;
-        displayModal = null;
-        scaleLabel = null;
-        scaleSeek = null;
-        if (m != null && m.getParent() instanceof ViewGroup) {
-            ((ViewGroup) m.getParent()).removeView(m);
-        }
-        CNCNDownloadUI.noteInteraction();
-    }
-
-    private static void startStayWatchdog() {
-        Thread current = stayThread;
-        if (current != null && current.isAlive()) return;
-        synchronized (CNDownloadUiAssist.class) {
-            current = stayThread;
-            if (current != null && current.isAlive()) return;
-            Thread t = new Thread(new StayLoop(), "cnv-overlay-stay");
-            t.setDaemon(true);
-            stayThread = t;
-            t.start();
-        }
-    }
-
-    private static void stopStayWatchdog() {
-        Thread t = stayThread;
-        stayThread = null;
-        if (t != null) t.interrupt();
-    }
-
-    private static final class StayLoop implements Runnable {
-        @Override public void run() {
-            while (stayRequested) {
-                try {
-                    FrameLayout overlay = CNCNDownloadUI.overlayView;
-                    if (!CNCNDownloadUI.isShowing || overlay == null) return;
-                    Activity act = RestClient.getCurrentActivity();
-                    if (act != null && overlay.getParent() == null) {
-                        CNCNDownloadUI.ensureVisible(act);
-                    }
-                    ensureInstalled();
-                    Thread.sleep(500L);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                } catch (Throwable t) {
-                    try { Thread.sleep(500L); }
-                    catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        return;
-                    }
-                }
-            }
-        }
-    }
-
-    private static void postInstall() {
-        try {
-            Handler h = CNCNDownloadUI.uiHandler;
-            if (h == null) h = new Handler(Looper.getMainLooper());
-            h.post(INSTALL);
-        } catch (Throwable ignore) {}
+        b.setBackground(bg);
+        b.setClickable(true);
+        b.setFocusable(true);
+        return b;
     }
 
     private static TextView findText(View v, String expected) {
@@ -1141,18 +1248,18 @@ public final class CNDownloadUiAssist {
         if (v instanceof ViewGroup) {
             ViewGroup g = (ViewGroup) v;
             for (int i = 0; i < g.getChildCount(); i++) {
-                TextView found = findText(g.getChildAt(i), expected);
-                if (found != null) return found;
+                TextView hit = findText(g.getChildAt(i), expected);
+                if (hit != null) return hit;
             }
         }
         return null;
     }
 
-    private static TextView text(Activity act, String value, float size, int color) {
+    private static TextView text(Activity act, String value, float size, int colorValue) {
         TextView v = new TextView(act);
         v.setText(value);
         v.setTextSize(TypedValue.COMPLEX_UNIT_SP, size);
-        v.setTextColor(color);
+        v.setTextColor(colorValue);
         return v;
     }
 
@@ -1164,11 +1271,25 @@ public final class CNDownloadUiAssist {
         return lp;
     }
 
+    /**
+     * 反射取 {@code CNCNDownloadUI} 的调色板。
+     *
+     * <p>那些字段没有初始值，默认是 0 —— 而 0 是 #00000000，全透明。所以
+     * <b>取到 0 也算没取到</b>：只在反射抛异常时才用兜底值的写法，会把整块面板
+     * 画成透明（真机上时有时无，取决于这次启动有没有建过下载浮层）。
+     */
     private static int color(String name, int fallback) {
+        try {
+            // 带上一个真 Context，好让它按玩家的深浅色偏好选调色板；拿不到就算了，
+            // CNCNDownloadUI 有静态初始化兜底，字段不会是空的。
+            View any = contentRoot != null ? contentRoot : attachedOverlay;
+            CNCNDownloadUI.ensurePalette(any == null ? null : any.getContext());
+        } catch (Throwable ignore) {}
         try {
             Field f = CNCNDownloadUI.class.getDeclaredField(name);
             f.setAccessible(true);
-            return f.getInt(null);
+            int v = f.getInt(null);
+            return (v >>> 24) == 0 ? fallback : v;
         } catch (Throwable t) {
             return fallback;
         }
@@ -1187,32 +1308,8 @@ public final class CNDownloadUiAssist {
         return Math.max(min, Math.min(max, value));
     }
 
-
-
-    /**
-     * 建浮层时左列该占的 weight。
-     *
-     * <p><b>浮层必须<i>建出来就是</i>玩家调好的比例</b>，而不是先按硬编码的
-     * 38/62 建好、再由 {@link #applySplit()} 改回去。写死 {@code 0.38f / 0.62f}
-     * 的话，每次重建浮层（切主题、看门狗发现浮层掉出视图树而重建）都会先闪回
-     * 默认比例，而 installSplit 要等 ensureInstalled 那一轮才跑——中间这段就是
-     * 玩家看到的「刷新一下比例被重置了」。
-     *
-     * <p>参数带 Context 是因为这可能是本进程第一次碰它：prefs 还没打开过时得先
-     * 把玩家存的值读进来，否则又是一个「默认值假装成玩家的选择」。
-     */
-    public static float leftWeight(Context ctx) {
-        loadPrefs(ctx);
-        return splitPct / 100f;
-    }
-
-    /** 见 {@link #leftWeight(Context)}。两个加起来恒为 1。 */
-    public static float rightWeight(Context ctx) {
-        return 1f - leftWeight(ctx);
-    }
-
     // ---- JVM 回归测试入口 ----
-    // 拖动本身要真机，但**夹紧范围**是纯算术，而它恰恰是拖坏界面的唯一途径：
+    // 拖动与布局要真机，但**夹紧范围**是纯算术，而它恰恰是把界面搞坏的唯一途径：
     // 越界一格，某一列就变成一条只剩省略号的缝。
     public static int splitPctForTest() { return splitPct; }
     public static void setSplitForTest(int value) { setSplit(value); }

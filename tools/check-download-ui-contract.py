@@ -59,6 +59,26 @@ def code(src):
     return "\n".join(code_lines(src))
 
 
+def body(src, signature):
+    """从方法签名那行起，按大括号配平取出方法体（去注释后再数括号）。
+
+    「某方法里必须调到某一句」比「全文里有这一句」强得多：后者在方法被拆开、
+    调用被挪走之后照样绿。
+    """
+    lines = code_lines(src)
+    for i, line in enumerate(lines):
+        if not line.startswith(signature):
+            continue
+        depth, out = 0, []
+        for cur in lines[i:]:
+            out.append(cur)
+            depth += cur.count("{") - cur.count("}")
+            if depth <= 0 and len(out) > 1:
+                break
+        return "\n".join(out)
+    return ""
+
+
 def followed_by(src, first, second):
     """`first` 之后紧跟着的下一行代码就是 `second`（中间的注释不算数）。"""
     lines = code_lines(src)
@@ -111,8 +131,34 @@ checks = {
         and 'CNDownloadConcurrency.acquire(' in hot,
     "活动资源树修改共用提交锁": "extractCommitLock" in downloader and "synchronized (CNDownloaderFix.extractCommitLock())" in hot_check,
     "日志只回收当前进程": '"--pid="' in log and "android.os.Process.myPid()" in log,
-    "默认100%内容宽度等于视口": "int contentBaseWidth = Math.max(1" in ui
-        and "scalePct <= 100 ? viewport" in assist,
+    # ── 宽度模型（2026-08-14 重写）──────────────────────────────────
+    #
+    # 这一层在宽度上翻过两次车，方向相反，判据必须把**两个**坑一起钉住：
+    #
+    #   第一版：读了自己马上要改的那个 View 的测量宽度 → 反馈环，
+    #           「反复拖分界线，左右越变越长」；
+    #   第二版：为躲开上面那条，改成 widthPixels − 边距 算死一个像素值，建浮层时
+    #           算一次 → 分屏/旋转/inset/padding 任一对不上，两列就按错的总宽分家，
+    #           就是「左右宽度解析有大问题」；而且之后屏幕怎么变都不重算。
+    #
+    # 现在的模型：**读视口（hScroll）、写内容（contentRoot）**。父子关系，父宽由
+    # 再上一层决定，不受子节点影响 —— 既没有反馈环，读的又是真实测量值。
+    "默认100%内容宽度交给视口而不是算出来的像素":
+        "mainScroll.setFillViewport(true)" in ui
+        and "mainScroll.addView(mainRow, new FrameLayout.LayoutParams(\n"
+            "                ViewGroup.LayoutParams.MATCH_PARENT," in ui
+        and "want = ViewGroup.LayoutParams.MATCH_PARENT;" in assist,
+    # 反向判据：内容宽度不准再从屏幕分辨率推算，也不准去读被自己改的那个 View。
+    "内容宽度只读视口，不读分辨率也不读自己":
+        "contentBaseWidthPx" not in code(assist)
+        and "contentRoot.getWidth()" not in code(assist)
+        and "hs.getWidth() - hs.getPaddingLeft()" in assist,
+    # 视口会变（旋转、分屏、折叠屏展开），变了要重算——上一版算一次就不管了。
+    "视口变化会重算内容宽度":
+        "OnLayoutChangeListener" in assist
+        and "addOnLayoutChangeListener" in assist
+        and "removeOnLayoutChangeListener" in assist
+        and "if ((r - l) == (oldR - oldL)) return;" in assist,
     "横向滚动只在真实溢出时启用": "setHorizontalScrollBarEnabled(overflow)" in assist
         and "if (!overflow) hs.scrollTo(0, 0)" in assist,
     "进度与下载字节单调不回撤": "if (clean > progress[i])" in ui
@@ -405,8 +451,12 @@ checks = {
         and "INTERACT_LINGER_MS = 12000L" in hot_check,
     # 4. 调大字号会把左右两栏撑大，再调小回不去——scrollX 停在旧内容宽度上，
     #    栏宽由权重算但滚动位置没归位。applyScale 收尾必须重新布局并复位滚动条。
+    # 改字号 → 缩内容 → 重算宽度 → 复位滚动状态，四步缺一不可。少了最后一步的
+    # 表现是「调大字号后两栏被撑大，再调小就回不去」：内容宽度确实缩回去了，但
+    # scrollX 还停在原处，而滚动条又已按「没溢出」关掉。
     "改字号后重新布局并复位滚动状态":
-        followed_by(assist, "root.requestLayout();", "styleScrollbars();"),
+        followed_by(assist, "applyContentScale(root);", "applyWidth();")
+        and "styleScrollbars();" in body(assist, "private static void applyWidth()"),
     # 5. 日志预览曾用 setTextIsSelectable(true)——那会顺带装上 ArrowKeyMovementMethod，
     #    把 TextView 变成一个吃触摸的滚动器，于是它和外层页面滚动容器抢同一个竖直
     #    手势：吸底吸的是内层，玩家看到的是外层没动。一页只留一个滚动容器。

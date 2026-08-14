@@ -738,15 +738,26 @@ public class CNCNDownloadUI {
         mainScroll.setClipToPadding(false);
         mainScroll.setPadding(0, 0, 0, dp(act, 5));
 
-        int contentBaseWidth = Math.max(1,
+        // ⚠ 内容根必须是 MATCH_PARENT，不能是算出来的像素宽。
+        //
+        // 上面那句 mainScroll.setFillViewport(true) 原先一直是**废的**：
+        // fillViewport 只在子节点是 WRAP_CONTENT / MATCH_PARENT 时才把它拉到视口宽，
+        // 给了精确像素值就原样照办。而那个像素值是「widthPixels − 左右边距」，建浮层
+        // 时算一次存进 contentBaseWidthPx——分屏、旋转、刘海与手势区 inset、面板自身
+        // padding，任何一项对不上，两列就在按错的总宽分家。这正是 2026-08-14 反馈的
+        // 「左右宽度解析有大问题」，而且它只算一次，之后屏幕怎么变都不会重算。
+        //
+        // 交给 MATCH_PARENT + fillViewport 之后，100% 时内容恰好等于**真实**视口，
+        // 一个像素都不用自己算；>100% 的放大由 CNDownloadUiAssist 按实测视口设定
+        // （读父写子，没有反馈环，见那边的类注释）。
+        contentBaseWidthPx = Math.max(1,
                 act.getResources().getDisplayMetrics().widthPixels
                         - mainLp.leftMargin - mainLp.rightMargin);
-        contentBaseWidthPx = contentBaseWidth;
         LinearLayout mainRow = new LinearLayout(act);
         mainRow.setTag(CNDownloadUiAssist.TAG_CONTENT_ROOT);
         mainRow.setOrientation(LinearLayout.HORIZONTAL);
         mainScroll.addView(mainRow, new FrameLayout.LayoutParams(
-                contentBaseWidth, ViewGroup.LayoutParams.MATCH_PARENT));
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         root.addView(mainScroll, mainLp);
 
         // ---- 左列：Logo + 署名区 ----
