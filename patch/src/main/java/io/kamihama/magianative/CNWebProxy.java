@@ -140,7 +140,7 @@ public final class CNWebProxy {
      * 填配置的人少记一套约定。**两张表不可互换，也不该共用任何选路逻辑：**
      *
      * <ul>
-     *   <li>{@code mirrors} 里绝大多数是<b>公共 CDN</b>（edge / ESA / gh-proxy /
+     *   <li>{@code mirrors} 里绝大多数是<b>公共 CDN</b>（edge / ESA /
      *       对象存储直连）。它们只会分发我们放上去的静态文件，
      *       <b>根本不会转发 API 请求</b>——把 API 指过去只会拿到 404 或它们自己的
      *       错误页。</li>

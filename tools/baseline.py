@@ -227,13 +227,18 @@ def cmd_fetch(args):
 def fetch_overlay(conf):
     """取回 overlay 包（汉化图集）并解开。
 
-    这些是人手重绘的图集：无法从原包重建，也不该躺在代码仓库里，所以放外部发布渠道的
-    Release。**内容一律按 sha256 认**——所以「从哪个地址下的」不影响正确性，
-    `repos` 列多个来源只是为了别在仓库转移窗口里卡住构建。
+    这些是人手重绘的图集：无法从原包重建，也不该躺在代码仓库里，所以放在外部发布渠道的
+    Release。地址由环境变量给（见 baseline.json 的 repos_env），本仓库里不写死。
+
+    **内容一律按 sha256 认**——地址只决定「去哪拿」，拿到的东西对不对由 hash 说了算。
+    所以地址不是安全边界，挪进 Secret 不降低任何保证；列多个来源也只是别在某个源
+    不可用时卡住构建，而不是「信任其中任何一个」。
     """
     spec = conf.get("overlay")
     if not spec:
         return
+    repos = [r.strip() for r in os.environ.get(spec.get("repos_env", "OVERLAY_URL"), "").split(",")
+             if r.strip()]
     if os.path.isdir(OVERLAY) and os.listdir(OVERLAY):
         print("overlay 已解开：%s" % OVERLAY)
         return
@@ -241,8 +246,12 @@ def fetch_overlay(conf):
     zip_path = os.path.join(WORK, spec["asset"])
     if not (os.path.isfile(zip_path) and sha256_file(zip_path) == spec["sha256"]):
         token = os.environ.get(spec.get("token_env", ""), "")
+        if not repos:
+            raise SystemExit(
+                "没有 %s：资产源地址由环境变量给（逗号分隔的 owner/repo，按序试），"
+                "本仓库里不写死。CI 里由 secrets 注入。" % spec.get("repos_env", "OVERLAY_URL"))
         errors = []
-        for repo in spec["repos"]:
+        for repo in repos:
             url = "https://github.com/%s/releases/download/%s/%s" % (
                 repo, spec["tag"], spec["asset"])
             print("取 overlay ← %s" % url)

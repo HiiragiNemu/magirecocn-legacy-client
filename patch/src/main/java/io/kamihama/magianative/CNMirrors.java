@@ -67,19 +67,6 @@ public final class CNMirrors {
     public static final String DEFAULT_BASE = "https://assets.example/";
 
     /**
-     * 与我们的基础设施<b>完全无关</b>的兜底线路：公共 gh-proxy 转 GitHub Release。
-     *
-     * <p>域名过期、服务器关停、CDN 账号被封——只要 GitHub 与 gh-proxy 还在，
-     * 玩家就还能装、还能更新。这是「服务器没了也能玩」这条路的最后一环。
-     */
-    static final String GITHUB_FALLBACK_V4 =
-        "https://v4.gh-proxy.org/https://github.com/MagirecoCN-Revival-Project/"
-        + "（外部发布渠道）/releases/download/latest/";
-    static final String GITHUB_FALLBACK =
-        "https://gh-proxy.org/https://github.com/MagirecoCN-Revival-Project/"
-        + "（外部发布渠道）/releases/download/latest/";
-
-    /**
      * 主线资源的**规范前缀**：判断「这是不是一条主线资源地址」、以及从地址里
      * 剥出文件名，都以它为准。
      *
@@ -252,22 +239,22 @@ public final class CNMirrors {
      * <ol>
      *   <li>{@code edge.} / {@code esa.} —— 自有域名下的 CDN。config.json 只是
      *       一时抽风（网络抖动、api 短暂 502）时最快，覆盖绝大多数情况；</li>
-     *   <li>{@code v4.gh-proxy.org} / {@code gh-proxy.org} —— 指向 GitHub Release
-     *       的公共代理，<b>与我们的域名、服务器、CDN 账号全都无关</b>。哪怕域名
-     *       过期、服务器关停，只要 GitHub 和 gh-proxy 还在，玩家就还能装、还能更新。</li>
      * </ol>
+     *
+     * <p><b>内置表里不再有任何指向代码托管站的线路</b>（2026-08-14 去掉）。
+     * 代价是丢了「我们的域名与 CDN 全挂掉也还能装」那条最后兜底——现在内置表
+     * 全部落在自有域名下，域名没了内置表就全灭。补偿手段是线上 config.json：
+     * 它随时可改，新线路下发即生效，而内置表只有发新版才动得了。
      *
      * <p>地址与线上 {@code config.json} 的 mirrors 保持一致；那边改了这里也要跟。
      * 顺序即优先级，{@code CNMirrors} 会按权重从高到低试。
      */
     private static List<Mirror> defaultList() {
-        List<Mirror> l = new ArrayList<Mirror>(4);
+        List<Mirror> l = new ArrayList<Mirror>(2);
         // 权重只决定内置表内部的先后，config.json 到位后整张表会被替换
         l.add(new Mirror("内置兜底 • edge", DEFAULT_BASE, 100, 0, true));
         l.add(new Mirror("内置兜底 • 阿里ESA",
                 "https://esa.assets.example.test/", 80, 0, true));
-        l.add(new Mirror("内置兜底 • gh-proxy v4", GITHUB_FALLBACK_V4, 60, 0, true));
-        l.add(new Mirror("内置兜底 • gh-proxy", GITHUB_FALLBACK, 40, 0, true));
         return l;
     }
 

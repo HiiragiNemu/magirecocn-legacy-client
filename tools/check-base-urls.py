@@ -45,7 +45,7 @@ INSTALLER = "patch/src/main/java/io/kamihama/magianative/CNDownloaderFix.java"
 #
 # 已经发生过一次：早先规范前缀是 r2.assets.example.test，而 object-storage 自定义域只在
 # CDN 接管 DNS 时才生效，换 NS 之后那个子域彻底废掉。
-CDN_PREFIXES = ("r2.", "edge.", "esa.", "（已下线线路）.", "cdn1.", "cdn2.", "cdn3.")
+CDN_PREFIXES = ("r2.", "edge.", "esa.", "cdn1.", "cdn2.", "cdn3.")
 
 # 规范前缀被**钉死**在这个值上，理由与「它能不能解析」无关：
 #

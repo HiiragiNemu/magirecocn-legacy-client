@@ -17,13 +17,6 @@
   },
   "mirrors": [
     {
-      "name": "香港CDN加速 • （已下线线路）",
-      "base": "https://（已下线线路）/g/m/releases/download/latest/",
-      "weight": 100,
-      "chunks": 16,
-      "enabled": true
-    },
-    {
       "name": "edge加速 • assets.example",
       "base": "https://assets.example/",
       "weight": 80,
@@ -43,20 +36,6 @@
       "weight": 40,
       "chunks": 8,
       "enabled": false
-    },
-    {
-      "name": "gh-proxy镜像v4 • v4.gh-proxy.org",
-      "base": "https://v4.gh-proxy.org/https://（外部发布渠道）/releases/download/latest/",
-      "weight": 30,
-      "chunks": 4,
-      "enabled": true
-    },
-    {
-      "name": "gh-proxy镜像 • gh-proxy.org",
-      "base": "https://gh-proxy.org/https://（外部发布渠道）/releases/download/latest/",
-      "weight": 20,
-      "chunks": 4,
-      "enabled": true
     }
   ],
   "ui_credits": {

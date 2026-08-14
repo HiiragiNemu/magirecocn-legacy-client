@@ -46,17 +46,21 @@ public class SafeLinkTest {
         ok("https://assets.example.test/version_js.json");
         ok("https://assets.example/cn_js_update.zip");
         ok("https://docs.example.test/client/bootstrap");
-        // 深层子域也必须放行：（已下线线路） 是公测包与热更的加速镜像，
-        // 强制更新/署名条目里的下载链接会落在它上面
-        ok("https://（已下线线路）/g/m/releases/download/latest/legacy-client.apk");
-        ok("https://（已下线线路）/version_js.json");
+        // 深层子域也必须放行：自有域下的加速镜像随时可能新开一个前缀
+        ok("https://cdn1.assets.example.test/g/m/pkg/legacy-client.apk");
+        ok("https://cdn1.assets.example.test/version_js.json");
         ok("https://github.com/magirecocn-revival-project/legacy-client");
-        // 公测包直链：gh-proxy 加速 fork 的 latest Release（强制更新链接会指向它）
-        ok("https://gh-proxy.org/https://（外部发布渠道）/releases/download/latest/magireco-latest-legacy-client.apk");
-        ok("https://v4.gh-proxy.org/https://（外部发布渠道）/releases/download/latest/magireco-latest-legacy-client.apk");
         // right_pill 的「支持我们」跳爱发电；两个域名是同一个站
         ok("https://afdian.com/a/magireco");
         ok("https://ifdian.net/a/magireco");
+
+        // 2026-08-14：下载线路不再经任何公共 GitHub 代理，白名单里也拿掉了。
+        // 反向钉住——这条要是又被放回来，多半是有人为了「让强制更新能跑」
+        // 顺手加的，而那正是当初把它加进来的理由。
+        no("https://gh-proxy.org/https://github.com/example/repo/releases/download/latest/x.apk",
+           "公共 GitHub 代理");
+        no("https://v4.gh-proxy.org/https://github.com/example/repo/releases/download/latest/x.apk",
+           "公共 GitHub 代理");
 
         System.out.println("\n[2] 协议：只放行 https");
         no("http://www.example.test", "明文 http");

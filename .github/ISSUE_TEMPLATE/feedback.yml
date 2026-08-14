@@ -21,6 +21,6 @@ body:
     id: content
     attributes:
       label: 想说什么
-      description: 越具体越好——「下载慢」不如说「晚 8 点下 cn_base_02 只有 0.3MB/s，（已下线线路） 线路」
+      description: 越具体越好——「下载慢」不如说「晚 8 点下 cn_base_02 只有 0.3MB/s，用的是浮层里显示的那条线路」
     validations:
       required: true

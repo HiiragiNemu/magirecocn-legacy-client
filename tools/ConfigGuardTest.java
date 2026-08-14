@@ -109,8 +109,8 @@ public class ConfigGuardTest {
         System.out.println("[1] base：只收 https，且强制以 '/' 结尾");
         okBase("https://api.example.test/stream/", "https://api.example.test/stream/");
         okBase("https://api.example.test/stream",  "https://api.example.test/stream/");
-        okBase("https://（已下线线路）/g/m/releases/download/latest",
-               "https://（已下线线路）/g/m/releases/download/latest/");
+        okBase("https://cdn1.assets.example.test/g/m/pkg/latest",
+               "https://cdn1.assets.example.test/g/m/pkg/latest/");
         okBase("  https://x.example/s/  ", "https://x.example/s/");
         okBase("HTTPS://X.EXAMPLE/s/", "HTTPS://X.EXAMPLE/s/");   // 大小写不影响判定
 

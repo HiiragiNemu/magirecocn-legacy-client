@@ -1883,12 +1883,12 @@ static void removeLegacyProxyCache() {
 // `#` 开头是注释；zhCN 为空表示**删除**该串（拼接式文案的语序调整用）。
 // 表在启动时加载，之后每 3 秒节流检查一次文件身份指纹，热更替换后免重启生效。
 //
-// ⚠ 上面那个路径是**运行时副本，不是源**。源在补丁仓库：
-//     （外部发布渠道）  →  madomagi/engine_i18n.tsv
-// 它由该仓库的 sync-and-upload.yml 打进 cn_js_update.zip（JS 包，与 magica/
+// ⚠ 上面那个路径是**运行时副本，不是源**。源在外部发布渠道：
+//     外部发布渠道  →  madomagi/engine_i18n.tsv
+// 它由该仓库的 资产同步流水线 打进 cn_js_update.zip（JS 包，与 magica/
 // 同包下发），客户端热更下来解到 <files>/，正好落在上面这个路径。也就是说
 // **直接改设备上那份只是就地验证，下一次 JS 包更新会把它整个盖掉**——译文要
-// 落地必须提到补丁仓库去。完整链路与操作步骤见本仓库 i18n/README.md。
+// 落地必须提到外部发布渠道去。完整链路与操作步骤见本仓库 i18n/README.md。
 
 static const std::string ENGINE_I18N_PATH =
     filesDir() + "/madomagi/engine_i18n.tsv";
@@ -2176,7 +2176,7 @@ static bool enginePrefixLookup(const char* data, size_t size, std::string& out) 
 // `#` 直接追加进表，这些串会当场从界面上消失，而且是在没人改译文的情况下悄悄发生。
 // 加上 `#` 后追加是纯粹的空操作（加载器第一件事就是跳过 `#` 行），翻一条放开一条。
 //
-// ⚠ 填好的译文**要提到补丁仓库**（（外部发布渠道） 的
+// ⚠ 填好的译文**要提到外部发布渠道**（外部发布渠道 的
 // madomagi/engine_i18n.tsv），不是留在设备上——设备上那份是热更下发的运行时副本，
 // 下一次 JS 包更新会把它整个盖掉。就地追加只用于验证。见 i18n/README.md。
 //

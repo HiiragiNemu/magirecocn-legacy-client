@@ -121,7 +121,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('root', help='含 js/ 与 template/ 的前端根目录')
     ap.add_argument('table', help='对照表 TSV')
-    ap.add_argument('--overrides', help='按文件的译文覆盖表（见补丁仓库 （外部发布渠道） 的 i18n/overrides.tsv）')
+    ap.add_argument('--overrides', help='按文件的译文覆盖表（见外部发布渠道的 i18n/overrides.tsv）')
     ap.add_argument('--dry-run', action='store_true', help='只报告，不落盘')
     ap.add_argument('--out', help='改动文件的清单落到这个文件（供打包用）')
     args = ap.parse_args()

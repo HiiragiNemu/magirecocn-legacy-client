@@ -45,7 +45,7 @@ python3 tools/check-debug-flag-boundary.py    # 调试开关边界
 ## 翻译贡献
 
 - 引擎硬编码串（弹窗、战斗台词、下载/网络错误）：
-  改 [`（外部发布渠道）`](https://（外部发布渠道）)
+  改 外部发布渠道
   的 `madomagi/engine_i18n.tsv`，随 JS 热更包下发，不用重出 APK。
 - 前端（WebView 一半）：同仓库 `i18n/` 下四张 TSV 对照表。
 - 判一句日文该归哪一层：[i18n/README.md](https://github.com/MagirecoCN-Revival-Project/legacy-client/blob/main/i18n/README.md) 有判据，别猜。

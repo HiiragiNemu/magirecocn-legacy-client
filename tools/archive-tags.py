@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""把要删掉的存档 tag 打包备份，传到发布仓库 Release，再由既有链路同步到 123云盘。
+"""把要删掉的存档 tag 打包备份，传到发布仓库 Release，再由既有链路同步到网盘。
 
 ## 背景
 
@@ -24,22 +24,21 @@
 
 真要一份份的源码包，加 `--tarballs`；两种可以一起打。
 
-## 为什么走发布仓库 Release 而不是直接传网盘
+## 为什么走 Release 而不是直接传网盘
 
-123云盘那条链路（外部发布渠道的 `scripts/sync-pan123-webdav.py`）本来就是
-「读上游 `releases/latest` 的资产 → PUT 到 WebDAV」，而且跑在**境内自托管
-runner** 上——境内机传 123云盘直连快，GitHub 官方 runner 跨太平洋 PUT 大文件极慢。
-所以传到发布仓库 Release 就够了，后面顺着既有链路走，不用另写一条上传通道。
+网盘那条链路本来就是「读目标仓库 `releases/latest` 的资产 → PUT 到 WebDAV」，
+而且跑在**境内自托管 runner** 上——境内机直连网盘快，GitHub 官方 runner 跨太平洋
+PUT 大文件极慢。所以传到 Release 就够了，后面顺着既有链路走，不用另写一条上传通道。
 
 ## 怎么跑
 
 **优先走 CI**：`.github/workflows/archive-tags.yml`（手动触发）。理由是那 120 MB
 从境内机器传到 GitHub 是整条路上最慢最不稳的一段，而 runner 上传 Release 全程在
-GitHub 内网；token 也已经在仓库 Secrets 里，不必让 PAT 落到谁的机器上。
+GitHub 内网；token 与目标地址也都已经在仓库 Secrets 里，不必落到谁的机器上。
 
 本地跑（调试或 CI 不可用时）：
 
-    export =...                       # 需要能写外部发布渠道的 token
+    export =... UPSTREAM_OWNER=... UPSTREAM_REPO=...
     git fetch --force origin 'refs/tags/*:refs/tags/*'
     python3 tools/archive-tags.py pack        # 打包 + 生成索引，落在 work/archive/
     python3 tools/archive-tags.py upload      # 传到发布仓库 Release（同名资产先删后传）
@@ -64,10 +63,18 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_DIR = os.path.join(REPO, "work", "archive")
 BASENAME = "legacy-client-archive-tags"
 
-# 上游外部发布渠道：123云盘/CDN 同步链路都读它的 releases/latest
-UPSTREAM_OWNER = os.environ.get("UPSTREAM_OWNER", "HiiragiNemu")
-UPSTREAM_REPO = os.environ.get("UPSTREAM_REPO", "（外部发布渠道）")
+# 归档资产传到哪：地址不写死在仓库里，由环境变量给（CI 从 secrets 注入）。
+# 那边的同步链路会读它的 releases/latest 再往外镜像。
+UPSTREAM_OWNER = os.environ.get("UPSTREAM_OWNER", "")
+UPSTREAM_REPO = os.environ.get("UPSTREAM_REPO", "")
 RELEASE_TAG = os.environ.get("UPSTREAM_RELEASE_TAG", "latest")
+
+
+def require_target():
+    if not UPSTREAM_OWNER or not UPSTREAM_REPO:
+        raise SystemExit(
+            "没有 UPSTREAM_OWNER / UPSTREAM_REPO：目标地址由环境变量给，"
+            "本仓库里不写死。CI 里由 secrets 注入。")
 
 API = "https://api.github.com"
 UPLOADS = "https://uploads.github.com"
@@ -277,12 +284,12 @@ def api(path, token, method="GET", data=None, headers=None, base=API, retries=4)
 def token_or_die():
     t = os.environ.get("") or os.environ.get("")
     if not t:
-        raise SystemExit("没有 。需要一个能写 %s/%s 的 token。"
-                         % (UPSTREAM_OWNER, UPSTREAM_REPO))
+        raise SystemExit("没有 。需要一个能写目标仓库的 token。")
     return t
 
 
 def cmd_upload(args):
+    require_target()
     token = token_or_die()
     files = sorted(os.path.join(OUT_DIR, f) for f in os.listdir(OUT_DIR)
                    if f.startswith(BASENAME))
@@ -314,13 +321,14 @@ def cmd_upload(args):
             base=UPLOADS)
         print("  ✔ %s" % name)
 
-    print("\n资产已就位。123云盘那条链路读的是发布仓库 releases/latest，"
+    print("\n资产已就位。网盘那条链路读的是发布仓库 releases/latest，"
           "等外部发布渠道的同步 workflow 跑一次即可（或手动触发）。")
     return 0
 
 
 def cmd_verify(args):
     """把资产下回来逐个校 sha256 —— 「传上去了」和「传完整了」是两回事。"""
+    require_target()
     token = token_or_die()
     sums = os.path.join(OUT_DIR, BASENAME + ".sha256")
     if not os.path.isfile(sums):

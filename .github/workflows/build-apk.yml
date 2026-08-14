@@ -173,13 +173,17 @@ jobs:
       # 2026-08-14 第一次跑这条腿就栽在这儿：verify 报「内容不同：1」，而那个文件是
       # 与我们毫无关系的 GMS 工具类，现象完全指不向真正的原因。
       # 只在这一步换 JAVA_HOME，别动整个 job 的 JDK（javac / d8 那边按 17 调好的）。
-      #  是给 overlay（汉化图集）取件用的：它在外部发布渠道 （外部发布渠道）
+      #  是给 overlay（汉化图集）取件用的：它在外部发布渠道
       # 的 Release 里，那个仓库预计转私有。没有 token 时仍会匿名试一次——公开期
       # 照样能用，私有后会明确报错而不是把 404 页面当 zip 解。
       # Totentanz 整包与 apktool 都在公开仓库，不需要 token。
       - name: 🌱 从Totentanz 整包重建工程树
         env:
           : ${{ secrets. }}
+          # 图集从哪取：逗号分隔的 owner/repo，按序试。地址由 secret 给，
+          # 内容仍按 baseline.json 的 sha256 认——地址错了拿不到，地址对了
+          # 内容也还要过 hash，两层各管各的。
+          OVERLAY_URL: ${{ secrets.OVERLAY_URL }}
         run: |
           set -euo pipefail
           J21="${JAVA_HOME_21_X64:-}"
@@ -556,13 +560,10 @@ jobs:
           retention-days: 30
           compression-level: 0
 
-      # 公测直链：https://gh-proxy.org/https://github.com/MagirecoCN-Revival-
-      # Project/（外部发布渠道）/releases/download/latest/magireco-latest-
-      # legacy-client.apk 指向的是【下游 fork】的 latest Release（经 gh-proxy
-      # 加速），而 fork 的 latest 是上游 latest 的严格全量镜像
-      # （不在上游的资产会被下次同步删掉）。所以资产必须传到【上游】
-      # HiiragiNemu 的 latest，再显式 dispatch 让下游立即镜像——资产上传
-      # 本身不触发上游 call-downstream 的 release 事件。
+      # APK 最终由自有域名的 CDN 提供（见 docs-site/download.md）。资产要传到
+      # 发布仓库的 latest Release，再显式 dispatch 让镜像仓库立即同步——镜像
+      # 仓库是发布仓库的严格全量镜像（不在发布仓库的资产会被下次同步删掉），
+      # 而资产上传本身不触发镜像同步的 release 事件。两个地址都由 secrets 给，见上面的 env。
       # 注意：gh release upload 的 <file>#<name> 语法里 '#' 只改显示标签，
       # 资产真实 name 仍按本地文件名走，必须先改名再传（与 sync-and-upload
       # 头注的虚空链接 bug 同源）。
@@ -570,12 +571,21 @@ jobs:
         if: ${{ inputs.verify_only != true }}
         env:
           : ${{ secrets. }}
+          # 资产站地址不写死在仓库里，由 secrets 给。它们不是安全边界——真正的
+          # 保证来自 token 权限与内容 hash——收进 secret 只是不让仓库正文替
+          # 别人的基础设施做广告。缺了就直接失败，别静默发去一个错地方。
+          UP_REPO: ${{ secrets.TARGET_REPO }}
+          DOWN_REPO: ${{ secrets.TARGET_REPO }}
         run: |
           set -euo pipefail
           SRC=.build/legacy-client.apk
           NAME=magireco-latest-legacy-client.apk
-          UP_REPO=（外部发布渠道）
-          DOWN_REPO=（外部发布渠道）
+          for v in UP_REPO DOWN_REPO; do
+            if [ -z "${!v:-}" ]; then
+              echo "::error::secret ${v/UP_REPO/TARGET_REPO} 未配置（Settings → Secrets and variables → Actions）"
+              exit 1
+            fi
+          done
 
           # preflight：token 必须能对发布仓库 release 读写，否则公测站留下的是 404
           # 死链——宁可构建红掉也不发死链。
@@ -635,9 +645,9 @@ jobs:
           gh release upload latest "$NAME" --repo "$UP_REPO" --clobber
           echo "✅ 已上传 $NAME 到 $UP_REPO latest Release"
 
-          # 让下游 fork 立即镜像（同步 workflow 会把新资产带进 fork 的
-          # latest，（已下线线路） 直链随即生效）。dispatch 失败不阻断——下次上游
-          # push 触发同步时也会补上，只是直链生效晚一点。
+          # 让下游立即镜像（同步 workflow 会把新资产带过去，CDN 直链随即生效）。
+          # dispatch 失败不阻断——下次上游 push 触发同步时也会补上，只是直链
+          # 生效晚一点。
           gh api "repos/$DOWN_REPO/dispatches" -f event_type=upstream-update \
             || echo "::warning::下游 dispatch 失败，镜像将等下次同步自动补齐"
 

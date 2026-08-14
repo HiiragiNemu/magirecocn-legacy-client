@@ -19,7 +19,7 @@
 ## 在流水线里的位置
 
     i18n-extract.py   抽取 → 对照表
-    (人/模型)         填 frontend-strings.tsv（源在补丁仓库 （外部发布渠道） 的 i18n/）
+    (人/模型)         填 frontend-strings.tsv（源在外部发布渠道的 i18n/）
     i18n-apply.py     整串回填(含 overrides 与 <DELETE>)
     i18n-fragments.py 片段补丁(本步)  ← 跑在回填**之后**,匹配的是
     i18n-package.py   打包              「邻居已汉化、只剩语序残留」的文本
@@ -113,7 +113,7 @@ def syntax_check(js_files, root):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('root', help='含 js/ 与 template/ 的前端根目录')
-    ap.add_argument('fragments', help='片段表 TSV(见补丁仓库 （外部发布渠道） 的 i18n/fragments.tsv)')
+    ap.add_argument('fragments', help='片段表 TSV(见外部发布渠道的 i18n/fragments.tsv)')
     ap.add_argument('--dry-run', action='store_true', help='只报告,不落盘')
     args = ap.parse_args()
 
