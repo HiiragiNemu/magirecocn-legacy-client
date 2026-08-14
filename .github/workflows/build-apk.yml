@@ -405,10 +405,37 @@ jobs:
           if [ "$(( ${#DEX_UI[@]} + ${#DEX_3[@]} ))" -ne "$TOTAL" ]; then
             echo "::error::dex 分组没覆盖全部补丁类（$TOTAL 个）"; exit 1
           fi
-          "${BT_DIR}/d8" --min-api 21 --output .build/dexui --lib .cache/deps/android.jar \
-            "${DEX_UI[@]}"
-          "${BT_DIR}/d8" --min-api 21 --output .build/dex3 --lib .cache/deps/android.jar \
-            "${DEX_3[@]}"
+          # ⚠ 两组各自出 dex，但 desugar 需要看见**全部**补丁类，所以整个
+          # .build/classes 都要作为 --classpath 传进去（--classpath 只供解析类型，
+          # 不会被写进输出 dex——这一点实测过：加与不加，两组 dex 逐字节相同）。
+          #
+          # 不加会怎样：CNCNDownloadUI$17 实现的 CNOfflineImportActivity$Callback
+          # 在另一组里，d8 看不见它，于是每次构建都报
+          #     Type `...$Callback` was not found, it is required for default or
+          #     static interface methods desugaring of `...CNCNDownloadUI$17`
+          # 今天这条告警无害——Callback 只有一个抽象方法，没有 default/static，
+          # 没东西要 desugar。但 minSdk 21 意味着 default 方法**必须**靠 desugar
+          # 才能在 API 21–23 上跑（原生支持是 24+）。哪天有人给某个跨组接口加了
+          # default 方法，d8 同样只会报这一句，然后**静默产出装得上、跑起来炸的类**
+          # ——而这句话早已天天出现、没人再看。所以：既补上 classpath，也把
+          # 「d8 有告警」变成红灯，把这个信号救回来。
+          run_d8() {
+            local out="$1"; shift
+            local log=".build/d8-$(basename "$out").log"
+            if ! "${BT_DIR}/d8" --min-api 21 --output "$out" \
+                 --lib .cache/deps/android.jar --classpath .build/classes \
+                 "$@" > "$log" 2>&1; then
+              cat "$log"; echo "::error::d8 失败（$out）"; exit 1
+            fi
+            cat "$log"
+            if grep -qE '^(Warning|Error)' "$log"; then
+              echo "::error::d8 出了告警（$out）。desugar 相关的告警在 minSdk 21 上"
+              echo "::error::可能意味着产出的类装得上但跑起来炸，不要当噪音略过。"
+              exit 1
+            fi
+          }
+          run_d8 .build/dexui "${DEX_UI[@]}"
+          run_d8 .build/dex3  "${DEX_3[@]}"
 
           rm -rf .build/smaliui .build/smali3
           baksmali d .build/dexui/classes.dex -o .build/smaliui

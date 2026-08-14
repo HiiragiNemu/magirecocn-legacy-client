@@ -99,8 +99,27 @@ if [ "$(( ${#DEX_UI[@]} + ${#DEX_3[@]} ))" -ne "$TOTAL" ]; then
     echo "✘ dex 分组没覆盖全部补丁类——有类会静默缺席"; exit 1
 fi
 
-"$BUILD_TOOLS/d8" --min-api 21 --output "$OUT/dexui" --lib "$DEPS_DIR/android.jar" "${DEX_UI[@]}"
-"$BUILD_TOOLS/d8" --min-api 21 --output "$OUT/dex3"  --lib "$DEPS_DIR/android.jar" "${DEX_3[@]}"
+# 两组各自出 dex，但 desugar 要看见**全部**补丁类，所以整个 classes 目录都作为
+# --classpath 传进去（只供解析类型，不写进输出 dex——加与不加实测逐字节相同）。
+# 并且 d8 一有告警就失败：minSdk 21 下 default 方法必须靠 desugar 才能在
+# API 21–23 上跑，看不见接口时 d8 只报一句告警，然后产出装得上、跑起来炸的类。
+# 与 build-apk.yml 的 run_d8 同一套判据，改一处要改两处。
+run_d8() {
+    local out="$1"; shift
+    local log="$OUT/d8-$(basename "$out").log"
+    if ! "$BUILD_TOOLS/d8" --min-api 21 --output "$out" \
+         --lib "$DEPS_DIR/android.jar" --classpath "$OUT/classes" "$@" > "$log" 2>&1; then
+        cat "$log"; echo "✘ d8 失败（$out）"; exit 1
+    fi
+    cat "$log"
+    if grep -qE '^(Warning|Error)' "$log"; then
+        echo "✘ d8 出了告警（$out）——desugar 相关告警在 minSdk 21 上可能意味着"
+        echo "  产出的类装得上但跑起来炸，不要当噪音略过。"
+        exit 1
+    fi
+}
+run_d8 "$OUT/dexui" "${DEX_UI[@]}"
+run_d8 "$OUT/dex3"  "${DEX_3[@]}"
 java -jar "$BAKSMALI_JAR" d "$OUT/dexui/classes.dex" -o "$OUT/smaliui"
 java -jar "$BAKSMALI_JAR" d "$OUT/dex3/classes.dex"  -o "$OUT/smali3"
 
