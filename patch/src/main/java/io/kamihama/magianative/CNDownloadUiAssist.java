@@ -78,6 +78,18 @@ public final class CNDownloadUiAssist {
      */
     public static final String TAG_SLOT_INFO = "cn-download-slot-info";
 
+    /**
+     * 滚动条留出的槽宽（dp）：竖条往右让、横条往下让，都让这么多。
+     *
+     * <p>原先是 5dp，而滚动条自己就有 6dp 粗（见 {@link #scrollThumb}）——<b>槽比条
+     * 还窄，条必然压在字上</b>。10dp 给出约 4dp 净空。
+     *
+     * <p>这个数<b>不是只给滚动条用的</b>：文件列表（{@code slotScroll}）靠右 padding
+     * 让出槽位，而它下面那行文字进度与总进度条不在同一个滚动容器里，得用同一个数
+     * 做右边距才对得齐。三处一起读这里，谁也别再各写各的——它们错开 1dp 都看得出来。
+     */
+    public static final int SCROLLBAR_GUTTER_DP = 10;
+
     private static final String LEGACY_TAG = "cn-download-ui-assist";
     private static final String TAG_STAY = "cn-download-stay";
     private static final String TAG_DISPLAY = "cn-download-display";
@@ -621,8 +633,9 @@ public final class CNDownloadUiAssist {
             if (!overflow) hs.scrollTo(0, 0);
             hs.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
             hs.setClipToPadding(false);
+            // 横条往下让：槽要比条宽，否则条压在最后一行字上。
             hs.setPadding(hs.getPaddingLeft(), hs.getPaddingTop(),
-                    hs.getPaddingRight(), dp(hs, 5));
+                    hs.getPaddingRight(), dp(hs, SCROLLBAR_GUTTER_DP));
             if (Build.VERSION.SDK_INT >= 29) {
                 hs.setHorizontalScrollbarThumbDrawable(scrollThumb(hs));
                 hs.setHorizontalScrollbarTrackDrawable(scrollTrack(hs));
@@ -633,8 +646,10 @@ public final class CNDownloadUiAssist {
             vs.setScrollbarFadingEnabled(false);
             vs.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
             vs.setClipToPadding(false);
+            // 竖条往右让。同一个数还被文件列表下面那行文字进度与总进度条用作右
+            // 边距——它们不在这个滚动容器里，靠这个数才对得齐。
             vs.setPadding(vs.getPaddingLeft(), vs.getPaddingTop(),
-                    dp(vs, 5), vs.getPaddingBottom());
+                    dp(vs, SCROLLBAR_GUTTER_DP), vs.getPaddingBottom());
             if (Build.VERSION.SDK_INT >= 29) {
                 vs.setVerticalScrollbarThumbDrawable(scrollThumb(vs));
                 vs.setVerticalScrollbarTrackDrawable(scrollTrack(vs));

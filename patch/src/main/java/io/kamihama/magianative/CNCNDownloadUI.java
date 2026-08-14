@@ -736,7 +736,7 @@ public class CNCNDownloadUI {
         mainScroll.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
         mainScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
         mainScroll.setClipToPadding(false);
-        mainScroll.setPadding(0, 0, 0, dp(act, 5));
+        mainScroll.setPadding(0, 0, 0, dp(act, CNDownloadUiAssist.SCROLLBAR_GUTTER_DP));
 
         // ⚠ 内容根必须是 MATCH_PARENT，不能是算出来的像素宽。
         //
@@ -853,7 +853,7 @@ public class CNCNDownloadUI {
         slotScroll.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
         slotScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
         slotScroll.setClipToPadding(false);
-        slotScroll.setPadding(0, 0, dp(act, 5), 0);
+        slotScroll.setPadding(0, 0, dp(act, CNDownloadUiAssist.SCROLLBAR_GUTTER_DP), 0);
         slotContainer = new LinearLayout(act);
         slotContainer.setOrientation(LinearLayout.VERTICAL);
         slotScroll.addView(slotContainer, new ScrollView.LayoutParams(
@@ -873,7 +873,7 @@ public class CNCNDownloadUI {
         // 5dp，看起来就是「默认情况下进度条偏长」（2026-08-13 反馈）。这跟「重下」
         // 按钮无关，那颗胶囊早已撤掉；是滚动条留白只加在了一边。
         LinearLayout totalRowLp0 = totalRow;
-        totalRowLp0.setPadding(0, 0, dp(act, 5), 0);
+        totalRowLp0.setPadding(0, 0, dp(act, CNDownloadUiAssist.SCROLLBAR_GUTTER_DP), 0);
         rightCol.addView(totalRow, lpRow(dp(act, 8), dp(act, 2)));
 
         vOverallText = new TextView(act);
@@ -899,7 +899,7 @@ public class CNCNDownloadUI {
         tintBar(progressBarOverall, COLOR_ACCENT);
         LinearLayout.LayoutParams overallLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 10));
-        overallLp.rightMargin = dp(act, 5);      // 与 slotScroll 的滚动条留白对齐
+        overallLp.rightMargin = dp(act, CNDownloadUiAssist.SCROLLBAR_GUTTER_DP);   // 与 slotScroll 的滚动条留白同源
         rightCol.addView(progressBarOverall, overallLp);
 
         // ── 第 3 层：左上角 LOG 胶囊 ──

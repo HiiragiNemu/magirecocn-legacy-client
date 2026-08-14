@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import re
 from pathlib import Path
 
 ui = Path("patch/src/main/java/io/kamihama/magianative/CNCNDownloadUI.java").read_text(encoding="utf-8")
@@ -461,9 +462,18 @@ checks = {
         and "delta * SUGGEST_SLOPE * 100f" in assist,
     # 2. 浮层总进度条比它上面那行字长出一截：文字行贴着 slotScroll 的 5dp 滚动条
     #    留白，进度条却是满宽。两者必须用同一个 inset，否则右端永远差 5dp。
-    "总进度条与文字行右端留白一致":
-        "totalRowLp0.setPadding(0, 0, dp(act, 5), 0)" in ui
-        and "overallLp.rightMargin = dp(act, 5)" in ui,
+    # 右端对齐的三处必须**同源**：文件列表靠右 padding 让出滚动条槽位，而它下面
+    # 那行文字进度与总进度条不在同一个滚动容器里，得用同一个数做右边距才对得齐。
+    # 原先三处各写 dp(act, 5)，谁改一处另外两处就错开——而错 1dp 都看得出来。
+    # 顺带：5dp 比滚动条本身（6dp）还窄，条必然压在字上，所以这个数抬到了 10dp。
+    "滚动条槽宽三处同源":
+        ui.count("dp(act, CNDownloadUiAssist.SCROLLBAR_GUTTER_DP)") >= 4
+        and "SCROLLBAR_GUTTER_DP = 10" in assist
+        and "dp(hs, SCROLLBAR_GUTTER_DP)" in assist
+        and "dp(vs, SCROLLBAR_GUTTER_DP)" in assist,
+    "槽宽必须宽过滚动条本身":
+        "d.setSize(dp(v, 6), dp(v, 6))" in assist
+        and int(re.search(r"SCROLLBAR_GUTTER_DP = (\d+)", assist).group(1)) > 6,
     # 3. 热更新检查完就跳走，玩家来不及看清结果（尤其失败时）。停留窗口拉长；
     #    上限 PLAYER_WINDOW_MAX_MS 不动，手动「停留」按钮仍是唯一的无限期通道。
     "热更新结果停留时间足够看清":
