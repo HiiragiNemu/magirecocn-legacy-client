@@ -143,7 +143,12 @@ public final class CNAria2 {
             int maxC = (maxConns > 0 && maxConns <= 16) ? maxConns : 8;
 
             int port = 16000 + (int) (Math.random() * 7000); // 16000-22999
-            String secret = "cn" + Long.toHexString((long) (Math.random() * 0x7fffffffL));
+            // RPC 只听 127.0.0.1，但**同机的其它应用照样够得着**，挡住它们的
+            // 只有这个 token。Math.random() 不是密码学随机源，而且只有 31 位——
+            // 猜中就等于拿到一个能以本应用身份往私有目录里写文件的下载器
+            // （dir/out 都是 RPC 参数），随后正是安装器要去解压的地方。
+            String secret = "cn" + Long.toHexString(
+                    new java.security.SecureRandom().nextLong() & 0x7fffffffffffffffL);
             File ariaDir = new File(CNPaths.filesDir(), "aria2");
             File bin = new File(ariaDir, "aria2c");
 
@@ -187,14 +192,30 @@ public final class CNAria2 {
             }
             opt.put("header", hdrs);
             if (proxy != null && !proxy.isEmpty()) opt.put("all-proxy", proxy);
+            // 🔴 证书校验**没有**关掉的余地，拿不到 CA 桶就整条路不走。
+            //
+            // 原先这里在拿不到 CA 桶时下发 check-certificate=false，理由写的是
+            // 「文件下载后走结构 + 分块 MD5 校验，完整性有独立防线」。那条理由
+            // 在 2026-08-13 被另一次改动**抽掉了**：按维护者口径，aria2 模式下
+            // 额外的内容校验一律旁路（不套 manifest 块指纹，也不比对热更两包的
+            // version json size/MD5），只剩「ZIP 结构合法且至少有一个条目」。
+            //
+            // 两次改动各自都说得通，合起来是个洞：传输层不认证 + 内容层不认证。
+            // 中间人可以整包替换，而 cn_js_update.zip 装的是 WebView 里跑的前端
+            // 脚本——那就不是「资源坏了」，是在玩家设备上执行攻击者的代码。
+            //
+            // 所以拿不到 CA 桶时返回 ERR_INIT：调用方会回退主引擎，那条路用
+            // OkHttp 做完整 TLS 验证，功能一点不少。宁可不用备用引擎，
+            // 也不能用一条不认证的。
             File cacerts = new File(ariaDir, "cacerts.pem");
-            if (cacerts.isFile()) {
-                opt.put("ca-certificate", cacerts.getAbsolutePath());
-            } else {
-                // 拿不到系统 CA 桶时放行（文件下载后走结构+分块 MD5 校验，
-                // 完整性有独立防线，传输层不校验证书可接受）。
-                opt.put("check-certificate", false);
+            if (!cacerts.isFile() || cacerts.length() <= 0) {
+                ensureCacerts(ariaDir);
             }
+            if (!cacerts.isFile() || cacerts.length() <= 0) {
+                CNLog.w(TAG, "拼不出 CA 证书桶，aria2 放弃本次下载（回退主引擎做完整 TLS 校验）");
+                return ERR_INIT;
+            }
+            opt.put("ca-certificate", cacerts.getAbsolutePath());
             JSONArray uris = new JSONArray();
             uris.put(url);
 
@@ -369,6 +390,10 @@ public final class CNAria2 {
             File bin = new File(dir, "aria2c");
             if (bin.isFile() && bin.length() == expect) {
                 bin.setExecutable(true, false);
+                // 二进制已经在了也要确认 CA 桶还在：这条早退路径原先直接 return，
+                // 于是 pem 一旦缺失（首次拼装失败、被清理、换过系统）就再也不会
+                // 重建——而缺了它的后果见 download() 里那段红字。
+                ensureCacerts(dir);
                 return true;
             }
             Context ctx = appContext();
@@ -407,7 +432,7 @@ public final class CNAria2 {
             } finally {
                 close(in);
             }
-            extractCacerts(dir);
+            ensureCacerts(dir);
             return true;
         } catch (Throwable t) {
             CNLog.w(TAG, "aria2c 解压失败: " + t);
@@ -433,9 +458,17 @@ public final class CNAria2 {
         }
     }
 
+    /** 缺了才拼；拼出来的空文件当没拼出来。 */
+    private static boolean ensureCacerts(File dir) {
+        File pem = new File(dir, "cacerts.pem");
+        if (pem.isFile() && pem.length() > 0) return true;
+        return extractCacerts(dir);
+    }
+
     /**
      * 拼装系统+用户 CA 证书到 files/aria2/cacerts.pem。失败（目录不可读/为空）
-     * 返回 false，下载时改走 {@code --check-certificate=false}。
+     * 返回 false，此时 {@link #download} <b>整条路不走</b>，回退主引擎——
+     * 绝不改用 {@code --check-certificate=false}，理由见那边的红字。
      */
     private static boolean extractCacerts(File dir) {
         File pem = new File(dir, "cacerts.pem");

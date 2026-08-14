@@ -17,6 +17,7 @@ zipplan = Path("patch/src/main/java/io/kamihama/magianative/CNZipPlan.java").rea
 offline = Path("patch/src/main/java/io/kamihama/magianative/CNOfflineImport.java").read_text(encoding="utf-8")
 hot_tx = Path("patch/src/main/java/io/kamihama/magianative/CNHotUpdateTx.java").read_text(encoding="utf-8")
 hud = Path("patch/src/main/java/io/kamihama/magianative/CNDebugHud.java").read_text(encoding="utf-8")
+aria2 = Path("patch/src/main/java/io/kamihama/magianative/CNAria2.java").read_text(encoding="utf-8")
 manifest = Path("AndroidManifest.xml").read_text(encoding="utf-8")
 
 
@@ -245,6 +246,21 @@ checks = {
         downloader.count("verifyHotIdentity(name, archive, hotMeta)") == 2
         and "verifyHotIdentity(name, archive, a2Meta)" not in downloader
         and "isAria2ArchiveUsable(archive, name)" in downloader,
+    # 上一条与这一条是一对，必须一起读。
+    #
+    # 「旁路内容校验」是维护者的决定，前提是**传输层还认证着**。而 aria2 原先在
+    # 拼不出 CA 桶时会下发 check-certificate=false，那条兜底当初的理由正是
+    # 「内容层还有独立防线」——两次改动各自都说得通，合起来是：传输不认证 +
+    # 内容不认证。中间人可以整包替换，而 cn_js_update.zip 装的是 WebView 里跑的
+    # 前端脚本，那已经不是「资源坏了」而是在玩家设备上执行攻击者的代码。
+    #
+    # 判据因此钉死：aria2 里不准出现关闭证书校验的写法，拿不到 CA 桶只能返回
+    # ERR_INIT 回退主引擎（那条路 OkHttp 做完整 TLS 验证，功能一点不少）。
+    "aria2 绝不关闭证书校验":
+        '"check-certificate"' not in code(aria2)
+        and 'opt.put("ca-certificate"' in aria2
+        and "return ERR_INIT;" in aria2
+        and "SecureRandom" in aria2,
     "aria2 解压走同一套事务（带空间预检与逐条目校验）":
         "CNArchiveInstallTx.extract(archive, new File(INSTALL_ROOT)," in downloader
         and "a2State" in downloader,
