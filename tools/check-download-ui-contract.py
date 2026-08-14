@@ -299,16 +299,31 @@ checks = {
         and "playerDecided" in mode,
     "云端不再算玩家关不掉的强制层":
         "CNMirrors.forceSingleThread()" not in mode.split("public static boolean forcedOn()")[1].split("}")[0],
-    # 「重下」胶囊与左右分界线拖动已按维护者要求整体撤回（2026-08-13）。下面两条是
-    # **反向**断言：谁再把它们加回来，CI 当场红。撤回的理由不是实现有 bug，是维护者
-    # 不要这两个特性——判据因此钉在「不存在」，而不是「实现得对不对」。
+    # 「重下」胶囊已按维护者要求整体撤回（2026-08-13）。这是一条**反向**断言：
+    # 谁再把它加回来，CI 当场红。撤回的理由不是实现有 bug，是维护者不要这个特性
+    # ——判据因此钉在「不存在」，而不是「实现得对不对」。
     "不再有单包重下胶囊":
         "installReloads" not in assist and "TAG_RELOAD" not in assist
         and "ReloadClick" not in assist,
-    "不再有左右分界线拖动":
-        "SplitDrag" not in assist and "TAG_SPLIT" not in assist
-        and "splitPct" not in assist
-        and "0.38f" in ui and "0.62f" in ui,
+    # 分界线拖动同日先撤后加：撤是维护者不要它，加回来也是维护者要的。判据于是
+    # 从「不存在」翻回「存在且接对了」——而「接对了」有两条，都踩过：
+    #   1. 长按才进拖动态，进去之后要把手势从 HorizontalScrollView 手里要过来
+    #      （不要的话横向一动就被滚动吃掉，表现为「长按了也拖不动」）；
+    #   2. 建浮层时的列宽直接取玩家存的比例，不能写死 0.38f/0.62f——浮层会被重建
+    #      （切主题、看门狗发现它掉出视图树），写死的话每次重建都先闪回默认比例，
+    #      玩家看到的就是「刷新一下比例被重置了」。
+    "左右分界线可长按拖动":
+        "SplitDrag" in assist and "TAG_SPLIT" in assist
+        and "setOnLongClickListener" in assist
+        and "requestDisallowInterceptTouchEvent" in assist,
+    "分界比例夹在可用范围内并落盘":
+        "SPLIT_MIN = 20" in assist and "SPLIT_MAX = 70" in assist
+        and "clamp(value, SPLIT_MIN, SPLIT_MAX)" in assist
+        and "PREF_SPLIT" in assist,
+    "浮层建出来就是玩家调好的比例":
+        "CNDownloadUiAssist.leftWeight(act)" in ui
+        and "CNDownloadUiAssist.rightWeight(act)" in ui
+        and "0.38f" not in code(ui) and "0.62f" not in code(ui),
     "调色板在类加载时就有值":
         "static { loadPalette(false); }" in ui and "ensurePalette" in ui,
     "取色把全透明当成没取到":

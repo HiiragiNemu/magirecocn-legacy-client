@@ -70,6 +70,22 @@ public class UiAssistStateTest {
         check("建议值恒在 75–150 内",
                 edgeLo >= 75 && edgeLo <= 150 && edgeHi >= 75 && edgeHi <= 150);
 
+        // 左右分界线：拖动要真机，但夹紧范围是纯算术，而越界正是唯一能把界面
+        // 拖坏的途径——某一列被压到只剩省略号。
+        int min = CNDownloadUiAssist.splitMinForTest();
+        int max = CNDownloadUiAssist.splitMaxForTest();
+        int def = CNDownloadUiAssist.splitDefaultForTest();
+        check("分界线默认值落在可调范围内", def >= min && def <= max);
+        check("分界线范围两侧都留得下东西", min >= 15 && max <= 85 && min < max);
+
+        CNDownloadUiAssist.setSplitForTest(def);
+        check("分界线可设为默认值", CNDownloadUiAssist.splitPctForTest() == def);
+        CNDownloadUiAssist.setSplitForTest(-500);
+        check("向左拖过头夹在下限", CNDownloadUiAssist.splitPctForTest() == min);
+        CNDownloadUiAssist.setSplitForTest(500);
+        check("向右拖过头夹在上限", CNDownloadUiAssist.splitPctForTest() == max);
+        CNDownloadUiAssist.setSplitForTest(def);
+
         System.out.println("通过 " + pass + " / 失败 " + fail);
         if (fail > 0) System.exit(1);
     }

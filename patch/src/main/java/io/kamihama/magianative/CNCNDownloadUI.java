@@ -753,8 +753,12 @@ public class CNCNDownloadUI {
         LinearLayout leftCol = new LinearLayout(act);
         leftCol.setOrientation(LinearLayout.VERTICAL);
         leftCol.setPadding(dp(act, 4), 0, dp(act, 12), 0);
+        // 比例从 CNDownloadUiAssist 取，不写死：浮层会被重建（切主题、看门狗
+        // 发现它掉出视图树），写死的话每次重建都先闪回 38/62，而分界线要等
+        // ensureInstalled 那一轮才把它改回来。
         mainRow.addView(leftCol, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.MATCH_PARENT, 0.38f));
+                0, ViewGroup.LayoutParams.MATCH_PARENT,
+                CNDownloadUiAssist.leftWeight(act)));
 
         // Logo 整幅在上、贡献者列表在下。9688f7e7 曾改成「Logo 122dp 靠左 +
         // 右侧三行品牌文字」，观感上不成立，已退回。那三行文字也一并去掉：
@@ -792,7 +796,8 @@ public class CNCNDownloadUI {
         rightCol.setOrientation(LinearLayout.VERTICAL);
         rightCol.setPadding(dp(act, 10), dp(act, 4), dp(act, 4), dp(act, 4));
         mainRow.addView(rightCol, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.MATCH_PARENT, 0.62f));
+                0, ViewGroup.LayoutParams.MATCH_PARENT,
+                CNDownloadUiAssist.rightWeight(act)));
 
         LinearLayout headRow = new LinearLayout(act);
         headRow.setOrientation(LinearLayout.HORIZONTAL);
