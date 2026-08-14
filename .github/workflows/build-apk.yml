@@ -4,7 +4,7 @@ name: 🏗️ 构建 APK
 # ║   APK 构建                                                          ║
 # ╠════════════════════════════════════════════════════════════════════╣
 # ║                                                                    ║
-# ║ 与 另一个客户端仓库 的差异（重要）                               ║
+# ║ 与另一个客户端仓库的差异（重要）                                    ║
 # ║ ─────────────────────────────────                                  ║
 # ║   ▸ 本仓库的 smali 不需要注入构建期常量：没有 API_HOST /            ║
 # ║     DIRECTORY_PUBKEY 之类的信任锚，因此不需要任何 Secret 或         ║
@@ -12,8 +12,8 @@ name: 🏗️ 构建 APK
 # ║   ▸ 签名用 **AOSP testkey**，由 CI 从 android.googlesource.com 取，  ║
 # ║     不入库、也不需要 keystore Secret。这与上游发行的包是同一把 key， ║
 # ║     所以产物可以直接覆盖安装。                                       ║
-# ║   ▸ 没有 （旧 native 层） / HCA 转码 / 音频资源等步骤——那些是 （旧客户端）  ║
-# ║     独有的，本仓库不涉及。                                          ║
+# ║   ▸ 没有 native i18n / HCA 转码 / 音频资源等步骤——那些是另一个      ║
+# ║     客户端仓库独有的，本仓库不涉及。                                ║
 # ║                                                                    ║
 # ║ 构建流程                                                            ║
 # ║ ───────                                                            ║
@@ -31,7 +31,7 @@ name: 🏗️ 构建 APK
 # ║   7. 发布 APK（公测直链，仅手动触发时）            ║
 # ║                                                                    ║
 # ║ 触发方式：仅手动（workflow_dispatch）。                             ║
-# ║ 与 （旧客户端） 一样不做自动发版——本仓库是既有产物的存档与再构建，     ║
+# ║ 不做自动发版——本仓库是既有产物的存档与再构建，                      ║
 # ║ 不应该因为一次 push 就产出新的对外 APK。                             ║
 # ╚════════════════════════════════════════════════════════════════════╝
 
@@ -122,7 +122,7 @@ jobs:
       - name: 📥 准备编译依赖（android.jar + OkHttp）
         run: |
           set -euo pipefail
-          # classpath 与 另一个客户端仓库 保持一致：android.jar + OkHttp/Okio。
+          # classpath 与另一个客户端仓库保持一致：android.jar + OkHttp/Okio。
           # 补丁源码只用 JDK 自带能力与 Android 框架，不引第三方库。
           mkdir -p .cache/deps
           curl -sSL -o .cache/deps/platform.zip \
@@ -134,6 +134,38 @@ jobs:
           curl -sSL -o .cache/deps/okio.jar \
             "https://repo1.maven.org/maven2/com/squareup/okio/okio/1.17.5/okio-1.17.5.jar"
           ls -la .cache/deps
+
+      # 地址与凭证都搬进 secrets 之后，「没配」与「没传进来」长得一模一样：
+      # 两种情况下变量都存在、值都是空串。而后者尤其阴——workflow_call 默认不
+      # 继承 secrets，调用方少写一行 `secrets: inherit`，这里就全空，却要等到
+      # 十分钟后 fetch 那步才报「没有 BASELINE_APK_URL」，指向完全错误的方向。
+      # 所以在动手之前先点名检查，并把那个坑直接写进错误里。
+      - name: 🔑 预检必需的 secret
+        env:
+          BASELINE_APK_URL: ${{ secrets.BASELINE_APK_URL }}
+          OVERLAY_URL: ${{ secrets.OVERLAY_URL }}
+          : ${{ secrets. }}
+          TARGET_REPO: ${{ secrets.TARGET_REPO }}
+          TARGET_REPO: ${{ secrets.TARGET_REPO }}
+        run: |
+          set -euo pipefail
+          NEED="BASELINE_APK_URL OVERLAY_URL "
+          # 发版相关的只有真要发版时才需要
+          if [ "${{ inputs.verify_only }}" != "true" ]; then
+            NEED="$NEED TARGET_REPO TARGET_REPO"
+          fi
+          MISSING=""
+          for v in $NEED; do
+            if [ -z "${!v:-}" ]; then MISSING="$MISSING $v"; fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error::这些 secret 是空的：$MISSING"
+            echo "::error::两种可能——(1) 仓库 Settings 里还没配；(2) 本次是被别的"
+            echo "::error::workflow 以 workflow_call 调进来的，而调用方没写 secrets: inherit。"
+            echo "::error::第二种最容易误判成「脚本读不到环境变量」：变量其实设了，值是空串。"
+            exit 1
+          fi
+          echo "必需的 secret 都在（$NEED）"
 
       - name: 🚧 校验 native 入口保护（异常绝不外泄）
         run: python3 tools/check-entry-guard.py
