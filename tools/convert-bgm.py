@@ -107,7 +107,14 @@ def main():
     ap.add_argument("--vgmstream", default="vgmstream-cli")
     ap.add_argument("--ffmpeg", default="ffmpeg")
     ap.add_argument("--quality", default="5", help="libvorbis -q:a，默认 5")
+    # 工程树根。默认是当前目录（仓库自己那棵树）；CI 的 baseline 腿从Totentanz 整包
+    # 重建出另一棵树，源与产物都得落在那棵树里，而不是仓库根。
+    ap.add_argument("--tree", default=".", help="客户端基线树根，默认当前目录")
     args = ap.parse_args()
+
+    global BGM_DIR, OUT_DIR
+    BGM_DIR = os.path.join(args.tree, BGM_DIR)
+    OUT_DIR = os.path.join(args.tree, OUT_DIR)
 
     os.makedirs(OUT_DIR, exist_ok=True)
     entries = []

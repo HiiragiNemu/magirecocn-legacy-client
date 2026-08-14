@@ -75,9 +75,22 @@ MagirecoCN-Revival-Project 索取上述对应源码的完整副本，我们按 G
 | 软件 | ShadowHook（bytedance/android-inline-hook），v2.0.1（取自 `.so` 内嵌版本串） |
 | 版权 | Copyright (c) 2021-2026 ByteDance Inc. |
 | 许可 | **MIT License** |
-| 上游 | <https://github.com/bytedance/android-inline-hook> |
+| 上游 | <https://github.com/bytedance/android-inline-hook>，tag `v2.0.1` |
+| 怎么来的 | **CI 从上游源码构建**（`magia-native/CMakeLists.txt` 的 `FetchContent`，`GIT_TAG v2.0.1`）。仓库里那两个 `.so` 是同版本的既有副本，每次构建都会被 CI 的产物覆盖 |
 
 **用途**：`libMagiaLegacy.so` 的 inline hook 后端，被它按 `DT_NEEDED` 动态链接。
+
+**我们改过它的源码**（MIT 不要求声明改动，但本项目附加条款第 1 条要求不得掩饰
+来源，所以照实写）。构建时对 shadowhook 源码打三处 `sed`，见
+`magia-native/CMakeLists.txt` 里逐条带理由的注释：
+
+1. 去掉 `-Weverything -Werror`——Clang 18 新增的警告类在 v2.0.1 写就时还不存在，
+   `-Werror` 会让它自己编不过；
+2. 让 linker mod 初始化失败变成非致命；
+3. 放宽 version script 的 `--no-undefined-version`（各架构专有符号列在同一份
+   `.map.txt` 里，lld 18 会判成错误）。
+
+因此随包分发的 `libshadowhook.so` 是**改动过的构建**，不是上游原版二进制。
 
 MIT 要求版权声明与许可全文随副本一同提供：
 

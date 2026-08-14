@@ -58,6 +58,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
+    # 两条腿跑同一套构建，只有「工程树从哪来」不同：
+    #   repo     —— 用仓库里那棵成品树（现行做法，唯一出产物的一条）
+    #   baseline —— 现取Totentanz 公开 Release 整包、apktool 解开、打 baseline/ 的
+    #               patchset 重建出工程树（见 README「基线与补丁」）
+    # 目的：在真删掉那 基线清单**之前**，先证明重建这条路能构建、
+    # 能过全部自检。两条腿并存期间 baseline 腿不上传、不发版，红了也不挡发版
+    # （fail-fast: false）——它是先行验证，不是发版闸门。
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [repo, baseline]
+
+    env:
+      # 所有写进 客户端基线树的步骤都经这个变量，repo 腿即仓库根本身
+      TREE: ${{ matrix.source == 'baseline' && 'work/tree' || '.' }}
+
     steps:
       - name: 🛡️ 安全护栏（校验仓库白名单）
         run: |
@@ -161,6 +177,19 @@ jobs:
           python3 tools/check-third-party-notices.py
           python3 tools/test-check-third-party-notices.py
 
+      # ── baseline 腿专属：现取Totentanz 整包，重建出工程树 ──────────────────────
+      # verify 会先 apply 到 --out，再拿结果和仓库现有的树逐文件比。也就是说
+      # 这一步同时办了两件事：产出待构建的 work/tree，并**在 CI 里**证明它与
+      # 仓库那棵成品树逐字节一致（不是只在某个 Agent 的机器上证明过）。
+      # 两棵树一致 ⇒ apktool b 的输入一致 ⇒ 产物一致，不必再构建两次去比 APK。
+      - name: 🌱 从Totentanz 整包重建工程树
+        if: matrix.source == 'baseline'
+        run: |
+          set -euo pipefail
+          python3 tools/baseline.py fetch
+          python3 tools/baseline.py verify --out work/tree
+          echo "重建树：$(find work/tree -type f | wc -l) 个文件"
+
       # 代理这条线换过四次路线、停用过三次，而停用的做法是删掉 H() 安装、
       # 留下实现。这一步核对「实现存在」与「真的被安装」是否一致，并要求每个
       # 未安装的实现都写明停用原因——否则谁都分不清哪些还在跑。
@@ -260,20 +289,20 @@ jobs:
             cmake --build "$BUILD_DIR" --parallel
             SO="$BUILD_DIR/libMagiaLegacy.so"
             if [ ! -f "$SO" ]; then echo "::error::[$ABI] 未产出 libMagiaLegacy.so"; exit 1; fi
-            cp "$SO" "lib/$ABI/libMagiaLegacy.so"
-            [ -n "$STRIP" ] && "$STRIP" --strip-unneeded "lib/$ABI/libMagiaLegacy.so"
+            cp "$SO" "${TREE}/lib/$ABI/libMagiaLegacy.so"
+            [ -n "$STRIP" ] && "$STRIP" --strip-unneeded "${TREE}/lib/$ABI/libMagiaLegacy.so"
             # shadowhook 是**动态库**，libMagiaLegacy 对它有 DT_NEEDED，
             # 必须一并打包——漏了的话 APK 照样能打能签能装，但真机启动时
             # dlopen failed: library "libshadowhook.so" not found。这个坑踩过一次。
             SH="$BUILD_DIR/_deps/shadowhook-build/libshadowhook.so"
             if [ ! -f "$SH" ]; then echo "::error::[$ABI] 未产出 libshadowhook.so"; exit 1; fi
-            cp "$SH" "lib/$ABI/libshadowhook.so"
-            [ -n "$STRIP" ] && "$STRIP" --strip-unneeded "lib/$ABI/libshadowhook.so"
-            echo "[$ABI] MagiaLegacy=$(du -h lib/$ABI/libMagiaLegacy.so | cut -f1) shadowhook=$(du -h lib/$ABI/libshadowhook.so | cut -f1)"
+            cp "$SH" "${TREE}/lib/$ABI/libshadowhook.so"
+            [ -n "$STRIP" ] && "$STRIP" --strip-unneeded "${TREE}/lib/$ABI/libshadowhook.so"
+            echo "[$ABI] MagiaLegacy=$(du -h "${TREE}/lib/$ABI/libMagiaLegacy.so" | cut -f1) shadowhook=$(du -h "${TREE}/lib/$ABI/libshadowhook.so" | cut -f1)"
           done
 
           # 旧库必须已从包内移除，否则会与新库对同一地址重复装 hook
-          for f in lib/arm64-v8a/libuwasa.so lib/armeabi-v7a/libuwasa.so lib/arm64-v8a/libcn_hook.so; do
+          for f in "${TREE}"/lib/arm64-v8a/libuwasa.so "${TREE}"/lib/armeabi-v7a/libuwasa.so "${TREE}"/lib/arm64-v8a/libcn_hook.so; do
             if [ -e "$f" ]; then echo "::error::$f 仍然存在，会与 libMagiaLegacy 冲突"; exit 1; fi
           done
 
@@ -301,13 +330,13 @@ jobs:
           FF="$(find .cache/audio/ff -name ffmpeg -type f | head -1)"
           chmod +x "${FF}"
 
-          python3 tools/convert-bgm.py --vgmstream "${VGMS}" --ffmpeg "${FF}"
+          python3 tools/convert-bgm.py --vgmstream "${VGMS}" --ffmpeg "${FF}" --tree "${TREE}"
 
           # 产物必须齐全：缺了浮层就没有 BGM。音频不是关键路径，只告警不阻断。
-          for f in assets/magia/bgm1.ogg assets/magia/bgm2.ogg assets/magia/bgm.json; do
+          for f in "${TREE}"/assets/magia/bgm1.ogg "${TREE}"/assets/magia/bgm2.ogg "${TREE}"/assets/magia/bgm.json; do
             if [ ! -s "${f}" ]; then echo "::warning::缺少 ${f}，本次 APK 浮层将没有 BGM"; fi
           done
-          ls -la assets/magia/
+          ls -la "${TREE}/assets/magia/"
 
       - name: ☕ 编译 Java 补丁源码 → dex → smali
         run: |
@@ -379,21 +408,21 @@ jobs:
           # 注意：smali_classes2/ 里除补丁类以外的内容（含 RestClient 那处
           # 把 cnDownloadFileFull 委托给 CNHotUpdate 的改动）保持原样，
           # 只删掉并重建 CNCNDownloadUI*。
-          rm -f smali_classes2/io/kamihama/magianative/CNCNDownloadUI*.smali
+          rm -f "${TREE}"/smali_classes2/io/kamihama/magianative/CNCNDownloadUI*.smali
           cp .build/smaliui/io/kamihama/magianative/CNCNDownloadUI*.smali \
-             smali_classes2/io/kamihama/magianative/
+             "${TREE}/smali_classes2/io/kamihama/magianative/"
 
-          rm -rf smali_classes3
-          mkdir -p smali_classes3
-          cp -r .build/smali3/. smali_classes3/
+          rm -rf "${TREE}/smali_classes3"
+          mkdir -p "${TREE}/smali_classes3"
+          cp -r .build/smali3/. "${TREE}/smali_classes3/"
 
-          echo "smali_classes2 补丁类：$(ls smali_classes2/io/kamihama/magianative/CNCNDownloadUI*.smali | wc -l) 个"
-          echo "smali_classes3 类：$(find smali_classes3 -name '*.smali' | wc -l) 个"
+          echo "smali_classes2 补丁类：$(ls "${TREE}"/smali_classes2/io/kamihama/magianative/CNCNDownloadUI*.smali | wc -l) 个"
+          echo "smali_classes3 类：$(find "${TREE}/smali_classes3" -name '*.smali' | wc -l) 个"
 
       - name: 🔨 重组 APK（apktool b）
         run: |
           set -euo pipefail
-          apktool b . -o .build/unsigned.apk --use-aapt2
+          apktool b "${TREE}" -o .build/unsigned.apk --use-aapt2
           ls -la .build/unsigned.apk
 
       - name: 📐 对齐 APK（zipalign）
@@ -479,12 +508,24 @@ jobs:
           echo "自检通过"
 
       - name: 📤 上传产物
-        if: ${{ inputs.verify_only != true }}
+        if: ${{ inputs.verify_only != true && matrix.source == 'repo' }}
         uses: actions/upload-artifact@v4
         with:
           name: legacy-client-apk
           path: .build/legacy-client.apk
           retention-days: 30
+          compression-level: 0
+
+      # baseline 腿的产物单独存一份，名字上就说清它不是发版包。
+      # 「过了全部自检」和「真机能进游戏」是两回事——删树之前要有人拿它验一次机，
+      # 那就得先能下载得到。保留期短，因为它只在验证窗口里有用。
+      - name: 📤 上传重建产物（仅供验证，不发版）
+        if: ${{ matrix.source == 'baseline' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-client-apk-from-baseline
+          path: .build/legacy-client.apk
+          retention-days: 7
           compression-level: 0
 
       # 公测直链：https://gh-proxy.org/https://github.com/MagirecoCN-Revival-
@@ -497,8 +538,9 @@ jobs:
       # 注意：gh release upload 的 <file>#<name> 语法里 '#' 只改显示标签，
       # 资产真实 name 仍按本地文件名走，必须先改名再传（与 sync-and-upload
       # 头注的虚空链接 bug 同源）。
+      # baseline 腿绝不发版：它是先行验证，产物只用来人工验机。
       - name: 🚀 发布 APK
-        if: ${{ inputs.verify_only != true }}
+        if: ${{ inputs.verify_only != true && matrix.source == 'repo' }}
         env:
           : ${{ secrets. }}
         run: |
@@ -576,7 +618,15 @@ jobs:
         if: always()
         run: |
           {
-            echo "## 构建结果"
+            if [ "${{ matrix.source }}" = "baseline" ]; then
+              echo "## 构建结果（🌱 从Totentanz 整包重建，仅验证）"
+              echo
+              echo "> 工程树不是仓库里那棵，而是现取Totentanz 公开 Release 整包、apktool"
+              echo "> 解开、打 \`baseline/\` 的 patchset 重建出来的。这一腿**不上传发版**"
+              echo "> 产物，也不发 Release；它绿了才谈删掉仓库里的原包派生文件。"
+            else
+              echo "## 构建结果"
+            fi
             echo
             if [ -f .build/legacy-client.apk ]; then
               echo "- 状态：✅ 成功"
