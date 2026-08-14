@@ -1,10 +1,10 @@
 import { defineConfig } from 'vitepress'
 
-// 公测站配置。绑定自定义域名（public/CNAME），部署在域名根下，base 保持 '/'。
+// 介绍站配置。绑定自定义域名（public/CNAME），部署在域名根下，base 保持 '/'。
 export default defineConfig({
   lang: 'zh-CN',
-  title: '魔法纪录中文化 · 公测',
-  description: '魔法纪录中文化客户端（legacy / Totentanz 系）公测：下载、安装、分层反馈指南',
+  title: '魔法纪录中文化 · 客户端',
+  description: '魔法纪录中文化客户端（legacy / Totentanz 系）：下载、安装、FAQ、分层反馈',
   base: '/',
   cleanUrls: true,
   lastUpdated: true,
@@ -64,8 +64,8 @@ export default defineConfig({
 
     footer: {
       message:
-        '基于 GitHub Pages 构建 · 补丁源码与热更链路见 GitHub 仓库',
-      copyright: 'MagirecoCN-Revival-Project · 本作品为粉丝非营利项目，与 Aniplex / f4samurai 无关',
+        '补丁源码与热更链路见 GitHub 仓库 · 补丁层以 GPLv3 授权',
+      copyright: 'MagirecoCN-Revival-Project · 粉丝项目，与 Aniplex / f4samurai 无关',
     },
   },
 })

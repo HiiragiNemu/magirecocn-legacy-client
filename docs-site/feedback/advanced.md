@@ -13,7 +13,7 @@
 下载失败、热更回滚、换线过程、崩溃前最后的动作，都在这里。
 **报问题时把这个目录整个打包附上**，基本能回答九成的「当时发生了什么」。
 
-导出方式（公测包已开 `android:debuggable`，`run-as` 直接用，**不需要 root**）：
+导出方式（客户端已开 `android:debuggable`，`run-as` 直接用，**不需要 root**）：
 
 ```bash
 adb shell "run-as io.kamihama.totentanz tar czf /sdcard/cnlog.tgz log"
@@ -46,7 +46,7 @@ adb logcat -d -s MagiaCN_Legacy:V AndroidRuntime:E > logcat.txt
 ## 三、调试开关目录（协助二分定位）
 
 `/data/data/io.kamihama.totentanz/debug/` 下**建一个同名空文件 = 打开开关，
-删掉 = 关闭，重启游戏生效**（公测包已开 debuggable，`adb shell run-as
+删掉 = 关闭，重启游戏生效**（客户端已开 debuggable，`adb shell run-as
 io.kamihama.totentanz ...` 直接可操作，无需 root）。开关一律只做一件事：
 把客户端退回更接近原包的行为，用来回答「是哪一步把游戏搞挂的」。
 

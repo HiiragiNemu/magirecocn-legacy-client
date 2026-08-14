@@ -3,27 +3,54 @@ layout: home
 
 hero:
   name: 魔法纪录中文化
-  text: 客户端公测
-  tagline: legacy / Totentanz 系客户端 · 汉化热更 · 分层反馈通道已开放
+  text: 客户端（legacy 系）
+  tagline: 面向魔法纪录玩家的完整中文化客户端 —— 汉化热更 · 多线路下载 · 开源补丁层
   actions:
     - theme: brand
-      text: 下载公测包
+      text: 下载客户端
       link: https://assets.example/magireco-latest-legacy-client.apk
     - theme: alt
-      text: 参与反馈
-      link: /feedback/
+      text: 下载与安装
+      link: /download
+    - theme: alt
+      text: 常见问题
+      link: /faq
 
 features:
-  - title: 普通玩家
-    details: 装包即玩。遇到错字、漏翻、闪退、卡下载，按模板说清楚现象和机型就行，不需要任何技术背景。
-    link: /feedback/player
-    linkText: 我要反馈
-  - title: 进阶玩家
-    details: 会用 adb / 能抓日志？这里有游戏日志位置、logcat 抓取法、调试开关目录——一份带日志的反馈顶十份截图。
-    link: /feedback/advanced
-    linkText: 排查手册
-  - title: 开发者
-    details: 补丁层全部开源、CI 可复现构建。仓库结构、本地构建、贡献流程都在这里。
-    link: /feedback/developer
-    linkText: 参与开发
+  - title: 🈶 完整汉化
+    details: 剧情、系统、道具、战斗文本持续汉化，热更新即时下发——报错后通常当天就能通过热更修正，不用重装 APK。
+  - title: ⚡ 多线路下载
+    details: 资源下载自动多线路切换：CDN 不可用或过慢时自动换线续传，配合离线包与备用引擎保证装得上。
+  - title: 🔧 开源补丁层
+    details: 补丁源码与工具完全开源，CI 可复现构建。修复、汉化、工具链都在 GitHub 仓库，欢迎参与。
+  - title: 📝 分层反馈
+    details: 普通玩家、进阶排查、开发者三个层次的反馈通道都已开放——一份带日志的反馈顶十份截图。
+    link: /feedback/
+    linkText: 参与反馈
 ---
+
+## 这是什么
+
+魔法纪录 · 魔法少女小圆外传的**完整中文化客户端**，在既有 APK 之上做汉化与
+下载系统的二次开发。项目接近完成，正在持续迭代。
+
+- **汉化**：剧情文本、系统界面、道具与战斗文本持续汉化，热更新即时下发；
+- **下载**：资源与热更走多线路自动切换，CDN 故障不影响安装；
+- **开源**：补丁层（Java + native hook + 工具链）全部开源，CI 可复现构建。
+
+## 当前能力
+
+- 剧情 / 系统 / 道具 / 战斗文本汉化，热更新即时生效（事务化应用，中断可恢复）；
+- 15 个资源包 + 热更的多线程分片下载、断点续传、失败自动换线；
+- 单线程可靠模式（低配 / 限流环境）、aria2 备用引擎、离线包手动导入；
+- 16MB 分块哈希校验——坏块只重下那 16MB，不再整包重来；
+- 调试悬浮窗、日志导出、本地排查工具（面向进阶用户）；
+- 补丁层全部开源，CI 从源码可复现构建 APK。
+
+## 快速开始
+
+1. [下载最新客户端](/download)（或直接点右上「下载客户端」）；
+2. 允许「安装未知来源应用」，直接覆盖安装（不用卸载旧版）；
+3. 首次启动自动下载资源与热更新，保持网络畅通。
+
+遇到问题先翻[常见问题](/faq)；需要反馈走[分层通道](/feedback/)。

@@ -1,6 +1,6 @@
 # 更新日志
 
-客户端公测版本以 CI 构建号命名（`1.0.<构建号>`），每个版本对应的
+客户端版本以 CI 构建号命名（`1.0.<构建号>`），每个版本对应的
 APK 与改动说明都在 GitHub Releases：
 
 👉 **[Releases · MagirecoCN-Revival-Project/legacy-client](https://github.com/MagirecoCN-Revival-Project/legacy-client/releases)**

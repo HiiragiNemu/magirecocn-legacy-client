@@ -1,8 +1,8 @@
 {
-  "name": "magirecocn-legacy-beta-site",
+  "name": "magirecocn-legacy-site",
   "version": "1.0.0",
   "private": true,
-  "description": "魔法纪录中文化客户端（legacy）公测站 · VitePress",
+  "description": "魔法纪录中文化客户端（legacy）介绍站 · VitePress",
   "type": "module",
   "scripts": {
     "docs:dev": "vitepress dev",

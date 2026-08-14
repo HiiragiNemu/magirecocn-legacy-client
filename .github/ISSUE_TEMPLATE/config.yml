@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
-  - name: 📖 公测站（下载 / FAQ / 反馈指南）
-    url: https://beta.example.test
+  - name: 📖 官方介绍站（下载 / FAQ / 反馈指南）
+    url: https://legacy.magireco.top
     about: 提 issue 前建议先翻一遍 FAQ，高频问题已有答案
   - name: 📦 下载公测包（Releases）
     url: https://github.com/MagirecoCN-Revival-Project/legacy-client/releases
