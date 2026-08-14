@@ -1,0 +1,46 @@
+--- a/assets/package/web/test/config.js
++++ b/assets/package/web/test/config.js
+@@ -1,6 +1,6 @@
+ var Config = {
+ 
+-  //DATA関連 (100未満）
++  //数据相关 (100以下）
+   DATA_CLEAR_WEB_CACHE        : 1,
+   DATA_REMOVE_ASSET           : 2,
+ 
+@@ -35,7 +35,7 @@
+   DATA_DELETE_QUEST_REPLAY_DATA   : 96,
+   DATA_GET_QUEST_REPLAY_VERSION    : 97,
+ 
+-  //SOUND関連 (100番台）
++  //音效相关 (100-199）
+   SOUND_BGM_PLAY              : 100,
+   SOUND_BGM_STOP              : 101,
+   SOUND_BGM_RESUME            : 102,
+@@ -54,7 +54,7 @@
+   SOUND_VO_GET_VO             : 125,
+ 
+ 
+-  //SCENE関連 (200番台 or 300番台）
++  //场景相关 (200-399）
+   SCENE_PUSH_WEBVIEW          : 201,
+   SCENE_POP_WEBVIEW           : 202,
+ 
+@@ -90,7 +90,7 @@
+   SCENE_PUSH_EVENT_TEST       : 371,
+ 
+ 
+-  //DISPLAY関連 (400番台）
++  //显示相关 (400-599）
+   DISPLAY_SET_WEBVIEW_VISIBLE : 400,
+ 
+   DISPLAY_CHANGE_BG           : 410,
+@@ -129,7 +129,7 @@
+   DISPLAY_PLAY_FORMATION_ENEMY : 620,
+   DISPLAY_STOP_FORMATION_ENEMY : 621,
+ 
+-  //Notification関連（500番台）
++  //通知相关（500-599）
+   NOTI_GET_CONF_PNOTE        : 500,
+   NOTI_AWAKE_PNOTE           : 501,
+   NOTI_TURN_ON_PNOTE         : 502,

@@ -1,0 +1,50 @@
+--- a/smali_classes2/org/cocos2dx/lib/Cocos2dxActivity.smali
++++ b/smali_classes2/org/cocos2dx/lib/Cocos2dxActivity.smali
+@@ -846,6 +846,47 @@
+     invoke-virtual {v0}, Ljava/lang/Exception;->printStackTrace()V
+ 
+     :goto_0
++    # ---- 复兴计划补丁：紧接引擎库之后链式加载 libMagiaLegacy.so ----
++    # 必须在 madomagi_native 之后：本库在 JNI_OnLoad 里同步按符号名装 hook，
++    # 引擎库没加载时符号解析必然失败。
++    # 它取代原先的 libuwasa.so（端点重定向）与 libcn_hook.so（下载流水线）。
++    :try_start_1
++    # ⚠ 只加载 MagiaLegacy，**不要**显式 loadLibrary("shadowhook")。
++    #
++    # libMagiaLegacy 对 libshadowhook.so 有 DT_NEEDED，动态链接器会在
++    # dlopen MagiaLegacy 时自动把它带进来——而按依赖加载**不会**调用
++    # 被依赖库的 JNI_OnLoad。
++    #
++    # 一旦改成显式 System.loadLibrary("shadowhook")，就会触发它自己的
++    # JNI_OnLoad；那个函数要给 com/bytedance/shadowhook/ShadowHook 注册
++    # native 方法，而我们的包里没有这个 Java 类（我们只用它的 C 接口），
++    # FindClass 失败 → 返回 JNI_ERR → UnsatisfiedLinkError:
++    #   JNI_ERR returned from JNI_OnLoad in ".../libshadowhook.so"
++    # 这个坑踩过一次，别再加回来。
++    const-string v0, "MagiaLegacy"
++
++    invoke-static {v0}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V
++
++    const-string v0, "MagiaDump"
++
++    const-string v1, "=== [JAVA] libMagiaLegacy.so loaded ==="
++
++    invoke-static {v0, v1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
++    :try_end_1
++    .catch Ljava/lang/Throwable; {:try_start_1 .. :try_end_1} :catch_1
++
++    goto :goto_1
++
++    :catch_1
++    move-exception v0
++
++    const-string v1, "MagiaDump"
++
++    const-string v2, "=== [JAVA] libMagiaLegacy.so load FAILED! ==="
++
++    invoke-static {v1, v2, v0}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
++
++    :goto_1
+     return-void
+ .end method
+ 

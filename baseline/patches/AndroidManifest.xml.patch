@@ -1,0 +1,36 @@
+--- a/AndroidManifest.xml
++++ b/AndroidManifest.xml
+@@ -15,6 +15,7 @@
+     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
++    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+     <uses-permission android:name="com.android.vending.BILLING"/>
+     <queries>
+         <intent>
+@@ -26,7 +27,7 @@
+     <uses-permission android:name="io.kamihama.totentanz.permission.C2D_MESSAGE"/>
+     <permission android:name="io.kamihama.totentanz.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" android:protectionLevel="signature"/>
+     <uses-permission android:name="io.kamihama.totentanz.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"/>
+-    <application android:allowBackup="false" android:appComponentFactory="androidx.core.app.CoreComponentFactory" android:extractNativeLibs="true" android:icon="@mipmap/ic_launcher" android:label="@string/app_name" android:name="jp.f4samurai.MyApplication" android:requestLegacyExternalStorage="true">
++    <application android:allowBackup="false" android:appComponentFactory="androidx.core.app.CoreComponentFactory" android:extractNativeLibs="true" android:icon="@mipmap/ic_launcher" android:label="@string/app_name" android:name="jp.f4samurai.MyApplication" android:networkSecurityConfig="@xml/network_security_config">
+         <meta-data android:name="BUILD_TYPE" android:value="@string/build_type"/>
+         <meta-data android:name="SERVER_TYPE" android:value="@string/server_type"/>
+         <meta-data android:name="APP_TYPE" android:value="@string/app_type"/>
+@@ -52,6 +53,8 @@
+                 <data android:scheme="magireco.reward"/>
+             </intent-filter>
+         </activity>
++        <activity android:excludeFromRecents="true" android:exported="false" android:launchMode="singleTask" android:name="io.kamihama.magianative.CNRestartActivity" android:noHistory="true" android:process=":cnrestart" android:screenOrientation="userLandscape" android:taskAffinity="io.kamihama.totentanz.cnrestart" android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
++        <activity android:excludeFromRecents="true" android:exported="false" android:launchMode="singleTask" android:name="io.kamihama.magianative.CNOfflineImportActivity" android:noHistory="true" android:screenOrientation="userLandscape" android:taskAffinity="io.kamihama.totentanz.offlineimport" android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
+         <service android:exported="true" android:name="jp.f4samurai.pnote.util.MyFcmListenerService">
+             <intent-filter>
+                 <action android:name="com.google.firebase.MESSAGING_EVENT"/>
+@@ -129,6 +132,7 @@
+         <receiver android:enabled="false" android:exported="false" android:name="cn.thinkingdata.analytics.utils.broadcast.TDReceiver"/>
+         <meta-data android:name="com.google.android.play.billingclient.version" android:value="5.2.1"/>
+         <activity android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize" android:exported="false" android:name="com.android.billingclient.api.ProxyBillingActivity" android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
++        <provider android:name="io.kamihama.magianative.CNLogShareProvider" android:authorities="io.kamihama.totentanz.logshare" android:exported="false" android:grantUriPermissions="true"/>
+         <service android:name="com.google.firebase.components.ComponentDiscoveryService">
+             <meta-data android:name="com.google.firebase.components:com.google.firebase.analytics.connector.internal.AnalyticsConnectorRegistrar" android:value="com.google.firebase.components.ComponentRegistrar"/>
+             <meta-data android:name="com.google.firebase.components:com.google.firebase.iid.Registrar" android:value="com.google.firebase.components.ComponentRegistrar"/>

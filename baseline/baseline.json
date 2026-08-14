@@ -1,0 +1,1079 @@
+{
+  "_": "基线与补丁的唯一事实来源。改动请先读 tools/baseline.py 顶部的说明。",
+  "apk": {
+    "version": "1.2.0-r1_r129",
+    "url": "https://github.com/Puella-Care/client-apk/releases/download/1.2.0-r1/totentanz-1.2.0-r1_r129.apk",
+    "sha256": "04dd3f78f12a07b92d8c03d6a4ed4806d0ef89e2ddff5707d35e0b4662da78f1",
+    "why": "上游 Puella-Care 公开发行的整包。我们一份原包都不自己存，构建时现取现解。"
+  },
+  "apktool": {
+    "version": "2.9.3",
+    "url": "https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar",
+    "sha256": "7956eb04194300ce0d0a84ad18771eebc94b89fb8d1ddcce8ea4c056818646f4",
+    "why": "重建结果与 apktool 版本强相关，换版本会让所有 pre hash 失配——所以钉死。"
+  },
+  "compare_roots": [
+    "smali",
+    "smali_classes2",
+    "smali_classes3",
+    "res",
+    "assets",
+    "lib",
+    "kotlin",
+    "unknown",
+    "original",
+    "META-INF",
+    "AndroidManifest.xml",
+    "apktool.yml"
+  ],
+  "expected_divergence": [
+    {
+      "why": "换基线的收益：上游 1.2.0 已删掉的埋点 SDK。现有工程树还是 1.1.1 的，仍带着这 358 个类；重建树不会有，也不该有。",
+      "prefixes": [
+        "smali/cn/thinkingdata/",
+        "smali/backtraceio/"
+      ],
+      "paths": []
+    },
+    {
+      "why": "上游 1.1.1→1.2.0 自己改的三个类（都是埋点 SDK 的门面），我们从未碰过。重建树取 1.2.0 版本是对的。",
+      "paths": [
+        "smali/jp/f4samurai/AppActivity.smali",
+        "smali/jp/f4samurai/backtrace/BacktraceHandler.smali",
+        "smali/jp/f4samurai/thinkingdata/ThinkingDataHelper.smali"
+      ]
+    },
+    {
+      "why": "重建/签名产物，重打包时由 apktool 与 apksigner 重新生成，入库的那份早已过期（还列着几个月前删掉的字体）。",
+      "prefixes": [
+        "original/META-INF/",
+        "META-INF/"
+      ],
+      "paths": [
+        "original/AndroidManifest.xml"
+      ]
+    },
+    {
+      "why": "早年用旧版 apktool 重建出来的残留：内层 <inset> 少了一个冗余的 xmlns:android。2.9.3 会带上，两边都能构建。",
+      "paths": [
+        "res/drawable/notification_action_background.xml"
+      ]
+    }
+  ],
+  "ops": [
+    {
+      "kind": "patch",
+      "path": "AndroidManifest.xml",
+      "group": "清单",
+      "why": "加 android:networkSecurityConfig、去掉埋点 SDK 的组件声明",
+      "pre": "13155189927d01bc64277487a6335bb03492c701aec5d9936c2c7202f5db1c49",
+      "post": "da157da9b1bb288881fc8eb8a76a58ce50c8eb2b783a81315468474daa09c2ef",
+      "no_final_newline": true
+    },
+    {
+      "kind": "patch",
+      "path": "apktool.yml",
+      "group": "打包",
+      "why": "doNotCompress 补 ogg：AssetManager.openFd() 打不开压缩过的 asset，浮层 BGM 会静默失效",
+      "pre": "4b0a35b07d8b450ac554ac34d8a1295230d5fd8f11b1d7c0c768550c77a03530",
+      "post": "134c3482a3a439c981e204b288e3ebe45366eae1c29c9633ee28056ee9bf7319"
+    },
+    {
+      "kind": "patch",
+      "path": "res/values/public.xml",
+      "group": "资源",
+      "why": "为新增的 network_security_config.xml 登记资源 id",
+      "pre": "a7498f6fa3c2a564702c29dae6bbf19c24d81842f12223e07607f1ff0af484f1",
+      "post": "80cd3c78ee7938fd2a18e55fa590386a097993609f5c793ba84bcd91090d0d7e",
+      "no_final_newline": true
+    },
+    {
+      "kind": "patch",
+      "path": "res/values/strings.xml",
+      "group": "资源",
+      "why": "应用名等文案汉化",
+      "pre": "4ae5e668d65af4e43b6cf67084c8e06d75f3c1d11ed1bc663ad6ea8b2873989b",
+      "post": "e0943a107d7555fcec405a6cb2d6d5210ab08eb3eeaee9584e63ec9deb73045d"
+    },
+    {
+      "kind": "patch",
+      "path": "assets/package/selectURL/select_url_ui.json",
+      "group": "汉化",
+      "why": "选服界面文案汉化",
+      "pre": "4100c3e24f7ed86f4fa87d3afd2658187ce2e11c1d257b745b00b543c2bf5278",
+      "post": "a563e4c82484896c1fd27e788410bd47b7523c4c70e5089dc6d3099462435315"
+    },
+    {
+      "kind": "patch",
+      "path": "assets/package/web/test/command.html",
+      "group": "汉化",
+      "why": "调试页文案汉化",
+      "pre": "f53f9c89cfc48af42cda9bb213740ed0d206d43192a142caf7e3aec6ccdbff0a",
+      "post": "043153b75b7e891705b836fa8d7ec869976e3155f949e99cf14093dd6d4c02ae"
+    },
+    {
+      "kind": "patch",
+      "path": "assets/package/web/test/config.js",
+      "group": "汉化",
+      "why": "命令桥常量表注释汉化",
+      "pre": "b521d6ee8666ccc39531b92467b0eb273bcf2acb8f57f58192862201ba723de4",
+      "post": "6e3c6d6026216b5a08bc42d1576db1498ad1f0aafd0586ddecf448dda9c11edc"
+    },
+    {
+      "kind": "patch",
+      "path": "assets/package/web/test/touch.html",
+      "group": "汉化",
+      "why": "调试页文案汉化",
+      "pre": "6aa198e0531f3dabc7907fcfdbee5284f2738a3ee4fd178d1312fa33343e2ac9",
+      "post": "3b119123fb4be10d61fe24d5e6bae7febda3075028fb497e23fb7e5aac28bee1"
+    },
+    {
+      "kind": "patch",
+      "path": "assets/package/web/test/touch2.html",
+      "group": "汉化",
+      "why": "调试页文案汉化",
+      "pre": "5540da26c68f52f288d1a3e7c2d7a988b464da19ef1718d78bbed52e5844a979",
+      "post": "680a6260e518256b5bfb936498ebd6ca102e8e5d20327bb5590c5b06dc91c405"
+    },
+    {
+      "kind": "patch",
+      "path": "assets/resource/image_native/mini/quest/testStageData1.json",
+      "group": "汉化",
+      "why": "测试关卡名汉化",
+      "pre": "c284bbbbf2f35a72487f203790a01a4f34e0f9548b497bb8e0195629dd6dc4a5",
+      "post": "2c25a5b71d4a1acea3a9fec33bad520bd5cc18311a60d2a6c200ef6d93e0a92b"
+    },
+    {
+      "kind": "patch",
+      "path": "smali/jp/f4samurai/MyApplication.smali",
+      "group": "补丁",
+      "why": "启动时接管：把控制权交给 Java 补丁层",
+      "pre": "617750f79fa4be971bfface226e47f6fe6eeae60e74751d78fd586c0d2b3e2c5",
+      "post": "aecb483e8878f4a12bd1cd3366d9ec4341c91cfd183096fa0af989c2000b3110"
+    },
+    {
+      "kind": "patch",
+      "path": "smali/jp/f4samurai/web/WebViewImpl$WebViewClientImpl.smali",
+      "group": "补丁",
+      "why": "WebView 资源改走 CNPaths->filesDir()（CLAUDE.md 铁律 2 允许的两处手工 smali 之一）",
+      "pre": "679700219a3046ef6ec3c90291b6cc92a2f13bc73f77047dfdf357a6528ca040",
+      "post": "9e9bacf682e7d455774ef1c498b95f47363a7682ecc9e447d8f29675f3eacd31"
+    },
+    {
+      "kind": "patch",
+      "path": "smali_classes2/com/loadLib/libLoader$1.smali",
+      "group": "补丁",
+      "why": "so 加载改指 libMagiaLegacy.so",
+      "pre": "f471c2f9872dbf988636d1c8c7434affda634dbfcce9cb07927423ab1b4fbcfd",
+      "post": "ba22869ab5a32eaafa47661dc6cd66b07acb1835358ba841c7ffd1f137afa26a"
+    },
+    {
+      "kind": "patch",
+      "path": "smali_classes2/org/cocos2dx/lib/Cocos2dxActivity.smali",
+      "group": "补丁",
+      "why": "引擎 Activity 启动挂钩",
+      "pre": "190130ff7f12d3a03c59a59f563ee4c91366930730bd555d5154116367a0d6e9",
+      "post": "ae5d9b9c34e192b02deee59b7252d08af9059ed6305d428cd40b1eecc872a862"
+    },
+    {
+      "kind": "replace",
+      "path": "smali_classes2/io/kamihama/magianative/RestClient.smali",
+      "from": "store",
+      "group": "补丁",
+      "why": "精简为桩：startCNDownload → CNDownloaderFix.runInstaller，并去掉 getUnsafeOkHttpClient（信任一切证书的 OkHttp）。498 行只剩 147 行，其中我们自己写的占绝大多数，存整份比存一份删 400 行的 diff 更诚实",
+      "pre": "f2d78425de7f8cd3078047dea7d221d6f0f0a2f0329fc9d9e467cc0167c7c2a9",
+      "post": "e14e29d6dd63691b3f4f6fc7824bf0efeebc5b8f316a0c9728f7e6e6d3480299"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/fonts/mbm_20160902.ttf",
+      "from": "repo",
+      "group": "字体",
+      "why": "换成能覆盖简体中文字形的字体（引擎硬编码这个文件名）",
+      "pre": "37f266883643ca3e3168049a130396a4993b981747f73c4f5068afec2412f5c5",
+      "post": "51383ac04bf0835445a0de382c07e6467f43991c6a51cf13a4327cad51f58b03"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/fonts/witchText-export.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "e88f1acd775a600228fce3ac518b274b625e6d8327bc29ec094b308860cd52ff",
+      "post": "43cd69d857986ce393fea96e2ebedd2fe8282df2a7eff4c1d036fb9accdd5d7f"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/download/data_download0.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "aecf790bc5bb6191f9bf991443213f9088d0f62640a91b6e7e35c709571910b5",
+      "post": "bede5013267e35068a699d4cd9d69c3d56d8709ea576dc0c817d2e6d10bc35ce"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/download/data_download0.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "3866f0bc28e5de1a5807ebbeb4ba2a0e005807f7f51cea6727db4c06bdaaafa2",
+      "post": "8a2d5dbf522c8df5f2a59a5908d97f46b5b333a70e198449266fb9400e9bdf65"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/download/loading_data.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "7569e1edb71a50dbb78423d6d254a3f8266130d9ed8f3d267a7d15937a09456f",
+      "post": "26aa5c6749237081ab93fa2f3e08336a09d516b6c8bf859d8b9c853c78e4a358"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/download/loading_data.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "4269c4460f08fc53cdaae107667c4eb39834671f62e212abf7a299e1131d51ff",
+      "post": "be07ce32495213043e600b5622a4a6e81f64c1085e23af5150347b1966e79c0c"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/evolution/web_ef_reality_up0.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "50dd886045ed9115b34eaeee3af0cca7114e1ec868c649ab778b440405b5219a",
+      "post": "835ec27f695fc80a64b1f5a71b0ed11040d928ab3d9f5ee872849d182ed66dda"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/evolution/web_ef_reality_up0.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "e4ea8b094b2723f146efb1c56c9d04e77380f031622f0b9e6fdaeb569e728f79",
+      "post": "858bc2be321d1ab82fd7f7a9a4c709057c439d695979b1b98cad40b9e9cc1e7e"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/loading/loading_icon.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "f8e22590f9f2607491e78a91a1b9aea57f0266c33a8377c8752dabbb10b40f6a",
+      "post": "f47ce0abf9763df88f231fe87a8a702a12ad1a53d077001847eb728ae9c00d9e"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/memoria/web_ef_memoria0.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "10208f4df79ad3ea7fb2fe5a33855925f2576a059b7d46e23d9284af11668352",
+      "post": "a168db0c1170f4d16713e6a27597234d88dc808e2e644c80fbf9370ee0843a3c"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/memoria/web_ef_memoria0.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "a3c7df0bb4316eb0bc309d6ffdecf96dc9c58c2f41380634382bc004f189034d",
+      "post": "22ae9e711b637edf9c4a846b6e8905e842f03835aa65e02b9606d9f37a7fedab"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/ef_battle00/ef_battle000.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "a3cd836e137b1d9fcba83893f11d12fa37b060912ed353817a93a7e64b889405",
+      "post": "c7069ae9ccd09b86f160410909a458d6490dbd8963636a149b4c1d7a6504abcf"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/ef_battle00/ef_battle000.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "447a1604b34b5a58d9024b6b16689bee238acfb4468b80a5ff84b56af2b4bdbb",
+      "post": "67b8b0978d5707dc176cc14310710cdb3e9d8d86f684f7fa553a4204f241805a"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/game_over/game_over0.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "438e1107e03ead702988bed5560644074e0f4af3ace5d6d32913fada432c45ea",
+      "post": "58de7eab0ca46d5f1720602cc57afad0dce55a081205c6a8b32ca091ed3443bf"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/game_over/game_over0.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "95d846adc7e8ef94daf85c04399c9ab9fda50c7753bba9faa4553654a366276a",
+      "post": "1c456a25e919a9133638afe18fe6903d0d7989d92c67e9aac687ec099a203e9c"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/game_over/game_over1.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "41230db46cc80cc370472e6673dd49abcfa49caefffcc8f9e744cb36bf96edc6",
+      "post": "35287bc0091155e797301a8d71ef69ce24e2741e368d4e1c4afe5d9bf889d293"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/game_over/game_over1.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "9e179eec218dee56f6a7f39ef29d02cbe4a4eade40e99aff8fc160f78def1f9b",
+      "post": "b44e6ea4d85b19c3cbc77975d98af5f4f4385e897774cc66e286568f8c51ccb0"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/qb_auto_settings/qb_auto_settings0.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "4f5c226e1a11d79568241ad9179b765723550fed44fae0c0c33f1b477c56082c",
+      "post": "13a703857e63c81f7f15c55671a5fb7775d6c477aee3d569b5aa553f3675ccff"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/qb_auto_settings/qb_auto_settings0.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "34aca2261568f8df05c9fe9bf420b7fd9570984cb1009f3bfa87616930072073",
+      "post": "f0d84e6ba3affa3bcc3e1053f4fafdd6487c5ef830cebd625bc78c7a8c6da4e2"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/qb_continue/qb_continue.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "611f1126a506e6528f39e117fe357d1dc538f0e8956a981a49e1a7f14005f563",
+      "post": "eecefa572156279d3cc1504a7fc8b1724995b0af5f3c49df09006614c84a91a3"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/qb_continue/qb_continue.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "ffa3033ecd363bb991396fabd4e92fceba0abfc4cf75ac0266514ff9b23d325f",
+      "post": "f4fb531331527c61eaa97026b59d973a5064fafe3d8d4d96c683175b77616b80"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/qb_ef_sp_combo/qb_ef_sp_combo0.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "2b5943971d228f886f1f0117d22d5c8724e65fbf0a0ef52af51d5a3272a37bfd",
+      "post": "d75b297e101d4ba8d5d7e55001c0546feb2000e7ffa44d01d206c64686b7de10"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/qb_ef_sp_combo/qb_ef_sp_combo0.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "3f4289f823fbc25cac6838f8bbcfee5cd486b66bb69d2ea1e4a3ee9ad1ae64c3",
+      "post": "ef3b4bc0a37a8ea95a26051d9ad853c1bfb4c8c7b49b8578a73af06c1bce589a"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/qb_help/qb_help.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "f315a822d20a3a71dd70645ef6d7ab2ce82a19ed6d5967a6a977bb42903303c3",
+      "post": "fac1b48d81f88ae223f13dcfab9b75de8e66b66db02e0256f550161cd53c6da7"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/qb_help/qb_help.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "01d25a0e072563e53eca7cc04d5d0d9cd257f352b15ea66c91ae46737c05d3ee",
+      "post": "a4d07e5acf08774c08b64b2943519d01ef59a6fd2c56c960ce17c18b253129d7"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/qb_menu_top/qb_menu_top0.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "68c24597f7b1fa066daa3961db6a7b0b480e4816f3fb36855d5c8e152d5a327a",
+      "post": "1470768832060eabdf961faba5df4ba28f17372dead711baef9b4423ae72ef3a"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/qb_menu_top/qb_menu_top0.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "e6a305aca9b889ff881f8dd2cd91655d0969c0d17187f443dbf8d705cfeda00f",
+      "post": "e192e2c41b4d66d03429a27c9afadb47f23dbbd86b6a6809f05d06ce84f70f5f"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/qb_number/qb_number0.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "3bf16fcc778f75a174d44177f645bb33d3db08c8c6bf0f1eeac03af59f92fb23",
+      "post": "fb07555f5106cb3748c010d11daf370e505722c16fe007f42f95dbcbc274fccd"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/qb_number/qb_number0.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "84d8e34e95282dc4571d4231879da67a1b368bc86e983c19e65845c5e5f0c955",
+      "post": "b01aa7621b27fb627c963fe563db5f56a17729c3daf4ac999b15235217735125"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/quest_image0.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "b6d8f84111a21c8440388f15974525b41107a42acddd0843c589d3603717bc63",
+      "post": "f920158d3ec24cb2347ef5b3cb5e9e6f8d39921a0675a6cb9776b8b5eb41635b"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/quest_image0.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "7cc6b23930bd9ec3c59d90b938807982559cbf4d145607f80c2e98d1f2a0eea9",
+      "post": "80e2c6d2fbb66094266b0225d2acb0cf17aec6384ccec77fc7646b6ff806f91d"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/ui_button_disk/ui_button_disk0.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "6e983637ef973f5406e213499a00296bd1a7b03882e0603ab5b581aba72f8591",
+      "post": "25bc9a48d702cebd661649b625711683980be26d555f6c34ee2685fddebac72e"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/quest/ui_button_disk/ui_button_disk0.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "79d771280c44ff367aa2d3e35ba6fe03b1ca9c8c343faf5cc231aac50ca14357",
+      "post": "1178b0be1cf84acd2d937125e9413addbf2045fe3d2950eaf80b10d81a595994"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/story/story_ui_sprites00.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "dcc132d801da0ab2daab9df0993c05df251167b5bfb93aeb72b54eefd823ef12",
+      "post": "784de5501a54eb28a765f1c3f1c26f19448049666659341fc1275237d14bed1f"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/story/story_ui_sprites00.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "26bc1f97a7ccea0f2af00ebbecb6af79379ac2b424a03c459b9a0aea1b9cbe58",
+      "post": "d8b92dc2254ce2aaae673e54fd24a13a9bfeafbbad85c3dd28aebc7a19f93aec"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/top/toppage_bg_020.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "2bcf2068315241c25fea1545cbd5f00354e437d08081a4750df3b9160608c808",
+      "post": "747ec6f3a089e3e331ad0f23cb8d9b0849f1993e460d5797fc35db6d28e65b3a"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/top/toppage_bg_020.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "0495b3d840e55481a6c580c06b63eb0271700c252337f97e606b6f79c75a7bca",
+      "post": "f2a0de4b5e54f48171ba1eee14ec8076239b96d5351b2526fc0c803407d9deae"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/top/toppage_bg_021.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "2d75593a45e03765a937c225d83fc75c1075c46e32bf4b003082366624192ada",
+      "post": "ecb1388622a6a518aba65f1d1749882e2d7afe9c29489a63f45cb4c08197f01a"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/top/toppage_bg_021.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "6a380842bcd925268cf33b0e3c8aacc2e6bf205852b7614ef34229e4237f1751",
+      "post": "66ae3ba8e3af4d03e7b068e7eb8ffa81e264eeffae63550d28d615c701a312b2"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/web/web_ef_magia_lvup/web_ef_magia_lvup0.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "850cde897a1a8ceb993c1ea788ef3916870252c46d47651a6b0c846e3f82bade",
+      "post": "b6f79dee52c023c7255edc602c372986d396dcd3601d599e1bf310af3bb2c5b9"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/web/web_ef_magia_lvup/web_ef_magia_lvup0.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "810169b173b3ea57a26fed362895e7cebbc9723f93f688c23b436f265394355f",
+      "post": "d067eaef5dbd3348ed6541b613305f76352910c5bcb83e73195789e53aeff921"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/web/web_ef_strengthening/web_ef_strengthening0.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "3cf12542f16370c19ee432ea4445228dffd20a46a9bf2ff811bc1a42348aa797",
+      "post": "7ddc3a5f75d3d84753fc36195887e15363203f681a05468e3fdcac53b81a2379"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/web/web_ef_strengthening/web_ef_strengthening0.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "d240beb947fef2ae308fdd5bd0cd30b6808fba0f44d34e7bb11457e902568375",
+      "post": "c5f2417a0282bc2e2ed3d7db0d9f784ff632f0fb2071695bcd23b9659c8e7f24"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/window/common_btn0.plist",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "ad9abb9691416ead78fc5847bee18dc460b15697a4135bd0f88a3c2d84e68735",
+      "post": "d63067df1c75f9d09796c36c33323664ff451416b353b1ce0c21abd900b7eb30"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/window/common_btn0.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "537095f0b6a15b247a6cf2dd134792086de3f1ae72245a03709458d50c8132be",
+      "post": "57731c8d98165fcaa5a4964af1e525bfc7f03c7ea30c322971f31977b4bf887b"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-hdpi/abc_btn_check_to_on_mtrl_000.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "ddc61305597383be60a8e1ec1841932942c92f3c1720c6f9490da63a084c1a5f",
+      "post": "e32c51210d0ebb45bdc7913aa243e5371d160d59398b5807aef31846c9907347"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-hdpi/abc_btn_check_to_on_mtrl_015.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "ad617187537c1bc753b1d20ae4747a11cd5aa13d02c9da874321dc09361fdbb0",
+      "post": "1f1a2940432bcfe00b1fef27efe73e7ce24a956ef5e628eb4dc903bcf3b55aed"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-hdpi/abc_btn_radio_to_on_mtrl_000.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "442d02638b8fad7863d38c43b701793d9cb1755280dbf44be3920fc19a389001",
+      "post": "c1b657e028594c12158cda195f3409f741298179077a3a61c4881fd8d7e8899b"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-hdpi/abc_btn_radio_to_on_mtrl_015.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "cf62578a2d4b857425800cc9cffad1cbb724b965d237776d99f56a7b472f0c95",
+      "post": "80779cea7be4dd5108cbe2f231ddf787a07190a85ba189c0cececbb239d5e6fa"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-hdpi/abc_ic_commit_search_api_mtrl_alpha.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "5fdffb3fa44d5ad6365994e41d2904217a825e95007ec3dd3fc0569cb7c505a5",
+      "post": "effd38f217713d7e0522d7d74e70c21a57f382e42cb2318a9ac00dfd25d5dfb0"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-hdpi/abc_scrubber_control_off_mtrl_alpha.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "3e93c22fa1cd88063d71f1be8de7b58d89baf33458b02017dab6e4d9f3636a49",
+      "post": "bcf9e688a1710c320c24f682ad26d12cd26b4b5e16e3a01a3ee690e486d57a95"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-hdpi/abc_scrubber_control_to_pressed_mtrl_000.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "1d6d4260643eb5735a0f3c75fe52f575cee5f42c3af3ce42dc54acc929e586a8",
+      "post": "540d0e23cd0c32a128c17bcee2982f1a47ef20ed1bf27fd0ee68db8ce1fabee4"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-hdpi/abc_scrubber_control_to_pressed_mtrl_005.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "9b96b614b00c3e140092567c1cc3caf3276766314de202d98dabd2d63cab9de9",
+      "post": "0c1130dc6a30b8765ea864d1522eaef92525a6e9a8187450242b59615e3ae25d"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-hdpi/abc_text_select_handle_middle_mtrl.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "461c00b1a6c75cac26d5038eb14066f1dc0634592f1259a0e53b2986c380c9ba",
+      "post": "732dcd3875645c1a7760ac1e7b5e4c2367da36e8e8b13d6c7bb653249e2ee7d8"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-hdpi/googleg_disabled_color_18.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "30c2f27d5879907b17ce124fd29f9a665df4d083601515e38ff4d6e8295a8adf",
+      "post": "b50aef754dd18d4ac42393f553c72e1976cf7f60c1b571a6cd29f78e32a83e86"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-hdpi/googleg_standard_color_18.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "496cefa4d0ceea7043c4c3d8a7856592f917d3e6d9fc95523deb57f9c394d0d8",
+      "post": "cc95bd25d5e20aa02a12503898147c6408057f05806c008a86d8c203feb4e581"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-mdpi/abc_btn_check_to_on_mtrl_000.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "e961278375e9bdaa9f0b0415d7c442cbaf607a65698fd1f7044528386b0e89b9",
+      "post": "1c2c0e5df0b18eb17eca08be106d7d50dc589ed1505d86d2d3c6558bb42c3d96"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-mdpi/abc_btn_check_to_on_mtrl_015.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "51ac89334a1f999bef5ede418e6244ce1fc8a68d233e435cc46cb0ebf568f508",
+      "post": "1eeb641c7bc0d7ae33b67b5de9f4c053d4281a6fc9d877bb8df367e519272f4f"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-mdpi/abc_btn_radio_to_on_mtrl_000.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "7ffa2ffef8d55275fee32e5bf4c4628cc13754cf4144dda3c9016a7ea040df85",
+      "post": "704444c7bcd0dde68ce60a755dd830ca2b11a265093110b88d96b743ce94db86"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-mdpi/abc_btn_radio_to_on_mtrl_015.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "8c6914a3d06eee2d95b8fa794d129610629795da3e87b0a3516d38ace65d503c",
+      "post": "2919e012d35e3d6b2d86de8b62207edef42cc7039a1bfcd7752aaf6a8a773ff6"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-mdpi/abc_ic_commit_search_api_mtrl_alpha.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "83d8e5a9855c47b713b2d385a54990f14cf7a05c3010435e1cef4f03e2f8c18e",
+      "post": "863e0ec74c58d236be3c7e9457e0dd5c12a76f7f1aebb225d966ddc91ac3b003"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-mdpi/abc_scrubber_control_off_mtrl_alpha.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "74b1244e2a2276dab6ebb152e643e065d91afcbb5ff2f795202547023a960f50",
+      "post": "aa44c927eb4e9a886438f3b6083c948d8cf67c52b3e5fe034b9720648f5fa78e"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-mdpi/abc_scrubber_control_to_pressed_mtrl_000.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "7a0475de896c981448ee95eb112ee4db17ea4ba732a4c297723296374fb20dd0",
+      "post": "4a494c652ef9019cc723afcb39de29a523e72e7b648739900fd786161cd47bf8"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-mdpi/abc_scrubber_control_to_pressed_mtrl_005.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "b7f8efd72c3025a13b713794ef09c58c0d2dcd7db9ff3deb3ea91e8416a8a35b",
+      "post": "6111c327f535aa76f4ceaa6b1f91c23252c3936f86e52100795594ae00e73b0f"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-mdpi/abc_text_select_handle_middle_mtrl.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "c7781509770af9c05890bb577e65e7eb8a3d53c55a417c475104f7227e20abc8",
+      "post": "54cc4cb81d1acf9ef5c08a90a0a1f8a92e8a2ef048767406719097abaffb3051"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-mdpi/googleg_disabled_color_18.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "72a0204b3c9d3d82f6791586ebe58808c31be1955ffe99481dbd21c678bf0b83",
+      "post": "7f06239b0ca9288450334250e8bdb026a597ce700ec77931333a8958e75b119f"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-mdpi/googleg_standard_color_18.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "7ad722c7e644caa240d8957a1e11fce4f7cbe82804aad83be83bf4ff80a98aa8",
+      "post": "6a7025e7a28bf6921b2e4229d45c1320c26db3e2766da69c133a4deee566cfc6"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-xhdpi/abc_btn_check_to_on_mtrl_015.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "15faaf55865596e312f030794e8f1f9562bb523fde95e1567d4dd0defd7d2f79",
+      "post": "b64c63c6759c3fad75205ffb43ab61b0e4faf40d3b11a6c827996207d24de202"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-xhdpi/abc_btn_radio_to_on_mtrl_000.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "85d572f6196cf849e09d421a8070bc006f81bfd49a673b0196d0b7fb230befa2",
+      "post": "e441ef6cb061a368ad4a2b4d109437bf8d501220820f6098f9a853af85c8e8e6"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-xhdpi/abc_btn_radio_to_on_mtrl_015.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "cf76acc9bd6ab09a289d23486320b03e3228a20b30dc54b543bbb8ab655ade1f",
+      "post": "a209e4acb360def2ab9b2ab3898ca140ccfa916bca0df746cef20ba269180b75"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-xhdpi/abc_ic_commit_search_api_mtrl_alpha.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "e9b60d922a3c906d443e2212408dd078f88ae7fabd4786d1c81f9618fb96ce56",
+      "post": "f9a9254c63552c452a27b8914a4f6ce7ed5e7e306310ab9e5f1795ef0ddfd1a1"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-xhdpi/abc_scrubber_control_off_mtrl_alpha.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "1bbe8d718368012029d143a84fe8b39fee4ef2db9de878a5db2b3d0674b651bd",
+      "post": "6b60f3a085c4779222c2b3be964a4d1a260620e75677462892816fce75b7ff9a"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-xhdpi/abc_scrubber_control_to_pressed_mtrl_000.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "ee083c831db3bd413cea2af30a189e68741a0e0381b2ce2bf978b3fac617c80d",
+      "post": "d665a33df9232b1fa1d555012d9cb7be5cf06a708c67145f5fdfb01e0b6dadb2"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-xhdpi/abc_scrubber_control_to_pressed_mtrl_005.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "dea1b719aa4b669933fc35759925cd89101cba206d18b1c02e28466d887c8e2a",
+      "post": "fa3926e54772a97592efa164d3651920abec139747bdc9e493deaca5cb1fcb82"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-xhdpi/abc_text_select_handle_middle_mtrl.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "16735a5fc1bbe89a1fc970c513e99b9f2349569bbe06197b9f5c00ea3fe84e66",
+      "post": "1e9e39129a5314992877606e4d7b787d8a5dd66384b887569a3d8761ddc0fe9a"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-xhdpi/googleg_disabled_color_18.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "43430468576caf34ab87d1973e32acf0eb4e6eed2aed252cc9fa067872de34f4",
+      "post": "d348af7cf465cd873e88d2379eb69cbce0e3353a6bda5a1b3a900928f6dea697"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-xhdpi/googleg_standard_color_18.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "0c25b718297962725b5a70c81c0ae3ae55990cbf126ec18982622d351c3666dc",
+      "post": "c0baa9c4c2ddbc9828c9ec9c340442401de5d45b8c0cef71130a8e1ec8b74a19"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-xxhdpi/abc_ic_commit_search_api_mtrl_alpha.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "828bb64e8d64abf722abf835d04a526ad20276e8c929fb5a9fcd6ba14b515353",
+      "post": "a12e5e05d6f3187d1e68e83cf3f52c26b1f176fe31d37ddeb94c278b2f9fb576"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-xxhdpi/abc_scrubber_control_to_pressed_mtrl_000.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "bd384cddb3c8553b51122abce889a97275694a9383719cd0c57fa8c6d9fef515",
+      "post": "238245599cc9d078b52744bfa556f004fe64edb38cd7a8d0a81e175462b8b2c5"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-xxhdpi/abc_scrubber_control_to_pressed_mtrl_005.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "a6908c9e77e876145d416c7b92700cea2afa7b8397bc87f2b48f38c91d3316fb",
+      "post": "4b68be65e3f188c28616afa799305273b4ee2df6e54ae970be71b53b0d6c12a0"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-xxhdpi/googleg_disabled_color_18.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "e9968348ae655a1915d3429685fb3865986b25e825fb2e3cd1637e673fd24d8c",
+      "post": "5cb82ee4939bfcf86313a6d677bfa94023ecb59fb19cee23a06e5ee109177409"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-xxxhdpi/abc_scrubber_control_to_pressed_mtrl_000.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "2b683da03bc6e098fc450bf9f1ca3075c909af13e3915735901b0832be6f877d",
+      "post": "945877f41b82cd839c126dcf0ef005eb028876fcee5704434ddf6cb9c15c5bcc"
+    },
+    {
+      "kind": "replace",
+      "path": "res/drawable-xxxhdpi/abc_scrubber_control_to_pressed_mtrl_005.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "1186bafac4df7a33c09184965a216ee4ee3a1afa2f2707b92d76ea410f3d2fd3",
+      "post": "3db773e478eaf384cd3d4572aeff4fbe4b10e0c87475028776784bec3e00ddbf"
+    },
+    {
+      "kind": "replace",
+      "path": "res/mipmap-xxxhdpi/ic_stat_notify.png",
+      "from": "repo",
+      "group": "汉化图集",
+      "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
+      "pre": "63ace776f4c5509835ee0c8c699ce7fa451c8c4ad859426fb3a10aa6cedf8025",
+      "post": "32fbcf721b914d608bb323ec77a25a2f1bfb8cf1226dab5a33283a2f74155fbf"
+    },
+    {
+      "kind": "add",
+      "path": "res/xml/network_security_config.xml",
+      "group": "安全",
+      "why": "禁止明文流量，钉死信任锚",
+      "post": "03765ca79123ad7ecb649a9039e056055acfcfb39b17ec4670df4437e5752387"
+    },
+    {
+      "kind": "add",
+      "path": "assets/aria2/aria2c-arm",
+      "group": "第三方",
+      "why": "aria2c 预编译二进制（armeabi-v7a）",
+      "post": "b06494c59df4c3536ad68dfc1ce5b33d3e638cd1e845ae5452709b35ed1270bb"
+    },
+    {
+      "kind": "add",
+      "path": "assets/aria2/aria2c-arm64",
+      "group": "第三方",
+      "why": "aria2c 预编译二进制（arm64-v8a）",
+      "post": "6705bac56e0752b26b22d4aa98cf5caa0f4672904e6cbf0ac2f516cc5f05797d"
+    },
+    {
+      "kind": "add",
+      "path": "lib/armeabi-v7a/libshadowhook.so",
+      "group": "第三方",
+      "why": "shadowhook 预编译库",
+      "post": "ee7a0c14b7a319b7d7a84b94032e0a8e577b3bb0fd19a981385b456c4eae13f7"
+    },
+    {
+      "kind": "add",
+      "path": "lib/arm64-v8a/libshadowhook.so",
+      "group": "第三方",
+      "why": "shadowhook 预编译库",
+      "post": "b865185eae7785559502a4e046444e09858bde3dbfe716bfb35f485ec46316f8"
+    },
+    {
+      "kind": "add",
+      "path": "assets/magia/logo.png",
+      "group": "美术",
+      "why": "下载浮层用的自制图",
+      "post": "80d8bd90546a70376c836625ae8141ee7741df2f91ada0de9ada940b1b775129"
+    },
+    {
+      "kind": "add",
+      "path": "assets/magia/background_light.png",
+      "group": "美术",
+      "why": "下载浮层用的自制图",
+      "post": "adf0328be465f699d58d18b063c43f5cb4f4ad96298794c19bd1cddb5ad1de05"
+    },
+    {
+      "kind": "add",
+      "path": "assets/package/memoria/web_ef_memoria1.png",
+      "group": "汉化图集",
+      "why": "汉化图集（新增页）",
+      "post": "85ca7127a2eb240894177a068c3a992751f8e71d5f247a6ce4d065a6442e35c9"
+    },
+    {
+      "kind": "add",
+      "path": "assets/package/memoria/web_ef_memoria1.plist",
+      "group": "汉化图集",
+      "why": "汉化图集坐标表（新增页）",
+      "post": "8ef77a5d4ff7febf5e0b1cbbf569d2a0d89c9983be8c781d0b935e38c70fdec1"
+    },
+    {
+      "kind": "remove",
+      "path": "assets/fonts/MTF4a5kp.ttf",
+      "group": "字体",
+      "why": "腾祥商业字体，引擎 so 里根本不引用这个字符串，删掉以撤销版权暴露",
+      "pre": "36dbe7b91d30d9d95713ba4b46bfa9b70f5d16bf759e45d3a043eae97da948a1"
+    },
+    {
+      "kind": "remove",
+      "path": "assets/fonts/koruri-semibold.ttf",
+      "group": "字体",
+      "why": "同上，未被引用",
+      "pre": "4277666026dff5410d996b9f48de4ad9c285520c5009b67f9633a72db25b3671"
+    },
+    {
+      "kind": "remove",
+      "path": "lib/arm64-v8a/libuwasa.so",
+      "group": "补丁",
+      "why": "已被 libMagiaLegacy.so 取代",
+      "pre": "d35a5b44ca9a32a630c2cfefcb847209d0f3d50f2024238ac55658fa340b9a49"
+    },
+    {
+      "kind": "remove",
+      "path": "lib/armeabi-v7a/libuwasa.so",
+      "group": "补丁",
+      "why": "已被 libMagiaLegacy.so 取代",
+      "pre": "2685d1dff1469fbd20266e492ad434c26a719ed27d434901ef031b027d4e8e32"
+    },
+    {
+      "kind": "remove",
+      "path": "smali_classes2/io/kamihama/magianative/RestClient$1.smali",
+      "group": "补丁",
+      "why": "随 getUnsafeOkHttpClient 一起去掉的 TrustManager 匿名类",
+      "pre": "f9e8deaa126aad1f08926dd03efc42b3cbbb168c760bcea872f519eeb4432f30"
+    },
+    {
+      "kind": "remove",
+      "path": "smali_classes2/io/kamihama/magianative/RestClient$2.smali",
+      "group": "补丁",
+      "why": "随 getUnsafeOkHttpClient 一起去掉的 HostnameVerifier 匿名类",
+      "pre": "0c02de0f4526710e83f88c35c754d26b21b326e8308c5d49eeebc0beca7bc4f1"
+    },
+    {
+      "kind": "generated",
+      "path": "smali_classes3/",
+      "group": "构建期产物",
+      "why": "构建期由 patch/src/main/java/ 经 javac→d8→baksmali 产出"
+    },
+    {
+      "kind": "generated",
+      "path": "smali_classes2/io/kamihama/magianative/CNCNDownloadUI",
+      "group": "构建期产物",
+      "why": "同上：CNCNDownloadUI 系列全部由 Java 源码产出"
+    },
+    {
+      "kind": "generated",
+      "path": "lib/arm64-v8a/libMagiaLegacy.so",
+      "group": "构建期产物",
+      "why": "构建期由 magia-native/ 用 NDK 编译"
+    },
+    {
+      "kind": "generated",
+      "path": "lib/armeabi-v7a/libMagiaLegacy.so",
+      "group": "构建期产物",
+      "why": "构建期由 magia-native/ 用 NDK 编译"
+    },
+    {
+      "kind": "generated",
+      "path": "assets/magia/bgm",
+      "group": "构建期产物",
+      "why": "构建期由 tools/convert-bgm.py 从 .hca 转出（bgm*.ogg / bgm.json）"
+    }
+  ]
+}

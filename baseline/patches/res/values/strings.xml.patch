@@ -1,0 +1,11 @@
+--- a/res/values/strings.xml
++++ b/res/values/strings.xml
+@@ -28,7 +28,7 @@
+     <string name="abc_shareactionprovider_share_with_application">Share with %s</string>
+     <string name="abc_toolbar_collapse_description">Collapse</string>
+     <string name="androidx_startup">androidx.startup</string>
+-    <string name="app_name">Totentanz</string>
++    <string name="app_name">魔法纪录：Magia☆Record（通用修复版）</string>
+     <string name="app_type">APP</string>
+     <string name="build_type">RELEASE</string>
+     <string name="common_google_play_services_enable_button">Enable</string>

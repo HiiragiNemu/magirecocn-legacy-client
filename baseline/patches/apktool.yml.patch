@@ -1,0 +1,18 @@
+--- a/apktool.yml
++++ b/apktool.yml
+@@ -1,5 +1,5 @@
+ version: 2.9.3
+-apkFileName: upstream.apk
++apkFileName: magireco-legacy.apk
+ isFrameworkApk: false
+ usesFramework:
+   ids:
+@@ -46,3 +46,8 @@
+ - assets/dexopt/baseline.profm
+ - assets/dexopt/baseline.prof
+ - jpg
++# ogg 必须以 Stored 入包：AssetManager.openFd() 只能打开未压缩的 asset，压缩的会抛
++# "This file can not be opened as a file descriptor; it is probably compressed"，
++# 浮层 BGM 就静默失效。真机构建时 aapt 的默认不压缩列表本来就含 .ogg，是 apktool
++# 重打包没带上。反正 Vorbis 再 deflate 也压不动（实测 0%）。
++- ogg

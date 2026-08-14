@@ -1,0 +1,8 @@
+--- a/res/values/public.xml
++++ b/res/values/public.xml
+@@ -1421,4 +1421,5 @@
+     <public type="style" name="Base.V26.Widget.AppCompat.Toolbar" id="0x7f0e005c" />
+     <public type="style" name="Base.V28.Theme.AppCompat" id="0x7f0e005d" />
+     <public type="style" name="Base.V28.Theme.AppCompat.Light" id="0x7f0e005e" />
++    <public type="xml" name="network_security_config" id="0x7f0f0000" />
+ </resources>

@@ -144,6 +144,15 @@ jobs:
       - name: 🔤 校验字体基线与重定向目标
         run: python3 tools/check-fonts.py
 
+      # baseline/ 这套 patchset 描述的是「上游原包 + 我们的补丁 = 现在这棵树」。
+      # 它现在还不参与构建（构建仍走仓库里的成品树），但只要清单和树对不上，
+      # 它就在悄悄腐烂——等真要靠它重建时才发现，成本高得多。这一步是离线自洽
+      # 检查（毫秒级，不下载上游包）；端到端那道是 `tools/baseline.py verify`。
+      - name: 🧬 校验基线 patchset 自洽
+        run: |
+          python3 tools/check-baseline.py
+          python3 tools/test-check-baseline.py
+
       # 代理这条线换过四次路线、停用过三次，而停用的做法是删掉 H() 安装、
       # 留下实现。这一步核对「实现存在」与「真的被安装」是否一致，并要求每个
       # 未安装的实现都写明停用原因——否则谁都分不清哪些还在跑。
