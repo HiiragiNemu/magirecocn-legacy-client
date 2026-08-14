@@ -33,6 +33,9 @@ import zipfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONF = os.path.join(REPO, "baseline", "baseline.json")
+# 图集迁走之后仓库里就没有源文件了，改从 fetch 取回并解开的那份重打。
+# 这条路径同时是一次往返校验：取回来 → 重打 → sha256 必须还等于钉死项。
+OVERLAY = os.path.join(REPO, "work", "baseline", "overlay")
 FIXED_DATE = (1980, 1, 1, 0, 0, 0)
 
 
@@ -49,14 +52,23 @@ def overlay_paths(conf):
     return sorted(op["path"] for op in ops)
 
 
+def source_of(rel):
+    """先找仓库里那份（迁走之前），再找 fetch 取回并解开的那份。"""
+    for base in (REPO, OVERLAY):
+        p = os.path.join(base, rel)
+        if os.path.isfile(p):
+            return p
+    raise SystemExit(
+        "找不到源文件：%s\n"
+        "  仓库里没有（图集已迁到外部发布渠道），work/baseline/overlay 里也没有。\n"
+        "  先跑一次 python3 tools/baseline.py fetch 把 overlay 取回来。" % rel)
+
+
 def build(paths, out):
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for rel in paths:
-            src = os.path.join(REPO, rel)
-            if not os.path.isfile(src):
-                raise SystemExit("要打包的文件不在仓库里：%s\n"
-                                 "  （已经迁走了？那就从外部发布渠道取，别再重打这个包）" % rel)
+            src = source_of(rel)
             info = zipfile.ZipInfo(rel, date_time=FIXED_DATE)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o644 << 16

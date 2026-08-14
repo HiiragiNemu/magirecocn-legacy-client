@@ -66,6 +66,7 @@ PATCH_DIR = os.path.join(BASELINE_DIR, "patches")
 REPLACE_DIR = os.path.join(BASELINE_DIR, "replace")
 WORK = os.path.join(REPO, "work", "baseline")
 TREE = os.path.join(REPO, "work", "tree")   # apply 的默认落点，也是改补丁的工作树
+OVERLAY = os.path.join(WORK, "overlay")    # 从外部发布渠道取回并解开的汉化图集
 
 
 # ---------------------------------------------------------------- 基础工具
@@ -205,6 +206,8 @@ def cmd_fetch(args):
     apk = grab(conf["apk"], "upstream.apk")
     jar = grab(conf["apktool"], "apktool.jar")
 
+    fetch_overlay(conf)
+
     java = args.java or "java"
     check_jdk(conf, java)
 
@@ -219,6 +222,68 @@ def cmd_fetch(args):
     check_fingerprint(conf, dec)
     print("基线树：%s" % dec)
     return 0
+
+
+def fetch_overlay(conf):
+    """取回 overlay 包（汉化图集）并解开。
+
+    这些是人手重绘的图集：无法从原包重建，也不该躺在代码仓库里，所以放外部发布渠道的
+    Release。**内容一律按 sha256 认**——所以「从哪个地址下的」不影响正确性，
+    `repos` 列多个来源只是为了别在仓库转移窗口里卡住构建。
+    """
+    spec = conf.get("overlay")
+    if not spec:
+        return
+    if os.path.isdir(OVERLAY) and os.listdir(OVERLAY):
+        print("overlay 已解开：%s" % OVERLAY)
+        return
+
+    zip_path = os.path.join(WORK, spec["asset"])
+    if not (os.path.isfile(zip_path) and sha256_file(zip_path) == spec["sha256"]):
+        token = os.environ.get(spec.get("token_env", ""), "")
+        errors = []
+        for repo in spec["repos"]:
+            url = "https://github.com/%s/releases/download/%s/%s" % (
+                repo, spec["tag"], spec["asset"])
+            print("取 overlay ← %s" % url)
+            try:
+                req = urllib.request.Request(url)
+                if token:
+                    req.add_header("Authorization", "Bearer " + token)
+                tmp = zip_path + ".part"
+                with urllib.request.urlopen(req) as r, open(tmp, "wb") as f:
+                    shutil.copyfileobj(r, f)
+                os.replace(tmp, zip_path)
+                break
+            except Exception as e:
+                errors.append("%s：%s" % (repo, e))
+                print("  取不到：%s" % e)
+        else:
+            raise SystemExit(
+                "overlay 一个来源都取不到：\n  %s\n"
+                "  外部发布渠道若已转私有，需要能读它的 %s（本 job 里没有就是没传进来）。"
+                % ("\n  ".join(errors), spec.get("token_env", "")))
+        got = sha256_file(zip_path)
+        if got != spec["sha256"]:
+            os.remove(zip_path)
+            raise SystemExit(
+                "overlay sha256 不符：期望 %s，实得 %s\n"
+                "  内容变了就要用 tools/make-overlay.py 重打、重传资产、并同步"
+                "baseline.json 的 overlay.sha256——三件事缺一不可。"
+                % (spec["sha256"], got))
+
+    import zipfile
+    if os.path.isdir(OVERLAY):
+        shutil.rmtree(OVERLAY)
+    os.makedirs(OVERLAY)
+    with zipfile.ZipFile(zip_path) as z:
+        for name in z.namelist():
+            # 压缩包来自另一个仓库，按不可信内容对待：不许 ../ 逃出解压目录
+            dst = os.path.normpath(os.path.join(OVERLAY, name))
+            if not dst.startswith(os.path.abspath(OVERLAY) + os.sep):
+                raise SystemExit("overlay 里有越界路径：%s" % name)
+            z.extract(name, OVERLAY)
+    print("overlay 已解开：%d 个文件 → %s" % (sum(1 for _ in walk_files(OVERLAY)), OVERLAY))
 
 
 def java_major(java):
@@ -304,10 +369,10 @@ def cmd_regen(args):
         elif kind == "add":
             if os.path.isfile(b):
                 raise SystemExit("标为新增的文件基线里已有：%s" % rel)
-            op["post"] = sha256_file(t)
+            op["post"] = sha256_file(content_src(op, rel))
         elif kind == "replace":
             op["pre"] = sha256_file(b)
-            op["post"] = sha256_file(t)
+            op["post"] = sha256_file(content_src(op, rel) if op.get("from") else t)
             if op.get("from", "store") == "store":
                 dst = os.path.join(REPLACE_DIR, rel)
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -356,14 +421,11 @@ def cmd_apply(args):
             os.remove(dst)
             continue
         if kind == "add":
-            src = os.path.join(REPO, rel)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
-            shutil.copyfile(src, dst)
+            shutil.copyfile(content_src(op, rel), dst)
         elif kind == "replace":
             check_pre(dst, op, rel)
-            src = (os.path.join(REPO, rel) if op.get("from") == "repo"
-                   else os.path.join(REPLACE_DIR, rel))
-            shutil.copyfile(src, dst)
+            shutil.copyfile(content_src(op, rel), dst)
         elif kind == "patch":
             check_pre(dst, op, rel)
             with open(os.path.join(PATCH_DIR, rel + ".patch"), "r", encoding="utf-8") as f:
@@ -376,6 +438,24 @@ def cmd_apply(args):
             raise SystemExit("%s：打完补丁 hash 不符\n  期望 %s\n  实得 %s" % (rel, op["post"], got))
     print("patchset 已应用：%d 条操作" % len(conf["ops"]))
     return 0
+
+
+def content_src(op, rel):
+    """一条 op 的内容从哪来。
+
+    repo    —— 本仓库里那一份（我们自己写的东西：字体、自制图、预编译件）
+    overlay —— 外部发布渠道 Release 取回来的（汉化图集，见 fetch_overlay）
+    store   —— baseline/replace/ 下存的整份（默认；给 RestClient 那种我们基本重写的）
+    """
+    where = op.get("from", "store")
+    if where == "repo":
+        return os.path.join(REPO, rel)
+    if where == "overlay":
+        p = os.path.join(OVERLAY, rel)
+        if not os.path.isfile(p):
+            raise SystemExit("%s：overlay 里没有这个文件——先跑 baseline.py fetch" % rel)
+        return p
+    return os.path.join(REPLACE_DIR, rel)
 
 
 def check_pre(path, op, rel):

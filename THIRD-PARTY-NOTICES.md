@@ -146,6 +146,9 @@ SOFTWARE.
 - **`assets/magia/logo.png`、`assets/magia/background_light.png`** —— 本项目自制，
   归 GPLv3（`LICENSE`）。
 - **`lib/*/libMagiaLegacy.so`** —— 本项目自制，源码在 `magia-native/`，归 GPLv3。
-- **`assets/fonts/witchText-export.png` / `.fnt`** —— 在原包位图字体基础上重绘的
-  汉化图集，属于对原包素材的衍生，归原包版权方一侧，见 `LICENSE.additional-terms` §3。
+- **`assets/fonts/witchText-export.png`** —— 在原包位图字体基础上重绘的汉化图集，
+  属于对原包素材的衍生，归原包版权方一侧，见 `LICENSE.additional-terms` §3。
+  它和另外 84 个汉化图集一样**不在本仓库**：放在外部发布渠道
+  `（外部发布渠道）` 的 Release 里，构建时按 sha256 取回（`baseline.json` 的
+  `overlay` 段）。配套的 `.fnt` 是原包原样，由基线树提供。
 - **`res/xml/network_security_config.xml`** —— 本项目自制配置，归 GPLv3。

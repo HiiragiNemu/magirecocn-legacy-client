@@ -173,7 +173,13 @@ jobs:
       # 2026-08-14 第一次跑这条腿就栽在这儿：verify 报「内容不同：1」，而那个文件是
       # 与我们毫无关系的 GMS 工具类，现象完全指不向真正的原因。
       # 只在这一步换 JAVA_HOME，别动整个 job 的 JDK（javac / d8 那边按 17 调好的）。
+      #  是给 overlay（汉化图集）取件用的：它在外部发布渠道 （外部发布渠道）
+      # 的 Release 里，那个仓库预计转私有。没有 token 时仍会匿名试一次——公开期
+      # 照样能用，私有后会明确报错而不是把 404 页面当 zip 解。
+      # Totentanz 整包与 apktool 都在公开仓库，不需要 token。
       - name: 🌱 从Totentanz 整包重建工程树
+        env:
+          : ${{ secrets. }}
         run: |
           set -euo pipefail
           J21="${JAVA_HOME_21_X64:-}"

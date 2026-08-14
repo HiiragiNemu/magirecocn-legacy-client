@@ -40,6 +40,16 @@ def bad(msg):
     problems.append(msg)
 
 
+def content_src(op, rel):
+    """一条 op 的内容在本地哪儿；from == overlay 时返回 None（内容不在本仓库）。"""
+    where = op.get("from", "store")
+    if where == "repo":
+        return os.path.join(REPO, rel)
+    if where == "overlay":
+        return None
+    return os.path.join(REPLACE_DIR, rel)
+
+
 def sha256_file(path):
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -116,20 +126,21 @@ def run(conf_path=None, quiet=False):
                 bad("%s：标为 patch，但仓库里又出现了这个原包文件——patchset 的目标"
                     "只该存在于重建树里" % rel)
 
-        elif kind == "replace":
-            src = (in_tree if op.get("from") == "repo"
-                   else os.path.join(REPLACE_DIR, rel))
-            if not os.path.isfile(src):
-                bad("%s：替换用的内容文件缺失 %s" % (rel, os.path.relpath(src, REPO)))
-            elif op.get("post") and sha256_file(src) != op["post"]:
-                bad("%s：内容与 post hash 对不上——改了文件没跑 baseline.py regen？" % rel)
-            if not HEX64.match(str(op.get("pre", ""))):
+        elif kind in ("replace", "add"):
+            if kind == "replace" and not HEX64.match(str(op.get("pre", ""))):
                 bad("%s：pre hash 没填（replace 也要认基线，否则换包时不报错）" % rel)
-
-        elif kind == "add":
-            if not os.path.isfile(in_tree):
-                bad("%s：标为新增，但工程树里没有" % rel)
-            elif op.get("post") and sha256_file(in_tree) != op["post"]:
+            if not HEX64.match(str(op.get("post", ""))):
+                bad("%s：post hash 没填或形状不对" % rel)
+            src = content_src(op, rel)
+            if src is None:
+                # from == overlay：内容在外部发布渠道的 Release 里，本地不一定取过。
+                # 取回来那一步由 baseline.py fetch 按 overlay.sha256 认，这里
+                # 只要求它别同时还躺在本仓库里——那说明迁移做了一半。
+                if os.path.isfile(in_tree):
+                    bad("%s：已改从 overlay 取，但仓库里那份还没删——迁移做了一半" % rel)
+            elif not os.path.isfile(src):
+                bad("%s：内容文件缺失 %s" % (rel, os.path.relpath(src, REPO)))
+            elif sha256_file(src) != op["post"]:
                 bad("%s：内容与 post hash 对不上——改了文件没跑 baseline.py regen？" % rel)
 
         elif kind == "remove":
@@ -160,8 +171,8 @@ def run(conf_path=None, quiet=False):
     # 判据：APK 相关目录下入库的文件，只能是 patchset 里 add / replace(from=repo)
     # 点名的那些。
     allowed = {op["path"] for op in ops
-               if op["kind"] == "add"
-               or (op["kind"] == "replace" and op.get("from") == "repo")}
+               if op["kind"] in ("add", "replace") and content_src(op, op["path"]) is not None
+               and op.get("from") == "repo"}
     roots = ("smali/", "smali_classes2/", "smali_classes3/", "res/", "assets/",
              "lib/", "kotlin/", "unknown/", "original/", "META-INF/",
              "AndroidManifest.xml", "apktool.yml")

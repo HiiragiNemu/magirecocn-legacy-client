@@ -101,9 +101,12 @@ def run(notices_path=None, quiet=False):
                 "要么补声明，要么说明它为什么不需要" % rel)
 
     # ── 二、声明里写的文件，必须真的在 ────────────────────────────────────
+    # 例外：清单里标了 from == overlay 的，内容在外部发布渠道的 Release 里而不在本仓库
+    # ——那是有意为之，不是「删文件忘了删声明」。
+    elsewhere = {op["path"] for op in conf["ops"] if op.get("from") == "overlay"}
     for m in re.finditer(r"`((?:assets|lib|res)/[^`]+)`", notices):
         rel = m.group(1)
-        if any(ch in rel for ch in "*?"):
+        if any(ch in rel for ch in "*?") or rel in elsewhere:
             continue
         if not os.path.exists(os.path.join(REPO, rel)):
             bad("声明里写着 %s，但这个文件不在仓库里——删文件时忘了删声明？" % rel)
