@@ -438,6 +438,9 @@ public final class CNDownloadUiAssist {
         } else {
             root.requestLayout();
         }
+        // 内容宽变了，两列的像素宽就得跟着重算——它们不再靠 weight 自适应，
+        // 原因见 applySplit() 里那段红字。
+        applySplit();
         // 宽度变了就得把横向滚动状态一起归位。少了这一步的表现正是「调大字号后
         // 两栏被撑大，再调小就回不去」：内容宽度确实缩回去了，但 scrollX 还停在
         // 原处，而滚动条又已经按「没溢出」关掉——看起来就是两栏歪着且拉不回来。
@@ -1075,27 +1078,84 @@ public final class CNDownloadUiAssist {
      * <p>只在「两列都是按 weight 排的」时才动手：谁哪天把某一列改成固定宽度，
      * 这里就该什么都不做，而不是把它的宽度清零——那会直接让半个界面消失。
      */
+    /**
+     * 把当前占比写成两列的<b>精确像素宽</b>。
+     *
+     * <h3>🔴 为什么这里不能用 weight（2026-08-14，第三轮才查到的真根因）</h3>
+     *
+     * 两列原本是 {@code width=0 + weight=0.38/0.62}，这在普通 {@code LinearLayout}
+     * 里没问题，但它们装在 {@code HorizontalScrollView} 里，而框架那两段凑一起会
+     * <b>把 weight 布局毁掉</b>：
+     *
+     * <pre>
+     * // HorizontalScrollView.measureChild —— 无视子节点的 lp.width，一律 UNSPECIFIED
+     * childWidthMeasureSpec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
+     *
+     * // LinearLayout.measureHorizontal —— 父不是 EXACTLY 时，把 lp.width 就地改写
+     * if (lp.width == 0 &amp;&amp; lp.weight &gt; 0) {
+     *     lp.width = LayoutParams.WRAP_CONTENT;   // ⚠ 永久改掉了 LayoutParams
+     * }
+     * </pre>
+     *
+     * 第一次测量时容器给的是 UNSPECIFIED，于是 {@code LinearLayout} 把两列的
+     * {@code lp.width} <b>就地改写成 WRAP_CONTENT</b>。之后 {@code fillViewport}
+     * 再用 EXACTLY 量一遍，可 {@code lp.width} 已经不是 0 了——weight 这时只负责
+     * 分配「各列按内容撑开之后<b>剩下</b>的那点空间」，38/62 从此不成立：列宽变成
+     * 「内容想要多宽 + 剩余空间的加权零头」。
+     *
+     * <p>这解释了为什么换过两版宽度模型都没修好——两版都经由同一个 UNSPECIFIED；
+     * 也解释了最早那版「反复拖分界线，左右越变越长」：它是在被改写过的
+     * WRAP_CONTENT 宽度上继续累加。
+     *
+     * <p>所以在这个容器里<b>不能靠 weight</b>。这里把 weight 清零，直接按视口算出
+     * 两列的像素宽——EXACTLY 与否都不影响结果，框架没有任何机会再改写它。
+     */
     private static void applySplit() {
         LinearLayout row = splitRow();
         if (row == null || row.getChildCount() < 3) return;
         View left = row.getChildAt(0);
+        View handle = row.getChildAt(1);
         View right = row.getChildAt(2);
-        if (!weighted(left) || !weighted(right)) return;
-        setWeight(left, splitPct / 100f);
-        setWeight(right, (100 - splitPct) / 100f);
+        if (!(left.getLayoutParams() instanceof LinearLayout.LayoutParams)
+                || !(right.getLayoutParams() instanceof LinearLayout.LayoutParams)) {
+            return;   // 对面改了布局形状，这里就该什么都不做
+        }
+        int viewport = viewportPx(row.getContext());
+        if (viewport <= 0) return;                 // 还没测量，等下一轮布局回调
+        int content = scalePct <= 100 ? viewport
+                : Math.max(viewport, Math.round(viewport * scalePct / 100f));
+
+        ViewGroup.LayoutParams hlp = handle.getLayoutParams();
+        int handleW = hlp != null && hlp.width > 0 ? hlp.width : dp(row, HANDLE_DP);
+        int usable = usableWidth(content, handleW);
+        int lw = splitLeftPx(content, handleW, splitPct);
+        setExactWidth(left, lw);
+        setExactWidth(right, usable - lw);
         row.requestLayout();
     }
 
-    private static boolean weighted(View v) {
-        ViewGroup.LayoutParams lp = v.getLayoutParams();
-        return lp instanceof LinearLayout.LayoutParams
-                && ((LinearLayout.LayoutParams) lp).weight > 0f;
+    /** 两列能分的总宽（扣掉把手）。至少留 2px，好让下面的夹紧永远有解。 */
+    static int usableWidth(int content, int handleW) {
+        return Math.max(2, content - handleW);
     }
 
-    private static void setWeight(View v, float weight) {
+    /**
+     * 左列该占多少像素。纯算术，抽出来是为了能在 JVM 上直接测。
+     *
+     * <p>两头各夹 1px：占比再极端也不能让某一列变成 0 宽——那一列会整个消失，
+     * 而它在界面上和「布局崩了」长得一样。
+     */
+    static int splitLeftPx(int content, int handleW, int pct) {
+        int usable = usableWidth(content, handleW);
+        return clamp(Math.round(usable * pct / 100f), 1, usable - 1);
+    }
+
+    /** 钉死一列的宽度：给精确像素并把 weight 清零，见 {@link #applySplit()}。 */
+    private static void setExactWidth(View v, int px) {
         LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) v.getLayoutParams();
-        lp.weight = weight;
-        lp.width = 0;
+        if (lp.width == px && lp.weight == 0f) return;
+        lp.width = px;
+        lp.weight = 0f;
         v.setLayoutParams(lp);
     }
 
@@ -1371,6 +1431,12 @@ public final class CNDownloadUiAssist {
     // ---- JVM 回归测试入口 ----
     // 拖动与布局要真机，但**夹紧范围**是纯算术，而它恰恰是把界面搞坏的唯一途径：
     // 越界一格，某一列就变成一条只剩省略号的缝。
+    public static int splitLeftPxForTest(int content, int handleW, int pct) {
+        return splitLeftPx(content, handleW, pct);
+    }
+    public static int splitUsableForTest(int content, int handleW) {
+        return usableWidth(content, handleW);
+    }
     public static int splitPctForTest() { return splitPct; }
     public static void setSplitForTest(int value) { setSplit(value); }
     public static int splitDefaultForTest() { return SPLIT_DEFAULT; }

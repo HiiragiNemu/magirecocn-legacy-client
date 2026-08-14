@@ -86,6 +86,35 @@ public class UiAssistStateTest {
         check("向右拖过头夹在上限", CNDownloadUiAssist.splitPctForTest() == max);
         CNDownloadUiAssist.setSplitForTest(def);
 
+        // 列宽换算：两列现在拿的是**精确像素**而不是 weight。
+        //
+        // 为什么不能靠 weight（2026-08-14 查到的真根因）：这两列装在
+        // HorizontalScrollView 里，而它测量子节点时一律给 UNSPECIFIED；
+        // LinearLayout 在父不是 EXACTLY 时会把 `width=0 + weight>0` 的
+        // lp.width **就地改写成 WRAP_CONTENT**。于是 38/62 从此不成立，
+        // 列宽变成「内容想要多宽 + 剩余空间的加权零头」。换算既然挪到了这里，
+        // 它的边界就得有人守着。
+        int content = 1000, handle = 50;
+        int usable = CNDownloadUiAssist.splitUsableForTest(content, handle);
+        check("可分宽度扣掉把手", usable == 950);
+        int l38 = CNDownloadUiAssist.splitLeftPxForTest(content, handle, 38);
+        check("默认比例按可分宽度换算", l38 == Math.round(950 * 0.38f));
+        check("两列加把手恰好等于内容宽", l38 + (usable - l38) + handle == content);
+        // 极端比例下任一列都不许变成 0——那一列会整个消失，而它在界面上
+        // 和「布局崩了」长得一样。
+        check("最左也留得下一像素",
+                CNDownloadUiAssist.splitLeftPxForTest(content, handle, 0) >= 1);
+        check("最右也留得下一像素",
+                usable - CNDownloadUiAssist.splitLeftPxForTest(content, handle, 100) >= 1);
+        // 内容比把手还窄（首帧、异常缩放）时不能算出负数或 0 宽。
+        int tiny = CNDownloadUiAssist.splitUsableForTest(10, 50);
+        check("内容窄于把手时仍有解", tiny >= 2
+                && CNDownloadUiAssist.splitLeftPxForTest(10, 50, 38) >= 1
+                && CNDownloadUiAssist.splitLeftPxForTest(10, 50, 38) <= tiny - 1);
+        // 放大到 150% 时内容宽随之变大，两列也要跟着变大（不是只撑一边）。
+        int big = CNDownloadUiAssist.splitLeftPxForTest(1500, handle, 38);
+        check("内容变宽时左列同比变宽", big > l38);
+
         System.out.println("通过 " + pass + " / 失败 " + fail);
         if (fail > 0) System.exit(1);
     }

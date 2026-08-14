@@ -378,6 +378,26 @@ checks = {
         "SplitDrag" in assist and "TAG_SPLIT" in assist
         and "setOnLongClickListener" in assist
         and "requestDisallowInterceptTouchEvent" in assist,
+    # 🔴 两列必须拿**精确像素**，不准靠 weight。
+    #
+    # 它们装在 HorizontalScrollView 里，而框架那两段凑一起会把 weight 布局毁掉：
+    #   HorizontalScrollView.measureChild 无视子节点 lp.width，一律 UNSPECIFIED；
+    #   LinearLayout.measureHorizontal 在父不是 EXACTLY 时，把 `width=0 + weight>0`
+    #   的 lp.width **就地改写成 WRAP_CONTENT**。
+    # 于是 fillViewport 之后那一遍 EXACTLY 测量里 lp.width 已经不是 0，weight 只
+    # 分配「各列按内容撑开之后剩下的那点空间」——38/62 从此不成立，列宽变成
+    # 「内容想要多宽 + 剩余空间的加权零头」。这个坑跨过两版宽度模型都没被修掉，
+    # 因为两版都经由同一个 UNSPECIFIED。
+    "两列拿精确像素宽而不是 weight":
+        "private static void setExactWidth(View v, int px)" in assist
+        and "lp.weight = 0f;" in assist
+        and "setExactWidth(left, lw);" in assist
+        and "setExactWidth(right, usable - lw);" in assist
+        and "lp.weight = weight;" not in code(assist),
+    "列宽换算有纯算术入口且两头都夹得住":
+        "static int splitLeftPx(int content, int handleW, int pct)" in assist
+        and "static int usableWidth(int content, int handleW)" in assist
+        and "clamp(Math.round(usable * pct / 100f), 1, usable - 1)" in assist,
     "分界比例夹在可用范围内并落盘":
         "SPLIT_MIN = 20" in assist and "SPLIT_MAX = 70" in assist
         and "clamp(value, SPLIT_MIN, SPLIT_MAX)" in assist

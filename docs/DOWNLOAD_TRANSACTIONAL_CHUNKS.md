@@ -30,6 +30,19 @@
 - 所有辅助控件都嵌在下载浮层内，浮层关闭即一起销毁，不进入游戏主界面；
 - 中央左右两列位于固定视口中；文件区右侧显示常驻长纵向滚动条，中央视口底部显示常驻长横向滚动条；背景、顶部胶囊、底部署名和游戏画面不参与滚动；
 - **内容宽度：读视口，写内容**（2026-08-14 重写）。这一层在宽度上翻过两次车，方向相反，两个坑都得记着：**第一版**读了自己马上要改的那个 View 的测量宽度，形成反馈环，表现是「反复拖左右分界线，左右越变越长」；**第二版**为躲开它，改成 `widthPixels − 左右边距` 算死一个像素值，建浮层时算一次存进 `contentBaseWidthPx`，两列再按 weight 去分它——反馈环没了，代价是那个数**经常不等于真实视口**（分屏、旋转、刘海与手势区 inset、面板自身 padding，任一对不上两列就在按错的总宽分家），而且之后屏幕怎么变都不重算。这正是「左右宽度解析有大问题」。现在读的是**视口**（`hScroll`）、写的是**内容**（`contentRoot`）：两者是父子，父宽由再上一层决定、不受子节点影响，所以既没有反馈环，读的又是真实测量值。上一版把「不许读 `getWidth()`」当成铁律，那条规矩下得太宽——出事的从来不是「读测量宽度」，是「读了自己马上要改的那个 View 的测量宽度」；
+- 🔴 **两列必须拿精确像素宽，不准靠 weight**（2026-08-14，第三轮才查到的真根因）。前面两条讲的是「内容区总共多宽」，这一条讲的是「这点宽度怎么分给两列」——而后者才是「左右宽度解析有大问题」真正的出处，它跨过了上面两版宽度模型都没被修掉，因为两版都经由同一个 `UNSPECIFIED`。框架这两段凑在一起会把 weight 布局毁掉：
+
+  ```java
+  // HorizontalScrollView.measureChild —— 无视子节点的 lp.width，一律 UNSPECIFIED
+  childWidthMeasureSpec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
+
+  // LinearLayout.measureHorizontal —— 父不是 EXACTLY 时，把 lp.width 就地改写
+  if (lp.width == 0 && lp.weight > 0) {
+      lp.width = LayoutParams.WRAP_CONTENT;   // ⚠ 永久改掉了 LayoutParams
+  }
+  ```
+
+  两列原本是 `width=0 + weight=0.38/0.62`。容器第一次测量给的是 `UNSPECIFIED`，于是 `LinearLayout` 把两列的 `lp.width` **就地改写成 `WRAP_CONTENT`**；之后 `fillViewport` 再用 `EXACTLY` 量一遍，可 `lp.width` 已经不是 0 了 —— weight 这时只负责分配「各列按内容撑开之后**剩下**的那点空间」，38/62 从此不成立，列宽变成「内容想要多宽 + 剩余空间的加权零头」。这也解释了最早那版「反复拖分界线，左右越变越长」：它是在被改写过的 `WRAP_CONTENT` 宽度上继续累加。现在 `applySplit()` 把 weight 清零、直接按视口算出两列的像素宽，框架没有任何机会再改写它；换算的纯算术部分（`splitLeftPx` / `usableWidth`，含两头各夹 1px 免得某一列变成 0 宽）由 `UiAssistStateTest` 钉住；
 - 由此 100% 及以下的内容宽直接交给 `MATCH_PARENT` + 容器的 `setFillViewport(true)`，**一个像素都不用自己算**。顺带说明一件事：那句 `mainScroll.setFillViewport(true)` 此前一直是**废的**——fillViewport 只在子节点是 `WRAP_CONTENT`/`MATCH_PARENT` 时才把它拉到视口宽，给了精确像素值就原样照办；
 - 视口变化（旋转、分屏、折叠屏展开）由 `hScroll` 的 `OnLayoutChangeListener` 触发重算，只在宽度**真的变了**时动手。这一条连同「读父写子」一起保证不自激：改的是 `contentRoot` 的宽，听的是 `hScroll` 的布局，后者不会因前者变宽而变化，所以下一轮回调里新旧宽度相等，到此为止；
 - 顶部 `Aa` 胶囊只缩放中央内容，范围为 75%–150%。字号放大后通过两条滚动条查看超出部分，绝不使用整屏 `translationX/Y`；
