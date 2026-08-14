@@ -29,3 +29,6 @@ assets/magia/bgm.json
 # native 构建中间产物（magia-native 由 CI 编译，产物拷进 lib/<abi>/）
 magia-native/build/
 __pycache__/
+
+# 只读参考产物：不参与构建，不入库。
+jadx-reference/
