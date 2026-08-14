@@ -82,6 +82,23 @@ for abi in "${ABIS[@]}"; do
     echo "  ✔ $abi"
 done
 
+# ── 2.5 BGM：HCA → OGG ───────────────────────────────────────
+# 这一步以前不在本脚本里，于是本地出的包**没有浮层 BGM**，而所有静态检查照过
+# ——正是本文件头注里骂的那类坑。与 build-apk.yml 的同名步骤同一套做法。
+# 工具不在就只告警：音频不是关键路径，但「悄悄没有」不行，得说出来。
+say "转换 BGM（HCA → OGG）"
+VGMS="${VGMSTREAM:-$(command -v vgmstream-cli || true)}"
+FF="${FFMPEG:-$(command -v ffmpeg || true)}"
+if [ -n "$VGMS" ] && [ -n "$FF" ]; then
+    python3 tools/convert-bgm.py --vgmstream "$VGMS" --ffmpeg "$FF" --tree "$TREE"
+    for f in bgm1.ogg bgm2.ogg bgm.json; do
+        [ -s "$TREE/assets/magia/$f" ] || echo "⚠ 缺少 assets/magia/$f，本包浮层将没有 BGM"
+    done
+else
+    echo "⚠ 找不到 vgmstream-cli 或 ffmpeg（可用 VGMSTREAM= / FFMPEG= 指定）"
+    echo "  本包浮层将没有 BGM——这不是构建失败，但别拿它去验 BGM 相关的改动。"
+fi
+
 # ── 3. Java → dex → smali ────────────────────────────────────
 say "编译补丁源码"
 rm -rf "$OUT/classes" "$OUT/dexui" "$OUT/dex3" "$OUT/smaliui" "$OUT/smali3"
