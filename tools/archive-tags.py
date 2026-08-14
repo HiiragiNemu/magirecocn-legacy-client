@@ -4,21 +4,21 @@
 
 ## 背景
 
-`refs/tags/archive/*` 与几个 `*-latest` 一共 15 个 tag，钉着几条已经退役的分支：
-单线程版客户端、引擎 i18n 权威化、MuMu initLabel hook、ZIP 解压回滚研究……
-它们**不在 main 的历史上**，删掉就真没了。而里头有相当一部分是研究结论——
-结论往往写在 commit 信息里，而不是最终那棵树里。
+`archive/*` 那批 tag 钉着已经退役的分支。它们**通常不在 main 的历史上**，删掉
+就真没了；而里头相当一部分是研究结论——结论往往写在 commit 信息里，不在最终
+那棵树里。
 
-删之前先备份。
+删之前先备份。名单每次从 origin 现取，不写死，所以开完新分支、下一批 tag 攒够
+要清时，直接再跑一次就行。
 
-## 为什么默认打 bundle 而不是 15 个源码包
+## 为什么默认打 bundle 而不是一堆源码包
 
-实测（2026-08-14）：
+2026-08-14 那批 15 个 tag 的实测值：
 
-    15 个 tag 各打一个 tar.gz   ≈ 1.6 GB（对象在 15 份里重复了 15 遍）
-    一个 git bundle             ≈ 120 MB（git 自带去重）
+    每个 tag 各打一个 tar.gz   ≈ 1.6 GB（对象在 15 份里重复了 15 遍）
+    一个 git bundle            ≈ 120 MB（git 自带去重）
 
-差 13 倍。而且 bundle 是**无损**的：commit 信息、作者、时间、全部 15 个 ref 都在，
+差 13 倍。而且 bundle 是**无损**的：commit 信息、作者、时间、全部 ref 都在，
 `git clone` 它就能得到一份能翻历史的仓库；tar.gz 只有最终那棵树，历史全丢——
 恰恰丢掉的是最值钱的部分。
 
@@ -45,7 +45,7 @@ GitHub 内网；token 与目标地址也都已经在仓库 Secrets 里，不必�
     python3 tools/archive-tags.py verify      # 把资产下回来，逐个校 sha256
 
 `pack` 会顺带写一份 `*-index.md`：每个 tag 的提交、日期、作者、标题与正文首段。
-备份要是几年后还看得懂，靠的就是这份索引，而不是 15 个不知道装了什么的压缩包。
+备份要是几年后还看得懂，靠的就是这份索引，而不是一个不知道装了什么的压缩包。
 """
 
 import argparse
@@ -184,7 +184,7 @@ def cmd_pack(args):
     infos = [tag_info(t) for t in tags]
     produced = []
 
-    # ── bundle：一个文件装下全部 15 个 ref 及其历史 ──────────────────────
+    # ── bundle：一个文件装下全部 ref 及其历史 ────────────────────────────
     bundle = os.path.join(OUT_DIR, BASENAME + ".bundle")
     if os.path.exists(bundle):
         os.remove(bundle)

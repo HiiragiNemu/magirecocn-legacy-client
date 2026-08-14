@@ -986,7 +986,7 @@
       "path": "lib/armeabi-v7a/libshadowhook.so",
       "group": "第三方",
       "why": "shadowhook 预编译库",
-      "post": "ee7a0c14b7a319b7d7a84b94032e0a8e577b3bb0fd19a981385b456c4eae13f7",
+      "post": "0d3ae156122429ab6f95951df39c8061f999b124af2ba306b504152be1547c4b",
       "from": "repo"
     },
     {
@@ -994,7 +994,7 @@
       "path": "lib/arm64-v8a/libshadowhook.so",
       "group": "第三方",
       "why": "shadowhook 预编译库",
-      "post": "b865185eae7785559502a4e046444e09858bde3dbfe716bfb35f485ec46316f8",
+      "post": "85e2307347d248f01f3761257e774ece26b7cb833b59b484cc206bf678539852",
       "from": "repo"
     },
     {

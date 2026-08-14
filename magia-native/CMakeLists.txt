@@ -7,8 +7,7 @@
 #                 是净损害。只有两个 hook 值得留，已在本文件对应的源码里重写。
 #   libcn_hook.so 资源下载流水线（无源码）。
 #
-# 实现照搬 另一个客户端仓库 的 （旧 native 层）/（同一个 3.1.9 引擎上验证过），
-# 去掉其中 cnv 专有的部分（setURI 代理后端、强制新手教程）。
+# 只保留资源下载流水线所需的部分（在同一个 3.1.9 引擎上验证过）。
 #
 # 设计为 Android NDK 单独驱动：
 #
@@ -42,7 +41,10 @@ project(MagiaLegacy C CXX)
 # GCC 8+），另外两个是老工具链的分别版本，一并给上不冲突。
 # 顺带的好处：构建可复现——换一台机器、换一个目录，产出的 .so 不再因为路径
 # 不同而字节不同。
-foreach(_pfx "${CMAKE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
+# NDK 根也要映射：工具链的 include 路径同样会被编进产物，而它往往带着编译者
+# 机器上的目录名（实测入库的那两个 libshadowhook.so 里就编着一条含已删仓库名的
+# NDK 路径）。谁在哪台机器上编的，不该随包发出去。
+foreach(_pfx "${CMAKE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}" "${CMAKE_ANDROID_NDK}")
     add_compile_options("-ffile-prefix-map=${_pfx}=.")
     add_compile_options("-fdebug-prefix-map=${_pfx}=.")
     add_compile_options("-fmacro-prefix-map=${_pfx}=.")
@@ -66,7 +68,7 @@ include(FetchContent)
 FetchContent_Declare(
     shadowhook
     GIT_REPOSITORY https://github.com/bytedance/android-inline-hook.git
-    # v1.1.1（（旧 native 层） 用的版本）在新 Android 上起不来：真机日志里是
+    # v1.1.1 在新 Android 上起不来：真机日志里是
     #     shadowhook init(mode: UNIQUE, debuggable: false), return: 12
     #     [Hook] ✗ ... errno=12 Init linker mod failed
     # 十七个 hook 全军覆没。errno 12 = 初始化 linker 模块失败——v1.1.1 是

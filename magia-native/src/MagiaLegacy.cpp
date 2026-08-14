@@ -16,16 +16,10 @@
 // 换行与标签尺寸只会排错；而我们的对话框图集本来就是按中文宽度做的
 // （story_ui_fukidashi 574x178，英文版是 844x198）。
 //
-// 另一个客户端仓库 早就得出同样结论并落地了：它的 （旧 native 层）/ 把 libuwasa
-// 里**唯一值得留的两个 hook** 逆向移植了过去，然后停用整个 libuwasa。见那边
-// 源码里的注释「性能 hook（从 libuwasa 逆向移植，已停用 libuwasa 加载）」。
-// 本文件照搬这个做法。
+// 所以做法是：把 libuwasa 里**唯一值得留的两个性能 hook** 逆向移植进本文件，
+// 然后整个停用 libuwasa 的加载。
 //
-// ## 与 （旧 native 层） 的差异
-//
-// 去掉了 cnv 专有的部分：
-//   - setURI 代理后端（ProxyBackends 是复兴客户端自己的服务端设施）
-// 保留资源下载流水线，并补回 libcn_hook 特有的「叫起 Java 安装器」触发。
+// 资源下载流水线保留，并补回 libcn_hook 特有的「叫起 Java 安装器」触发。
 // 强制新手教程曾经走过两个版本：v1 从 native 拦 pushSceneTop 改调
 // pushScenePrologue（真机上只放得出战斗、放不出剧情）；v2 改走前端路由播
 // 完整序章（CNPrologueNav），完整序章太难维护，弃用。v3 复活 v1 的 native
@@ -119,8 +113,7 @@ static JavaVM* gJvm = nullptr;
 // AttachCurrentThread —— 那里的 FindClass 用**系统 ClassLoader**，看不到 App 类，
 // 只会返回 null 并挂一个 ClassNotFoundException。
 //
-// 这个坑在 另一个客户端仓库 的 MagiaClient.cpp 里有白纸黑字的警告
-// （ProxyBackends 那段），第一版还是照着踩了：真机日志里是
+// 这个坑第一版照着踩了：真机日志里是
 //     E/MagiaCN_Legacy: [UrlConfig] 找不到 CNDownloaderFix
 static jclass gClsDownloaderFix   = nullptr; // io.kamihama.magianative.CNDownloaderFix
 static jclass gClsRestClient      = nullptr; // io.kamihama.magianative.RestClient
@@ -767,7 +760,7 @@ static void mainSceneOnErrNew(void* a, void* b, int code) {
 //
 // ## 为什么调 pushScenePrologue 而不是自己 new 一个 Info
 //
-// （旧 native 层） 那边是逐字段复刻调试菜单「播放序章」的构造：
+// 另一条路是逐字段复刻调试菜单「播放序章」的构造：
 //     new PrologueSceneLayerInfo(0x58 字节) → ctor(9, "OP020", "{}")
 //     → SceneLayerManager::getInstance() → 虚表 [vptr+0x18] 压栈
 // 这套在本仓库的 arm64 引擎上逐字节核对过，是对的（0xd1f054 起那段）。

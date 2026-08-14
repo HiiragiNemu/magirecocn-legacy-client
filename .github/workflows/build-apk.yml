@@ -4,16 +4,13 @@ name: 🏗️ 构建 APK
 # ║   APK 构建                                                          ║
 # ╠════════════════════════════════════════════════════════════════════╣
 # ║                                                                    ║
-# ║ 与另一个客户端仓库的差异（重要）                                    ║
-# ║ ─────────────────────────────────                                  ║
-# ║   ▸ 本仓库的 smali 不需要注入构建期常量：没有 API_HOST /            ║
-# ║     DIRECTORY_PUBKEY 之类的信任锚，因此不需要任何 Secret 或         ║
-# ║     Variable 就能构建。                                             ║
+# ║ 几点前提                                                            ║
+# ║ ────                                                               ║
+# ║   ▸ 补丁 smali 里没有构建期注入的信任锚（API_HOST /                 ║
+# ║     DIRECTORY_PUBKEY 之类），构建本身不需要这类 Secret。            ║
 # ║   ▸ 签名用 **AOSP testkey**，由 CI 从 android.googlesource.com 取，  ║
 # ║     不入库、也不需要 keystore Secret。这与上游发行的包是同一把 key， ║
 # ║     所以产物可以直接覆盖安装。                                       ║
-# ║   ▸ 没有 native i18n / HCA 转码 / 音频资源等步骤——那些是另一个      ║
-# ║     客户端仓库独有的，本仓库不涉及。                                ║
 # ║                                                                    ║
 # ║ 构建流程                                                            ║
 # ║ ───────                                                            ║
@@ -122,7 +119,7 @@ jobs:
       - name: 📥 准备编译依赖（android.jar + OkHttp）
         run: |
           set -euo pipefail
-          # classpath 与另一个客户端仓库保持一致：android.jar + OkHttp/Okio。
+          # classpath 只有 android.jar + OkHttp/Okio。
           # 补丁源码只用 JDK 自带能力与 Android 框架，不引第三方库。
           mkdir -p .cache/deps
           curl -sSL -o .cache/deps/platform.zip \
@@ -360,7 +357,6 @@ jobs:
           set -euo pipefail
           # assets 里的 BGM 是 CRI HCA 且 ciphType=56（加密），Android 放不了。
           # vgmstream 自带 CRI 游戏的密钥库，能直接解；再用 ffmpeg 转 OGG。
-          # 与 另一个客户端仓库 的同名步骤同一套做法。
           mkdir -p .cache/audio
 
           # vgmstream：官网的下载链接指向 vgmstream-releases 的 nightly 资产
