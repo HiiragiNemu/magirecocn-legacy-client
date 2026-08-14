@@ -6,22 +6,25 @@
 逐文件比对），但它要下 80 MB、跑一次 apktool。**这个脚本只做离线自洽检查**，
 几毫秒跑完，适合每次构建都过一遍：
 
-    ▸ baseline.json 能解析，钉死项（URL / sha256 / 版本）形状正确
+    ▸ baseline.json 能解析，钉死项（URL / sha256 / 版本 / JDK / 树指纹）形状正确
     ▸ 每条 op 的 path 唯一，都有 why——分类是人做的判断，判断必须留痕
-    ▸ patch  → 补丁文件在、pre/post 都填了
+    ▸ patch  → 补丁文件在、pre/post 都填了，且目标**不在**仓库里
     ▸ replace/add → 内容文件在，且 hash 与 post 相符
-    ▸ remove → 填了 pre，且该文件**确实已经不在工程树里**
+    ▸ remove → 填了 pre，且该文件确实不在仓库里
     ▸ generated → 不与其他 op 的路径重叠
+    ▸ **原包派生路径下不许有 patchset 之外的入库文件**
 
-最后一条最容易出事：`remove` 说「基线里有、我们要删」，如果工程树里那个文件
-还躺着，说明删的动作只写在了清单里、没落到树上，重建出来的树会和现有树不一致，
-而 `verify` 要下 80 MB 才发现得了。
+最后一条是这套东西的目的本身。2026-08-14 删掉那 原包派生文件之后，
+如果没有一道检查盯着，它们会以各种方式慢慢回来：调试时拷一份忘了删、某次
+「顺手补个文件」、从旧检出 cherry-pick 带进来。等到有人发现时已经分不清
+哪些是故意留的。
 """
 
 import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -107,8 +110,11 @@ def run(conf_path=None, quiet=False):
             for k in ("pre", "post"):
                 if not HEX64.match(str(op.get(k, ""))):
                     bad("%s：%s hash 没填或形状不对" % (rel, k))
-            if not os.path.isfile(in_tree):
-                bad("%s：标为 patch，但工程树里没有这个文件" % rel)
+            # 2026-08-14 起仓库里不再存原包派生文件：patch 的目标只存在于重建树里。
+            # 它要是又出现在仓库里，多半是谁把一棵完整树的一部分提交了回来。
+            if os.path.isfile(in_tree):
+                bad("%s：标为 patch，但仓库里又出现了这个原包文件——patchset 的目标"
+                    "只该存在于重建树里" % rel)
 
         elif kind == "replace":
             src = (in_tree if op.get("from") == "repo"
@@ -146,6 +152,30 @@ def run(conf_path=None, quiet=False):
         for g in generated:
             if rel.startswith(g):
                 bad("%s（%s）落在 generated 前缀 %s 之下，会被 verify 无声放过" % (rel, kind, g))
+
+    # ── 原包派生文件不许回流 ──────────────────────────────────────────────
+    # 删掉那 原包派生文件是这套东西的目的本身。如果没有一道检查盯着，
+    # 它们会以各种方式慢慢回来：调试时拷一份进来忘了删、某次「顺手补个文件」、
+    # 从旧检出 cherry-pick 带进来。等到有人发现时已经分不清哪些是故意留的。
+    # 判据：APK 相关目录下入库的文件，只能是 patchset 里 add / replace(from=repo)
+    # 点名的那些。
+    allowed = {op["path"] for op in ops
+               if op["kind"] == "add"
+               or (op["kind"] == "replace" and op.get("from") == "repo")}
+    roots = ("smali/", "smali_classes2/", "smali_classes3/", "res/", "assets/",
+             "lib/", "kotlin/", "unknown/", "original/", "META-INF/",
+             "AndroidManifest.xml", "apktool.yml")
+    try:
+        tracked = subprocess.check_output(
+            ["git", "-C", REPO, "ls-files"], text=True).split("\n")
+    except Exception:
+        tracked = []                      # 不是 git 检出（打包下载等）就跳过这一项
+    stray = sorted(p for p in tracked
+                   if p and p.startswith(roots) and p not in allowed)
+    for p in stray[:20]:
+        bad("%s：原包派生路径下多出了入库文件，patchset 里没有它" % p)
+    if len(stray) > 20:
+        bad("……另有 %d 个同类文件（已截断）" % (len(stray) - 20))
 
     for grp in conf.get("expected_divergence") or []:
         if not grp.get("why"):

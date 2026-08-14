@@ -31,7 +31,10 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WEB = os.path.join(ROOT, "smali", "jp", "f4samurai", "web")
+# 这几个文件在**重建树**里，不在仓库里（2026-08-14 起原包派生文件已从仓库删除）。
+# 树根取环境变量 TREE，CI 里由重建那一步设好；本地先跑 baseline.py apply。
+TREE_ROOT = os.environ.get("TREE") or ROOT
+WEB = os.path.join(TREE_ROOT, "smali", "jp", "f4samurai", "web")
 
 HELPER      = os.path.join(WEB, "WebViewHelper.smali")
 HELPER_RUN  = os.path.join(WEB, "WebViewHelper$1.smali")

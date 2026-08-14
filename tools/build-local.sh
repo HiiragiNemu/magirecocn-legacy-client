@@ -35,6 +35,20 @@ ABIS=(arm64-v8a armeabi-v7a)
 
 say() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
 
+# ── 0. 工程树：从Totentanz 整包重建 ────────────────────────────────
+# 仓库里不再有 客户端基线树（2026-08-14 起原包派生文件已删除，见 README
+# 「基线与补丁」）。所有写进工程树的步骤都用 $TREE，读工程树的守卫也认它。
+# ⚠ 重建要 JDK 19+：构建链给 const 附的 float 注释来自 Float.toString，
+#   JDK 19 换过算法。要用别的 JDK 重建就设 BASELINE_JAVA 指到它的 java。
+say "从Totentanz 整包重建工程树"
+export TREE="$OUT/tree"
+python3 tools/baseline.py fetch ${BASELINE_JAVA:+--java "$BASELINE_JAVA"}
+python3 tools/baseline.py apply --out "$TREE"
+echo "重建树：$(find "$TREE" -type f | wc -l) 个文件"
+
+python3 tools/check-fonts.py --tree "$TREE"
+python3 tools/check-webview-interceptor.py
+
 # ── 1. native ────────────────────────────────────────────────
 say "编译 native（${#ABIS[@]} 个 ABI）"
 for abi in "${ABIS[@]}"; do
@@ -55,15 +69,15 @@ say "把 native 产物拷进 lib/ 并校验"
 for abi in "${ABIS[@]}"; do
     for so in libMagiaLegacy.so; do
         src="magia-native/build/$abi/$so"
-        cp "$src" "lib/$abi/$so"
-        if ! cmp -s "$src" "lib/$abi/$so"; then
+        cp "$src" "$TREE/lib/$abi/$so"
+        if ! cmp -s "$src" "$TREE/lib/$abi/$so"; then
             echo "✘ $abi/$so 拷贝后与构建产物不一致"; exit 1
         fi
     done
     src_sh="magia-native/build/$abi/_deps/shadowhook-build/libshadowhook.so"
     if [ -f "$src_sh" ]; then
-        cp "$src_sh" "lib/$abi/libshadowhook.so"
-        cmp -s "$src_sh" "lib/$abi/libshadowhook.so" || { echo "✘ $abi/libshadowhook.so 不一致"; exit 1; }
+        cp "$src_sh" "$TREE/lib/$abi/libshadowhook.so"
+        cmp -s "$src_sh" "$TREE/lib/$abi/libshadowhook.so" || { echo "✘ $abi/libshadowhook.so 不一致"; exit 1; }
     fi
     echo "  ✔ $abi"
 done
@@ -124,23 +138,22 @@ java -jar "$BAKSMALI_JAR" d "$OUT/dexui/classes.dex" -o "$OUT/smaliui"
 java -jar "$BAKSMALI_JAR" d "$OUT/dex3/classes.dex"  -o "$OUT/smali3"
 
 say "用编译产物覆盖补丁 smali"
-rm -f smali_classes2/io/kamihama/magianative/CNCNDownloadUI*.smali
+rm -f "$TREE"/smali_classes2/io/kamihama/magianative/CNCNDownloadUI*.smali
 cp "$OUT"/smaliui/io/kamihama/magianative/CNCNDownloadUI*.smali \
-   smali_classes2/io/kamihama/magianative/
-rm -rf smali_classes3 && mkdir -p smali_classes3
-cp -r "$OUT"/smali3/. smali_classes3/
+   "$TREE/smali_classes2/io/kamihama/magianative/"
+rm -rf "$TREE/smali_classes3" && mkdir -p "$TREE/smali_classes3"
+cp -r "$OUT"/smali3/. "$TREE/smali_classes3/"
 
 # ── 4. 打包 / 对齐 / 签名 ────────────────────────────────────
 say "apktool b"
-java -jar "$APKTOOL_JAR" b . -o "$OUT/unsigned.apk" --use-aapt2
+java -jar "$APKTOOL_JAR" b "$TREE" -o "$OUT/unsigned.apk" --use-aapt2
 "$BUILD_TOOLS/zipalign" -f 4 "$OUT/unsigned.apk" "$OUT/aligned.apk"
 "$BUILD_TOOLS/apksigner" sign --key "$SIGN_KEY" --cert "$SIGN_CERT" \
     --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
     --out "$OUT/magireco-legacy.apk" "$OUT/aligned.apk"
 
-# 生成的 smali 是产物，不入库——还原工作树，免得误提交
-git checkout -- smali_classes2 smali_classes3 2>/dev/null || true
-git clean -fdq smali_classes2 smali_classes3 2>/dev/null || true
+# 从前这里要 git checkout 还原被覆盖的 smali——现在改动全落在 $TREE 里，
+# 仓库工作树自始至终没被碰过，不需要还原。
 
 # ── 5. 自检 ──────────────────────────────────────────────────
 say "自检"

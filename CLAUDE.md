@@ -9,11 +9,20 @@
 
 1. **补丁逻辑一律写在 `patch/src/main/java/`，不要手改 smali。**
    `smali_classes3/` 整个目录和 `smali_classes2/…/CNCNDownloadUI*.smali`
-   在每次 CI 构建时都会被 Java 编译产物覆盖，手改必被冲掉。
+   在每次构建时都由 Java 编译产物生成，手改必被冲掉。
+
+   > **2026-08-14 起仓库里没有 客户端基线树了**。原包派生的那 原包派生文件
+   > 已删除，工程树在构建时从Totentanz 公开 Release 整包重建（`tools/baseline.py`，
+   > 见 README「基线与补丁」）。要改上面这两处以外的 smali，流程是
+   > `baseline.py apply --out work/tree` → 在 `work/tree` 里改 → `baseline.py regen`
+   > 把改动落成 `baseline/patches/` 下的 diff。直接往仓库里放 smali 会被
+   > `tools/check-baseline.py` 拦下。
 
 2. **允许的手工 smali 改动只有两处**（都已存在，均有守卫脚本）：
-   `RestClient.smali` 精简为桩（`startCNDownload` → `CNDownloaderFix.runInstaller`），
-   以及 `WebViewImpl$WebViewClientImpl.smali` 里的 `CNPaths->filesDir()` 调用。
+   `RestClient.smali` 精简为桩（`startCNDownload` → `CNDownloaderFix.runInstaller`，
+   现在以整份存在 `baseline/replace/` 下），以及
+   `WebViewImpl$WebViewClientImpl.smali` 里的 `CNPaths->filesDir()` 调用
+   （现在是 `baseline/patches/` 下的一份 diff）。
    要再加手工 smali 改动，必须在 README 里写清楚为什么不能用 Java 解决。
 
 3. **minSdk 21**：禁用 API 24+ 才有的便捷方法；需要 API 21+ 的调用要用

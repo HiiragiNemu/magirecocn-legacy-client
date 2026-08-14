@@ -6,9 +6,9 @@ name: 🏗️ 构建 APK
 # ║                                                                    ║
 # ║ 与 （旧客户端仓库） 的差异（重要）                               ║
 # ║ ─────────────────────────────────                                  ║
-# ║   ▸ 本仓库的 smali 已经是**打好补丁的成品**，不需要注入构建期常量：   ║
-# ║     没有 API_HOST / DIRECTORY_PUBKEY 之类的信任锚，因此不需要任何    ║
-# ║     Secret 或 Variable 就能构建。                                   ║
+# ║   ▸ 本仓库的 smali 不需要注入构建期常量：没有 API_HOST /            ║
+# ║     DIRECTORY_PUBKEY 之类的信任锚，因此不需要任何 Secret 或         ║
+# ║     Variable 就能构建。                                             ║
 # ║   ▸ 签名用 **AOSP testkey**，由 CI 从 android.googlesource.com 取，  ║
 # ║     不入库、也不需要 keystore Secret。这与上游发行的包是同一把 key， ║
 # ║     所以产物可以直接覆盖安装。                                       ║
@@ -17,7 +17,9 @@ name: 🏗️ 构建 APK
 # ║                                                                    ║
 # ║ 构建流程                                                            ║
 # ║ ───────                                                            ║
-# ║   0. 注入客户端版本号 1.0.<run_number>（强制更新通道的本端版本，       ║
+# ║   0. 从Totentanz 公开 Release 取整包、apktool 解开、打 baseline/ 的        ║
+# ║      patchset 重建出工程树（仓库里不再存原包派生文件）              ║
+# ║   0'. 注入客户端版本号 1.0.<run_number>（强制更新通道的本端版本，     ║
 # ║      与 APK 自身 versionName/versionCode 无关）                     ║
 # ║   1. 编译 patch/src/main/java/ 下的 Java 补丁源码                   ║
 # ║   2. d8 转成 dex，baksmali 解码回 smali                           ║
@@ -58,21 +60,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
-    # 两条腿跑同一套构建，只有「工程树从哪来」不同：
-    #   repo     —— 用仓库里那棵成品树（现行做法，唯一出产物的一条）
-    #   baseline —— 现取Totentanz 公开 Release 整包、apktool 解开、打 baseline/ 的
-    #               patchset 重建出工程树（见 README「基线与补丁」）
-    # 目的：在真删掉那 基线清单**之前**，先证明重建这条路能构建、
-    # 能过全部自检。两条腿并存期间 baseline 腿不上传、不发版，红了也不挡发版
-    # （fail-fast: false）——它是先行验证，不是发版闸门。
-    strategy:
-      fail-fast: false
-      matrix:
-        source: [repo, baseline]
-
     env:
-      # 所有写进 客户端基线树的步骤都经这个变量，repo 腿即仓库根本身
-      TREE: ${{ matrix.source == 'baseline' && 'work/tree' || '.' }}
+      # 工程树不在仓库里：现取Totentanz 整包、apktool 解开、打 baseline/ 的 patchset
+      # 重建出来（见 README「基线与补丁」）。所有写进工程树的步骤都经这个变量，
+      # 读工程树的守卫也认它。
+      TREE: work/tree
 
     steps:
       - name: 🛡️ 安全护栏（校验仓库白名单）
@@ -154,16 +146,8 @@ jobs:
       - name: 🔒 校验调试开关没伸进安全判据
         run: python3 tools/check-debug-flag-boundary.py
 
-      # 字体只改加载路径、不改文件内容（1c29ba38 定的路线）。这一步钉住
-      # assets/fonts/ 每个文件的哈希与内部家族名，并校验 native 的重定向目标
-      # 确实随包发出去。放在编译之前：字体不对时越早失败越省事。
-      - name: 🔤 校验字体基线与重定向目标
-        run: python3 tools/check-fonts.py
-
-      # baseline/ 这套 patchset 描述的是「上游原包 + 我们的补丁 = 现在这棵树」。
-      # 它现在还不参与构建（构建仍走仓库里的成品树），但只要清单和树对不上，
-      # 它就在悄悄腐烂——等真要靠它重建时才发现，成本高得多。这一步是离线自洽
-      # 检查（毫秒级，不下载上游包）；端到端那道是 `tools/baseline.py verify`。
+      # patchset 现在是工程树的**唯一**定义，构建就靠它。这一步是离线自洽检查
+      # （毫秒级，不下载上游包），排在真去取包之前：清单本身有毛病时越早失败越省事。
       - name: 🧬 校验基线 patchset 自洽
         run: |
           python3 tools/check-baseline.py
@@ -177,11 +161,11 @@ jobs:
           python3 tools/check-third-party-notices.py
           python3 tools/test-check-third-party-notices.py
 
-      # ── baseline 腿专属：现取Totentanz 整包，重建出工程树 ──────────────────────
-      # verify 会先 apply 到 --out，再拿结果和仓库现有的树逐文件比。也就是说
-      # 这一步同时办了两件事：产出待构建的 work/tree，并**在 CI 里**证明它与
-      # 仓库那棵成品树逐字节一致（不是只在某个 Agent 的机器上证明过）。
-      # 两棵树一致 ⇒ apktool b 的输入一致 ⇒ 产物一致，不必再构建两次去比 APK。
+      # ── 现取Totentanz 整包，重建出工程树 ───────────────────────────────────────
+      # 链条是闭合的，不需要第二棵树来对账：
+      #   fetch  APK sha256 + apktool 版本 + JDK 大版本 + 整棵重建树的指纹
+      #   apply  每条 op 的 pre hash（打的是不是我们以为的那份文件）
+      #          + post hash（打完是不是我们要的那份）
       # ⚠ 重建必须用 JDK 19+，不能用本 job 的 JDK 17。构建链给 const 指令附的
       # float 注释来自 Float.toString，JDK 19 换了「最短且能 round-trip」的算法：
       # 同一常量在 17 上是 -8.2930312E7f、在 19+ 上是 -8.293031E7f。整个 APK 里只有
@@ -190,7 +174,6 @@ jobs:
       # 与我们毫无关系的 GMS 工具类，现象完全指不向真正的原因。
       # 只在这一步换 JAVA_HOME，别动整个 job 的 JDK（javac / d8 那边按 17 调好的）。
       - name: 🌱 从Totentanz 整包重建工程树
-        if: matrix.source == 'baseline'
         run: |
           set -euo pipefail
           J21="${JAVA_HOME_21_X64:-}"
@@ -202,8 +185,17 @@ jobs:
           export PATH="$JAVA_HOME/bin:$PATH"
           java -version
           python3 tools/baseline.py fetch --java "$J21/bin/java"
-          python3 tools/baseline.py verify --out work/tree
-          echo "重建树：$(find work/tree -type f | wc -l) 个文件"
+          python3 tools/baseline.py apply --out "${TREE}"
+          echo "重建树：$(find "${TREE}" -type f | wc -l) 个文件"
+
+      # 这两道守卫读的是**工程树**里的文件（字体、引擎 web 那几个 smali），
+      # 所以必须排在重建之后。原先它们在 last-green.yml 里跑，那边没有树了，
+      # 已迁到这里——守卫得待在它要检查的东西旁边。
+      - name: 🔤 校验字体基线与重定向目标
+        run: python3 tools/check-fonts.py --tree "${TREE}"
+
+      - name: 🕸 核对 WebView 拦截链的假设
+        run: python3 tools/check-webview-interceptor.py
 
       # 代理这条线换过四次路线、停用过三次，而停用的做法是删掉 H() 安装、
       # 留下实现。这一步核对「实现存在」与「真的被安装」是否一致，并要求每个
@@ -550,24 +542,12 @@ jobs:
           echo "自检通过"
 
       - name: 📤 上传产物
-        if: ${{ inputs.verify_only != true && matrix.source == 'repo' }}
+        if: ${{ inputs.verify_only != true }}
         uses: actions/upload-artifact@v4
         with:
           name: legacy-client-apk
           path: .build/legacy-client.apk
           retention-days: 30
-          compression-level: 0
-
-      # baseline 腿的产物单独存一份，名字上就说清它不是发版包。
-      # 「过了全部自检」和「真机能进游戏」是两回事——删树之前要有人拿它验一次机，
-      # 那就得先能下载得到。保留期短，因为它只在验证窗口里有用。
-      - name: 📤 上传重建产物（仅供验证，不发版）
-        if: ${{ matrix.source == 'baseline' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: legacy-client-apk-from-baseline
-          path: .build/legacy-client.apk
-          retention-days: 7
           compression-level: 0
 
       # 公测直链：https://gh-proxy.org/https://github.com/MagirecoCN-Revival-
@@ -580,9 +560,8 @@ jobs:
       # 注意：gh release upload 的 <file>#<name> 语法里 '#' 只改显示标签，
       # 资产真实 name 仍按本地文件名走，必须先改名再传（与 sync-and-upload
       # 头注的虚空链接 bug 同源）。
-      # baseline 腿绝不发版：它是先行验证，产物只用来人工验机。
       - name: 🚀 发布 APK
-        if: ${{ inputs.verify_only != true && matrix.source == 'repo' }}
+        if: ${{ inputs.verify_only != true }}
         env:
           : ${{ secrets. }}
         run: |
@@ -660,15 +639,7 @@ jobs:
         if: always()
         run: |
           {
-            if [ "${{ matrix.source }}" = "baseline" ]; then
-              echo "## 构建结果（🌱 从Totentanz 整包重建，仅验证）"
-              echo
-              echo "> 工程树不是仓库里那棵，而是现取Totentanz 公开 Release 整包、apktool"
-              echo "> 解开、打 \`baseline/\` 的 patchset 重建出来的。这一腿**不上传发版**"
-              echo "> 产物，也不发 Release；它绿了才谈删掉仓库里的原包派生文件。"
-            else
-              echo "## 构建结果"
-            fi
+            echo "## 构建结果"
             echo
             if [ -f .build/legacy-client.apk ]; then
               echo "- 状态：✅ 成功"

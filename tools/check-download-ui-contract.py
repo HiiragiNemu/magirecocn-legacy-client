@@ -21,7 +21,12 @@ hud = Path("patch/src/main/java/io/kamihama/magianative/CNDebugHud.java").read_t
 aria2 = Path("patch/src/main/java/io/kamihama/magianative/CNAria2.java").read_text(encoding="utf-8")
 bgm = Path("patch/src/main/java/io/kamihama/magianative/CNBgm.java").read_text(encoding="utf-8")
 bgm_gen = Path("tools/convert-bgm.py").read_text(encoding="utf-8")
-manifest = Path("AndroidManifest.xml").read_text(encoding="utf-8")
+# AndroidManifest.xml 本身不在仓库里了（2026-08-14 起原包派生文件由 baseline/
+# 的 patchset 重建）。这里改读**补丁**，判据也随之变准：我们能负责的是「我们的
+# 改动加了什么、没加什么」，至于原包那一侧写了什么，由 apk.tree_fingerprint 钉住。
+manifest_patch = Path("baseline/patches/AndroidManifest.xml.patch").read_text(encoding="utf-8")
+manifest_added = [l[1:] for l in manifest_patch.splitlines() if l.startswith("+") and not l.startswith("+++")]
+manifest_removed = [l[1:] for l in manifest_patch.splitlines() if l.startswith("-") and not l.startswith("---")]
 
 
 def code_lines(src):
@@ -540,8 +545,13 @@ checks = {
     "曲名没把动画 OP 当成手游主题曲":
         '"かかわり"' in bgm and '"うつろい"' in bgm
         and "ごまかし" not in code(bgm),
-    "原包自带的悬浮窗权限必须保留": "SYSTEM_ALERT_WINDOW" in manifest,
-    "不主动申请全盘存储权限": "MANAGE_EXTERNAL_STORAGE" not in manifest,
+    # 订正（2026-08-14）：这条原先叫「原包自带的悬浮窗权限必须保留」，是错的
+    # ——看补丁就知道 SYSTEM_ALERT_WINDOW 是**我们加的**，原包没有。浮层要靠它，
+    # 所以判据是「我们的补丁必须加上它」，不是「别把它删了」。
+    "悬浮窗权限由我们的补丁加上":
+        any("SYSTEM_ALERT_WINDOW" in l for l in manifest_added),
+    "不主动申请全盘存储权限":
+        not any("MANAGE_EXTERNAL_STORAGE" in l for l in manifest_added),
 }
 
 failed = [name for name, ok in checks.items() if not ok]

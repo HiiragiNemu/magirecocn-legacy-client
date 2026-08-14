@@ -64,6 +64,14 @@ check("patch 的补丁文件不存在",
       lambda c: first(c, "patch").__setitem__("path", "no/such/file.smali"),
       "补丁文件缺失")
 
+# 删掉原包树之后最容易慢慢退化回去的一条：把清单里某个 keeper 摘掉，
+# 它在仓库里的那份就成了「patchset 之外的入库文件」，必须被点名。
+check("原包路径下混进了 patchset 之外的入库文件",
+      lambda c: c["ops"].remove(next(o for o in c["ops"]
+                                     if o["kind"] == "add"
+                                     and o["path"].startswith("assets/"))),
+      "patchset 里没有它")
+
 check("add 的内容与 post hash 对不上",
       lambda c: first(c, "add").__setitem__("post", "0" * 64),
       "post hash 对不上")

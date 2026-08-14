@@ -6,15 +6,21 @@
 
 本仓库长期以来是一整棵 apktool 重建树入库：入库文件里，只有 ~60 个是我们
 写的，其余全是构建链重建产物。上游 Puella-Care/client-apk 走的是另一条路——
-仓库正文只放补丁，整包放 Release。我们可以做得更干净：**连原包都不自己存**，
-构建时直接从Totentanz 公开 Release 取。
+仓库正文只放补丁，整包放 Release。我们做得更干净：**连原包都不自己存**，
+构建时直接从Totentanz 公开 Release 取。2026-08-14 起那棵树已从仓库删除。
 
 这个工具就是那条路上的机械部分：
 
     fetch   下载并校验发布仓库 Release APK 与 apktool，重建出「基线树」
-    regen   拿现有工程树反推出 patchset（开发时用，改完补丁重新生成）
     apply   在基线树上应用 patchset，还原出可构建的工程树
-    verify  apply 一遍，逐文件比对现有工程树，报告所有差异
+    verify  apply 一遍；给了 --tree 才额外与一棵完整外部树逐文件对账
+    regen   拿一棵**改过的工作树**反推出 patchset（改补丁时用）
+
+改补丁的流程（仓库里已经没有成品树可以直接改了）：
+
+    python3 tools/baseline.py apply --out work/tree
+    # 在 work/tree 里改
+    python3 tools/baseline.py regen          # 默认就读 work/tree
 
 ## 为什么分类是手写在 baseline.json 里、而不是自动推断
 
@@ -59,6 +65,7 @@ BASELINE_JSON = os.path.join(BASELINE_DIR, "baseline.json")
 PATCH_DIR = os.path.join(BASELINE_DIR, "patches")
 REPLACE_DIR = os.path.join(BASELINE_DIR, "replace")
 WORK = os.path.join(REPO, "work", "baseline")
+TREE = os.path.join(REPO, "work", "tree")   # apply 的默认落点，也是改补丁的工作树
 
 
 # ---------------------------------------------------------------- 基础工具
@@ -109,6 +116,15 @@ def save_conf(conf):
 
 def op_paths(conf, kind):
     return [op["path"] for op in conf["ops"] if op["kind"] == kind]
+
+
+def walk_files(root):
+    """遍历一棵树，产出相对路径（正斜杠），跳过 .git。"""
+    for d, dirs, files in os.walk(root):
+        if ".git" in dirs:
+            dirs.remove(".git")
+        for f in files:
+            yield os.path.relpath(os.path.join(d, f), root).replace(os.sep, "/")
 
 
 # ---------------------------------------------------------------- 补丁应用
@@ -375,13 +391,32 @@ def check_pre(path, op, rel):
 
 
 def cmd_verify(args):
-    """apply 一遍，再和现有工程树逐文件比。所有差异都要在 baseline.json 里有交代。"""
+    """apply 一遍，再（可选地）和一棵完整工程树逐文件比。
+
+    2026-08-14 之前仓库里存着整棵成品树，`--tree .` 就是拿重建结果和它对账。
+    那棵树删掉之后，**已经没有第二个事实来源可以对账了**——patchset 自己就是
+    定义。这不是放松了校验，链条仍然是闭合的：
+
+        fetch   APK sha256 + apktool 版本 + JDK 大版本 + 整棵重建树的指纹
+                ⇒ 基线树逐字节确定
+        apply   每条 op 的 pre hash（打的是不是我们以为的那份文件）
+                + post hash（打完是不是我们要的那份）
+                ⇒ 输出树逐字节确定
+
+    所以不带 `--tree` 时这里只跑 apply 并报告；带 `--tree` 时才做逐文件比对，
+    用于跟一棵外部的完整树核对（旧检出、解开的发行包等）。
+    """
     conf = load_conf()
     out = args.out or os.path.join(WORK, "applied")
     ns = argparse.Namespace(baseline=args.baseline, out=out)
     cmd_apply(ns)
 
     tree = args.tree
+    if not tree:
+        n = sum(1 for _ in walk_files(out))
+        print("\n重建完成：%d 个文件；每条 op 的 pre/post hash 均已核对。" % n)
+        print("（没给 --tree，不做逐文件比对——仓库里已经没有第二棵树可比了）")
+        return 0
     roots = tuple(conf["compare_roots"])
     exact, prefixes = set(), []
     for grp in conf["expected_divergence"]:
@@ -394,15 +429,7 @@ def cmd_verify(args):
     prefixes = tuple(prefixes)
 
     def walk(root):
-        seen = set()
-        for d, dirs, files in os.walk(root):
-            if ".git" in dirs:
-                dirs.remove(".git")
-            for f in files:
-                rel = os.path.relpath(os.path.join(d, f), root).replace(os.sep, "/")
-                if rel.startswith(roots):
-                    seen.add(rel)
-        return seen
+        return {rel for rel in walk_files(root) if rel.startswith(roots)}
 
     a, b = walk(out), walk(tree)
 
@@ -466,9 +493,11 @@ def main():
     p.add_argument("--java", default=None, help="重建用的 java 可执行文件（默认 PATH 上的 java）")
     p.set_defaults(func=cmd_fetch)
 
-    p = sub.add_parser("regen", help="从现有工程树反推 patchset 内容与 hash")
+    # 改补丁的流程（仓库里已经没有成品树了）：
+    #   baseline.py apply --out work/tree   →  在 work/tree 里改  →  regen
+    p = sub.add_parser("regen", help="从一棵改过的工程树反推 patchset 内容与 hash")
     p.add_argument("--baseline", default=os.path.join(WORK, "dec"))
-    p.add_argument("--tree", default=REPO)
+    p.add_argument("--tree", default=TREE)
     p.set_defaults(func=cmd_regen)
 
     p = sub.add_parser("apply", help="在基线树上应用 patchset")
@@ -476,9 +505,10 @@ def main():
     p.add_argument("--out", default=os.path.join(WORK, "applied"))
     p.set_defaults(func=cmd_apply)
 
-    p = sub.add_parser("verify", help="重建后与现有工程树逐文件比对")
+    p = sub.add_parser("verify", help="重建；给了 --tree 才做逐文件比对")
     p.add_argument("--baseline", default=os.path.join(WORK, "dec"))
-    p.add_argument("--tree", default=REPO)
+    p.add_argument("--tree", default=None,
+                   help="要对账的完整工程树；不给就只重建并核对每条 op 的 hash")
     p.add_argument("--out", default=None)
     p.set_defaults(func=cmd_verify)
 

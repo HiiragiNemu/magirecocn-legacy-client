@@ -59,6 +59,7 @@
 """
 
 import hashlib
+import argparse
 import os
 import re
 import struct
@@ -171,6 +172,15 @@ def check_redirect_target():
 
 
 def main():
+    # 字体在**重建树**里，不在仓库里（2026-08-14 起原包派生文件已从仓库删除）。
+    # 所以要么给 --tree 指到重建树，要么先跑 baseline.py apply。
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--tree", default=os.environ.get("TREE", "."),
+                    help="客户端基线树根，默认取环境变量 TREE，再默认当前目录")
+    args = ap.parse_args()
+    global FONT_DIR
+    FONT_DIR = os.path.join(args.tree, FONT_DIR)
+
     if not os.path.isdir(FONT_DIR):
         print("找不到目录 " + FONT_DIR, file=sys.stderr)
         return 2

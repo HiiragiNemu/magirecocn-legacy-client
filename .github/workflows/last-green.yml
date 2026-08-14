@@ -111,8 +111,12 @@ jobs:
       - name: 🛡 跑全部守卫
         run: |
           set -euo pipefail
+          # ⚠ check-fonts 与 check-webview-interceptor 已迁到 build-apk.yml。
+          # 它们读的是**工程树**里的文件（字体、引擎 web 那几个 smali），而
+          # 2026-08-14 起工程树不在仓库里了——要在这边跑就得先下 80 MB 重建一次，
+          # 每次 push 都做不划算。守卫跟着它要检查的东西走。
           for g in check-proxy-hooks check-base-urls check-entry-guard \
-                   check-fonts check-webview-interceptor check-branch-hygiene \
+                   check-branch-hygiene check-baseline check-third-party-notices \
                    check-debug-flag-boundary check-docs-fresh; do
             python3 tools/$g.py
           done
