@@ -303,6 +303,7 @@ public final class CNDownloadUiAssist {
 
     private static void detachRefs() {
         unwatchViewport();
+        lastGeometry = null;
         attachedOverlay = null;
         contentRoot = null;
         hScroll = null;
@@ -441,6 +442,65 @@ public final class CNDownloadUiAssist {
         // 两栏被撑大，再调小就回不去」：内容宽度确实缩回去了，但 scrollX 还停在
         // 原处，而滚动条又已经按「没溢出」关掉——看起来就是两栏歪着且拉不回来。
         styleScrollbars();
+        logGeometry();
+    }
+
+    /** 上一次打出来的几何快照，用来判重——只在数字真的变了时才记一行。 */
+    private static String lastGeometry;
+
+    /**
+     * 把左右宽度**实际算成了什么**打进日志。
+     *
+     * <h3>为什么这行日志值得常驻</h3>
+     *
+     * 这一层的宽度问题已经复发过三轮（反馈环 → 算死像素 → 现在这版），而每一轮的
+     * 排查都卡在同一个地方：<b>看得见现象，看不见数字</b>。「左右宽度不对」这句话
+     * 对应至少四种完全不同的故障——视口取错、weight 没生效、内容被自己的最小宽度
+     * 顶开、缩放把某一列撑爆——而它们在屏幕上长得一样，靠读代码分不出来。
+     *
+     * <p>成本接近零：布局稳定后每种尺寸只记一行（{@link #lastGeometry} 判重），
+     * 屏幕不变就再也不打。这点开销换掉一整轮「猜—发版—再猜」。
+     */
+    private static void logGeometry() {
+        try {
+            View root = contentRoot;
+            HorizontalScrollView hs = hScroll;
+            if (root == null || hs == null) return;
+            // 还没测量过就别记：那时候全是 0，只会污染日志。
+            if (hs.getWidth() <= 0 || root.getWidth() <= 0) return;
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("视口=").append(hs.getWidth())
+              .append('(').append(hs.getPaddingLeft()).append('/')
+              .append(hs.getPaddingRight()).append(')')
+              .append(" 内容=").append(root.getWidth())
+              .append(" lp=").append(root.getLayoutParams() == null
+                      ? "?" : String.valueOf(root.getLayoutParams().width))
+              .append(" 字号=").append(scalePct).append('%')
+              .append(" 分界=").append(splitPct).append('%');
+            if (root instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) root;
+                sb.append(" 列=[");
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    if (i > 0) sb.append(',');
+                    View c = g.getChildAt(i);
+                    sb.append(c.getWidth());
+                    ViewGroup.LayoutParams clp = c.getLayoutParams();
+                    if (clp instanceof LinearLayout.LayoutParams) {
+                        sb.append('@').append(((LinearLayout.LayoutParams) clp).weight);
+                    }
+                }
+                sb.append(']');
+            }
+            android.util.DisplayMetrics m = root.getResources().getDisplayMetrics();
+            sb.append(" 屏=").append(m.widthPixels).append('x').append(m.heightPixels)
+              .append(" d=").append(m.density);
+
+            String now = sb.toString();
+            if (now.equals(lastGeometry)) return;
+            lastGeometry = now;
+            CNLog.i("界面", "浮层几何 " + now);
+        } catch (Throwable ignore) {}
     }
 
     // ══ 字号 ═══════════════════════════════════════════════════════════
