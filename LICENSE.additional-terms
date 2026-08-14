@@ -34,15 +34,19 @@ TERMS
 
      The GNU GPL v3 license in LICENSE covers only this repository's
      original patch layer and tooling (the `patch/` directory, the
-     `tools/` directory, and the documentation written by the
-     maintainers). The following are NOT covered and remain the property
-     of their respective right holders, who are not granting rights
-     under this License:
+     `tools/` directory, the `baseline/` patchset, the native sources
+     under `magia-native/`, the artwork under `assets/magia/`, and the
+     documentation written by the maintainers). The following are NOT
+     covered and remain the property of their respective right holders,
+     who are not granting rights under this License:
 
         - the game engine bytecode under `smali/`, `smali_classes2/`,
           `smali_classes3/` (the classes.dex family);
         - the game assets and native libraries under `assets/`, `lib/`,
-          `res/`, `kotlin/`, `META-INF/`;
+          `res/`, `kotlin/`, `META-INF/` — EXCEPT for the files listed
+          in THIRD-PARTY-NOTICES.md, which are free software added by
+          this project and are NOT the game rights holders' material
+          (see term 5 below);
         - the reference copies under `original/`.
 
      Those come from a third-party commercial APK (base package signed
@@ -76,6 +80,37 @@ TERMS
      in the upstream repository at the link above. The MIT license
      applies to those derived portions; everything else in this
      repository is covered by the GPL v3 license in LICENSE.
+
+  5. (Free software bundled by this project — NOT game material)
+
+     A few files under `assets/` and `lib/` were added by this project
+     and do not come from the base APK at all. Term 3 used to sweep them
+     in with the game rights holders' material, which was factually
+     wrong in both directions: it misattributed free software to a
+     rights holder who has nothing to do with it, and it silently
+     dropped the notices those licenses require.
+
+     Each such file, its upstream, its license and its obligations are
+     recorded in THIRD-PARTY-NOTICES.md, which is part of this
+     distribution. Two of them carry obligations beyond attribution:
+
+        - `assets/aria2/aria2c-arm`, `assets/aria2/aria2c-arm64`
+          are aria2 1.37.0, GPL v2 OR LATER, statically linked
+          (OpenSSL included under aria2's own OpenSSL linking
+          exception). Conveying them obliges the conveyor to make the
+          corresponding source available. This project conveys them
+          under GPL v3 (as permitted by "or later") together with the
+          source pointers and written offer in THIRD-PARTY-NOTICES.md.
+
+        - `assets/fonts/mbm_20160902.ttf` is Apache-2.0 and is a
+          MODIFIED derivative of Adobe's Source Han family; the
+          modification is stated in THIRD-PARTY-NOTICES.md as
+          Apache-2.0 section 4(b) requires.
+
+     Nothing in these additional terms restricts the rights granted by
+     those upstream licenses. Where this file and an upstream license
+     appear to conflict as to that upstream's own material, the upstream
+     license governs.
 
 
 SCOPE

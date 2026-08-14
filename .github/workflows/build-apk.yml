@@ -153,6 +153,14 @@ jobs:
           python3 tools/check-baseline.py
           python3 tools/test-check-baseline.py
 
+      # assets/ 与 lib/ 底下绝大多数东西来自原包，但有几个是我们塞进去的自由软件
+      # （aria2 是 GPLv2+，带「提供对应源码」的硬义务）。漏声明这种事不会有人发现
+      # ——编译过、装机跑得好好的，只有真出事那天才知道少了什么。
+      - name: ⚖️ 校验第三方组件声明没有漏项
+        run: |
+          python3 tools/check-third-party-notices.py
+          python3 tools/test-check-third-party-notices.py
+
       # 代理这条线换过四次路线、停用过三次，而停用的做法是删掉 H() 安装、
       # 留下实现。这一步核对「实现存在」与「真的被安装」是否一致，并要求每个
       # 未安装的实现都写明停用原因——否则谁都分不清哪些还在跑。

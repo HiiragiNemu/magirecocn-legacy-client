@@ -73,10 +73,20 @@ public final class CNAria2 {
 
     private static final String TAG = "CNAria2";
 
-    // 内置静态二进制（Cross-Compiled-Binaries-Android，aria2 v1.37.0，全静态）：
+    // 内置静态二进制：aria2 v1.37.0，全静态（0 条 NEEDED，OpenSSL 已编入）。
     //   aria2c-arm64 sha256 6705bac56e0752b26b22d4aa98cf5caa0f4672904e6cbf0ac2f516cc5f05797d
-    //   aria2c-arm   sha256 b06494c59df4c3536ad68dfc1ce5b33d3e638cd1eae845ae5452709b35ed1270bb
+    //   aria2c-arm   sha256 b06494c59df4c3536ad68dfc1ce5b33d3e638cd1e845ae5452709b35ed1270bb
     // 资产文件、对应 ABI 前缀、预期字节数三者同步维护；换二进制时三处一起改。
+    //
+    // 来源：github.com/Zackptg5/Cross-Compiled-Binaries-Android，路径
+    // aria2/aria2c.bin-arm 与 aria2/aria2c.bin-arm64（master @ 9c14dc3a，2026-08-14）。
+    // ⚠ 我们把 `.bin` 去掉了：上游那边不带 .bin 的同名文件是个 shell 包装脚本，
+    // 不是二进制——旧注释只写「来源 Cross-Compiled-Binaries-Android」，照着找会
+    // 拿到 142 字节的脚本，这是它当初再也没人复现得了的原因。
+    //
+    // 🔴 aria2 是 GPLv2-or-later（附 OpenSSL 链接例外）。分发这两个文件带着
+    // 「提供对应源码」的义务，源码指向与书面要约写在 THIRD-PARTY-NOTICES.md，
+    // tools/check-third-party-notices.py 在 CI 里守着，别把那条删了。
     private static final String[][] ASSETS = {
             {"arm64-v8a", "aria2/aria2c-arm64", "10146592"},
             {"armeabi-v7a", "aria2/aria2c-arm", "8319744"},
