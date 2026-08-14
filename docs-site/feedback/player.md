@@ -13,9 +13,9 @@
 
 点下面对应模板，照着填就行，带 \* 的是必填：
 
-- 🐞 [报 Bug](https://（本仓库）/issues/new?template=bug_report.yml)
-- 🔤 [报误译 / 漏翻](https://（本仓库）/issues/new?template=translation.yml)
-- 💬 [体验与建议](https://（本仓库）/issues/new?template=feedback.yml)
+- 🐞 [报 Bug](https://github.com/MagirecoCN-Revival-Project/legacy-client/issues/new?template=bug_report.yml)
+- 🔤 [报误译 / 漏翻](https://github.com/MagirecoCN-Revival-Project/legacy-client/issues/new?template=translation.yml)
+- 💬 [体验与建议](https://github.com/MagirecoCN-Revival-Project/legacy-client/issues/new?template=feedback.yml)
 
 ## 截图怎么截才有用
 

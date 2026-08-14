@@ -47,7 +47,7 @@ export default defineConfig({
     socialLinks: [
       {
         icon: 'github',
-        link: 'https://（本仓库）',
+        link: 'https://github.com/MagirecoCN-Revival-Project/legacy-client',
       },
     ],
 

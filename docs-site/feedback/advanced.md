@@ -56,12 +56,12 @@ adb logcat -d -s MagiaCN_Legacy:V AndroidRuntime:E > logcat.txt
 
 | 开关 | 效果 | 用来定位 |
 |---|---|---|
-| `logI18nMiss` | 把「流经 native 文本 hook 但没翻到」的日文打进 logcat | 收集漏翻（[方法见仓库 i18n/README](https://（本仓库）/blob/main/i18n/README.md)） |
+| `logI18nMiss` | 把「流经 native 文本 hook 但没翻到」的日文打进 logcat | 收集漏翻（[方法见仓库 i18n/README](https://github.com/MagirecoCN-Revival-Project/legacy-client/blob/main/i18n/README.md)） |
 | `logI18nMissAll` | 同上但不筛字符集（噪音大） | 确认英文/纯汉字串走不走 native 层 |
 | `skipOverlay` | 不出现下载浮层 | 浮层本身导致的卡死 |
 | `failDownload` | 注入下载失败 | 协助复现换线/重试问题 |
 
-完整开关表与边界规则见仓库 README 的[「调试开关目录」](https://（本仓库）#%E8%B0%83%E8%AF%95%E5%BC%80%E5%85%B3%E7%9B%AE%E5%BD%95%E6%8E%92%E6%9F%A5%E7%94%A8%E7%8E%A9%E5%AE%B6%E7%A2%B0%E4%B8%8D%E5%88%B0)一节。
+完整开关表与边界规则见仓库 README 的[「调试开关目录」](https://github.com/MagirecoCN-Revival-Project/legacy-client#%E8%B0%83%E8%AF%95%E5%BC%80%E5%85%B3%E7%9B%AE%E5%BD%95%E6%8E%92%E6%9F%A5%E7%94%A8%E7%8E%A9%E5%AE%B6%E7%A2%B0%E4%B8%8D%E5%88%B0)一节。
 
 ::: warning 用完记得删
 开关是为排查设计的退化行为，开着某些开关游戏**本来就不会正常**。
@@ -80,11 +80,11 @@ adb logcat -d -s MagiaCN_Legacy | sed -n 's/.*\[i18n-miss\]\[[^]]*\] //p' | sort
 ```
 
 `miss.tsv` 就是现成的「日文原文清单」，直接附到
-[误译/漏翻 Issue](https://（本仓库）/issues/new?template=translation.yml)。
+[误译/漏翻 Issue](https://github.com/MagirecoCN-Revival-Project/legacy-client/issues/new?template=translation.yml)。
 
 ::: tip 没有 root 也能报漏翻
 不进游戏也能报：直接把看到的日文句子 + 截图发到
-[误译/漏翻 Issue](https://（本仓库）/issues/new?template=translation.yml)，
+[误译/漏翻 Issue](https://github.com/MagirecoCN-Revival-Project/legacy-client/issues/new?template=translation.yml)，
 标注大致出处（哪章哪话/哪个按钮），我们定位后仍会修。
 ::: 
 

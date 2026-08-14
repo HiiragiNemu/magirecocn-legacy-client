@@ -2,18 +2,19 @@
 
 ## 下载
 
-客户端发布在 GitHub Releases：
+**直链下载（推荐）**：
 
-- **最新版（推荐）**：[Releases · latest](https://（本仓库）/releases/latest)
-- 全部历史版本：[Releases 列表](https://（本仓库）/releases)
+<https://assets.example/magireco-latest-legacy-client.apk>
 
-APK 文件名形如 `legacy-client-1.0.<构建号>.apk`，构建号单调递增，
-数字越大越新。
+这条走 edge 加速，国内直连。另有两条备选，把主机名里的 `edge.` 换成
+`esa.`（阿里 ESA）或 `r2.` 即可——三条指向同一个文件。
 
-::: tip 国内下载慢？
-客户端直链走我们自己的 edge 加速：
-`https://assets.example/magireco-latest-legacy-client.apk`
-另有阿里 ESA 与 object-storage 两条备选，把主机名换成 `esa.` / `r2.` 即可。
+链接固定指向**最新版**，不带版本号；装好后在下载浮层里能看到本机的客户端版本
+（形如 `1.0.<构建号>`）。客户端自己也会检查版本，落后太多时会提示更新。
+
+::: tip 为什么不给「历史版本」列表
+旧版本对着的往往是旧的资源与线路配置，装上大概率连不通，留着只会让人装错。
+需要特定版本请走[反馈通道](/feedback/)说明用途。
 :::
 
 ## 安装

@@ -1,9 +1,9 @@
 # 更新日志
 
-客户端版本以 CI 构建号命名（`1.0.<构建号>`），每个版本对应的
-APK 与改动说明都在 GitHub Releases：
+客户端版本以 CI 构建号命名（`1.0.<构建号>`）。构建号单调递增，
+每次构建都能回溯到具体一次 CI 运行。
 
-👉 **[Releases · （本仓库）](https://（本仓库）/releases)**
+👉 **[下载最新版](/download)**（直链固定指向最新，不用挑版本）
 
 ## 两类更新，两种速度
 
@@ -21,5 +21,4 @@ APK 与改动说明都在 GitHub Releases：
 - **1.0.83+** armeabi-v7a（32 位设备）native string 布局兼容
 - **1.0.84+** i18n 前缀匹配与热重载指纹修复
 
-完整提交历史见
-[commits · main](https://（本仓库）/commits/main)。
+补丁层与工具链的源码、提交历史都在[代码仓库](https://github.com/MagirecoCN-Revival-Project/legacy-client)。

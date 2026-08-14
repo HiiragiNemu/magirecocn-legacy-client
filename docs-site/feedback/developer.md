@@ -4,7 +4,7 @@
 
 ## 仓库
 
-[（本仓库）](https://（本仓库）)
+[代码仓库](https://github.com/MagirecoCN-Revival-Project/legacy-client)
 
 这不是从零写的客户端：基础 APK（`io.kamihama.totentanz`）作为基线，
 CI 可重新构建；我们的改动集中在**补丁层**：
@@ -35,8 +35,8 @@ python3 tools/check-debug-flag-boundary.py    # 调试开关边界
 - **一个逻辑改动一个 commit**，Commit message 用 Conventional Commits
   （`feat(hook):` / `fix(inject):`），正文说明改动理由，并带一行 `文档: …`
   声明文档影响（commit-msg 钩子强制）。
-- 开工前读 [CONTRIBUTING.md](https://（本仓库）/blob/main/CONTRIBUTING.md)，
-  并在 [ACTIVE.md](https://（本仓库）/blob/main/ACTIVE.md)
+- 开工前读 [CONTRIBUTING.md](https://github.com/MagirecoCN-Revival-Project/legacy-client/blob/main/CONTRIBUTING.md)，
+  并在 [ACTIVE.md](https://github.com/MagirecoCN-Revival-Project/legacy-client/blob/main/ACTIVE.md)
   登记你在动哪片（10 秒成本，消灭对撞）。
 - CI 守门：push 复验 → 全量回归 → 通过自动打 `last-green` 锚点；
   红灯期间只允许修复主线的提交。
@@ -44,11 +44,10 @@ python3 tools/check-debug-flag-boundary.py    # 调试开关边界
 
 ## 翻译贡献
 
-- 引擎硬编码串（弹窗、战斗台词、下载/网络错误）：
-  改 外部发布渠道
-  的 `madomagi/engine_i18n.tsv`，随 JS 热更包下发，不用重出 APK。
-- 前端（WebView 一半）：同仓库 `i18n/` 下四张 TSV 对照表。
-- 判一句日文该归哪一层：[i18n/README.md](https://（本仓库）/blob/main/i18n/README.md) 有判据，别猜。
+- 引擎硬编码串（弹窗、战斗台词、下载/网络错误）：改 `engine_i18n.tsv`，
+  随 JS 热更包下发，不用重出 APK。那张表不在本仓库，走反馈通道联系维护者。
+- 前端（WebView 一半）：本仓库 `i18n/` 下四张 TSV 对照表。
+- 判一句日文该归哪一层：[i18n/README.md](https://github.com/MagirecoCN-Revival-Project/legacy-client/blob/main/i18n/README.md) 有判据，别猜。
 
 ## 提 PR 前
 
