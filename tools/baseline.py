@@ -47,6 +47,7 @@ import difflib
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -188,16 +189,86 @@ def cmd_fetch(args):
     apk = grab(conf["apk"], "upstream.apk")
     jar = grab(conf["apktool"], "apktool.jar")
 
+    java = args.java or "java"
+    check_jdk(conf, java)
+
     dec = os.path.join(WORK, "dec")
     if args.force and os.path.isdir(dec):
         shutil.rmtree(dec)
     if os.path.isdir(dec):
         print("基线树已存在，跳过重建（要重来加 --force）：%s" % dec)
-        return 0
-    print("重建（apktool %s）…" % conf["apktool"]["version"])
-    subprocess.check_call(["java", "-jar", jar, "d", "-f", "-o", dec, apk])
+    else:
+        print("重建（apktool %s）…" % conf["apktool"]["version"])
+        subprocess.check_call([java, "-jar", jar, "d", "-f", "-o", dec, apk])
+    check_fingerprint(conf, dec)
     print("基线树：%s" % dec)
     return 0
+
+
+def java_major(java):
+    """取 java 的主版本号。`java -version` 走 stderr，格式历来是 "21.0.10" 或 "1.8.0"。"""
+    out = subprocess.run([java, "-version"], capture_output=True, text=True).stderr
+    m = re.search(r'version "(\d+)(?:\.(\d+))?', out)
+    if not m:
+        raise SystemExit("认不出 java 版本，`%s -version` 输出：\n%s" % (java, out))
+    major = int(m.group(1))
+    return int(m.group(2) or 0) if major == 1 else major
+
+
+def check_jdk(conf, java):
+    """JDK 主版本也是钉死项之一 —— 理由见 baseline.json 的 jdk.why。"""
+    spec = conf.get("jdk")
+    if not spec:
+        return
+    got = java_major(java)
+    lo, hi = spec.get("min_major"), spec.get("max_major")
+    if (lo and got < lo) or (hi and got > hi):
+        raise SystemExit(
+            "JDK 版本不在钉死区间：需要 %s，实得 %d（%s）\n  %s\n"
+            "  换一个合规的 JDK，或用 --java 指定它的 java 可执行文件。"
+            % ("%s–%s" % (lo or "*", hi or "*"), got, java, spec.get("why", "")))
+    print("JDK 主版本 %d（钉死区间 %s–%s）" % (got, lo or "*", hi or "*"))
+
+
+def tree_fingerprint(root):
+    """整棵树的指纹：把每个文件的「相对路径 + sha256」排序后再哈希一次。
+
+    单个文件的 hash 只能发现「这个文件变了」；指纹能发现「这棵树和当初那棵不是
+    同一棵」——包括多了文件、少了文件。重建环境一旦漂移（apktool 换版本、JDK 换
+    大版本），这里立刻炸，而不是等到某个没打补丁的文件在 verify 里冒出来。
+    """
+    h = hashlib.sha256()
+    items = []
+    for d, dirs, files in os.walk(root):
+        if ".git" in dirs:
+            dirs.remove(".git")
+        for f in files:
+            p = os.path.join(d, f)
+            rel = os.path.relpath(p, root).replace(os.sep, "/")
+            if rel == "apktool.yml":
+                continue          # 带 apkFileName，不是 APK 内容的纯函数
+            items.append((rel, sha256_file(p)))
+    for rel, digest in sorted(items):
+        h.update(("%s %s\n" % (rel, digest)).encode("utf-8"))
+    return h.hexdigest(), len(items)
+
+
+def check_fingerprint(conf, dec):
+    want = (conf.get("apk") or {}).get("tree_fingerprint")
+    got, n = tree_fingerprint(dec)
+    if not want:
+        print("基线树指纹（%d 个文件）：%s\n  ← baseline.json 里还没记，"
+              "确认无误后填进 apk.tree_fingerprint" % (n, got))
+        return
+    if got != want:
+        raise SystemExit(
+            "基线树指纹不符（%d 个文件）\n  期望 %s\n  实得 %s\n"
+            "  同一个 APK 解出了不一样的树——查重建工具链：apktool 版本、JDK 大版本。\n"
+            "  （踩过一次：构建链给 const 指令加的 float 注释来自 Float.toString，\n"
+            "    JDK 19 换了最短表示算法，同一常量在 17 上是 -8.2930312E7f、\n"
+            "    在 21 上是 -8.293031E7f。注释不影响 dex，但树就不是同一棵了。）"
+            % (n, want, got))
+    print("基线树指纹相符（%d 个文件）" % n)
 
 
 def cmd_regen(args):
@@ -344,15 +415,45 @@ def cmd_verify(args):
                     if not excused(p)
                     and sha256_file(os.path.join(out, p)) != sha256_file(os.path.join(tree, p)))
 
-    for title, items in (("现有树里多出来", only_tree), ("重建树里多出来", only_out), ("内容不同", differ)):
+    for title, items in (("现有树里多出来", only_tree), ("重建树里多出来", only_out)):
         print("\n=== %s：%d ===" % (title, len(items)))
         for p in items[:40]:
             print("   ", p)
         if len(items) > 40:
             print("    …还有 %d 个" % (len(items) - 40))
+
+    # 「内容不同：1」这种报法在 CI 里毫无用处——看不到差在哪就没法判断是我们改漏了
+    # 还是重建环境漂移了。所以直接把差异打出来（限量，别刷屏）。
+    print("\n=== 内容不同：%d ===" % len(differ))
+    for p in differ[:10]:
+        print("\n--- %s" % p)
+        show_diff(os.path.join(out, p), os.path.join(tree, p))
+    if len(differ) > 10:
+        print("\n…还有 %d 个不同的文件（未展开）" % (len(differ) - 10))
+
     bad = len(only_tree) + len(only_out) + len(differ)
     print("\n未交代的差异共 %d 个" % bad)
     return 1 if bad else 0
+
+
+def show_diff(a, b, max_lines=40):
+    """打出两份文件的差异。文本走 unified diff，二进制只报大小与首个不同的字节位置。"""
+    try:
+        ta = open(a, "rb").read().decode("utf-8").splitlines(keepends=True)
+        tb = open(b, "rb").read().decode("utf-8").splitlines(keepends=True)
+    except UnicodeDecodeError:
+        sa, sb = os.path.getsize(a), os.path.getsize(b)
+        da, db = open(a, "rb").read(), open(b, "rb").read()
+        at = next((i for i in range(min(len(da), len(db))) if da[i] != db[i]), min(len(da), len(db)))
+        print("    二进制：重建 %d 字节 / 现有 %d 字节，首个不同字节在偏移 %d" % (sa, sb, at))
+        return
+    shown = 0
+    for line in difflib.unified_diff(ta, tb, fromfile="重建", tofile="现有", n=1):
+        sys.stdout.write("    " + line if line.endswith("\n") else "    " + line + "\n")
+        shown += 1
+        if shown >= max_lines:
+            print("    …（差异过长，已截断）")
+            break
 
 
 def main():
@@ -362,6 +463,7 @@ def main():
 
     p = sub.add_parser("fetch", help="下载并校验上游 APK 与 apktool，重建出基线树")
     p.add_argument("--force", action="store_true", help="已有基线树时也重新重建")
+    p.add_argument("--java", default=None, help="重建用的 java 可执行文件（默认 PATH 上的 java）")
     p.set_defaults(func=cmd_fetch)
 
     p = sub.add_parser("regen", help="从现有工程树反推 patchset 内容与 hash")

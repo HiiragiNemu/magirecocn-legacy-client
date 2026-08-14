@@ -182,11 +182,26 @@ jobs:
       # 这一步同时办了两件事：产出待构建的 work/tree，并**在 CI 里**证明它与
       # 仓库那棵成品树逐字节一致（不是只在某个 Agent 的机器上证明过）。
       # 两棵树一致 ⇒ apktool b 的输入一致 ⇒ 产物一致，不必再构建两次去比 APK。
+      # ⚠ 重建必须用 JDK 19+，不能用本 job 的 JDK 17。构建链给 const 指令附的
+      # float 注释来自 Float.toString，JDK 19 换了「最短且能 round-trip」的算法：
+      # 同一常量在 17 上是 -8.2930312E7f、在 19+ 上是 -8.293031E7f。整个 APK 里只有
+      # MurmurHash3.smali 撞上这一处，注释也不影响 dex——但树就不是同一棵了。
+      # 2026-08-14 第一次跑这条腿就栽在这儿：verify 报「内容不同：1」，而那个文件是
+      # 与我们毫无关系的 GMS 工具类，现象完全指不向真正的原因。
+      # 只在这一步换 JAVA_HOME，别动整个 job 的 JDK（javac / d8 那边按 17 调好的）。
       - name: 🌱 从Totentanz 整包重建工程树
         if: matrix.source == 'baseline'
         run: |
           set -euo pipefail
-          python3 tools/baseline.py fetch
+          J21="${JAVA_HOME_21_X64:-}"
+          if [ -z "$J21" ] || [ ! -x "$J21/bin/java" ]; then
+            echo "::error::runner 上找不到 JDK 21（JAVA_HOME_21_X64 未设或不可用）"
+            exit 1
+          fi
+          export JAVA_HOME="$J21"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          java -version
+          python3 tools/baseline.py fetch --java "$J21/bin/java"
           python3 tools/baseline.py verify --out work/tree
           echo "重建树：$(find work/tree -type f | wc -l) 个文件"
 

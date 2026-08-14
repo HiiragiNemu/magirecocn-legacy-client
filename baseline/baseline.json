@@ -4,13 +4,19 @@
     "version": "1.2.0-r1_r129",
     "url": "https://github.com/Puella-Care/client-apk/releases/download/1.2.0-r1/totentanz-1.2.0-r1_r129.apk",
     "sha256": "04dd3f78f12a07b92d8c03d6a4ed4806d0ef89e2ddff5707d35e0b4662da78f1",
-    "why": "上游 Puella-Care 公开发行的整包。我们一份原包都不自己存，构建时现取现解。"
+    "why": "上游 Puella-Care 公开发行的整包。我们一份原包都不自己存，构建时现取现解。",
+    "tree_fingerprint": "ae69c81aa36bcd39069a433d0637db0811272743381b2cb9c0b1d986c2882784",
+    "tree_fingerprint_why": "整棵重建树的指纹（每个文件的「路径 + sha256」排序后再哈希；apktool.yml 除外，它带 apkFileName，不是 APK 内容的纯函数）。单文件 hash 只能发现「这个文件变了」，指纹能发现「这棵树和当初那棵不是同一棵」——包括多了/少了文件。重建工具链一漂移就在 fetch 那步炸，而不是等某个没打补丁的文件在 verify 里冒出来。"
   },
   "apktool": {
     "version": "2.9.3",
     "url": "https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar",
     "sha256": "7956eb04194300ce0d0a84ad18771eebc94b89fb8d1ddcce8ea4c056818646f4",
     "why": "重建结果与 apktool 版本强相关，换版本会让所有 pre hash 失配——所以钉死。"
+  },
+  "jdk": {
+    "min_major": 19,
+    "why": "重建用的 JDK 大版本也得钉死。构建链给 const 指令附的 float 注释来自 Float.toString，而 JDK 19 换成了「最短且能 round-trip」的新算法：同一个常量 -0x3361d2af 在 JDK 17 上写作 -8.2930312E7f、在 19+ 上写作 -8.293031E7f。两者都正确，但树就不是同一棵了。整个 APK 里只有 MurmurHash3.smali 一个文件撞上——正因为只有一个，才更值得钉：不钉的话它会在换机器时偶发地冒出来，而现象（一个与我们无关的 GMS 工具类内容不同）完全指不向真正的原因。注释不影响 dex，产物其实一样，但 verify 要的是逐字节一致，放它过去就等于承认这套等式可以有例外。"
   },
   "compare_roots": [
     "smali",

@@ -68,6 +68,19 @@ def run(conf_path=None, quiet=False):
         if not spec.get("why"):
             bad("%s.why 空着——钉死一个版本总得说清为什么" % key)
 
+    # 重建树的指纹：单文件 hash 只管得住打过补丁的那 14 个，指纹管得住整棵树。
+    # 少了它，「同一个 APK 解出了不一样的树」这类环境漂移只会在某个没打补丁的
+    # 文件上偶发地冒出来，而现象指不向原因（踩过：JDK 19 换了 Float.toString 的
+    # 最短表示算法，MurmurHash3.smali 的一句注释就变了）。
+    if not HEX64.match(str((conf.get("apk") or {}).get("tree_fingerprint", ""))):
+        bad("apk.tree_fingerprint 没填或形状不对——整棵重建树没有指纹就管不住环境漂移")
+
+    jdk = conf.get("jdk") or {}
+    if not isinstance(jdk.get("min_major"), int):
+        bad("jdk.min_major 没填——重建用的 JDK 大版本也是钉死项，理由见 jdk.why")
+    if not jdk.get("why"):
+        bad("jdk.why 空着——钉死 JDK 版本这种反直觉的约束尤其要写清为什么")
+
     ops = conf.get("ops") or []
     if not ops:
         bad("ops 是空的")

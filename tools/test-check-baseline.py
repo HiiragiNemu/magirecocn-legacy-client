@@ -88,6 +88,16 @@ check("钉死项的 sha256 形状不对",
       lambda c: c["apk"].__setitem__("sha256", "deadbeef"),
       "sha256 不是 64 位"),
 
+# 下面两条是 2026-08-14 那次 CI 红灯补上的：同一个 APK 在 JDK 17 和 21 上解出了
+# 不一样的树，而单文件 hash 只覆盖打过补丁的 14 个文件，一个都没盖住它。
+check("整棵重建树没有指纹",
+      lambda c: c["apk"].pop("tree_fingerprint", None),
+      "管不住环境漂移")
+
+check("没钉重建用的 JDK 大版本",
+      lambda c: c.pop("jdk", None),
+      "JDK 大版本也是钉死项")
+
 check("预期内差异不写理由",
       lambda c: c["expected_divergence"][0].__setitem__("why", ""),
       "不写理由就是掩盖差异")
