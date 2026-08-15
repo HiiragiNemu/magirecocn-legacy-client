@@ -218,11 +218,13 @@ public final class CNHotUpdateCheck {
         new Pkg("台词包",
                 "version_scenario.json", "scenario_version",
                 "cn_scenario_update.zip",
-                "cn_scenario_update.zip", "scenario", 0),
+                "cn_scenario_update.zip", "scenario",
+                CNDownloaderFix.HOT_SLOT_SCENARIO),
         new Pkg("前端脚本",
                 "version_js.json", "js_version",
                 "cn_js_update.zip",
-                "cn_js_update_hot.zip", "js", 1),
+                "cn_js_update_hot.zip", "js",
+                CNDownloaderFix.HOT_SLOT_JS),
     };
 
     // ==================================================================

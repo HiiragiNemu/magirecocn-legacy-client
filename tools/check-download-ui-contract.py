@@ -87,6 +87,28 @@ def body(src, signature):
     return ""
 
 
+
+def file_name_table(text):
+    """取 FILE_NAMES 表里的文件名，按表序返回。"""
+    m = re.search(r"String\[\] FILE_NAMES = \{(.*?)\};", text, re.S)
+    return re.findall(r'"([^"]+\.zip)"', m.group(1)) if m else []
+
+
+UI_ORDER = file_name_table(ui)
+DL_ORDER = file_name_table(downloader)
+HOT_PACKS = ("cn_scenario_update.zip", "cn_js_update.zip")
+
+
+def hot_after_base(order):
+    """热更两包必须排在**全部** cn_base_* 之后。"""
+    if not order:
+        return False
+    base = [i for i, n in enumerate(order) if n.startswith("cn_base_")]
+    hot = [order.index(h) for h in HOT_PACKS if h in order]
+    if not base or len(hot) != len(HOT_PACKS):
+        return False
+    return min(hot) > max(base)
+
 def followed_by(src, first, second):
     """`first` 之后紧跟着的下一行代码就是 `second`（中间的注释不算数）。"""
     lines = code_lines(src)
@@ -472,6 +494,27 @@ checks = {
     # 右端对齐的三处必须**同源**：文件列表靠右 padding 让出滚动条槽位，而它下面
     # 那行文字进度与总进度条不在同一个滚动容器里，得用同一个数做右边距才对得齐。
     # 原先三处各写死同一个字面量，谁改一处另外两处就错开——而错 1dp 都看得出来。
+    # 热更两包里可能带着针对基础包的**覆盖修正**：同一个文件，基础包一份、热更
+    # 包一份改好的。装反了基础包会把改好的那份盖回去，而这种坏法完全没有报错
+    # ——文件都在、标记都全，只是内容退回了修正之前。
+    #
+    # 两道都要：表序保证「轮到热更包时基础包早已全部开工」（线程池按提交序取
+    # 任务，这也是那道闸不会死锁的依据），闸门保证「装」真的在后面。只有表序
+    # 是不够的——15 个包一次性提交给 4 线程池，几十 MB 的热更包必然先装完。
+    "热更两包排在全部基础包之后":
+        hot_after_base(DL_ORDER) and hot_after_base(UI_ORDER),
+    "两张文件表逐项对齐": UI_ORDER == DL_ORDER and len(DL_ORDER) == 15,
+    "装热更包之前等基础包收尾":
+        "awaitBaseInstalled(index, name)" in downloader
+        and "baseGate = new CountDownLatch(BASE_SLOTS.length)" in downloader
+        and "if (isBaseSlot(index)) baseGate.countDown();" in downloader,
+    # 槽位常量按名字查，不写死数字：跟表序绑死的话，一调顺序它们就悄悄指向别的
+    # 包，而它们决定「走热更通道还是基础包通道」与「装完要不要重启」。
+    "热更槽位由文件名查出":
+        'HOT_SLOT_SCENARIO = slotOf("cn_scenario_update.zip")' in downloader
+        and 'HOT_SLOT_JS       = slotOf("cn_js_update.zip")' in downloader
+        # 用 code() 而不是原文：注释里正记着「原先写的是 index >= 2」这段来由。
+        and "index < 2" not in code(manual) and "index >= 2" not in code(manual),
     "滚动条槽宽三处同源":
         ui.count("dp(act, CNDownloadUiAssist.SCROLLBAR_GUTTER_DP)") >= 4
         and re.search(r"SCROLLBAR_GUTTER_DP = \d+", assist) is not None

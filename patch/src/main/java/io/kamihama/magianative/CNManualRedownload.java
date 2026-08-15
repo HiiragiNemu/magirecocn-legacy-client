@@ -87,7 +87,7 @@ public final class CNManualRedownload {
                 && status[index] == CNCNDownloadUI.ST_RUNNING)
                 || RUNNING.get(index) != 0;
         if (active) {
-            boolean signalled = index < 2
+            boolean signalled = CNDownloaderFix.isHotSlot(index)
                     ? CNHotUpdate.requestActiveRestart(index)
                     : CNDownloaderFix.requestActiveRestart(index);
             CNCNDownloadUI.resetFileProgress(index);
@@ -180,15 +180,17 @@ public final class CNManualRedownload {
                         name + (CNDownloadMode.singleThread()
                                 ? "：单线程可靠下载中（其它文件排队）"
                                 : "：正在下载（可同时处理其他文件）"), 0);
-                if (index == CNDownloaderFix.HOT_SLOT_SCENARIO
-                        || index == CNDownloaderFix.HOT_SLOT_JS) {
+                if (CNDownloaderFix.isHotSlot(index)) {
                     ok = CNHotUpdateCheck.redownloadPackage(index);
                 } else {
                     ok = CNDownloaderFix.redownloadArchive(index);
                 }
                 if (ok) {
                     CNCNDownloadUI.markFileDone(index);
-                    if (index >= 2) RESTART_REQUIRED.set(true);
+                    // 热更两包不需要重启，基础包需要。原先写的是 index >= 2，
+                    // 跟「热更包排在最前」那版表序绑死；表一调就会把热更包也
+                    // 判成要重启，或反过来漏掉某个基础包。
+                    if (!CNDownloaderFix.isHotSlot(index)) RESTART_REQUIRED.set(true);
                     try { CNDownloaderFix.commitFinalFlagIfComplete(); }
                     catch (Throwable t) { CNLog.w(TAG, "补齐总完成标记失败: " + t); }
                     CNLog.i(TAG, "手动重下载成功 index=" + index + " file=" + name);

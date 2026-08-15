@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -119,10 +120,19 @@ public final class CNDownloaderFix {
     /**
      * 下载顺序。
      *
-     * <p><b>热更新的两个包排在最前面</b>：{@code cn_scenario_update.zip}（台词）与
-     * {@code cn_js_update.zip}（前端脚本）是热更新真正依赖的内容，先拿到它们，
-     * 玩家在剩下十几 GB 还没下完时就已经是最新的汉化与前端。排在后面的话，
-     * 要等 voice/movie 那几个大包下完才轮得到，热更新形同虚设。
+     * <p><b>热更两包排在全部 {@code cn_base_*} 之后</b>：{@code cn_scenario_update.zip}
+     * （台词）与 {@code cn_js_update.zip}（前端脚本）里可能带着针对基础包的
+     * <b>覆盖修正</b>——同一个文件，基础包给一份、热更包给一份改好的。装反了，
+     * 基础包会把改好的那份盖回去，而这种坏法完全没有报错：文件都在、标记都全，
+     * 只是内容退回了修正之前。
+     *
+     * <p>热更两包仍排在 voice / movie 之前：那几个是十几 GB 的大头，等它们下完
+     * 再上汉化，热更形同虚设。放在 base 与 voice 之间是这两条约束的交点。
+     *
+     * <p><b>但这张表本身给不了「装在之后」的保证</b>：15 个包是一次性全部提交给
+     * 一个 4 线程池的（见 {@link #runInstallerInner}），表序只决定谁先开工，几十 MB
+     * 的热更包必然在几 GB 的基础包还没下完时就装完了。真正的保证在
+     * {@link #awaitBaseInstalled}——那道闸只挡解压提交，下载照旧并行。
      *
      * <p>顺序只是下载次序，不是身份：所有逻辑都按**文件名**索引，完成标记也是
      * {@code <文件名>.done}，所以调整顺序不会让既有安装失效、也不会触发重下。
@@ -130,19 +140,103 @@ public final class CNDownloaderFix {
      * <b>必须逐项对齐</b>——三张表是按下标并行的。
      */
     private static final String[] FILE_NAMES = {
-        "cn_scenario_update.zip", "cn_js_update.zip",
         "cn_base_00_db.zip", "cn_base_01_json.zip", "cn_base_02.zip",
         "cn_base_03.zip", "cn_base_04.zip", "cn_base_05.zip",
-        "cn_base_06.zip", "cn_magica_resource.zip", "cn_scenario_img.zip",
+        "cn_base_06.zip",
+        "cn_scenario_update.zip", "cn_js_update.zip",
+        "cn_magica_resource.zip", "cn_scenario_img.zip",
         "cn_voice_01.zip", "cn_voice_02_done.zip",
         "movie.zip", "movie2.zip"
     };
 
     private static final int ARCHIVE_COUNT = 15;
 
-    /** 热更那一轮真正检查的两个槽位，与 {@code CNHotUpdateCheck.PACKAGES} 的 slot 对应。 */
-    static final int HOT_SLOT_SCENARIO = 0;   // cn_scenario_update.zip
-    static final int HOT_SLOT_JS       = 1;   // cn_js_update.zip
+    /**
+     * 热更那一轮真正检查的两个槽位，与 {@code CNHotUpdateCheck.PACKAGES} 的 slot 对应。
+     *
+     * <p><b>按文件名查出来，不写死数字。</b>原先是 0 / 1，跟表序绑死；一调顺序
+     * 这两个常量就悄悄指向别的包，而它们被用来决定「走热更通道还是基础包通道」
+     * 与「装完要不要重启」——指错了不会报错，只会走错分支。
+     */
+    static final int HOT_SLOT_SCENARIO = slotOf("cn_scenario_update.zip");
+    static final int HOT_SLOT_JS       = slotOf("cn_js_update.zip");
+
+    /** 基础包槽位，热更两包要等它们全部收尾才允许装。同样按名字查。 */
+    private static final int[] BASE_SLOTS = baseSlots();
+
+    private static int slotOf(String name) {
+        for (int i = 0; i < FILE_NAMES.length; i++) {
+            if (FILE_NAMES[i].equals(name)) return i;
+        }
+        throw new IllegalStateException("FILE_NAMES 里没有 " + name);
+    }
+
+    private static int[] baseSlots() {
+        int n = 0;
+        for (int i = 0; i < FILE_NAMES.length; i++) {
+            if (FILE_NAMES[i].startsWith("cn_base_")) n++;
+        }
+        int[] out = new int[n];
+        int k = 0;
+        for (int i = 0; i < FILE_NAMES.length; i++) {
+            if (FILE_NAMES[i].startsWith("cn_base_")) out[k++] = i;
+        }
+        return out;
+    }
+
+    /** 这个下标是不是热更两包之一。五处判断都读这里，别再各写一份下标比较。 */
+    static boolean isHotSlot(int index) {
+        return index == HOT_SLOT_SCENARIO || index == HOT_SLOT_JS;
+    }
+
+    private static boolean isBaseSlot(int index) {
+        for (int i = 0; i < BASE_SLOTS.length; i++) {
+            if (BASE_SLOTS[i] == index) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 「基础包没装完，热更两包不许装」的闸门，每轮安装重建一次。
+     *
+     * <p>计数在每个基础包<b>收尾时</b>减一，<b>成败都减</b>。只在成功时减的话，
+     * 某个基础包失败就会把热更两包永远挂在闸前，主循环等 future 等不回来——
+     * 玩家连「重试」都点不到，界面停在那里不动。放行之后再核对 marker：基础包
+     * 真失败了，热更包这一轮也不装，返回失败，由重试进入下一轮。
+     */
+    private static volatile CountDownLatch baseGate = new CountDownLatch(0);
+
+    /**
+     * 挡在解压提交之前：热更包等基础包收尾。返回 false 表示这一轮不该装。
+     *
+     * <p>不会死锁：热更两包在表里排在全部基础包之后，线程池按提交序取任务，
+     * 所以轮到热更包时基础包早已全部开工——最多只剩几个还在跑，它们在别的
+     * 线程上，减到零只是时间问题。
+     */
+    private static boolean awaitBaseInstalled(int index, String name) {
+        if (!isHotSlot(index)) return true;
+        CountDownLatch gate = baseGate;
+        if (gate.getCount() > 0) {
+            CNLog.i(TAG, "hold-for-base file=" + name
+                    + " remaining=" + gate.getCount());
+            CNCNDownloadUI.updateSimple("正在安装资源",
+                    name + "：等基础包装完再装（它可能覆盖基础包里的文件）", 100);
+            try {
+                gate.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        for (int i = 0; i < BASE_SLOTS.length; i++) {
+            String base = FILE_NAMES[BASE_SLOTS[i]];
+            if (!isMarkerValid(markerFor(base), base, RESOURCE_BASE_URL + base)) {
+                CNLog.w(TAG, "defer-hot file=" + name + " reason=base-incomplete base=" + base);
+                return false;
+            }
+        }
+        return true;
+    }
 
     /** 防止 native hook 与 Java 侧同时触发安装器。 */
     private static final AtomicBoolean installerStarted = new AtomicBoolean(false);
@@ -682,6 +776,8 @@ public final class CNDownloaderFix {
         // 主循环：有文件失败就停在这里等玩家点「重试」，而不是直接返回。
         // 返回意味着把控制权交回 native hook，引擎随即显示它自带的下载场景。
         while (true) {
+            // 每轮重建：上一轮的闸门已经放行完了，重试这一轮要重新等一次。
+            baseGate = new CountDownLatch(BASE_SLOTS.length);
             ExecutorService pool = Executors.newFixedThreadPool(MAX_DOWNLOADS);
             List<Future<Boolean>> futures = new ArrayList<Future<Boolean>>(ARCHIVE_COUNT);
             for (int i = 0; i < ARCHIVE_COUNT; i++) {
@@ -923,6 +1019,8 @@ public final class CNDownloaderFix {
                 }
             } finally {
                 CNDownloadRestart.unregister(index);
+                // 成败都要减：见 baseGate 的说明，只在成功时减会把热更包挂死。
+                if (isBaseSlot(index)) baseGate.countDown();
             }
         }
     }
@@ -1059,6 +1157,14 @@ public final class CNDownloaderFix {
                 CNCNDownloadUI.updateFileProgress(index, 100);
                 CNCNDownloadUI.updateSimple("正在安装资源",
                         name + "：下载已验证，正在解压并提交…", 100);
+                // 装之前先过闸：热更包可能覆盖基础包里的文件，装在基础包之前
+                // 会被原样盖回去，而且没有任何报错。下载已经做完，这里只挡「装」。
+                if (!awaitBaseInstalled(index, name)) {
+                    CNCNDownloadUI.updateSimple("正在安装资源",
+                            name + "：基础包尚未装完，本轮先不装它", 100);
+                    markFailed(index);
+                    return false;
+                }
                 final int tokenForExtract = restartToken;
                 File extractState = CNArchiveInstallTx.stateFile(new File(STATE_ROOT), name);
                 try {
@@ -2193,7 +2299,7 @@ public final class CNDownloaderFix {
         resetUiForRun();
         int installed = 0, missing = 0;
         for (int i = 0; i < ARCHIVE_COUNT; i++) {
-            boolean hot = (i == HOT_SLOT_SCENARIO || i == HOT_SLOT_JS);
+            boolean hot = isHotSlot(i);
             int status = (CNCNDownloadUI.fileStatus != null) ? CNCNDownloadUI.fileStatus[i] : -1;
             if (hot) {
                 // 本轮要查的两个：先回到「等待中」，查完由热更流程按真实结果落状态。
@@ -2390,7 +2496,7 @@ public final class CNDownloaderFix {
      */
     static boolean redownloadArchive(int index) {
         if (index < 0 || index >= ARCHIVE_COUNT) return false;
-        if (index == HOT_SLOT_SCENARIO || index == HOT_SLOT_JS) {
+        if (isHotSlot(index)) {
             return CNHotUpdateCheck.redownloadPackage(index);
         }
         CNDownloadRestart.register(index);
