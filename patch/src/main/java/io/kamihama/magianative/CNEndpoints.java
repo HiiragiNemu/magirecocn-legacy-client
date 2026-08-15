@@ -5,19 +5,15 @@ package io.kamihama.magianative;
  *
  * <h3>为什么要有这一层</h3>
  *
- * 仓库（含全部历史）里不再出现任何一个真实业务域名。以前它们散在
- * {@code CNMirrors}、{@code CNSafeLink}、{@code CNHotUpdateCheck}、
- * {@code CNCNDownloadUI} 等七八个文件里，任何人 clone 一次就能把我们的
- * 全套基础设施抄走；改架构、换域名时也要满仓库找。
- *
- * <p><b>这不能挡住拿到 APK 的人。</b>包里的常量池、抓一次包，域名都在那儿。
- * 这一层挡的是「翻仓库和翻历史的人」，不是「装了包的人」。真要断掉旧域名
- * 只能换域名本身。
+ * 主机名是<b>部署参数</b>，不是代码。以前它们散在 {@code CNMirrors}、
+ * {@code CNSafeLink}、{@code CNHotUpdateCheck}、{@code CNCNDownloadUI} 等
+ * 七八个文件里：换域名、换架构、切测试环境都要满仓库找，而且漏一处就是一条
+ * 半死不活的链路——查起来还特别难，因为其余几处都是对的。
  *
  * <h3>注入了什么</h3>
  *
- * 只有两个值，其余全部由它们推导——推导关系写在源码里是安全的，那是结构，
- * 不是地址：
+ * 只有两个值，其余全部由它们推导——推导关系是<b>结构</b>，跟着代码走；
+ * 取值是<b>部署参数</b>，跟着环境走。两者分开，换环境时只动后者：
  *
  * <ul>
  *   <li>{@link #ROOT_DOMAIN} —— 自有主域。官网 / api / assets / 各 CDN 子域
@@ -42,7 +38,8 @@ package io.kamihama.magianative;
  * 它就是 {@code CNMirrors.CANONICAL_BASE}——<b>身份标识</b>，已经写进每一台
  * 已安装设备的 15 个完成标记里。注入值哪怕差一个字符，所有老玩家都会被判定
  * 「没装过」而重下几个 GB。因此 {@code tools/check-base-urls.py} 用<b>钉死的
- * sha256</b> 核对注入结果（钉哈希而不是钉明文，正是为了不把地址写回仓库）。
+ * sha256</b> 核对注入结果——钉哈希而不是钉明文，才能既锁死取值、又让它继续
+ * 由部署参数给。
  */
 public final class CNEndpoints {
 
@@ -81,7 +78,7 @@ public final class CNEndpoints {
      */
     public static final String ASSETS_BASE = ROOT_DOMAIN.isEmpty() ? "" : "https://assets." + ROOT_DOMAIN + "/";
 
-    /** 线路列表（config.json）地址。路径是我们自己的约定，不是秘密。 */
+    /** 线路列表（config.json）地址。路径部分是固定约定，只有主机名随部署变。 */
     public static final String MIRRORS_URL = API_BASE.isEmpty() ? "" : API_BASE + "legacy/config.json";
 
     /** 内置兜底线路之一：自有域下的 edge。 */

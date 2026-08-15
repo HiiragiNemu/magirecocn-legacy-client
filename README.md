@@ -68,7 +68,7 @@ sha256 与树指纹钉死。
 | secret | 给谁 |
 |---|---|
 | `BASELINE_APK_URL` | 基线整包 |
-| `OVERLAY_URL` | 汉化图集资产源，逗号分隔按序试 |
+| `OVERLAY_URL` | 汉化图集外部来源，逗号分隔按序试 |
 | `TARGET_REPO` / `TARGET_REPO` | 发版与归档目标 |
 | `` | 上面几处的读写凭证 |
 | `CLIENT_ROOT_DOMAIN` / `CLIENT_PAGES_HOSTS` | 对外主机名，见 `CNEndpoints` |
@@ -76,7 +76,7 @@ sha256 与树指纹钉死。
 ### 不在仓库里的那些
 
 85 个汉化图集加浮层那张 logo：人手重绘或原样取自国服官方包，**都归原包版权方**，
-且无法从本基线重现，只能整份存着——放在外部资产源的 Release，构建时按 `sha256` 取回。
+且无法从本基线重现，只能整份存着——不入工程树，构建时按 `sha256` 取回。
 地址与 token 都由 secrets 注入。**内容一律按 hash 认**，所以列多个来源只是防止
 某个源不可用时卡住构建，不是「信任其中任何一个」。
 
@@ -123,7 +123,7 @@ python3 tools/baseline.py apply --out <目录>   # 只重建，不比对
 | `CNDownloadMode` | **单线程可靠模式**开关。四处并发（分片工作线程、字节分段、全局连接闸门、并行文件数）共用它一个判据 `cap()`——各写各的判断迟早漏掉一处，而漏掉的表现是「选了单线程但并发没降下来」，不报错不崩，只有翻日志数连接才发现得了。 |
 | `CNDiskSpace` | **「装不下」与「网络坏了」的分界**。ENOSPC 抛的是普通 `IOException`，和超时、断流走同一个 catch，于是磁盘满会被当成线路故障：无辜线路被记失败进 60 秒冷却（线上 `switch_after_failures=1`，一次就够）、四次重试逐条线路白烧、玩家对着「重试 / 备用引擎 / 单线程 / 离线包」四个都不解决问题的选项反复点。 |
 | `CNZipPlan` | **下载前算出安装峰值**。装一个包的磁盘峰值是 ZIP + 解压后（ZIP 要留到解压成功才删），而这个比例各包差得很远：`cn_base_03.zip` 1.32→2.79 GiB（**2.11x**），其余全在 1.02–1.16x。03 因此拥有 15 个包里最高的安装峰值 **4.11 GiB**，而进度条上只写着 1.3 GB——玩家按这个数去清理空间，然后在解压阶段翻车。 |
-| `CNEndpoints` | **全部对外主机名的唯一来源**。源码里只留结构（`https://assets.` + 主域 + `/` 这样的拼法），真实取值由 `tools/inject-endpoints.py` 在构建期从 Secret 注入，仓库与历史里都不出现。注入缺失时 fail-closed：放行列表不含自有域、线路表为空、热更地址拼不出来——退化成「什么都下不了」，而不是退回某个不受控的默认值。 |
+| `CNEndpoints` | **全部对外主机名的唯一来源**。源码里只留结构（`assets.` 子域 + 主域这样的拼法），真实取值由 `tools/inject-endpoints.py` 在构建期从 Secret 注入，仓库与历史里都不出现。注入缺失时 fail-closed：放行列表不含自有域、线路表为空、热更地址拼不出来——退化成「什么都下不了」，而不是退回某个不受控的默认值。 |
 | `CNMirrors` | 线路目录：从 `config.json` 拉取线路表，失败/停滞/过慢时自动换线 |
 | `CNAria2` | **备用下载引擎**（默认关）：解压内置的**全静态 aria2c 可执行文件**（v1.37.0，`assets/aria2/`，来源 Cross-Compiled-Binaries-Android，sha256 见类内注释）跑**独立子进程**，JSON-RPC 控制。主分块下载器修不动时兜底拉资源——单文件同步下载，aria2 多连接 + 断点续传，失败回退主引擎。 |
 | `CNHotUpdate` | 热更新的文件下载，与首次安装共用同一套选线与分片逻辑 |
@@ -243,8 +243,8 @@ WebViewClientImpl.shouldInterceptRequest
 同一份字节，不同线路给出的 ETag 格式互不相同（转发型给被转发侧的版本号、CDN 给
 S3 分段上传的 `<md5>-<段数>`、自建 nginx 给 inode-mtime）。各家实现各自为政，改不了。
 
-> 有哪几条线、权重多少、实测值是什么，**故意不写在这里**：那是线上 `config.json`
-> 的内容，随时可改，写进文档只会同时做到「过期」和「泄露」。
+> 有哪几条线、权重多少、实测值是什么，**以线上 `config.json` 为准**：那份随时
+> 可改，抄进文档的那一刻就开始过期，而过期的线路表比没有更误导人。
 
 由此定下四条：
 
@@ -521,13 +521,11 @@ classpath 少了一截。
 
 **二次开发**：本仓库在其上的逆向分析与改造（引擎 hook、UI 改造、下载系统、
 汉化补丁）由 **Totentanz** 组织完成（GitHub 组织
-[Puella-Care](https://github.com/Puella-Care)，部分 smali 补丁来源）。
+`Puella-Care`，部分 smali 补丁来源）。
 
 **Totentanz MIT 许可来源**：本仓库的部分 smali 补丁与构建脚手架来自 Totentanz 项目
-[`Puella-Care/client-apk`](https://github.com/Puella-Care/client-apk)
-（即 Totentanz client），它本身是
-[`rayshift/magiatranslate`](https://github.com/rayshift/magiatranslate)
-（MagiaTranslate）的 fork，**Copyright (c) 2023 Rayshift，MIT License**。
+`Puella-Care/client-apk`（即 Totentanz client），它本身是
+`rayshift/magiatranslate`（MagiaTranslate）的 fork，**Copyright (c) 2023 Rayshift，MIT License**。
 按 MIT 要求，原版权声明（Copyright (c) 2023 Rayshift）在本仓库
 [`LICENSE.additional-terms`](LICENSE.additional-terms) §4 声明保留；MIT 只覆盖
 这些派生部分，其余归 GPL v3 管。
@@ -566,9 +564,7 @@ CyberNova（下载加速及资源自动化推送）、segfault（国服数据留
 > 最干净的形态，不向任何其他部分传播 GPL。
 
 **另有 MIT 来源**（部分 smali 补丁/脚手架，来自
-Totentanz 项目 →
-[`rayshift/magiatranslate`](https://github.com/rayshift/magiatranslate)，Copyright
-Rayshift）：版权声明在 §4 声明保留，MIT 只覆盖那些派生部分。
+Totentanz 项目 → `rayshift/magiatranslate`，Copyright Rayshift）：版权声明在 §4 声明保留，MIT 只覆盖那些派生部分。
 
 ---
 

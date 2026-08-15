@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""把要删掉的存档 tag 打包备份，传到发布仓库 Release，再由既有链路同步到网盘。
+"""把要删掉的存档 tag 打包备份，传到发布仓库 Release，之后由既有链路取走。
 
 ## 背景
 
@@ -24,11 +24,11 @@
 
 真要一份份的源码包，加 `--tarballs`；两种可以一起打。
 
-## 为什么走 Release 而不是直接传网盘
+## 为什么只传 Release
 
-网盘那条链路本来就是「读目标仓库 `releases/latest` 的资产 → PUT 到 WebDAV」，
-而且跑在**境内自托管 runner** 上——境内机直连网盘快，GitHub 官方 runner 跨太平洋
-PUT 大文件极慢。所以传到 Release 就够了，后面顺着既有链路走，不用另写一条上传通道。
+既有的分发链路本来就是「读目标仓库 `releases/latest` 的资产 → 取走」。传到
+Release 就够了，后面顺着那条链路走，不必为备份另写一条上传通道——多一条通道
+就多一份要维护、要授权、会失效的东西。
 
 ## 怎么跑
 
@@ -320,8 +320,8 @@ def cmd_upload(args):
             base=UPLOADS)
         print("  ✔ %s" % name)
 
-    print("\n资产已就位。网盘那条链路读的是发布仓库 releases/latest，"
-          "等外部发布渠道的同步 workflow 跑一次即可（或手动触发）。")
+    print("\n资产已就位。既有链路读的是发布仓库 releases/latest，"
+          "等它跑一次即可（或手动触发）。")
     return 0
 
 

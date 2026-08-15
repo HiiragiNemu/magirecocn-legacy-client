@@ -205,9 +205,9 @@ jobs:
       # 2026-08-14 第一次跑这条腿就栽在这儿：verify 报「内容不同：1」，而那个文件是
       # 与我们毫无关系的 GMS 工具类，现象完全指不向真正的原因。
       # 只在这一步换 JAVA_HOME，别动整个 job 的 JDK（javac / d8 那边按 17 调好的）。
-      #  是给外部图集取件用的：它在外部发布渠道
-      # 的 Release 里。没有 token 时仍会匿名试一次——公开期
-      # 照样能用，私有后会明确报错而不是把 404 页面当 zip 解。
+      #  是给外部图集取件用的。没有 token 时仍会匿名试一次——
+      # 来源公开时照样能用，需要凭证时会明确报错，而不是把一个 404
+      # 页面当 zip 解开。
       # Totentanz 整包与构建工具都在公开仓库，不需要 token。
       - name: 🌱 从Totentanz 整包重建工程树
         env:
@@ -309,13 +309,13 @@ jobs:
             || { echo "::error::版本号注入失败（CNUserAgent.CLIENT_VERSION 常量没匹配上）"; exit 1; }
           echo "CLIENT_VERSION=${VER}" >> "$GITHUB_ENV"
 
-      # 真实主机名不入库：源码里 CNEndpoints 的两个常量恒为空串，取值在这里
-      # 从 Secret 写进去。脚本同时做两件构建期必须做的核对：
+      # 主机名是部署参数：源码里 CNEndpoints 的两个常量恒为空串，取值在这里
+      # 从仓库变量写进去。脚本同时做两件构建期必须做的核对：
       #   · 拼出来的规范前缀 sha256 必须等于钉死值——它是写进每台已装设备 15 个
       #     完成标记里的**身份串**，注错一个字符就是全员重下几个 GB；
       #   · 主域同时导出给 native（MAGIA_ROOT_DOMAIN），两侧「自身域不重写」的
       #     判断必须同源，否则会打成死循环或漏判。
-      # 刻意不 echo 取值：run 日志是公开的。
+      # 只报注入了几项，不 echo 取值——构建日志会长期留存，参数没必要散进去。
       - name: 🌐 注入端点（主域与署名区主机名）
         env:
           CLIENT_ROOT_DOMAIN: ${{ secrets.CLIENT_ROOT_DOMAIN }}
@@ -613,9 +613,9 @@ jobs:
         if: ${{ inputs.verify_only != true }}
         env:
           : ${{ secrets. }}
-          # 资产站地址不写死在仓库里，由 secrets 给。它们不是安全边界——真正的
-          # 保证来自 token 权限与内容 hash——收进 secret 只是不让仓库正文替
-          # 别人的基础设施做广告。缺了就直接失败，别静默发去一个错地方。
+          # 目标地址由仓库变量给，不写死：它随部署走，换目标时不该改代码。
+          # 它也不是安全边界——真正的保证来自 token 权限与内容 hash。
+          # 缺了就直接失败，别静默发去一个错地方。
           UP_REPO: ${{ secrets.TARGET_REPO }}
           DOWN_REPO: ${{ secrets.TARGET_REPO }}
         run: |

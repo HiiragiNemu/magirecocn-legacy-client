@@ -44,7 +44,7 @@ def content_src(op, rel):
     """一条 op 的内容在本地哪儿。
 
     返回 None 表示**内容不在本仓库**，有两种：
-      overlay  —— 在外部发布渠道的 Release 里；
+      overlay  —— 在外部来源的 Release 里；
       baseline —— 在基线树里的另一个路径（op 的 `src`），构建时现拷。
     两种都要求「仓库里不能同时还躺着一份」，那是迁移做了一半。
     """

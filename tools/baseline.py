@@ -64,7 +64,7 @@ PATCH_DIR = os.path.join(BASELINE_DIR, "patches")
 REPLACE_DIR = os.path.join(BASELINE_DIR, "replace")
 WORK = os.path.join(REPO, "work", "baseline")
 TREE = os.path.join(REPO, "work", "tree")   # apply 的默认落点，也是改补丁的工作树
-OVERLAY = os.path.join(WORK, "overlay")    # 从外部发布渠道取回并解开的汉化图集
+OVERLAY = os.path.join(WORK, "overlay")    # 从外部来源取回并解开的汉化图集
 DEC = os.path.join(WORK, "dec")            # apktool 重建出来的基线树
 
 
@@ -232,7 +232,7 @@ def cmd_fetch(args):
 def fetch_overlay(conf):
     """取回 overlay 包并解开。
 
-    这些是人手重绘的图集：无法从原包重建，也不该躺在代码仓库里，所以放在外部发布渠道的
+    这些是人手重绘的图集：无法从原包重建，也不该躺在代码仓库里，所以放在外部来源的
     Release。地址由环境变量给（见 baseline.json 的 repos_env），本仓库里不写死。
 
     **内容一律按 sha256 认**——地址只决定「去哪拿」，拿到的东西对不对由 hash 说了算。
@@ -253,8 +253,8 @@ def fetch_overlay(conf):
         token = os.environ.get(spec.get("token_env", ""), "")
         if not repos:
             raise SystemExit(
-                "没有 %s：资产源地址由环境变量给（逗号分隔的 owner/repo，按序试），"
-                "本仓库里不写死。CI 里由 secrets 注入。" % spec.get("repos_env", "OVERLAY_URL"))
+                "没有 %s：取件地址由环境变量给（逗号分隔，按序试），"
+                "本仓库里不写死。" % spec.get("repos_env", "OVERLAY_URL"))
         errors = []
         for repo in repos:
             url = "https://github.com/%s/releases/download/%s/%s" % (
@@ -275,7 +275,7 @@ def fetch_overlay(conf):
         else:
             raise SystemExit(
                 "overlay 一个来源都取不到：\n  %s\n"
-                "  外部发布渠道若已转私有，需要能读它的 %s（本 job 里没有就是没传进来）。"
+                "  来源若需要凭证，要能读它的 %s（本 job 里没有就是没传进来）。"
                 % ("\n  ".join(errors), spec.get("token_env", "")))
         got = sha256_file(zip_path)
         if got != spec["sha256"]:
@@ -461,7 +461,7 @@ def content_src(op, rel):
     baseline —— **基线树里的另一个路径**，由 op 的 `src` 指定。给「原包里本来
                 就有、我们只是换个位置用」的文件：那些字节归版权方，我们既不该
                 存进仓库，也没必要存到外部——基线树里现成就有一份。
-    overlay  —— 外部发布渠道 Release 取回来的（汉化图集等，见 fetch_overlay）
+    overlay  —— 外部来源 Release 取回来的（汉化图集等，见 fetch_overlay）
     store    —— baseline/replace/ 下存的整份（默认；给 RestClient 那种我们基本重写的）
     """
     where = op.get("from", "store")

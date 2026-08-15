@@ -21,7 +21,7 @@ CNHotUpdateCheck.PACKAGES 里那几条硬编码 URL 是不是都以它开头」�
 拿文件名去拼 `CANONICAL_BASE`，「前缀对不上」在结构上不可能发生。所以本脚本转去守
 **那个结构本身**——只要没人把绝对地址写回去，上面那类故障就回不来。
 
-顺带守住第二件事：真实业务域名不进仓库（见 `CNEndpoints` 与
+顺带守住第二件事：主机名只有 `CNEndpoints` 一个来源（取值构建期注入，见
 `tools/inject-endpoints.py`）。这两件事必须由同一个守卫看着，因为破坏它们的是
 同一个动作：图省事把一条完整 URL 直接写进源码。
 
@@ -31,8 +31,8 @@ CNHotUpdateCheck.PACKAGES 里那几条硬编码 URL 是不是都以它开头」�
 `url=` 字段），`isMarkerValid` 做逐字符串比对。一改 → `allMarkersValid()` 全部
 返回 false → 安装器判定「没装过」→ **每个老玩家重下几个 GB**。
 
-明文钉死值已经移走：现在由 `tools/inject-endpoints.py` 用 **sha256** 核对注入
-结果——钉哈希而不是钉明文，才能同时满足「不许改」和「不入库」。
+钉死值改成了 **sha256**：由 `tools/inject-endpoints.py` 核对注入结果。钉哈希
+而不是钉明文，才能同时满足「不许改」和「取值由部署参数给」。
 
 用法：python3 tools/check-base-urls.py
 """
@@ -56,15 +56,14 @@ DELEGATES = [
     (INSTALLER, "RESOURCE_BASE_URL", "CNEndpoints.ASSETS_BASE"),
 ]
 
-# 允许留在补丁源码里的绝对地址。判据是「它是不是**我们的**基础设施」：
+# 允许留在补丁源码里的绝对地址。判据是「它会不会跟着部署走」：
 #
-#   · 第三方公共站点（B 站、爱发电）—— 本来就不是我们的，藏起来没有意义，
-#     也不该跟着我们的 Secret 一起失效；
-#   · 游戏后端 Totentanz —— 它明明白白写在公开发行的原包
-#     smali 里，谁都能重建看到。在我们仓库里遮住它只是自欺；
-#   · 组织主页 —— 公开仓库的 owner，本来就露在外面。
+#   · 第三方公共站点（B 站、爱发电）—— 不是我们部署的，换域名换架构都不会动它，
+#     没有理由跟着我们的部署参数一起变；
+#   · 游戏后端 —— 由原包决定，不是我们能配的；
+#   · 组织主页 —— 仓库本身的 owner，与部署无关。
 #
-# 除此之外的绝对地址一律拦下。要新增，先问一句「这条要是被人抄走，损失是什么」。
+# 除此之外的绝对地址一律拦下：会随部署变的东西都该走 CNEndpoints。
 ALLOWED_ABS = (
     "https://b23.tv/",
     "https://www.bilibili.com/",
@@ -214,9 +213,9 @@ def main():
                 continue
             problems.append(
                 "%s 里出现了绝对地址 %s。\n"
-                "      我们自己的地址一律走 CNEndpoints（构建期注入），不入库。\n"
-                "      确实是第三方公共站点的话，把前缀加进本脚本的 ALLOWED_ABS，\n"
-                "      并在那里写清楚「它被抄走的损失是什么」。"
+                "      会随部署变的地址一律走 CNEndpoints（构建期注入）。\n"
+                "      确实是不随部署变的第三方站点，就把前缀加进本脚本的\n"
+                "      ALLOWED_ABS，并在那里写清楚为什么它不会变。"
                 % (path, url))
 
     if problems:
@@ -226,7 +225,7 @@ def main():
         return 1
 
     print("✔ 基址核对通过")
-    print("    · CNEndpoints 的两个注入位都是空串（真实取值不入库）")
+    print("    · CNEndpoints 的两个注入位都是空串（取值构建期注入）")
     print("    · %d 个基址常量全部委托给 CNEndpoints" % len(DELEGATES))
     print("    · 热更表与浮层文件表里没有绝对地址（前缀对不上在结构上已不可能）")
     print("    · FILE_URLS 由 FILE_NAMES 逐项拼出")

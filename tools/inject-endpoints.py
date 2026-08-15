@@ -3,12 +3,9 @@
 
 ## 为什么要有这一步
 
-仓库里（含全部历史）不留任何真实业务域名。源码中的
-`CNEndpoints.ROOT_DOMAIN` / `CNEndpoints.PAGES_HOSTS` 恒为空串，真值在构建时
-由本脚本写进去，取自 CI Secret。
-
-**这挡不住拿到 APK 的人**——包里的常量池、抓一次包，域名都在。它挡的是「翻仓库
-和翻历史的人」。真要让旧域名失效只能换域名本身。
+主机名是**部署参数**，不是代码：换域名、换架构、切测试环境时不该动源码。所以
+`CNEndpoints.ROOT_DOMAIN` / `CNEndpoints.PAGES_HOSTS` 在源码里恒为空串，取值构建时
+由本脚本从 CI 变量写进去；测试与本地构建走同一条路径，只是取值换成占位域名。
 
 ## 为什么是一个脚本而不是一行 sed
 
@@ -182,8 +179,8 @@ def main():
     text = set_const(text, "PAGES_HOSTS", pages, ENDPOINTS)
     open(ENDPOINTS, "w", encoding="utf-8").write(text)
 
-    # 刻意不回显 root / pages 本身：CI 日志是公开的，把刚藏起来的东西
-    # 又打回日志里等于白做。只报「注入了几项」。
+    # 只报「注入了几项」，不回显取值本身：构建日志会被长期保留、到处转贴，
+    # 部署参数没有理由散进去。
     print("✔ 端点注入完成：主域 1 项、署名区主机名 %d 项" % len(pages.split(",")))
     print("    规范前缀 sha256 = %s（与钉死值一致）" % got)
     return 0

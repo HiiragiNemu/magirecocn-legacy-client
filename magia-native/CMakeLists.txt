@@ -26,24 +26,19 @@
 cmake_minimum_required(VERSION 3.18)
 project(MagiaLegacy C CXX)
 
-# ── 把构建路径从产物里抹掉 ────────────────────────────────────────────────
+# ── 可复现构建：让产物不依赖它在哪台机器上编的 ──────────────────────────
 # 编译器会把源文件的**绝对路径**编进 .so（assert/__FILE__、调试信息、汇编的
-# .file 指示）。实测发出去的包里能直接 strings 出：
+# .file 指示）。默认情况下同一份源码在两台机器上编出来字节不同，只因为它们
+# 放在不同目录——这让「产物有没有变」无法靠比对回答。
 #
-#   /home/runner/work/<仓库名>/<仓库名>/magia-native/src/MagiaLegacy.cpp
-#   …/_deps/shadowhook-src/…
-#
-# 也就是说仓库名、CI 路径、连第三方依赖的取用方式，全都随每个 APK 发出去了
-# ——仓库正文里怎么清理都盖不住这一处。-ffile-prefix-map 把前缀重写成一个
-# 中性根，__FILE__ 与调试信息里就只剩相对路径。
+# -ffile-prefix-map 把前缀重写成一个中性根，__FILE__ 与调试信息里就只剩相对
+# 路径，换机器、换目录产出的 .so 逐字节一致。
 #
 # 三个 flag 的关系：-ffile-prefix-map 同时管调试信息与 __FILE__（Clang 10+、
 # GCC 8+），另外两个是老工具链的分别版本，一并给上不冲突。
-# 顺带的好处：构建可复现——换一台机器、换一个目录，产出的 .so 不再因为路径
-# 不同而字节不同。
-# NDK 根也要映射：工具链的 include 路径同样会被编进产物，而它往往带着编译者
-# 机器上的目录名（实测入库的那两个 libshadowhook.so 里就编着一条含已删仓库名的
-# NDK 路径）。谁在哪台机器上编的，不该随包发出去。
+#
+# NDK 根也要映射：工具链的 include 路径同样会被编进产物，而它带着各人本机的
+# 目录名——不映射的话前两项白做，产物照样因机器而异。
 foreach(_pfx "${CMAKE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}" "${CMAKE_ANDROID_NDK}")
     add_compile_options("-ffile-prefix-map=${_pfx}=.")
     add_compile_options("-fdebug-prefix-map=${_pfx}=.")
@@ -143,8 +138,8 @@ add_library(MagiaLegacy SHARED
 )
 
 # ── 自有主域（构建期注入）────────────────────────────────────────────────
-# 源码里不留任何真实业务域名，主域由 CI 从 Secret 给进来，与 Java 侧的
-# CNEndpoints.ROOT_DOMAIN 同一个值、同一处给出。
+# 主域是部署参数，由 CI 给进来，与 Java 侧的 CNEndpoints.ROOT_DOMAIN 同一个值、
+# 同一处给出——两侧各有一份「自身域不重写」的判断，取值不一致会打成死循环。
 #
 # 本地手编不给 -DMAGIA_ROOT_DOMAIN 时是空串，proxyIsSelfHost 恒返回 false
 # ——只影响「自身域不重写」这一条判断，不会让库编不出来，也不会让本地调试

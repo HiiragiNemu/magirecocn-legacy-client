@@ -110,7 +110,7 @@ def run(notices_path=None, quiet=False):
 
     # ── 二、声明里写的文件，必须真的在 ────────────────────────────────────
     # 例外：内容有意不在本仓库的三类，都不算「删文件忘了删声明」——
-    #   from == overlay   目标在外部发布渠道的 Release 里
+    #   from == overlay   目标在外部来源的 Release 里
     #   from == baseline  目标构建时从基线树拷，且它引用的**基线树源路径**
     #                     （op 的 src）本来就只存在于基线树里
     elsewhere = set()

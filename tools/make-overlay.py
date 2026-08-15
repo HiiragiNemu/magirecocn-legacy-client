@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""打包 overlay —— 那些**无法从原包重建**、要放到外部发布渠道去的文件。
+"""打包 overlay —— 那些**无法从原包重建**、要放到外部来源去的文件。
 
 ## 为什么要有这个脚本
 
 `baseline/` 里 `from: overlay` 的那些 op（人手重绘的汉化图集）不在本仓库里，
-构建时从外部发布渠道的 Release 取。既然要取，就要钉 sha256；既然要钉 sha256，
+构建时从外部来源的 Release 取。既然要取，就要钉 sha256；既然要钉 sha256，
 **这个 zip 就必须是可复现的**——否则「重打一次包，钉死项就失效」，谁也说不清
 是文件变了还是打包方式变了。
 
@@ -60,7 +60,7 @@ def source_of(rel):
             return p
     raise SystemExit(
         "找不到源文件：%s\n"
-        "  仓库里没有（图集已迁到外部发布渠道），work/baseline/overlay 里也没有。\n"
+        "  仓库里没有（图集已迁到外部来源），work/baseline/overlay 里也没有。\n"
         "  先跑一次 python3 tools/baseline.py fetch 把 overlay 取回来。" % rel)
 
 
