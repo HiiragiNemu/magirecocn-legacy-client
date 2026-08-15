@@ -46,7 +46,7 @@ import java.io.File;
  * {@code run-as} 用不了</b>，所以这个目录只有能直写<b>应用私有目录</b>的环境
  * （root/su、模拟器）碰得到。
  *
- * <p>公测期曾短暂打开过 debuggable（{@code 7aebb871}，为的是让人免 root 抓日志
+ * <p>公测期曾短暂打开过 debuggable（{@code f38ffea2}，为的是让人免 root 抓日志
  * 和改开关），两天后又收了回去——不是因为收紧，而是<b>这条路根本送不到人</b>：
  * 要用它得会 adb 或 Termux，而实际会用的人几乎没有。这件事直接决定了
  * {@link CNDebugBridge} 那个悬浮窗存在的理由，改这段之前先读它。

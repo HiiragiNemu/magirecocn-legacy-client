@@ -30,7 +30,7 @@ import java.util.Set;
  * <p>曾经的方案是「先用 su 建一个 {@code enableOverlay} 文件自举」。它错在
  * 门槛正好架在目标受众面前：能建那个文件的人本来就能直接 touch 开关，而真正
  * 需要悬浮窗的人建不出来。{@code android:debuggable} 已经这么白开了两天又收
- * 回去（{@code 7aebb871} 打开，两天后收回）——要用它得会 adb 或 Termux，
+ * 回去（{@code f38ffea2} 打开，两天后收回）——要用它得会 adb 或 Termux，
  * 而实际会用的人几乎没有。同一个错误不犯第二次。
  *
  * <h2>🔴 边界</h2>

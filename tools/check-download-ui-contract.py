@@ -461,7 +461,7 @@ checks = {
     # 设置里慢一步回来就永远等不到小球，日志里只有一句「等待超时」。
     "等待悬浮窗权限的轮询不会彻底停下":
         "PERM_POLL_SLOW_MS" in overlay and "PERM_POLL_MAX" not in overlay,
-    # SYSTEM_ALERT_WINDOW 是**原包自带**的权限，不是我们加的。c1bb57a0 把它连同
+    # SYSTEM_ALERT_WINDOW 是**原包自带**的权限，不是我们加的。5c7bdb9d 把它连同
     # MANAGE_EXTERNAL_STORAGE 一起删掉，理由写作「移除无用的悬浮窗权限」，并在这里
     # 立了一条「不许回来」的断言——而维护者对这条改动**完全不知情**。
     #

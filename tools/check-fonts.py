@@ -5,12 +5,12 @@
 
 字体这条线在本仓库绕了两圈才落地，两次都是**改字体文件本体**惹的祸：
 
-    5c368ba2  字体直替：MTF4a5kp/mbm 两个文件内容直接换成 TTZhiHeiGB3-W4
-    93a5481f  Revert 上面那条
-    8ae27fed  引擎字体替换 + 前缀规则
-    bebeb9ec  回滚字体路径钩子：字体问题不通过换字体解决
-    0da51a66  引擎 UI 字体路径重定向（最终方案：只改加载路径，不碰文件）
-    8aea5734  修复字体重定向堆破坏
+    702ebbf3  字体直替：MTF4a5kp/mbm 两个文件内容直接换成 TTZhiHeiGB3-W4
+    703cb30f  Revert 上面那条
+    e1c3bf6d  引擎字体替换 + 前缀规则
+    6ad7aa23  回滚字体路径钩子：字体问题不通过换字体解决
+    f7f41ce6  引擎 UI 字体路径重定向（最终方案：只改加载路径，不碰文件）
+    dd06a6b6  修复字体重定向堆破坏
 
 维护者最后定的路线是**只重定向加载路径，绝不改文件内容**——可热回滚、
 出问题改一行常量就退回去。但这个约定只写在提交信息里，没有任何机制拦着
@@ -224,7 +224,7 @@ def main():
         for p in problems:
             print("  · " + p, file=sys.stderr)
         print("", file=sys.stderr)
-        print("字体问题**不通过换字体文件解决**——这是 bebeb9ec 定下的路线。",
+        print("字体问题**不通过换字体文件解决**——这是 6ad7aa23 定下的路线。",
               file=sys.stderr)
         print("要换界面字体，改 magia-native/src/MagiaLegacy.cpp 里那对常量：",
               file=sys.stderr)
@@ -232,7 +232,7 @@ def main():
         print('    static const char kTo[]   = "fonts/mbm_20160902.ttf";',
               file=sys.stderr)
         print("这样随时能热回滚；直接替换文件内容做不到，而且历史上已经回滚过一次"
-              "（5c368ba2 → 93a5481f）。", file=sys.stderr)
+              "（702ebbf3 → 703cb30f）。", file=sys.stderr)
         print("", file=sys.stderr)
         print("确实要改基线（例如换了新的授权字体），就更新本脚本的 EXPECTED 表，"
               "并在提交信息里写明来源与授权。", file=sys.stderr)

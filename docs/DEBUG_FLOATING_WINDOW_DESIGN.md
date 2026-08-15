@@ -10,7 +10,7 @@
 > ⚠ **本文档 v1 有两处硬错，已在下文改正**，列在这里免得有人只读了旧版：
 >
 > 1. 曾写「权限门槛已经没有了，原包 manifest 里本来就有 `SYSTEM_ALERT_WINDOW`」
->    ——写这句时它已经被 `c1bb57a0` 删掉 15 分钟了，并且同一个提交还在
+>    ——写这句时它已经被 `5c7bdb9d` 删掉 15 分钟了，并且同一个提交还在
 >    `check-download-ui-contract.py` 里立了「不许回来」的断言。该删除**维护者
 >    并不知情**，已回退，断言也反了过来（现在断言它必须在）。
 > 2. 曾把入口设计成「先用 su 建 `<priv>/debug/enableOverlay` 自举」。
@@ -78,7 +78,7 @@ JNI_OnLoad → loadDebugFlags();   // 进程一起就定死
 
 `SYSTEM_ALERT_WINDOW` 是**原包自带**的权限，不是我们加的。
 
-`c1bb57a0`（2026-08-13 00:26）把它连同 `MANAGE_EXTERNAL_STORAGE` 和
+`5c7bdb9d`（2026-08-13 00:26）把它连同 `MANAGE_EXTERNAL_STORAGE` 和
 `android:requestLegacyExternalStorage` 一起删掉，提交信息写作「移除无用的全盘和
 悬浮窗权限」，并在 `check-download-ui-contract.py` 里立了一条「不许回来」的断言。
 **维护者对这条改动完全不知情**，且它并不「无用」——悬浮窗正是靠它挂
@@ -115,7 +115,7 @@ v1 定的判据是**自举**：悬浮窗只在 `<priv>/debug/enableOverlay` 存�
 > 真正需要悬浮窗的人 = **建不出那个文件的人**。
 
 门槛正好挡住了要服务的那批，放进来的正好是不需要它的那批。这不是假想——
-`android:debuggable` 就是这么白开了两天又收回去的（`7aebb871` 打开，两天后收回）：
+`android:debuggable` 就是这么白开了两天又收回去的（`f38ffea2` 打开，两天后收回）：
 开它是为了让人免 root 抓日志和改开关，收它是因为**这条路根本送不到人**，
 要用它得会 Termux，而实际会用的人几乎没有。同一个错误不该犯第二次。
 
