@@ -40,19 +40,12 @@ jobs:
         with:
           fetch-depth: 0   # lastUpdated 需要完整历史才能取到每页的最后提交时间
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: docs-site/package-lock.json
-
-      - name: 安装依赖
-        run: npm ci
-
-      # 下载地址是部署参数，仓库里只有占位符。缺了就发布一个「下载按钮点不开」
-      # 的站点——那种坏法没有任何报错，只有玩家点了才知道，所以在这里拦。
-      - name: 🔑 注入下载地址
-        working-directory: .
+      # 与 build-apk 的预检同一个道理：缺 secret 要在**动手之前**报，而不是让
+      # 装依赖、构建都跑完再说。这一步排在 setup-node 之前，缺了几秒钟就红。
+      #
+      # 而且这个缺法本身没有报错：注入不上就发布一个「下载按钮点不开」的站点，
+      # 构建、部署全绿，只有玩家点了才知道。所以它必须是硬失败。
+      - name: 🔑 预检必需的 secret
         env:
           DOWNLOAD_URLS: ${{ secrets.DOWNLOAD_URLS }}
         run: |
@@ -62,7 +55,22 @@ jobs:
             echo "::error::格式：逗号分隔的完整地址，第一条即页面上「推荐」的那条"
             exit 1
           fi
-          python3 tools/inject-download-url.py
+          echo "必需的 secret 都在（DOWNLOAD_URLS）"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 🔑 注入下载地址
+        working-directory: .
+        env:
+          DOWNLOAD_URLS: ${{ secrets.DOWNLOAD_URLS }}
+        run: python3 tools/inject-download-url.py
 
       - name: 构建
         run: npm run docs:build
