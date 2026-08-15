@@ -75,9 +75,8 @@ jobs:
       - name: 🧹 清理
         env:
           # 两个 token 各管各的，别混用：自身仓库的 artifact / cache / run 用内置
-          # token（permissions 已给 actions: write）；Release 资产在别的仓库，
-          # 只有 PAT 够得着。反过来 PAT 未必对本仓库有 actions:write，拿它删
-          # artifact 会 403。
+          # token（permissions 已给 actions: write）；Release 资产那一档由 PAT 管。
+          # 反过来 PAT 未必对本仓库有 actions:write，拿它删 artifact 会 403。
           : ${{ secrets. }}
           : ${{ secrets. }}
           TARGET_REPO: ${{ secrets.TARGET_REPO }}

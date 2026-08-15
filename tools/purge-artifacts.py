@@ -142,7 +142,7 @@ def purge_caches(token, repo, apply_):
 
 
 def purge_runs(token, repo, apply_, keep):
-    """删 run 会连日志一起删——秘密化之前的日志里直接 echo 过仓库地址。
+    """删 run 会连日志一起删。
 
     保留最近 keep 次：全删会让「上一次绿灯长什么样」也没了，出回归时无从对照。
     """
@@ -190,7 +190,7 @@ def main():
     ap.add_argument("--artifacts", action="store_true")
     ap.add_argument("--caches", action="store_true")
     ap.add_argument("--runs", action="store_true",
-                    help="删旧 run（连带日志——秘密化之前的日志里 echo 过仓库地址）")
+                    help="删旧 run（连带日志一起删）")
     ap.add_argument("--keep-runs", type=int, default=3)
     ap.add_argument("--release-assets", action="store_true",
                     help="连对外 Release 上的旧资产一起删（危险，见 --yes-…）")

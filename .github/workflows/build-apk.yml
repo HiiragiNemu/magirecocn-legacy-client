@@ -151,8 +151,8 @@ jobs:
           # 发生（线路表为空、外链全不放行、热更地址拼不出来）。所以在这里拦，
           # 而不是等玩家装上才发现。
           NEED="BASELINE_APK_URL OVERLAY_URL CLIENT_ROOT_DOMAIN CLIENT_PAGES_HOSTS"
-          # 发版相关的只有真要发版时才需要。 也在这一档——取 overlay
-          # 现在走 OVERLAY_URL（凭证若需要就带在 URL 里），构建本身不再用它。
+          # 发版相关的只有真要发版时才需要。 也在这一档：它只服务发版，
+          # 构建本身不碰它——取件要凭证的话，凭证跟着 OVERLAY_URL 走。
           if [ "${{ inputs.verify_only }}" != "true" ]; then
             NEED="$NEED  TARGET_REPO TARGET_REPO"
           fi
@@ -206,10 +206,7 @@ jobs:
       # 2026-08-14 第一次跑这条腿就栽在这儿：verify 报「内容不同：1」，而那个文件是
       # 与我们毫无关系的 GMS 工具类，现象完全指不向真正的原因。
       # 只在这一步换 JAVA_HOME，别动整个 job 的 JDK（javac / d8 那边按 17 调好的）。
-      #  是给外部图集取件用的。没有 token 时仍会匿名试一次——
-      # 来源公开时照样能用，需要凭证时会明确报错，而不是把一个 404
-      # 页面当 zip 解开。
-      # Totentanz 整包与构建工具都在公开仓库，不需要 token。
+      # Totentanz 整包与构建工具都在公开仓库，不需要凭证。
       - name: 🌱 从Totentanz 整包重建工程树
         env:
           # 图集从哪取：整条 URL 由变量给（逗号分隔可列多条，按序试；需要
@@ -603,13 +600,12 @@ jobs:
             || { echo "::error::产物缺少 classes3.dex"; exit 1; }
           echo "自检通过"
 
-      # APK 最终由自有域名的 CDN 提供（见 docs-site/download.md）。资产要传到
-      # 发布仓库的 latest Release，再显式 dispatch 让镜像仓库立即同步——镜像
-      # 仓库是发布仓库的严格全量镜像（不在发布仓库的资产会被下次同步删掉），
-      # 而资产上传本身不触发镜像同步的 release 事件。两个地址都由 secrets 给，见上面的 env。
+      # 产物交给分发链路：先传到 UP_REPO 的 latest Release，再显式 dispatch
+      # 通知 DOWN_REPO——**资产上传本身不产生 release 事件**，不 dispatch 的话
+      # 那一端要等下一次常规触发才会跟上。两个地址都由 secrets 给，见下面的 env。
       # 注意：gh release upload 的 <file>#<name> 语法里 '#' 只改显示标签，
-      # 资产真实 name 仍按本地文件名走，必须先改名再传（与 sync-and-upload
-      # 头注的虚空链接 bug 同源）。
+      # 资产真实 name 仍按本地文件名走，所以必须先改名再传——否则拿到的是一个
+      # 名字对不上的资产，按名字取件的那一端会直接扑空。
       - name: 🚀 发布 APK
         if: ${{ inputs.verify_only != true }}
         env:
@@ -630,8 +626,8 @@ jobs:
             fi
           done
 
-          # preflight：token 必须能对发布仓库 release 读写，否则公测站留下的是 404
-          # 死链——宁可构建红掉也不发死链。
+          # preflight：token 必须能对 UP_REPO 的 release 读写，否则玩家那边留下的
+          # 是 404 死链——宁可构建红掉也不发死链。
           #
           # ⚠ 报错必须分清是哪一种。原先三种情况共用一句「 缺失或无权限」，
           # 于是 2026-08-13 那次 401（token 本身失效）把维护者送去查权限设置——
@@ -639,8 +635,8 @@ jobs:
           #
           #   secret 为空 → 去仓库 Settings 配上
           #   401         → token 已过期/被撤销/粘进了空白，重新签发一枚
-          #   403 / 404   → token 有效，但够不着发布仓库（细粒度 PAT 只能访问
-          #                 其所属账户的仓库，而发布仓库属于另一个账户）
+          #   403 / 404   → token 有效，但够不着目标（细粒度 PAT 的可访问范围
+          #                 是签发它的那个账户，够不到范围外的目标）
           if [ -z "${:-}" ]; then
             echo "::error:: secret 未配置或为空（Settings → Secrets and variables → Actions）"
             exit 1
@@ -671,28 +667,27 @@ jobs:
             echo "::notice:: 有效期至 ${EXP}（到期后本步骤会以 401 失败）"
           fi
 
-          # 再确认够得着发布仓库。403 与 404 分开报：私有仓库无权限时 GitHub
-          # 回的是 404，不写清楚会让人以为 release 被删了。
+          # 再确认够得着 UP_REPO。403 与 404 分开报：无权限时 GitHub 回的可能是
+          # 404，不写清楚会让人以为 release 被删了。
           UP=$(curl -sS -o /dev/null -w '%{http_code}' \
                -H "Authorization: Bearer ${}" \
                -H "Accept: application/vnd.github+json" \
                "https://api.github.com/repos/$UP_REPO/releases/tags/latest" || echo 000)
           case "$UP" in
-            200) echo "发布仓库 $UP_REPO latest release 可读，继续发布" ;;
-            403) echo "::error::token 有效但无权访问 $UP_REPO（HTTP 403）。细粒度 PAT 只能访问其所属账户的仓库，而发布仓库属于另一个账户；classic PAT 则需要 token 持有者本人对该仓库有写权限。"; exit 1 ;;
-            404) echo "::error::看不到 $UP_REPO 的 latest release（HTTP 404）。私有仓库在无权限时同样返回 404，所以这既可能是权限不够，也可能是 latest tag 真的不在了。"; exit 1 ;;
-            *)   echo "::error::读取 $UP_REPO latest release 返回 HTTP $UP，无法发布公测直链"; exit 1 ;;
+            200) echo "$UP_REPO latest release 可读，继续发布" ;;
+            403) echo "::error::token 有效但无权访问 $UP_REPO（HTTP 403）。细粒度 PAT 的可访问范围是签发它的那个账户，够不到范围外的目标；classic PAT 则需要 token 持有者本人对目标有写权限。"; exit 1 ;;
+            404) echo "::error::看不到 $UP_REPO 的 latest release（HTTP 404）。无权限时同样返回 404，所以这既可能是权限不够，也可能是 latest tag 真的不在了。"; exit 1 ;;
+            *)   echo "::error::读取 $UP_REPO latest release 返回 HTTP $UP，无法发布"; exit 1 ;;
           esac
 
           cp "$SRC" "$NAME"
           gh release upload latest "$NAME" --repo "$UP_REPO" --clobber
           echo "✅ 已上传 $NAME 到 $UP_REPO latest Release"
 
-          # 让下游立即镜像（同步 workflow 会把新资产带过去，CDN 直链随即生效）。
-          # dispatch 失败不阻断——下次发布仓库 push 触发同步时也会补上，只是直链
-          # 生效晚一点。
+          # 通知 DOWN_REPO 立即跟进。失败不阻断——它下一次常规触发时也会跟上，
+          # 只是晚一点。
           gh api "repos/$DOWN_REPO/dispatches" -f event_type=upstream-update \
-            || echo "::warning::下游 dispatch 失败，镜像将等下次同步自动补齐"
+            || echo "::warning::dispatch 失败，DOWN_REPO 将在下次常规触发时跟上"
 
       - name: 📊 构建报告
         if: always()
