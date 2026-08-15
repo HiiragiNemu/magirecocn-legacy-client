@@ -9,7 +9,7 @@ name: 🏗️ 构建 APK
 # ║   ▸ 补丁层里没有构建期注入的信任锚（API_HOST /                 ║
 # ║     DIRECTORY_PUBKEY 之类），构建本身不需要这类 Secret。            ║
 # ║   ▸ 签名用 **AOSP testkey**，由 CI 从 android.googlesource.com 取，  ║
-# ║     不入库、也不需要 keystore Secret。这与上游发行的包是同一把 key， ║
+# ║     不入库、也不需要 keystore Secret。这与 Totentanz 发行的包是同一把 key， ║
 # ║     所以产物可以直接覆盖安装。                                       ║
 # ║                                                                    ║
 # ║ 构建流程                                                            ║
@@ -179,7 +179,7 @@ jobs:
         run: python3 tools/check-debug-flag-boundary.py
 
       # patchset 现在是工程树的**唯一**定义，构建就靠它。这一步是离线自洽检查
-      # （毫秒级，不下载上游包），排在真去取包之前：清单本身有毛病时越早失败越省事。
+      # （毫秒级，不下载 Totentanz 包），排在真去取包之前：清单本身有毛病时越早失败越省事。
       - name: 🧬 校验基线 patchset 自洽
         run: |
           python3 tools/check-baseline.py
@@ -292,7 +292,7 @@ jobs:
           # 客户端版本通道的「本端版本」在这里定：1.0.<run_number>，每个构建
           # 单调递增，可回溯到具体 workflow run。config.json 的 client.version
           # 抬过它，旧包启动时就会弹强制更新框。
-          # 注意这与 APK 的 versionName/versionCode 无关——那是上游包的身份，
+          # 注意这与 APK 的 versionName/versionCode 无关——那是 Totentanz 包的身份，
           # 不能动。cpp 里的字面量只是本地构建（build-local.sh）的兜底。
           VER="1.0.${GITHUB_RUN_NUMBER}"
           echo "客户端版本号: ${VER}"
@@ -530,7 +530,7 @@ jobs:
       - name: 🔏 签名 APK（AOSP testkey）
         run: |
           set -euo pipefail
-          # AOSP 公开测试密钥：与上游发行包同一签名身份，产物可直接覆盖安装。
+          # AOSP 公开测试密钥：与 Totentanz 发行包同一签名身份，产物可直接覆盖安装。
           # 它是公开的测试密钥，**不提供任何真实性保证**，仅用于保持可覆盖安装。
           #
           # googlesource 在 CI 上间歇性不可达（已撞两次 base64: invalid input），
@@ -677,7 +677,7 @@ jobs:
                -H "Accept: application/vnd.github+json" \
                "https://api.github.com/repos/$UP_REPO/releases/tags/latest" || echo 000)
           case "$UP" in
-            200) echo "上游 $UP_REPO latest release 可读，继续发布" ;;
+            200) echo "发布仓库 $UP_REPO latest release 可读，继续发布" ;;
             403) echo "::error::token 有效但无权访问 $UP_REPO（HTTP 403）。细粒度 PAT 只能访问其所属账户的仓库，而发布仓库属于另一个账户；classic PAT 则需要 token 持有者本人对该仓库有写权限。"; exit 1 ;;
             404) echo "::error::看不到 $UP_REPO 的 latest release（HTTP 404）。私有仓库在无权限时同样返回 404，所以这既可能是权限不够，也可能是 latest tag 真的不在了。"; exit 1 ;;
             *)   echo "::error::读取 $UP_REPO latest release 返回 HTTP $UP，无法发布公测直链"; exit 1 ;;
@@ -688,7 +688,7 @@ jobs:
           echo "✅ 已上传 $NAME 到 $UP_REPO latest Release"
 
           # 让下游立即镜像（同步 workflow 会把新资产带过去，CDN 直链随即生效）。
-          # dispatch 失败不阻断——下次上游 push 触发同步时也会补上，只是直链
+          # dispatch 失败不阻断——下次发布仓库 push 触发同步时也会补上，只是直链
           # 生效晚一点。
           gh api "repos/$DOWN_REPO/dispatches" -f event_type=upstream-update \
             || echo "::warning::下游 dispatch 失败，镜像将等下次同步自动补齐"

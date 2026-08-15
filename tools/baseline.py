@@ -4,8 +4,8 @@
 
 ## 这个工具解决什么问题
 
-本仓库以基础客户端为基线，仓库正文只放补丁，整包放Totentanz 公开 Release。
-基线树由构建链从Totentanz 公开 Release 现取重建，不在仓库里留原包派生文件。
+本仓库以 Totentanz 客户端为基线，仓库正文只放补丁，整包放 Totentanz 公开 Release。
+基线树由构建链从 Totentanz 公开 Release 现取重建，不在仓库里留原包派生文件。
 
 这个工具就是那条路上的机械部分：
 
@@ -23,7 +23,7 @@
 ## 为什么分类是手写在 baseline.json 里、而不是自动推断
 
 自动推断会把「我们故意不要的东西」误判成「我们新增的东西」。最典型的是
-1.1.1 → 1.2.0 之间上游删掉的 358 个埋点 SDK 类（thinkingdata / backtrace）：
+1.1.1 → 1.2.0 之间项目删掉的 358 个埋点 SDK 类（thinkingdata / backtrace）：
 它们在我们的旧树里有、在新基线里没有，任何按存在性推断的脚本都会把它们当成
 「我方新增，要加回去」——而实际上删掉它们正是换基线的收益。
 
@@ -581,7 +581,7 @@ def main():
                                  epilog=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("fetch", help="下载并校验上游 APK，重建出基线树")
+    p = sub.add_parser("fetch", help="下载并校验 Totentanz APK，重建出基线树")
     p.add_argument("--force", action="store_true", help="已有基线树时也重新重建")
     p.add_argument("--java", default=None, help="重建用的 java 可执行文件（默认 PATH 上的 java）")
     p.set_defaults(func=cmd_fetch)

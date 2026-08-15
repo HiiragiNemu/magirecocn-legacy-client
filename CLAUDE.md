@@ -11,8 +11,8 @@
    `smali_classes3/` 整个目录和 `smali_classes2/…/CNCNDownloadUI*.smali`
    在每次构建时都由 Java 编译产物生成，手改必被冲掉。
 
-   > **2026-08-14 起仓库里没有 客户端基线树了**。原包派生的那 原包派生文件
-   > 已删除，工程树在构建时从Totentanz 公开 Release 整包重建（`tools/baseline.py`，
+   > **2026-08-14 起仓库里没有 客户端基线树了**。工程树在构建时从 Totentanz 公开
+   > Release 整包重建（`tools/baseline.py`，
    > 见 README「基线与补丁」）。要改上面这两处以外的 smali，流程是
    > `baseline.py apply --out work/tree` → 在 `work/tree` 里改 → `baseline.py regen`
    > 把改动落成 `baseline/patches/` 下的 diff。直接往仓库里放 smali 会被
