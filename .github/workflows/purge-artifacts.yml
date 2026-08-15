@@ -9,7 +9,7 @@ name: 🧹 清理旧构建产物
 # ║   构建产物会一直堆着，占配额；更麻烦的是**旧包仍然可下载**——有人    ║
 # ║   顺着旧链接装到早已不适用的版本，排查时会得到完全对不上的现象。     ║
 # ║                                                                    ║
-# ║     artifact   每次构建的 APK 与中间产物                            ║
+# ║     artifact   归档流水线留下的索引、校验和与 bundle                ║
 # ║     run 日志   历次运行记录                                         ║
 # ║     cache      构建缓存                                             ║
 # ║     Release    被新版取代的旧发行文件                               ║
@@ -33,7 +33,7 @@ on:
         type: boolean
         default: false
       artifacts:
-        description: 'workflow artifact（旧 APK 就在这里）'
+        description: 'workflow artifact（归档流水线的索引 / bundle）'
         type: boolean
         default: true
       caches:

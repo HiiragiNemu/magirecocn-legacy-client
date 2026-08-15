@@ -294,7 +294,7 @@ workflow（复验 + 全量回归并移动 `last-green`），不产出对外 APK�
 
 ```
 fetch → apply → work/tree → native .so → BGM 转码 → 覆盖补丁 smali
-      → apktool b → zipalign → apksigner → artifact
+      → apktool b → zipalign → apksigner → 发布
 ```
 
 所有读写工程树的步骤都经 `$TREE`；`tools/build-local.sh` 走同一套。
@@ -593,5 +593,5 @@ Totentanz 项目 → `rayshift/magiatranslate`，Copyright Rayshift）：版权�
 
 ## 状态提醒
 
-本仓库不做自动发版：CI 只有手动触发，产物只上传为 workflow artifact，不建
-Release。游戏后端不由我们掌控，自动产出对外包只会让玩家装到连不通的版本。
+本仓库不做自动发版：产出对外 APK 的那条腿只有手动触发，push 到 main 只跑检查。
+游戏后端不由我们掌控，自动产出对外包只会让玩家装到连不通的版本。

@@ -4,13 +4,16 @@
 
 ## 清的是什么、为什么
 
-构建产物会一直堆着：每次构建的 APK artifact、Actions cache、历次 run 及其日志、
+跑过的东西会一直堆着：workflow artifact、Actions cache、历次 run 及其日志、
 以及 Release 上被新版取代的旧资产。留着有两个实际代价——占配额，以及**旧包仍然
 可下载**：有人顺着旧链接装到一个早已不适用的版本，排查时会得到完全对不上的现象。
 
+APK 本身不在 artifact 里——构建完直接发到发布目标，所以「旧包还能下」这一条
+落在最后一行（Release 资产），不在第一行。
+
 | 类别 | 说明 |
 |---|---|
-| workflow artifact | 每次构建的 APK 与中间产物，按保留期堆积 |
+| workflow artifact | 归档流水线留下的索引、校验和与 bundle，按保留期堆积 |
 | Actions cache | 构建缓存，同上 |
 | run 与日志 | 历次运行记录 |
 | Release 资产 | 被新版取代的旧发行文件 |

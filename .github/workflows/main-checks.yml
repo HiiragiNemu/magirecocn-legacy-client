@@ -22,7 +22,7 @@ permissions:
   contents: write   # 并发预警要在提交下留言
 
 jobs:
-  # ── 复验：完整构建流水线（不上传产物）─────────────────────────────
+  # ── 复验：完整构建流水线（不发布）─────────────────────────────────
   recheck:
     uses: ./.github/workflows/build-apk.yml
     with:

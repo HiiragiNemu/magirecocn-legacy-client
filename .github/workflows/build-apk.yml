@@ -37,7 +37,7 @@ on:
   workflow_dispatch:
     inputs:
       verify_only:
-        description: '只构建校验，不上传产物'
+        description: '只构建校验，不发布（不勾＝构建完把 APK 传到发布目标）'
         type: boolean
         default: false
   # 供 main-checks.yml 复用（push 到 main 后的复验）。APK 构建本身的
@@ -46,7 +46,7 @@ on:
   workflow_call:
     inputs:
       verify_only:
-        description: '只构建校验，不上传产物'
+        description: '只构建校验，不发布'
         type: boolean
         default: true
 
