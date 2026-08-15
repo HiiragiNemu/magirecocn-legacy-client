@@ -117,7 +117,10 @@ jobs:
           set -euo pipefail
           FILES=$(git diff --name-only "$BEFORE" "$AFTER" || echo "")
           TIER=1
-          CORE="^(magia-native/|smali/|smali_classes2/|patch/src/main/java/io/kamihama/magianative/(CNWebProxy|CNDownloaderFix|CNHotUpdate|CNSafeLink)\.java)"
+          # baseline/ 顶掉了原先的 smali/ 与 smali_classes2/：工程树不在仓库里之后，
+          # 那两条路径永远匹配不到，这一级判定等于哑火。改动 patchset 与改 smali
+          # 是同一件事——它决定重建出来的树长什么样。
+          CORE="^(magia-native/|baseline/|patch/src/main/java/io/kamihama/magianative/(CNWebProxy|CNDownloaderFix|CNHotUpdate|CNSafeLink)\.java)"
           UI="^(patch/src/main/java/|config\.json)"
           while IFS= read -r f; do
             [ -z "$f" ] && continue

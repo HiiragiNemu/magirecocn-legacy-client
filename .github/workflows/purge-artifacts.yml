@@ -41,7 +41,7 @@ on:
         type: boolean
         default: true
       runs:
-        description: '旧 run 及其日志（日志里 echo 过仓库地址）'
+        description: '旧 run 及其日志'
         type: boolean
         default: true
       keep_runs:
