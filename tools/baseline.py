@@ -232,26 +232,56 @@ def cmd_fetch(args):
 
 
 def _split_credentials(url):
-    """把 URL 里的 user:token 拆出来。
-
-    返回 (干净 URL, Authorization 头或 None)。
-
-    为什么自己拆而不交给 urllib：`urlopen` **不会**把 URL 里的 userinfo 变成
-    Authorization 头，它会把 `user:token@host` 整个当主机名，于是解析失败或者
-    把凭证发到一个错的地方。拆出来自己发，行为是确定的。
-
-    顺带一条实际限制，别踩：token 拼进 URL 只对**接受 basic auth 的端点**有效
-    （API 那类）。浏览器下载直链（`/releases/download/...`）不吃这一套——私有
-    来源那条会跳登录流，拿回来的是一个 HTML 页面而不是 zip。真那样的话 sha256
-    会当场对不上，不会静默装错东西，但错误信息会指向「哈希不符」而不是「没权限」，
-    所以这里先说清楚。
-    """
     m = re.match(r"^(https?://)([^/@]+)@(.*)$", url)
     if not m:
         return url, None
     scheme, cred, rest = m.groups()
     return scheme + rest, "Basic " + base64.b64encode(
         urllib.parse.unquote(cred).encode("utf-8")).decode("ascii")
+
+
+class _Redir(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        nxt = urllib.request.HTTPRedirectHandler.redirect_request(
+            self, req, fp, code, msg, headers, newurl)
+        if nxt is not None and (urllib.parse.urlsplit(newurl).netloc
+                                != urllib.parse.urlsplit(req.full_url).netloc):
+            for k in [h for h in nxt.headers if h.lower() in ("authorization", "cookie")]:
+                del nxt.headers[k]
+        return nxt
+
+
+_OPENER = urllib.request.build_opener(_Redir)
+
+
+def _get(url, auth):
+    req = urllib.request.Request(url)
+    req.add_header("Accept", "application/octet-stream")
+    req.add_header("User-Agent", "baseline")
+    if auth:
+        req.add_header("Authorization", auth)
+    return _OPENER.open(req)
+
+
+def _pull(url, auth, want, dst, hop=0):
+    with _get(url, auth) as r:
+        if "json" not in (r.headers.get("Content-Type") or "").lower():
+            tmp = dst + ".part"
+            with open(tmp, "wb") as f:
+                shutil.copyfileobj(r, f)
+            os.replace(tmp, dst)
+            return
+        doc = json.loads(r.read().decode("utf-8", "replace"))
+    items = None if hop else (doc.get("assets") if isinstance(doc, dict) else doc)
+    if not isinstance(items, list):
+        raise ValueError("来源没有直接给出文件")
+    for it in items:
+        if isinstance(it, dict) and it.get("name") == want:
+            nxt = it.get("url") or it.get("browser_download_url")
+            if not nxt:
+                break
+            return _pull(nxt, auth, want, dst, hop + 1)
+    raise ValueError("来源里没有 %s" % want)
 
 
 def fetch_overlay(conf):
@@ -287,19 +317,9 @@ def fetch_overlay(conf):
             clean, auth = _split_credentials(raw)
             print("取 overlay（第 %d/%d 个来源；日志不回显地址）…" % (i, len(urls)))
             try:
-                req = urllib.request.Request(clean)
-                # 让 API 那类端点直接回字节而不是 JSON 元数据；对普通静态直链
-                # 是个无害的 Accept，服务端照常回文件。
-                req.add_header("Accept", "application/octet-stream")
-                if auth:
-                    req.add_header("Authorization", auth)
-                tmp = zip_path + ".part"
-                with urllib.request.urlopen(req) as r, open(tmp, "wb") as f:
-                    shutil.copyfileobj(r, f)
-                os.replace(tmp, zip_path)
+                _pull(clean, auth, spec["asset"], zip_path)
                 break
             except Exception as e:
-                # 只记第几个来源与错误本身，不记地址——它可能带凭证。
                 errors.append("第 %d 个来源：%s" % (i, e))
                 print("  取不到：%s" % e)
         else:
