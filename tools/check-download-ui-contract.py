@@ -99,24 +99,9 @@ DL_ORDER = file_name_table(downloader)
 HOT_PACKS = ("cn_scenario_update.zip", "cn_js_update.zip")
 
 
-def is_bulk(name):
-    """纯音视频大包：不会与热更两包撞文件，允许排在它们后面。
-
-    与 CNDownloaderFix.isBulkMedia 同一个判据，反着定义——只放行这一类，
-    其余一律算前置。新增内容包忘了登记时默认落在安全的一侧。
-    """
-    return name.startswith("cn_voice_") or name.startswith("movie")
-
-
-def hot_after_prereq(order):
-    """热更两包必须排在**全部非音视频包**之后。"""
-    if not order:
-        return False
-    prereq = [i for i, n in enumerate(order) if not is_bulk(n) and n not in HOT_PACKS]
-    hot = [order.index(h) for h in HOT_PACKS if h in order]
-    if not prereq or len(hot) != len(HOT_PACKS):
-        return False
-    return min(hot) > max(prereq)
+def hot_last(order):
+    """热更两包必须是表里的最后两项——前置集合就是它们的补集。"""
+    return bool(order) and set(order[-len(HOT_PACKS):]) == set(HOT_PACKS)
 
 def followed_by(src, first, second):
     """`first` 之后紧跟着的下一行代码就是 `second`（中间的注释不算数）。"""
@@ -507,17 +492,16 @@ checks = {
     # 包一份改好的。装反了内容包会把改好的那份盖回去，而这种坏法完全没有报错
     # ——文件都在、标记都全，只是内容退回了修正之前。
     #
-    # 两道都要：表序保证「轮到热更包时前置包早已全部开工」（线程池按提交序取
+    # 两道都要：表序保证「轮到热更包时其余包早已全部开工」（线程池按提交序取
     # 任务，这也是那道闸不会死锁的依据），闸门保证「装」真的在后面。只有表序
     # 是不够的——15 个包一次性提交给 4 线程池，几十 MB 的热更包必然先装完。
-    "热更两包排在全部前置包之后":
-        hot_after_prereq(DL_ORDER) and hot_after_prereq(UI_ORDER),
+    "热更两包排在表尾": hot_last(DL_ORDER) and hot_last(UI_ORDER),
     "两张文件表逐项对齐": UI_ORDER == DL_ORDER and len(DL_ORDER) == 15,
-    # 前置集合必须反着定义：正着列「哪些要等」的话，新增内容包忘了登记就默认
-    # 落在不安全的一侧，而且照例没有任何报错。
-    "前置集合按「除音视频外」反着定义":
-        'name.startsWith("cn_voice_") || name.startsWith("movie")' in downloader
-        and "!isBulkMedia(name)" in downloader,
+    # 前置集合必须是补集。按前缀或用途挑一部分「应该不会撞文件」的放行，判断
+    # 下错了是静默的，而挑对了的收益不过是让汉化早到一会儿。
+    "前置集合是热更两包的补集":
+        "isPrereqSlot(int index) {\n        return !isHotSlot(index);" in downloader
+        and "if (!isHotSlot(i)) n++;" in downloader,
     "装热更包之前等前置包收尾":
         "awaitPrereqInstalled(index, name)" in downloader
         and "prereqGate = new CountDownLatch(PREREQ_SLOTS.length)" in downloader

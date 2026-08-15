@@ -120,19 +120,23 @@ public final class CNDownloaderFix {
     /**
      * 下载顺序。
      *
-     * <p><b>热更两包排在全部内容包之后</b>：{@code cn_scenario_update.zip}（台词）
-     * 与 {@code cn_js_update.zip}（前端脚本）里可能带着针对内容包的<b>覆盖修正</b>
-     * ——同一个文件，内容包给一份、热更包给一份改好的。装反了，内容包会把改好的
+     * <p><b>热更两包排在最后</b>：{@code cn_scenario_update.zip}（台词）与
+     * {@code cn_js_update.zip}（前端脚本）里可能带着针对其它包的<b>覆盖修正</b>
+     * ——同一个文件，别的包给一份、热更包给一份改好的。装反了，那个包会把改好的
      * 那份盖回去，而这种坏法完全没有报错：文件都在、标记都全，只是内容退回了
      * 修正之前。
      *
-     * <p>热更两包仍排在 voice / movie 之前：那几个是十几 GB 的大头，等它们下完
-     * 再上汉化，热更形同虚设。放在内容包与 voice 之间是这两条约束的交点。
+     * <p>所以前置集合就是热更两包的<b>补集</b>：其余 13 个包，一个不落。不按前缀
+     * 或用途挑——「这个包应该不会跟热更撞文件吧」这种判断一旦下错，错法是静默的，
+     * 而收益只是让汉化早到一会儿。
      *
      * <p><b>但这张表本身给不了「装在之后」的保证</b>：15 个包是一次性全部提交给
      * 一个 4 线程池的（见 {@link #runInstallerInner}），表序只决定谁先开工，几十 MB
      * 的热更包必然在几 GB 的内容包还没下完时就装完了。真正的保证在
      * {@link #awaitPrereqInstalled}——那道闸只挡解压提交，下载照旧并行。
+     *
+     * <p>排在最后还有一层作用：线程池按提交序取任务，热更包因此最晚开工，等在
+     * 闸前的时间最短，不会白占着池里的线程让其余包只剩两条腿下载。
      *
      * <p>顺序只是下载次序，不是身份：所有逻辑都按**文件名**索引，完成标记也是
      * {@code <文件名>.done}，所以调整顺序不会让既有安装失效、也不会触发重下。
@@ -143,9 +147,9 @@ public final class CNDownloaderFix {
         "cn_base_00_db.zip", "cn_base_01_json.zip", "cn_base_02.zip",
         "cn_base_03.zip", "cn_base_04.zip", "cn_base_05.zip",
         "cn_base_06.zip", "cn_magica_resource.zip", "cn_scenario_img.zip",
-        "cn_scenario_update.zip", "cn_js_update.zip",
         "cn_voice_01.zip", "cn_voice_02_done.zip",
-        "movie.zip", "movie2.zip"
+        "movie.zip", "movie2.zip",
+        "cn_scenario_update.zip", "cn_js_update.zip"
     };
 
     private static final int ARCHIVE_COUNT = 15;
@@ -161,15 +165,11 @@ public final class CNDownloaderFix {
     static final int HOT_SLOT_JS       = slotOf("cn_js_update.zip");
 
     /**
-     * 前置包槽位：热更两包要等它们全部收尾才允许装。
+     * 前置包槽位：<b>热更两包的补集</b>——其余 13 个包，一个不落。
      *
-     * <p><b>判据是反着定义的</b>——只有语音与影片是显式放行的，其余一律算前置。
-     * 正着列「哪些要等」的话，将来加一个内容包、忘了加进名单，它就默认落在
-     * 不安全的一侧，而且照例没有任何报错。反着写，新包默认要等：慢一点是可见的，
-     * 装错了不是。
-     *
-     * <p>放行 voice / movie 是因为它们只有音频与视频，不可能与台词、前端脚本
-     * 撞文件；而它们十几 GB，等它们装完再上汉化等于热更形同虚设。
+     * <p>刻意不按前缀或用途挑。「这个包应该不会跟热更撞文件吧」这种判断下错了
+     * 是静默的（文件都在、标记都全，只是内容退回了修正之前），而挑对了的收益
+     * 不过是让汉化早到一会儿。取补集就没有可挑错的地方，新增包也自动落进来。
      */
     private static final int[] PREREQ_SLOTS = prereqSlots();
 
@@ -180,28 +180,17 @@ public final class CNDownloaderFix {
         throw new IllegalStateException("FILE_NAMES 里没有 " + name);
     }
 
-    /** 纯音视频大包：不会与热更两包撞文件，因此不必等它。 */
-    private static boolean isBulkMedia(String name) {
-        return name.startsWith("cn_voice_") || name.startsWith("movie");
-    }
-
     private static int[] prereqSlots() {
         int n = 0;
         for (int i = 0; i < FILE_NAMES.length; i++) {
-            if (isPrereqName(FILE_NAMES[i])) n++;
+            if (!isHotSlot(i)) n++;
         }
         int[] out = new int[n];
         int k = 0;
         for (int i = 0; i < FILE_NAMES.length; i++) {
-            if (isPrereqName(FILE_NAMES[i])) out[k++] = i;
+            if (!isHotSlot(i)) out[k++] = i;
         }
         return out;
-    }
-
-    private static boolean isPrereqName(String name) {
-        return !isBulkMedia(name)
-                && !"cn_scenario_update.zip".equals(name)
-                && !"cn_js_update.zip".equals(name);
     }
 
     /** 这个下标是不是热更两包之一。五处判断都读这里，别再各写一份下标比较。 */
@@ -209,11 +198,9 @@ public final class CNDownloaderFix {
         return index == HOT_SLOT_SCENARIO || index == HOT_SLOT_JS;
     }
 
+    /** 补集的另一半，写成函数只是为了让 countDown 那处读起来是一句话。 */
     private static boolean isPrereqSlot(int index) {
-        for (int i = 0; i < PREREQ_SLOTS.length; i++) {
-            if (PREREQ_SLOTS[i] == index) return true;
-        }
-        return false;
+        return !isHotSlot(index);
     }
 
     /**
@@ -229,9 +216,9 @@ public final class CNDownloaderFix {
     /**
      * 挡在解压提交之前：热更包等前置包收尾。返回 false 表示这一轮不该装。
      *
-     * <p>不会死锁：热更两包在表里排在全部前置包之后，线程池按提交序取任务，
-     * 所以轮到热更包时前置包早已全部开工——最多只剩几个还在跑，它们在别的
-     * 线程上，减到零只是时间问题。
+     * <p>不会死锁：热更两包排在表尾，线程池按提交序取任务，所以轮到热更包时
+     * 其余 13 个包早已全部开工——最多只剩 {@code MAX_DOWNLOADS - 1} 个还在跑，
+     * 它们在别的线程上，减到零只是时间问题。
      */
     private static boolean awaitPrereqInstalled(int index, String name) {
         if (!isHotSlot(index)) return true;
@@ -240,7 +227,7 @@ public final class CNDownloaderFix {
             CNLog.i(TAG, "hold-for-prereq file=" + name
                     + " remaining=" + gate.getCount());
             CNCNDownloadUI.updateSimple("正在安装资源",
-                    name + "：等前面的内容包装完再装（它可能覆盖那些包里的文件）", 100);
+                    name + "：等其余资源装完再装（它可能覆盖那些包里的文件）", 100);
             try {
                 gate.await();
             } catch (InterruptedException e) {
@@ -1177,11 +1164,11 @@ public final class CNDownloaderFix {
                 CNCNDownloadUI.updateFileProgress(index, 100);
                 CNCNDownloadUI.updateSimple("正在安装资源",
                         name + "：下载已验证，正在解压并提交…", 100);
-                // 装之前先过闸：热更包可能覆盖内容包里的文件，装在它们之前
+                // 装之前先过闸：热更包可能覆盖其余包里的文件，装在它们之前
                 // 会被原样盖回去，而且没有任何报错。下载已经做完，这里只挡「装」。
                 if (!awaitPrereqInstalled(index, name)) {
                     CNCNDownloadUI.updateSimple("正在安装资源",
-                            name + "：前面的内容包尚未装完，本轮先不装它", 100);
+                            name + "：其余资源尚未装完，本轮先不装它", 100);
                     markFailed(index);
                     return false;
                 }
