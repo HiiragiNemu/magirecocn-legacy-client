@@ -467,20 +467,22 @@ checks = {
         and "SUGGEST_SLOPE = 0.5f" in assist
         and "SUGGEST_MIN = 85" in assist and "SUGGEST_MAX = 125" in assist
         and "delta * SUGGEST_SLOPE * 100f" in assist,
-    # 2. 浮层总进度条比它上面那行字长出一截：文字行贴着 slotScroll 的 5dp 滚动条
-    #    留白，进度条却是满宽。两者必须用同一个 inset，否则右端永远差 5dp。
+    # 2. 浮层总进度条比它上面那行字长出一截：文字行贴着 slotScroll 的滚动条留白，
+    #    进度条却是满宽。两者必须用同一个 inset，否则右端永远差这一份。
     # 右端对齐的三处必须**同源**：文件列表靠右 padding 让出滚动条槽位，而它下面
     # 那行文字进度与总进度条不在同一个滚动容器里，得用同一个数做右边距才对得齐。
-    # 原先三处各写 dp(act, 5)，谁改一处另外两处就错开——而错 1dp 都看得出来。
-    # 顺带：5dp 比滚动条本身（6dp）还窄，条必然压在字上，所以这个数抬到了 10dp。
+    # 原先三处各写死同一个字面量，谁改一处另外两处就错开——而错 1dp 都看得出来。
     "滚动条槽宽三处同源":
         ui.count("dp(act, CNDownloadUiAssist.SCROLLBAR_GUTTER_DP)") >= 4
-        and "SCROLLBAR_GUTTER_DP = 10" in assist
+        and re.search(r"SCROLLBAR_GUTTER_DP = \d+", assist) is not None
         and "dp(hs, SCROLLBAR_GUTTER_DP)" in assist
         and "dp(vs, SCROLLBAR_GUTTER_DP)" in assist,
+    # 槽比条窄的话条就压在字上。钉的是**两者的关系**而不是各自的取值：粗细和
+    # 留白都还会按观感调，钉死字面量的话每调一次都要来改这里，改着改着就没人
+    # 再当它是不变量了。
     "槽宽必须宽过滚动条本身":
-        "d.setSize(dp(v, 6), dp(v, 6))" in assist
-        and int(re.search(r"SCROLLBAR_GUTTER_DP = (\d+)", assist).group(1)) > 6,
+        int(re.search(r"SCROLLBAR_GUTTER_DP = (\d+)", assist).group(1))
+        > int(re.search(r"d\.setSize\(dp\(v, (\d+)\)", body(assist, "private static GradientDrawable scrollThumb(View v)")).group(1)),
     # 3. 热更新检查完就跳走，玩家来不及看清结果（尤其失败时）。停留窗口拉长；
     #    上限 PLAYER_WINDOW_MAX_MS 不动，手动「停留」按钮仍是唯一的无限期通道。
     "热更新结果停留时间足够看清":

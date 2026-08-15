@@ -81,14 +81,17 @@ public final class CNDownloadUiAssist {
     /**
      * 滚动条留出的槽宽（dp）：竖条往右让、横条往下让，都让这么多。
      *
-     * <p>原先是 5dp，而滚动条自己就有 6dp 粗（见 {@link #scrollThumb}）——<b>槽比条
-     * 还窄，条必然压在字上</b>。10dp 给出约 4dp 净空。
+     * <p><b>必须大于滚动条本身的粗细</b>（见 {@link #scrollThumb}）。槽比条还窄的话
+     * 条就压在字上——这条不变量由 {@code tools/check-download-ui-contract.py} 钉着。
+     * 现在是 7dp 槽配 4dp 条，留 3dp 净空。
      *
      * <p>这个数<b>不是只给滚动条用的</b>：文件列表（{@code slotScroll}）靠右 padding
      * 让出槽位，而它下面那行文字进度与总进度条不在同一个滚动容器里，得用同一个数
      * 做右边距才对得齐。三处一起读这里，谁也别再各写各的——它们错开 1dp 都看得出来。
+     *
+     * <p>调小它会把竖条连同内容右边界一起往面板边缘推；调大则往里收。
      */
-    public static final int SCROLLBAR_GUTTER_DP = 10;
+    public static final int SCROLLBAR_GUTTER_DP = 7;
 
     private static final String LEGACY_TAG = "cn-download-ui-assist";
     private static final String TAG_STAY = "cn-download-stay";
@@ -657,19 +660,26 @@ public final class CNDownloadUiAssist {
         }
     }
 
+    /**
+     * 滑块：4dp 粗，圆角取半宽（2dp）才是一颗真的胶囊——圆角大于半宽只会被裁掉，
+     * 视觉上没差别，但读的人会以为这里还有别的意图。
+     *
+     * <p>粗细与 {@link #SCROLLBAR_GUTTER_DP} 是一对：槽必须比条宽，否则条压在字上。
+     */
     private static GradientDrawable scrollThumb(View v) {
         GradientDrawable d = new GradientDrawable();
         d.setColor(color("COLOR_ACCENT", 0xFFD63384));
-        d.setCornerRadius(dp(v, 6));
-        d.setSize(dp(v, 6), dp(v, 6));
+        d.setCornerRadius(dp(v, 2));
+        d.setSize(dp(v, 4), dp(v, 4));
         return d;
     }
 
+    /** 轨道比滑块再细 1dp：它只是给出「这里能滚」的暗示，不该和滑块抢注意力。 */
     private static GradientDrawable scrollTrack(View v) {
         GradientDrawable d = new GradientDrawable();
         d.setColor(color("COLOR_BAR_BG", 0x335B4661));
-        d.setCornerRadius(dp(v, 6));
-        d.setSize(dp(v, 5), dp(v, 5));
+        d.setCornerRadius(dp(v, 2));
+        d.setSize(dp(v, 3), dp(v, 3));
         return d;
     }
 

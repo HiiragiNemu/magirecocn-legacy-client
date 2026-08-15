@@ -868,10 +868,10 @@ public class CNCNDownloadUI {
         totalRow.setGravity(Gravity.CENTER_VERTICAL);
         // ⚠ 右侧留白必须与文件区一致。
         //
-        // slotScroll 为了给常驻纵向滚动条让位，右边留了 5dp；而 totalRow 与总进度条
-        // 是直接加在 rightCol 上的，没有这 5dp——于是它们比上面每一行文件都长出
-        // 5dp，看起来就是「默认情况下进度条偏长」（2026-08-13 反馈）。这跟「重下」
-        // 按钮无关，那颗胶囊早已撤掉；是滚动条留白只加在了一边。
+        // slotScroll 为了给常驻纵向滚动条让位，右边留了 SCROLLBAR_GUTTER_DP；而
+        // totalRow 与总进度条是直接加在 rightCol 上的，没有这一份——于是它们比上面
+        // 每一行文件都长出同样多，看起来就是「默认情况下进度条偏长」（2026-08-13
+        // 反馈）。这跟「重下」按钮无关，那颗胶囊早已撤掉；是滚动条留白只加在了一边。
         LinearLayout totalRowLp0 = totalRow;
         totalRowLp0.setPadding(0, 0, dp(act, CNDownloadUiAssist.SCROLLBAR_GUTTER_DP), 0);
         rightCol.addView(totalRow, lpRow(dp(act, 8), dp(act, 2)));
