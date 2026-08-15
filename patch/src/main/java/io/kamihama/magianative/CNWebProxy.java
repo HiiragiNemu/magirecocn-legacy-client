@@ -45,7 +45,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <h3>为什么这一层没有跨域问题</h3>
  *
- * {@code UrlConfig::web} 的改写是<b>停用</b>的，原因是真机黑屏（45289988）：改了
+ * {@code UrlConfig::web} 的改写是<b>停用</b>的，原因是真机黑屏（d3999f5b）：改了
  * web 端点等于换掉页面的 origin，前端所有相对请求与同源判断跟着一起变。
  *
  * <p>拦截层没有这个问题：我们把字节<b>交回</b>给 WebView，页面 origin 始终是

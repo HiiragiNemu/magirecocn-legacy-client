@@ -80,7 +80,7 @@ public final class CNLog {
      * ——注意它和 {@code files/} <b>平级</b>，不在 {@code files/} 里面。
      *
      * <p><b>{@code files/log} 是历史遗留，已经没有任何代码写它，可以直接删。</b>
-     * 2026-08-02（commit 67ac26a9）之前日志是从浮层起的，那时调的是
+     * 2026-08-02（commit cb8f007b）之前日志是从浮层起的，那时调的是
      * {@code CNLog.init(activity.getFilesDir())}，落点就是 {@code files/log}；
      * 改成从 native 入口起之后落点换了，而旧目录没人清理，就一直留在设备上。
      *
@@ -268,7 +268,7 @@ public final class CNLog {
             boolean append = openedOnce;
             if (!append) {
                 // 本进程第一次开：分配启动序号并定下文件名。
-                // （原注释写的是「两个目录用同一个名字」——那是 67ac26a9 之前的
+                // （原注释写的是「两个目录用同一个名字」——那是 cb8f007b 之前的
                 //   事实，当时浮层还会往 files/log 再开一份。现在只有一个落点，
                 //   见 LOG_DIR 的说明。）
                 Date now = new Date();

@@ -45,7 +45,7 @@ public final class CNMirrors {
 
     // 代理配置**刻意不做任何缓存**，始终以本次启动读到的 config.json 为准。
     //
-    // 曾经有过一份磁盘缓存（cn_proxy_config.tsv，8f6dba66），目的是让 native 在
+    // 曾经有过一份磁盘缓存（cn_proxy_config.tsv，8dea228f），目的是让 native 在
     // JNI_OnLoad 就预读到代理配置，赶在引擎首个请求之前生效。但它带来一个更糟的
     // 失败模式：config.json 拉不到时，缓存既不更新也不删除，于是 native 每次启动
     // 都把请求重写到一个可能早已不存在的代理——而端点级重写**没有失败回退**
