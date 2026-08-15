@@ -254,9 +254,9 @@ class _Redir(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_Redir)
 
 
-def _get(url, auth):
+def _get(url, auth, accept):
     req = urllib.request.Request(url)
-    req.add_header("Accept", "application/octet-stream")
+    req.add_header("Accept", accept)
     req.add_header("User-Agent", "baseline")
     if auth:
         req.add_header("Authorization", auth)
@@ -264,7 +264,7 @@ def _get(url, auth):
 
 
 def _pull(url, auth, want, dst, hop=0):
-    with _get(url, auth) as r:
+    with _get(url, auth, "*/*" if hop == 0 else "application/octet-stream") as r:
         if "json" not in (r.headers.get("Content-Type") or "").lower():
             tmp = dst + ".part"
             with open(tmp, "wb") as f:
@@ -272,7 +272,11 @@ def _pull(url, auth, want, dst, hop=0):
             os.replace(tmp, dst)
             return
         doc = json.loads(r.read().decode("utf-8", "replace"))
-    items = None if hop else (doc.get("assets") if isinstance(doc, dict) else doc)
+    if hop:
+        raise ValueError("来源没有直接给出文件")
+    items = doc.get("assets") if isinstance(doc, dict) else doc
+    if isinstance(doc, dict) and not isinstance(items, list):
+        items = [doc]
     if not isinstance(items, list):
         raise ValueError("来源没有直接给出文件")
     for it in items:
