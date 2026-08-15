@@ -8,7 +8,7 @@ hero:
   actions:
     - theme: brand
       text: 下载客户端
-      link: https://assets.example/magireco-latest-legacy-client.apk
+      link: __DOWNLOAD_URL__
     - theme: alt
       text: 下载与安装
       link: /download

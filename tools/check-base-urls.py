@@ -48,6 +48,10 @@ HOTCHECK  = "patch/src/main/java/io/kamihama/magianative/CNHotUpdateCheck.java"
 INSTALLER = "patch/src/main/java/io/kamihama/magianative/CNDownloaderFix.java"
 DOWNUI    = "patch/src/main/java/io/kamihama/magianative/CNCNDownloadUI.java"
 
+# 介绍站的两个注入位（取值部署期写入，见 tools/inject-download-url.py）。
+DOCS_INDEX    = "docs-site/index.md"
+DOCS_DOWNLOAD = "docs-site/download.md"
+
 # 常量必须**委托**给这些表达式，而不是自带一个字面量。
 DELEGATES = [
     (MIRRORS,   "MIRRORS_URL",       "CNEndpoints.MIRRORS_URL"),
@@ -218,6 +222,25 @@ def main():
                 "      ALLOWED_ABS，并在那里写清楚为什么它不会变。"
                 % (path, url))
 
+    # ---- 6. 介绍站的下载地址必须还是占位符 ----
+    #
+    # 与第 1 条同源：拦「本地注入过、顺手 git add 了」。下载地址是部署参数，
+    # 由 tools/inject-download-url.py 在部署时写入（见 deploy-docs.yml）。
+    for path, slot in ((DOCS_INDEX, "__DOWNLOAD_URL__"),
+                       (DOCS_DOWNLOAD, "<!-- DOWNLOAD_LINKS -->")):
+        try:
+            text = open(path, encoding="utf-8").read()
+        except OSError as e:
+            problems.append(str(e))
+            continue
+        if slot not in text:
+            problems.append(
+                "%s 里找不到占位符 %s。\n"
+                "      真实下载地址只该由 tools/inject-download-url.py 在**部署时**写入，\n"
+                "      不该入库。看到这条多半是本地注入过之后顺手提交了——\n"
+                "      跑 `python3 tools/inject-download-url.py --reset` 还原即可。"
+                % (path, slot))
+
     if problems:
         print("✘ 基址核对未通过：", file=sys.stderr)
         for p in problems:
@@ -230,6 +253,7 @@ def main():
     print("    · 热更表与浮层文件表里没有绝对地址（前缀对不上在结构上已不可能）")
     print("    · FILE_URLS 由 FILE_NAMES 逐项拼出")
     print("    · 补丁源码里没有白名单之外的绝对地址")
+    print("    · 介绍站的下载地址还是占位符（取值部署期注入）")
     return 0
 
 

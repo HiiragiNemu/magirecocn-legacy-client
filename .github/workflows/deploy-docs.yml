@@ -49,6 +49,21 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
+      # 下载地址是部署参数，仓库里只有占位符。缺了就发布一个「下载按钮点不开」
+      # 的站点——那种坏法没有任何报错，只有玩家点了才知道，所以在这里拦。
+      - name: 🔑 注入下载地址
+        working-directory: .
+        env:
+          DOWNLOAD_URLS: ${{ secrets.DOWNLOAD_URLS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DOWNLOAD_URLS:-}" ]; then
+            echo "::error::secret DOWNLOAD_URLS 未配置或为空（Settings → Secrets and variables → Actions）"
+            echo "::error::格式：逗号分隔的完整地址，第一条即页面上「推荐」的那条"
+            exit 1
+          fi
+          python3 tools/inject-download-url.py
+
       - name: 构建
         run: npm run docs:build
 

@@ -72,6 +72,7 @@ sha256 与树指纹钉死。
 | `TARGET_REPO` / `TARGET_REPO` | 发版与归档目标 |
 | `` | 上面几处的读写凭证 |
 | `CLIENT_ROOT_DOMAIN` / `CLIENT_PAGES_HOSTS` | 对外主机名，见 `CNEndpoints` |
+| `DOWNLOAD_URLS` | 介绍站上的下载线路（逗号分隔，第一条即「推荐」那条），见 `tools/inject-download-url.py` |
 
 ### 不在仓库里的那些
 
