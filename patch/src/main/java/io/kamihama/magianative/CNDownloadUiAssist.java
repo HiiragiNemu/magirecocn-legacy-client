@@ -668,10 +668,13 @@ public final class CNDownloadUiAssist {
     }
 
     /**
-     * 滑块：4dp 粗，圆角取半宽（2dp）才是一颗真的胶囊——圆角大于半宽只会被裁掉，
-     * 视觉上没差别，但读的人会以为这里还有别的意图。
+     * 滑块：视觉上是「细胶囊」。**它的 setSize 不决定滚动条宽度**——Android 的
+     * {@code getVerticalScrollbarWidth()} 优先读 track 的 intrinsicWidth（见
+     * {@link #scrollTrack}），只有 track 为 null 时才会看 thumb，而 {@code styleScrollbars}
+     * 总是两个都挂。想调滚动条粗细请改 {@link #scrollTrack}，改这里的数字看不出变化。
      *
-     * <p>粗细与 {@link #SCROLLBAR_GUTTER_DP} 是一对：槽必须比条宽，否则条压在字上。
+     * <p>圆角取半宽才是一颗真的胶囊——圆角大于半宽只会被裁掉，视觉上没差别，
+     * 但读的人会以为这里还有别的意图。
      */
     private static GradientDrawable scrollThumb(View v) {
         GradientDrawable d = new GradientDrawable();
@@ -681,7 +684,15 @@ public final class CNDownloadUiAssist {
         return d;
     }
 
-    /** 轨道比滑块再细 1dp：它只是给出「这里能滚」的暗示，不该和滑块抢注意力。 */
+    /**
+     * 轨道：**滚动条宽度的真正开关**。{@code getVerticalScrollbarWidth()} 会先取
+     * {@code ScrollBarDrawable.getSize()}——track 的 intrinsicWidth 优先，thumb 次之，
+     * 都为 0 才回退系统 scrollBarSize（约 10dp）。所以这里 setSize 的宽度就是滚动条
+     * 的实际宽度，改细改粗都改它。比滑块细 1dp：轨道只是「这里能滚」的暗示，
+     * 不该和滑块抢注意力。
+     *
+     * <p>粗细与 {@link #SCROLLBAR_GUTTER_DP} 是一对：槽必须比条宽，否则条压在字上。
+     */
     private static GradientDrawable scrollTrack(View v) {
         GradientDrawable d = new GradientDrawable();
         d.setColor(color("COLOR_BAR_BG", 0x335B4661));

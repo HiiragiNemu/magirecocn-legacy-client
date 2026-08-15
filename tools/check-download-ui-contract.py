@@ -521,9 +521,15 @@ checks = {
     # 槽比条窄的话条就压在字上。钉的是**两者的关系**而不是各自的取值：粗细和
     # 留白都还会按观感调，钉死字面量的话每调一次都要来改这里，改着改着就没人
     # 再当它是不变量了。
+    #
+    # 比的是 scrollTrack 而不是 scrollThumb：Android 的 getVerticalScrollbarWidth()
+    # 优先取 ScrollBarDrawable.getSize() = track 的 intrinsicWidth，thumb 的 setSize
+    # 根本不参与宽度（只有 track 为 null 时才会读 thumb）。当初写 thumb 是因为不
+    # 知道这条链路，结果「改滑块粗细」怎么改都看不出变化——判据钉对了对象，这条
+    # 不变量才真的成立。
     "槽宽必须宽过滚动条本身":
         int(re.search(r"SCROLLBAR_GUTTER_DP = (\d+)", assist).group(1))
-        > int(re.search(r"d\.setSize\(dp\(v, (\d+)\)", body(assist, "private static GradientDrawable scrollThumb(View v)")).group(1)),
+        > int(re.search(r"d\.setSize\(dp\(v, (\d+)\)", body(assist, "private static GradientDrawable scrollTrack(View v)")).group(1)),
     # 3. 热更新检查完就跳走，玩家来不及看清结果（尤其失败时）。停留窗口拉长；
     #    上限 PLAYER_WINDOW_MAX_MS 不动，手动「停留」按钮仍是唯一的无限期通道。
     "热更新结果停留时间足够看清":
