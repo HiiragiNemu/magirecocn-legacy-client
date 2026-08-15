@@ -99,15 +99,24 @@ DL_ORDER = file_name_table(downloader)
 HOT_PACKS = ("cn_scenario_update.zip", "cn_js_update.zip")
 
 
-def hot_after_base(order):
-    """热更两包必须排在**全部** cn_base_* 之后。"""
+def is_bulk(name):
+    """纯音视频大包：不会与热更两包撞文件，允许排在它们后面。
+
+    与 CNDownloaderFix.isBulkMedia 同一个判据，反着定义——只放行这一类，
+    其余一律算前置。新增内容包忘了登记时默认落在安全的一侧。
+    """
+    return name.startswith("cn_voice_") or name.startswith("movie")
+
+
+def hot_after_prereq(order):
+    """热更两包必须排在**全部非音视频包**之后。"""
     if not order:
         return False
-    base = [i for i, n in enumerate(order) if n.startswith("cn_base_")]
+    prereq = [i for i, n in enumerate(order) if not is_bulk(n) and n not in HOT_PACKS]
     hot = [order.index(h) for h in HOT_PACKS if h in order]
-    if not base or len(hot) != len(HOT_PACKS):
+    if not prereq or len(hot) != len(HOT_PACKS):
         return False
-    return min(hot) > max(base)
+    return min(hot) > max(prereq)
 
 def followed_by(src, first, second):
     """`first` 之后紧跟着的下一行代码就是 `second`（中间的注释不算数）。"""
@@ -494,20 +503,25 @@ checks = {
     # 右端对齐的三处必须**同源**：文件列表靠右 padding 让出滚动条槽位，而它下面
     # 那行文字进度与总进度条不在同一个滚动容器里，得用同一个数做右边距才对得齐。
     # 原先三处各写死同一个字面量，谁改一处另外两处就错开——而错 1dp 都看得出来。
-    # 热更两包里可能带着针对基础包的**覆盖修正**：同一个文件，基础包一份、热更
-    # 包一份改好的。装反了基础包会把改好的那份盖回去，而这种坏法完全没有报错
+    # 热更两包里可能带着针对内容包的**覆盖修正**：同一个文件，内容包一份、热更
+    # 包一份改好的。装反了内容包会把改好的那份盖回去，而这种坏法完全没有报错
     # ——文件都在、标记都全，只是内容退回了修正之前。
     #
-    # 两道都要：表序保证「轮到热更包时基础包早已全部开工」（线程池按提交序取
+    # 两道都要：表序保证「轮到热更包时前置包早已全部开工」（线程池按提交序取
     # 任务，这也是那道闸不会死锁的依据），闸门保证「装」真的在后面。只有表序
     # 是不够的——15 个包一次性提交给 4 线程池，几十 MB 的热更包必然先装完。
-    "热更两包排在全部基础包之后":
-        hot_after_base(DL_ORDER) and hot_after_base(UI_ORDER),
+    "热更两包排在全部前置包之后":
+        hot_after_prereq(DL_ORDER) and hot_after_prereq(UI_ORDER),
     "两张文件表逐项对齐": UI_ORDER == DL_ORDER and len(DL_ORDER) == 15,
-    "装热更包之前等基础包收尾":
-        "awaitBaseInstalled(index, name)" in downloader
-        and "baseGate = new CountDownLatch(BASE_SLOTS.length)" in downloader
-        and "if (isBaseSlot(index)) baseGate.countDown();" in downloader,
+    # 前置集合必须反着定义：正着列「哪些要等」的话，新增内容包忘了登记就默认
+    # 落在不安全的一侧，而且照例没有任何报错。
+    "前置集合按「除音视频外」反着定义":
+        'name.startsWith("cn_voice_") || name.startsWith("movie")' in downloader
+        and "!isBulkMedia(name)" in downloader,
+    "装热更包之前等前置包收尾":
+        "awaitPrereqInstalled(index, name)" in downloader
+        and "prereqGate = new CountDownLatch(PREREQ_SLOTS.length)" in downloader
+        and "if (isPrereqSlot(index)) prereqGate.countDown();" in downloader,
     # 槽位常量按名字查，不写死数字：跟表序绑死的话，一调顺序它们就悄悄指向别的
     # 包，而它们决定「走热更通道还是基础包通道」与「装完要不要重启」。
     "热更槽位由文件名查出":

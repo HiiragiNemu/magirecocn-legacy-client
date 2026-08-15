@@ -78,13 +78,12 @@ public class CNCNDownloadUI {
     public static Handler uiHandler;
 
     // 顺序与 CNDownloaderFix.FILE_NAMES 逐项对齐（三张表按下标并行）。
-    // 热更两包排在全部 cn_base_* 之后，理由见 CNDownloaderFix.FILE_NAMES 的注释。
+    // 热更两包排在全部内容包之后、voice/movie 之前，理由见 CNDownloaderFix.FILE_NAMES。
     public static final String[] FILE_NAMES = {
         "cn_base_00_db.zip", "cn_base_01_json.zip", "cn_base_02.zip",
         "cn_base_03.zip", "cn_base_04.zip", "cn_base_05.zip",
-        "cn_base_06.zip",
+        "cn_base_06.zip", "cn_magica_resource.zip", "cn_scenario_img.zip",
         "cn_scenario_update.zip", "cn_js_update.zip",
-        "cn_magica_resource.zip", "cn_scenario_img.zip",
         "cn_voice_01.zip", "cn_voice_02_done.zip",
         "movie.zip", "movie2.zip"
     };

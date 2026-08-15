@@ -120,19 +120,19 @@ public final class CNDownloaderFix {
     /**
      * 下载顺序。
      *
-     * <p><b>热更两包排在全部 {@code cn_base_*} 之后</b>：{@code cn_scenario_update.zip}
-     * （台词）与 {@code cn_js_update.zip}（前端脚本）里可能带着针对基础包的
-     * <b>覆盖修正</b>——同一个文件，基础包给一份、热更包给一份改好的。装反了，
-     * 基础包会把改好的那份盖回去，而这种坏法完全没有报错：文件都在、标记都全，
-     * 只是内容退回了修正之前。
+     * <p><b>热更两包排在全部内容包之后</b>：{@code cn_scenario_update.zip}（台词）
+     * 与 {@code cn_js_update.zip}（前端脚本）里可能带着针对内容包的<b>覆盖修正</b>
+     * ——同一个文件，内容包给一份、热更包给一份改好的。装反了，内容包会把改好的
+     * 那份盖回去，而这种坏法完全没有报错：文件都在、标记都全，只是内容退回了
+     * 修正之前。
      *
      * <p>热更两包仍排在 voice / movie 之前：那几个是十几 GB 的大头，等它们下完
-     * 再上汉化，热更形同虚设。放在 base 与 voice 之间是这两条约束的交点。
+     * 再上汉化，热更形同虚设。放在内容包与 voice 之间是这两条约束的交点。
      *
      * <p><b>但这张表本身给不了「装在之后」的保证</b>：15 个包是一次性全部提交给
      * 一个 4 线程池的（见 {@link #runInstallerInner}），表序只决定谁先开工，几十 MB
-     * 的热更包必然在几 GB 的基础包还没下完时就装完了。真正的保证在
-     * {@link #awaitBaseInstalled}——那道闸只挡解压提交，下载照旧并行。
+     * 的热更包必然在几 GB 的内容包还没下完时就装完了。真正的保证在
+     * {@link #awaitPrereqInstalled}——那道闸只挡解压提交，下载照旧并行。
      *
      * <p>顺序只是下载次序，不是身份：所有逻辑都按**文件名**索引，完成标记也是
      * {@code <文件名>.done}，所以调整顺序不会让既有安装失效、也不会触发重下。
@@ -142,9 +142,8 @@ public final class CNDownloaderFix {
     private static final String[] FILE_NAMES = {
         "cn_base_00_db.zip", "cn_base_01_json.zip", "cn_base_02.zip",
         "cn_base_03.zip", "cn_base_04.zip", "cn_base_05.zip",
-        "cn_base_06.zip",
+        "cn_base_06.zip", "cn_magica_resource.zip", "cn_scenario_img.zip",
         "cn_scenario_update.zip", "cn_js_update.zip",
-        "cn_magica_resource.zip", "cn_scenario_img.zip",
         "cn_voice_01.zip", "cn_voice_02_done.zip",
         "movie.zip", "movie2.zip"
     };
@@ -161,8 +160,18 @@ public final class CNDownloaderFix {
     static final int HOT_SLOT_SCENARIO = slotOf("cn_scenario_update.zip");
     static final int HOT_SLOT_JS       = slotOf("cn_js_update.zip");
 
-    /** 基础包槽位，热更两包要等它们全部收尾才允许装。同样按名字查。 */
-    private static final int[] BASE_SLOTS = baseSlots();
+    /**
+     * 前置包槽位：热更两包要等它们全部收尾才允许装。
+     *
+     * <p><b>判据是反着定义的</b>——只有语音与影片是显式放行的，其余一律算前置。
+     * 正着列「哪些要等」的话，将来加一个内容包、忘了加进名单，它就默认落在
+     * 不安全的一侧，而且照例没有任何报错。反着写，新包默认要等：慢一点是可见的，
+     * 装错了不是。
+     *
+     * <p>放行 voice / movie 是因为它们只有音频与视频，不可能与台词、前端脚本
+     * 撞文件；而它们十几 GB，等它们装完再上汉化等于热更形同虚设。
+     */
+    private static final int[] PREREQ_SLOTS = prereqSlots();
 
     private static int slotOf(String name) {
         for (int i = 0; i < FILE_NAMES.length; i++) {
@@ -171,17 +180,28 @@ public final class CNDownloaderFix {
         throw new IllegalStateException("FILE_NAMES 里没有 " + name);
     }
 
-    private static int[] baseSlots() {
+    /** 纯音视频大包：不会与热更两包撞文件，因此不必等它。 */
+    private static boolean isBulkMedia(String name) {
+        return name.startsWith("cn_voice_") || name.startsWith("movie");
+    }
+
+    private static int[] prereqSlots() {
         int n = 0;
         for (int i = 0; i < FILE_NAMES.length; i++) {
-            if (FILE_NAMES[i].startsWith("cn_base_")) n++;
+            if (isPrereqName(FILE_NAMES[i])) n++;
         }
         int[] out = new int[n];
         int k = 0;
         for (int i = 0; i < FILE_NAMES.length; i++) {
-            if (FILE_NAMES[i].startsWith("cn_base_")) out[k++] = i;
+            if (isPrereqName(FILE_NAMES[i])) out[k++] = i;
         }
         return out;
+    }
+
+    private static boolean isPrereqName(String name) {
+        return !isBulkMedia(name)
+                && !"cn_scenario_update.zip".equals(name)
+                && !"cn_js_update.zip".equals(name);
     }
 
     /** 这个下标是不是热更两包之一。五处判断都读这里，别再各写一份下标比较。 */
@@ -189,38 +209,38 @@ public final class CNDownloaderFix {
         return index == HOT_SLOT_SCENARIO || index == HOT_SLOT_JS;
     }
 
-    private static boolean isBaseSlot(int index) {
-        for (int i = 0; i < BASE_SLOTS.length; i++) {
-            if (BASE_SLOTS[i] == index) return true;
+    private static boolean isPrereqSlot(int index) {
+        for (int i = 0; i < PREREQ_SLOTS.length; i++) {
+            if (PREREQ_SLOTS[i] == index) return true;
         }
         return false;
     }
 
     /**
-     * 「基础包没装完，热更两包不许装」的闸门，每轮安装重建一次。
+     * 「前置包没装完，热更两包不许装」的闸门，每轮安装重建一次。
      *
-     * <p>计数在每个基础包<b>收尾时</b>减一，<b>成败都减</b>。只在成功时减的话，
-     * 某个基础包失败就会把热更两包永远挂在闸前，主循环等 future 等不回来——
-     * 玩家连「重试」都点不到，界面停在那里不动。放行之后再核对 marker：基础包
+     * <p>计数在每个前置包<b>收尾时</b>减一，<b>成败都减</b>。只在成功时减的话，
+     * 某个前置包失败就会把热更两包永远挂在闸前，主循环等 future 等不回来——
+     * 玩家连「重试」都点不到，界面停在那里不动。放行之后再核对 marker：前置包
      * 真失败了，热更包这一轮也不装，返回失败，由重试进入下一轮。
      */
-    private static volatile CountDownLatch baseGate = new CountDownLatch(0);
+    private static volatile CountDownLatch prereqGate = new CountDownLatch(0);
 
     /**
-     * 挡在解压提交之前：热更包等基础包收尾。返回 false 表示这一轮不该装。
+     * 挡在解压提交之前：热更包等前置包收尾。返回 false 表示这一轮不该装。
      *
-     * <p>不会死锁：热更两包在表里排在全部基础包之后，线程池按提交序取任务，
-     * 所以轮到热更包时基础包早已全部开工——最多只剩几个还在跑，它们在别的
+     * <p>不会死锁：热更两包在表里排在全部前置包之后，线程池按提交序取任务，
+     * 所以轮到热更包时前置包早已全部开工——最多只剩几个还在跑，它们在别的
      * 线程上，减到零只是时间问题。
      */
-    private static boolean awaitBaseInstalled(int index, String name) {
+    private static boolean awaitPrereqInstalled(int index, String name) {
         if (!isHotSlot(index)) return true;
-        CountDownLatch gate = baseGate;
+        CountDownLatch gate = prereqGate;
         if (gate.getCount() > 0) {
-            CNLog.i(TAG, "hold-for-base file=" + name
+            CNLog.i(TAG, "hold-for-prereq file=" + name
                     + " remaining=" + gate.getCount());
             CNCNDownloadUI.updateSimple("正在安装资源",
-                    name + "：等基础包装完再装（它可能覆盖基础包里的文件）", 100);
+                    name + "：等前面的内容包装完再装（它可能覆盖那些包里的文件）", 100);
             try {
                 gate.await();
             } catch (InterruptedException e) {
@@ -228,10 +248,10 @@ public final class CNDownloaderFix {
                 return false;
             }
         }
-        for (int i = 0; i < BASE_SLOTS.length; i++) {
-            String base = FILE_NAMES[BASE_SLOTS[i]];
-            if (!isMarkerValid(markerFor(base), base, RESOURCE_BASE_URL + base)) {
-                CNLog.w(TAG, "defer-hot file=" + name + " reason=base-incomplete base=" + base);
+        for (int i = 0; i < PREREQ_SLOTS.length; i++) {
+            String pre = FILE_NAMES[PREREQ_SLOTS[i]];
+            if (!isMarkerValid(markerFor(pre), pre, RESOURCE_BASE_URL + pre)) {
+                CNLog.w(TAG, "defer-hot file=" + name + " reason=prereq-incomplete pending=" + pre);
                 return false;
             }
         }
@@ -777,7 +797,7 @@ public final class CNDownloaderFix {
         // 返回意味着把控制权交回 native hook，引擎随即显示它自带的下载场景。
         while (true) {
             // 每轮重建：上一轮的闸门已经放行完了，重试这一轮要重新等一次。
-            baseGate = new CountDownLatch(BASE_SLOTS.length);
+            prereqGate = new CountDownLatch(PREREQ_SLOTS.length);
             ExecutorService pool = Executors.newFixedThreadPool(MAX_DOWNLOADS);
             List<Future<Boolean>> futures = new ArrayList<Future<Boolean>>(ARCHIVE_COUNT);
             for (int i = 0; i < ARCHIVE_COUNT; i++) {
@@ -1019,8 +1039,8 @@ public final class CNDownloaderFix {
                 }
             } finally {
                 CNDownloadRestart.unregister(index);
-                // 成败都要减：见 baseGate 的说明，只在成功时减会把热更包挂死。
-                if (isBaseSlot(index)) baseGate.countDown();
+                // 成败都要减：见 prereqGate 的说明，只在成功时减会把热更包挂死。
+                if (isPrereqSlot(index)) prereqGate.countDown();
             }
         }
     }
@@ -1157,11 +1177,11 @@ public final class CNDownloaderFix {
                 CNCNDownloadUI.updateFileProgress(index, 100);
                 CNCNDownloadUI.updateSimple("正在安装资源",
                         name + "：下载已验证，正在解压并提交…", 100);
-                // 装之前先过闸：热更包可能覆盖基础包里的文件，装在基础包之前
+                // 装之前先过闸：热更包可能覆盖内容包里的文件，装在它们之前
                 // 会被原样盖回去，而且没有任何报错。下载已经做完，这里只挡「装」。
-                if (!awaitBaseInstalled(index, name)) {
+                if (!awaitPrereqInstalled(index, name)) {
                     CNCNDownloadUI.updateSimple("正在安装资源",
-                            name + "：基础包尚未装完，本轮先不装它", 100);
+                            name + "：前面的内容包尚未装完，本轮先不装它", 100);
                     markFailed(index);
                     return false;
                 }
