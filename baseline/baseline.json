@@ -18,7 +18,7 @@
   "overlay": {
     "asset": "apk-overlay-atlas.zip",
     "tag": "latest",
-    "sha256": "9e141dec2b87a88f94e2a732c33c9820e2eea5320d0e1105f7f3c067be1d5696",
+    "sha256": "3edc096b5f34a7ab57abab0e524ea8d5126730e3b42f16961a8a8afba53baef2",
     "why": "人手重绘的汉化图集：无法从原包重建，也不该躺在代码仓库里，所以放在外部发布渠道的 Release，构建时取回。用 tools/make-overlay.py 打包——那个脚本固定了条目顺序、时间戳与权限位，同一批文件永远打出同一个 sha256，钉死项才立得住。",
     "token_env": "",
     "token_why": "资产源可能是私有的。取不到 token 时仍会匿名试一次——公开时照样能用，私有时没 token 会明确报错，而不是拿到一个 404 页面当 zip 解。",
