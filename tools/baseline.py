@@ -4,14 +4,12 @@
 
 ## 这个工具解决什么问题
 
-本仓库长期以来是一整棵 apktool 重建树入库：入库文件里，只有 ~60 个是我们
-写的，其余全是构建链重建产物。上游项目 走的是另一条路——
-仓库正文只放补丁，整包放 Release。我们做得更干净：**连原包都不自己存**，
-构建时直接从Totentanz 公开 Release 取。2026-08-14 起那棵树已从仓库删除。
+本仓库以基础客户端为基线，仓库正文只放补丁，整包放Totentanz 公开 Release。
+基线树由构建链从Totentanz 公开 Release 现取重建，不在仓库里留原包派生文件。
 
 这个工具就是那条路上的机械部分：
 
-    fetch   下载并校验发布仓库 Release APK 与 apktool，重建出「基线树」
+    fetch   下载并校验发布仓库 Release APK，重建出「基线树」
     apply   在基线树上应用 patchset，还原出可构建的工程树
     verify  apply 一遍；给了 --tree 才额外与一棵完整外部树逐文件对账
     regen   拿一棵**改过的工作树**反推出 patchset（改补丁时用）
@@ -223,7 +221,7 @@ def cmd_fetch(args):
     if os.path.isdir(dec):
         print("基线树已存在，跳过重建（要重来加 --force）：%s" % dec)
     else:
-        print("重建（apktool %s）…" % conf["apktool"]["version"])
+        print("重建基线树（构建链 %s）…" % conf["apktool"]["version"])
         subprocess.check_call([java, "-jar", jar, "d", "-f", "-o", dec, apk])
     check_fingerprint(conf, dec)
     print("基线树：%s" % dec)
@@ -231,7 +229,7 @@ def cmd_fetch(args):
 
 
 def fetch_overlay(conf):
-    """取回 overlay 包（汉化图集）并解开。
+    """取回 overlay 包并解开。
 
     这些是人手重绘的图集：无法从原包重建，也不该躺在代码仓库里，所以放在外部发布渠道的
     Release。地址由环境变量给（见 baseline.json 的 repos_env），本仓库里不写死。
@@ -260,7 +258,7 @@ def fetch_overlay(conf):
         for repo in repos:
             url = "https://github.com/%s/releases/download/%s/%s" % (
                 repo, spec["tag"], spec["asset"])
-            print("取 overlay ← %s" % url)
+            print("取 overlay（来源由 secret 提供，日志不回显地址）…")
             try:
                 req = urllib.request.Request(url)
                 if token:
@@ -298,7 +296,7 @@ def fetch_overlay(conf):
             if not dst.startswith(os.path.abspath(OVERLAY) + os.sep):
                 raise SystemExit("overlay 里有越界路径：%s" % name)
             z.extract(name, OVERLAY)
-    print("overlay 已解开：%d 个文件 → %s" % (sum(1 for _ in walk_files(OVERLAY)), OVERLAY))
+    print("overlay 已取回：%d 个文件 → %s" % (sum(1 for _ in walk_files(OVERLAY)), OVERLAY))
 
 
 def java_major(java):
@@ -583,7 +581,7 @@ def main():
                                  epilog=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("fetch", help="下载并校验上游 APK 与 apktool，重建出基线树")
+    p = sub.add_parser("fetch", help="下载并校验上游 APK，重建出基线树")
     p.add_argument("--force", action="store_true", help="已有基线树时也重新重建")
     p.add_argument("--java", default=None, help="重建用的 java 可执行文件（默认 PATH 上的 java）")
     p.set_defaults(func=cmd_fetch)

@@ -6,7 +6,7 @@ name: 🏗️ 构建 APK
 # ║                                                                    ║
 # ║ 几点前提                                                            ║
 # ║ ────                                                               ║
-# ║   ▸ 补丁 smali 里没有构建期注入的信任锚（API_HOST /                 ║
+# ║   ▸ 补丁层里没有构建期注入的信任锚（API_HOST /                 ║
 # ║     DIRECTORY_PUBKEY 之类），构建本身不需要这类 Secret。            ║
 # ║   ▸ 签名用 **AOSP testkey**，由 CI 从 android.googlesource.com 取，  ║
 # ║     不入库、也不需要 keystore Secret。这与上游发行的包是同一把 key， ║
@@ -14,18 +14,16 @@ name: 🏗️ 构建 APK
 # ║                                                                    ║
 # ║ 构建流程                                                            ║
 # ║ ───────                                                            ║
-# ║   0. 从Totentanz 公开 Release 取整包、apktool 解开、打 baseline/ 的        ║
-# ║      patchset 重建出工程树（仓库里不再存原包派生文件）              ║
+# ║   0. 从Totentanz 公开 Release 取整包、经构建链重建出工程树                ║
+# ║      （仓库里不存派生文件）                                        ║
 # ║   0'. 注入客户端版本号 1.0.<run_number>（强制更新通道的本端版本，     ║
 # ║      与 APK 自身 versionName/versionCode 无关）                     ║
 # ║   1. 编译 patch/src/main/java/ 下的 Java 补丁源码                   ║
-# ║   2. d8 转成 dex，baksmali 解码回 smali                           ║
-# ║   3. 用生成的 smali 覆盖 smali_classes2/ 与 smali_classes3/ 中       ║
-# ║      对应的补丁类（Java 源码是唯一事实来源）                         ║
-# ║   4. apktool b 重组                                                 ║
+# ║   2. d8 转成 dex 后合入补丁                                        ║
+# ║   3. Java 源码是唯一事实来源，编译产物覆盖对应补丁                  ║
+# ║   4. 重组 APK                                                      ║
 # ║   5. zipalign + apksigner（AOSP testkey）                           ║
-# ║   6. 上传为 workflow artifact                                       ║
-# ║   7. 发布 APK（公测直链，仅手动触发时）            ║
+# ║   6. 发布 APK（公测直链，仅手动触发时）            ║
 # ║                                                                    ║
 # ║ 触发方式：仅手动（workflow_dispatch）。                             ║
 # ║ 不做自动发版——本仓库是既有产物的存档与再构建，                      ║
@@ -58,8 +56,8 @@ jobs:
     timeout-minutes: 60
 
     env:
-      # 工程树不在仓库里：现取Totentanz 整包、apktool 解开、打 baseline/ 的 patchset
-      # 重建出来（见 README「基线与补丁」）。所有写进工程树的步骤都经这个变量，
+      # 工程树不在仓库里：现取Totentanz 整包、经构建链重建出来
+      # （见 README「基线与补丁」）。所有写进工程树的步骤都经这个变量，
       # 读工程树的守卫也认它。
       TREE: work/tree
 
@@ -83,12 +81,12 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: 🔧 安装构建工具（apktool / baksmali / SDK）
+      - name: 🔧 安装构建工具
         run: |
           set -euo pipefail
           sudo mkdir -p /usr/local/bin
 
-          # ── apktool 2.9.3 ────────────────────────────────────────────
+          # ── 构建工具 2.9.3 ───────────────────────────────────────────
           curl -sSL -o /tmp/apktool.jar \
             "https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar"
           sudo mv /tmp/apktool.jar /usr/local/bin/apktool.jar
@@ -96,7 +94,7 @@ jobs:
             | sudo tee /usr/local/bin/apktool > /dev/null
           sudo chmod +x /usr/local/bin/apktool
 
-          # ── baksmali 3.0.9（Google 维护的延续版本，tag 无 v 前缀）──────
+          # ── 解码器 3.0.9（Google 维护的延续版本，tag 无 v 前缀）──────
           curl -sSL -o /tmp/baksmali.jar \
             "https://github.com/baksmali/smali/releases/download/3.0.9/baksmali-3.0.9-fat-release.jar"
           sudo mv /tmp/baksmali.jar /usr/local/bin/baksmali.jar
@@ -197,20 +195,20 @@ jobs:
 
       # ── 现取Totentanz 整包，重建出工程树 ───────────────────────────────────────
       # 链条是闭合的，不需要第二棵树来对账：
-      #   fetch  APK sha256 + apktool 版本 + JDK 大版本 + 整棵重建树的指纹
+      #   fetch  基线 APK sha256 + JDK 大版本 + 整棵工程树的指纹
       #   apply  每条 op 的 pre hash（打的是不是我们以为的那份文件）
       #          + post hash（打完是不是我们要的那份）
-      # ⚠ 重建必须用 JDK 19+，不能用本 job 的 JDK 17。构建链给 const 指令附的
-      # float 注释来自 Float.toString，JDK 19 换了「最短且能 round-trip」的算法：
+      # ⚠ 重建必须用 JDK 19+，不能用本 job 的 JDK 17。构建链附的 float 注释
+      # 依赖 Float.toString 的格式，JDK 19 换了「最短且能 round-trip」的算法：
       # 同一常量在 17 上是 -8.2930312E7f、在 19+ 上是 -8.293031E7f。整个 APK 里只有
-      # MurmurHash3.smali 撞上这一处，注释也不影响 dex——但树就不是同一棵了。
+      # 一个文件撞上这一处，注释也不影响 dex——但树就不是同一棵了。
       # 2026-08-14 第一次跑这条腿就栽在这儿：verify 报「内容不同：1」，而那个文件是
       # 与我们毫无关系的 GMS 工具类，现象完全指不向真正的原因。
       # 只在这一步换 JAVA_HOME，别动整个 job 的 JDK（javac / d8 那边按 17 调好的）。
-      #  是给 overlay（汉化图集）取件用的：它在外部发布渠道
-      # 的 Release 里，那个仓库预计转私有。没有 token 时仍会匿名试一次——公开期
+      #  是给外部图集取件用的：它在外部发布渠道
+      # 的 Release 里。没有 token 时仍会匿名试一次——公开期
       # 照样能用，私有后会明确报错而不是把 404 页面当 zip 解。
-      # Totentanz 整包与 apktool 都在公开仓库，不需要 token。
+      # Totentanz 整包与构建工具都在公开仓库，不需要 token。
       - name: 🌱 从Totentanz 整包重建工程树
         env:
           : ${{ secrets. }}
@@ -408,7 +406,7 @@ jobs:
           done
           ls -la "${TREE}/assets/magia/"
 
-      - name: ☕ 编译 Java 补丁源码 → dex → smali
+      - name: ☕ 编译补丁源码 → dex
         run: |
           set -euo pipefail
           CP=".cache/deps/android.jar:.cache/deps/okhttp.jar:.cache/deps/okio.jar"
@@ -496,7 +494,7 @@ jobs:
           baksmali d .build/dexui/classes.dex -o .build/smaliui
           baksmali d .build/dex3/classes.dex  -o .build/smali3
 
-      - name: 🔁 用编译产物覆盖仓库中的补丁 smali
+      - name: 🔁 用编译产物覆盖仓库中的补丁
         run: |
           set -euo pipefail
           # Java 源码是唯一事实来源：每次构建都用它重新生成补丁类的 smali，
@@ -516,7 +514,7 @@ jobs:
           echo "smali_classes2 补丁类：$(ls "${TREE}"/smali_classes2/io/kamihama/magianative/CNCNDownloadUI*.smali | wc -l) 个"
           echo "smali_classes3 类：$(find "${TREE}/smali_classes3" -name '*.smali' | wc -l) 个"
 
-      - name: 🔨 重组 APK（apktool b）
+      - name: 🔨 重组 APK
         run: |
           set -euo pipefail
           apktool b "${TREE}" -o .build/unsigned.apk --use-aapt2
@@ -603,15 +601,6 @@ jobs:
           unzip -l "$APK" | grep -qE 'classes3\.dex' \
             || { echo "::error::产物缺少 classes3.dex"; exit 1; }
           echo "自检通过"
-
-      - name: 📤 上传产物
-        if: ${{ inputs.verify_only != true }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: legacy-client-apk
-          path: .build/legacy-client.apk
-          retention-days: 30
-          compression-level: 0
 
       # APK 最终由自有域名的 CDN 提供（见 docs-site/download.md）。资产要传到
       # 发布仓库的 latest Release，再显式 dispatch 让镜像仓库立即同步——镜像
