@@ -1,0 +1,595 @@
+# legacy-client
+
+魔法纪录中文化客户端（上一代 / Totentanz 系）的**可重新构建存档**：把一个既有成品
+APK 的 Totentanz 客户端为基线，叠一层 Java 补丁，由 CI 重新构建。
+
+基础 APK 来自 `io.kamihama.totentanz`，版权与免责声明见下方「原始署名与免责声明」。
+
+> **协作**：主干开发，直接提 `main`；分支只有 `hotfix/*`（修红灯）与 `surgery/*`
+> （核心层大手术）两类例外。开工前读 [CONTRIBUTING.md](CONTRIBUTING.md)，
+> 在 [ACTIVE.md](ACTIVE.md) 登记你在动哪片。
+
+---
+
+## 仓库结构
+
+```
+patch/src/main/java/   ← ★ 补丁源码，唯一事实来源
+baseline/              ← ★ 基线钉死项 + 可复现的 patchset
+magia-native/          ← native hook 源码（libMagiaLegacy.so）
+tools/                 ← 测试套件、构建前置检查、汉化与资源工具
+assets/ lib/ res/      ← 只剩我们自己的东西：中文字体、自制图、aria2c、
+                          shadowhook、network_security_config
+config.json            ← 线上配置的快照，仅供本地看字段长什么样，不参与构建
+```
+
+仓库里**没有基线工程树**，构建时从整包重建。要看 `smali/` 或完整 `res/`：
+
+```bash
+python3 tools/baseline.py fetch
+python3 tools/baseline.py apply --out work/tree
+```
+
+---
+
+## 基线与补丁（`baseline/`）
+
+```
+整包  +  baseline/ 的 119 条操作  =  工程树
+```
+
+每条操作带 `pre`/`post` hash 与 `why`，逐字节确定。**分类是人写死在
+`baseline.json` 里的，不靠脚本推断**——自动推断会把「我们故意不要的东西」误判成
+「我们新增的东西」。
+
+| kind | 条数 | 是什么 |
+|---|---:|---|
+| `patch` | 14 | 基线里有、我们改了几行 |
+| `replace` | 85 | 基本重写或二进制没法 diff：`RestClient.smali` 桩、中文字体、83 个汉化图集（从 overlay 取） |
+| `add` | 9 | 基线里没有：`network_security_config.xml`、aria2 与 shadowhook、自制图、2 个新增图集页 |
+| `remove` | 6 | 要删的：两个未引用的商业字体、被取代的 `libuwasa.so`、`RestClient$1/$2` |
+| `generated` | 5 | 构建期产出（Java→dex→smali、native `.so`、BGM 转码），不校验内容 |
+
+基线钉 `1.2.0-r1_r129` 而不是我们这棵树的真实底包 `1.1.1_r125`：打补丁的两个引擎类
+两版**逐字节相同**，而换过去白拿 358 个埋点 SDK 类的清除。
+
+### 钉死项
+
+| 项 | 值 | 为什么 |
+|---|---|---|
+| 整包 | `04dd3f78…`（sha256） | 基线本身 |
+| apktool | 2.9.3，`7956eb04…` | 解包结果与它的版本强相关 |
+| 重建 JDK | 主版本 ≥ 19 | `Float.toString` 在 JDK 19 换了算法，构建链给 `const` 附的 float 注释因此不同（全 APK 只有 `MurmurHash3.smali` 撞上）。CI 重建步骤单独把 `JAVA_HOME` 切到 JDK 21 |
+| 基线树指纹 | `ae69c81a…`（9,468 个文件） | 单文件 hash 只管得住打过补丁的 14 个，剩下的漂移要在 `fetch` 就炸，而不是等到 `verify` 报「某个陌生文件不同」 |
+
+**表里没有任何地址。** 下载地址一律由 secrets 注入——地址不是安全边界，包的身份由
+sha256 与树指纹钉死。
+
+| secret | 给谁 |
+|---|---|
+| `BASELINE_APK_URL` | 基线整包 |
+| `OVERLAY_URL` | 汉化图集资产源，逗号分隔按序试 |
+| `TARGET_REPO` / `TARGET_REPO` | 发版与归档目标 |
+| `` | 上面几处的读写凭证 |
+| `CLIENT_ROOT_DOMAIN` / `CLIENT_PAGES_HOSTS` | 对外主机名，见 `CNEndpoints` |
+
+### overlay：85 个不在仓库里的汉化图集
+
+人手重绘、无法从原包重现，放在外部资产源的 Release，构建时按 `sha256` 取回。
+地址与 token 都由 secrets 注入。**内容一律按 hash 认**，所以列多个来源只是防止
+某个源不可用时卡住构建，不是「信任其中任何一个」。
+
+zip 必须由 `tools/make-overlay.py` 打（固定条目顺序、时间戳、权限位，同一批文件
+永远同一个 sha256）。改了图集要**三件事一起做**：重打包、重传、同步
+`baseline.json` 的 `overlay.sha256`。
+
+### 用法
+
+```bash
+python3 tools/baseline.py fetch                # 取整包与 apktool，重建出基线树
+python3 tools/baseline.py verify               # 打完补丁与现有工程树逐文件比对
+python3 tools/baseline.py regen                # 改完补丁后重生成 diff 与 hash（★ 必跑）
+python3 tools/baseline.py apply --out <目录>   # 只重建，不比对
+```
+
+基线树落在 `work/baseline/dec`。⚠ 必须由 `fetch` 重建出来——`apktool.yml` 里带着
+`apkFileName`，手动换个文件名解一遍，`pre` hash 就对不上。
+
+### 守卫
+
+| 脚本 | 查什么 |
+|---|---|
+| `tools/check-baseline.py` | 清单自洽：路径不重、hash 对得上、`remove` 的文件确实不在仓库里，**且原包派生路径下没有 patchset 之外的入库文件** |
+| `tools/test-check-baseline.py` | 上面那个脚本的自测（11 种坏样本） |
+| `tools/baseline.py verify --tree <树>` | 与一棵外部完整树逐文件对账 |
+
+最后那条「不许回流」是这套东西的目的本身：没有检查盯着，移出的原包派生文件会以
+各种方式慢慢回来，等发现时已经分不清哪些是故意留的。
+
+---
+
+## 补丁层（`patch/src/main/java/io/kamihama/magianative/`）
+
+| 类 | 职责 |
+|---|---|
+| `CNCNDownloadUI` | 资源下载浮层。背景图 + 毛玻璃底板 + 左列署名区 + 右列文件槽位/总进度；左上 LOG 胶囊、右上主题切换与 GitHub 胶囊 |
+| `CNDownloaderFix` | 资源安装器。15 个基础包的下载、解压校验、完成标记、重试 |
+| `CNChunkedDownload` | 多线程分片下载 + 断点续传 |
+| `CNDownloadMode` | **单线程可靠模式**开关。四处并发（分片工作线程、字节分段、全局连接闸门、并行文件数）共用它一个判据 `cap()`——各写各的判断迟早漏掉一处，而漏掉的表现是「选了单线程但并发没降下来」，不报错不崩，只有翻日志数连接才发现得了。 |
+| `CNDiskSpace` | **「装不下」与「网络坏了」的分界**。ENOSPC 抛的是普通 `IOException`，和超时、断流走同一个 catch，于是磁盘满会被当成线路故障：无辜线路被记失败进 60 秒冷却（线上 `switch_after_failures=1`，一次就够）、四次重试逐条线路白烧、玩家对着「重试 / 备用引擎 / 单线程 / 离线包」四个都不解决问题的选项反复点。 |
+| `CNZipPlan` | **下载前算出安装峰值**。装一个包的磁盘峰值是 ZIP + 解压后（ZIP 要留到解压成功才删），而这个比例各包差得很远：`cn_base_03.zip` 1.32→2.79 GiB（**2.11x**），其余全在 1.02–1.16x。03 因此拥有 15 个包里最高的安装峰值 **4.11 GiB**，而进度条上只写着 1.3 GB——玩家按这个数去清理空间，然后在解压阶段翻车。 |
+| `CNEndpoints` | **全部对外主机名的唯一来源**。源码里只留结构（`https://assets.` + 主域 + `/` 这样的拼法），真实取值由 `tools/inject-endpoints.py` 在构建期从 Secret 注入，仓库与历史里都不出现。注入缺失时 fail-closed：放行列表不含自有域、线路表为空、热更地址拼不出来——退化成「什么都下不了」，而不是退回某个不受控的默认值。 |
+| `CNMirrors` | 线路目录：从 `config.json` 拉取线路表，失败/停滞/过慢时自动换线 |
+| `CNAria2` | **备用下载引擎**（默认关）：解压内置的**全静态 aria2c 可执行文件**（v1.37.0，`assets/aria2/`，来源 Cross-Compiled-Binaries-Android，sha256 见类内注释）跑**独立子进程**，JSON-RPC 控制。主分块下载器修不动时兜底拉资源——单文件同步下载，aria2 多连接 + 断点续传，失败回退主引擎。 |
+| `CNHotUpdate` | 热更新的文件下载，与首次安装共用同一套选线与分片逻辑 |
+| `CNHotUpdateCheck` | 热更检查流程：启动时比对台词包/前端脚本包版本，必要时下载并应用。重写自原包的 `RestClient.checkAndApplyHotUpdate`——那版浮层自始至终不出现，无从判断跑没跑 |
+| `CNHotUpdateTx` | 热更包的**事务化应用**：暂存 → 备份 → 换入，出错整体回滚，崩溃后按 journal 恢复。只用于热更，安装器的大包仍直接解压 |
+| `CNWebProxy` | WebView 拦截层代理：把原 `WebViewClient` 包一层，本地文件没命中的 GET 可改走 `/stream/`。默认纯透传，模式由 `config.json` 的 `proxy.web_mode`（`off` / `measure` / `on`）下发，切换不用重打 APK。端点级代理在真机上五次会话零命中（见「网络出口」一节），这是替代路线 |
+| `CNSafeLink` | 外链统一出口：只放行 HTTPS 且域名在**写死在客户端**的允许列表内（自有域与那三个站的主机名由 `CNEndpoints` 构建期注入——注入发生在编译前，进包后同样是常量池里的死串，配置改不动它，性质不变）。挡的是「服务端被攻破后靠改配置把玩家导去任意地址」与配置写错，**不是**中间人——那一层已由 DNSSEC + 完整 TLS 验证覆盖 |
+| `CNVersionCheck` | 客户端版本检查，跑在热更检查与首次安装**两者之前**（装不上资源的玩家最需要强更提示）。本端版本硬编码在 native（`CLIENT_VERSION`，与 APK 的 versionName/versionCode 无关），云端版本在 `config.json` 的 `client` 段。任何异常一律放行，绝不因网络抖动挡住进游戏 |
+| `CNUserAgent` | 补丁侧统一 User-Agent（`magireco-cn-legacy/<ver> (Android …; SDK …)`），CDN/服务端日志据此识别客户端与版本。版本号与 native `CLIENT_VERSION` 同源，CI 注入。补丁发起的请求全覆盖；**WebView 转发的游戏流量不动**，仍透传原始 UA |
+| `CNRestart` | 重启本进程。原包的 `RestClient.restartApp()` 是坏的——它开头会重跑旧热更（浮层再现），且新 Activity 起在同进程里，被随后那一刀连带砍掉。**做法换过两版**：先是用 `AlarmManager` 把启动 Intent 排到 ~300ms 后再自杀，但部分机型上仍会退回桌面；现在改走独立进程的可见跳板（见下一行），确认跳板真的到了前台才杀旧进程 |
+| `CNRestartActivity` | 重启跳板，跑在独立进程 `:cnrestart` 里的透明 Activity。`onResume` 里确认自己已在前台后写就绪标记，`CNRestart` 轮询到该标记才敢杀旧进程；随后延迟拉起主 Activity，失败还会重试一次并把跳板留在前台，而不是悄悄消失。 |
+| `CNTutorialPrompt` | 「下次启动去播序章」的标记读写与「自动询问只问一次」的记忆，另含给 native 用的隐藏/恢复前端界面入口。真正的触发在 native 侧（拦 `pushSceneTop` 改调 `pushScenePrologue`） |
+| `CNBgm` | 安装浮层的 BGM。不用 `MediaPlayer`——它只能整文件循环，会放出尾部 235 帧 padding 且接缝有空隙；这里自己 `MediaExtractor`+`MediaCodec` 解码喂 `AudioTrack`，按 HCA 循环点做采样级无缝循环。全类绝不外抛。 |
+| `CNLog` | 统一日志：logcat + 内存环形缓冲 + 文件，LOG 面板直接渲染同一份缓冲区 |
+| `CNDebugFlags` | 调试开关目录的 Java 侧读取（与 native 共用同一个目录，见「调试开关目录」一节）。首次查询时扫一遍并缓存，之后零 I/O；任何异常一律当作「没开」 |
+| `CNDebugBridge` | 调试悬浮窗的**接线层**：native 总闸（三态，`null` = 库还没加载所以现在问不到，与「明确是关」分开——压成一个 false 已经害过一次）、合并 Java 侧与 native 侧的开关全表、落盘 + 重启、HUD 文案排版、停留/重下/日志转接 |
+| `CNDebugOverlay` | 调试悬浮窗**本体**：`WindowManager` 挂载、可拖动小球、页面树、权限引导。归总闸管——它提供的是「**改**开关」的能力 |
+| `CNDebugHud` | 屏幕上缘那行「调试模式：…」。挂 Activity 的 `decorView`，**不需要悬浮窗权限，也不看总闸**：开关是读文件生效的，不依赖悬浮窗，所以「有开关正在生效就得说出来」不该被悬浮窗的两道闸挡住——某人开了开关又回收了悬浮窗权限，开关照旧生效而提示没了，恰好在最需要它的时候失效。它管的是**监测**，不是操作 |
+| `CNDownloadUiAssist` | 下载浮层的显示辅助：字号缩放（含「按分辨率推荐」）、横纵滚动条状态、窄屏弹窗宽度、「停留本页」状态、左右两列之间那条可长按拖动的分界线（占比夹在 20%–70% 并落盘）。字号推荐参考 720dp、斜率取半、夹在 85–125：`dp = px/density`，720p 低密度手机报出的 dp 比 1080p 还多，dp 宽度不是屏幕大小的代理 |
+| `CNArchiveInstallTx` | ZIP 解压的**唯一**实现（首次安装、aria2 路径、离线包导入共用）：解压前按 zip 目录精确预检空间，逐条目校验，膨胀比两道防护**都在写出去之前**（写完再查等于炸弹已经落地），失败清掉半截产物 |
+
+补丁类的 smali（`smali_classes2/…/CNCNDownloadUI*` 与整个 `smali_classes3/`）
+**每次 CI 构建都会用 Java 源码重新生成**，手工改这些 .smali 不会影响产物。
+
+### 🔴 铁律：安装器入口绝不能抛异常
+
+native hook 转调 `RestClient.startCNDownload` 后做 `ExceptionCheck`/`ExceptionClear`。
+**Throwable 一旦逃进 JNI，hook 会清掉它并放行引擎自带的下载场景**——玩家看到原生
+安装界面，这是必须避免的终态。所以 `runInstaller` / `getEndpoint` 最外层都套了
+`catch (Throwable)`：宁可停在我们自己的浮层上报错，也不把控制权交回引擎。
+
+同理 `CNCNDownloadUI.show()` 只在浮层**确实挂上 decorView** 之后才置 `isShowing`；
+无条件置位会让一次创建失败之后本进程再也建不起浮层。
+
+### 手工 smali 改动（两处，都有守卫）
+
+- `RestClient.smali` 精简为桩，只剩 `clinit`/`getCurrentActivity`/`startCNDownload`。
+- `WebViewImpl$WebViewClientImpl.smali` 手工加入 `CNPaths->filesDir()` 调用，
+  由 `tools/check-webview-interceptor.py` 第 7 项守着。
+
+两者都住在 `baseline/` 里。要改就 `baseline.py apply` 出工作树、在那儿改、
+再 `baseline.py regen`。
+
+### 右上角胶囊 `right_pill`
+
+默认「GitHub」，`config.json` 下发 `right_pill` 时变成「支持我们」，点击弹窗里的
+跳转一律先过 `CNSafeLink`。`enabled` **缺省 true**，置 `false` 时无视其余字段
+回落默认胶囊——有这个显式开关才能临时关掉而不用把整段删了再敲回来。
+
+---
+
+## 安全模型：config.json 是半可信输入
+
+信任锚只有三样，都写死在包里：`CNMirrors.MIRRORS_URL`、`CNSafeLink` 的外链允许
+列表、APK 签名。其余一切来自 `config.json`。
+
+- **🔴 只收 https。** 往 `mirrors[].base` 或 `proxy.base` 填一个 `http://`，TLS 就
+  整个不参与了，而 15 个包里有 13 个**没有 md5/sha 校验**，完整性全押在 TLS 上。
+  那条链是：明文投毒 → `extractChecked` 只验结构 → 恶意 JS 落进 `<files>/magica/js/`
+  → 拦截层本地优先且热更只写不删 → 永久执行。所以 `normalizeBase` 只收 https，
+  并拒掉内嵌控制字符。
+  > 欠着的一层：给 13 个基础包加 md5/大小校验。那要服务端先出清单，
+  > 在那之前这条规则不能松。
+- **`proxy.domains` 有最小粒度。** 它是后缀匹配，填个 `"com"` 就能把所有 `.com`
+  流量吸进代理。`isSaneProxyDomain` 要求至少两段、纯 ASCII，并拒掉常见两级公共
+  后缀。挡不住多级公共后缀，但最便宜那条路堵死了。
+- **解压有膨胀比上限。** md5 管的是压缩后那份。超过 200 倍且已写出 256 MB 就中止；
+  正常包最高 2.11x（`cn_base_03.zip`），差近两个数量级，不会误伤。
+- **代理响应流要能自己收尾。** `CNWebProxy` 把 `disconnect()` 挂在流的 `close()`
+  上，覆盖「读到 EOF」与「被取消」两种收尾。
+- **`hide()` 要清干净 static 视图引用。** `CNCNDownloadUI` 的视图引用全是 static，
+  漏一个就把 Activity 钉住。加新视图字段记得同步 `HideRunnable` 的清理列表。
+- **启动期的东西挂在 `triggerInstaller()` 分支之前。** 版本检查曾只挂在「标记存在」
+  那一支，结果首次安装卡住的玩家永远收不到强更提示——而最需要的正是他们。
+
+判据钉在 `tools/ConfigGuardTest.java`（52 项）：
+
+```bash
+java -cp .build-test:.cache/deps/android.jar ConfigGuardTest
+```
+
+---
+
+## 网络出口：谁走支线、谁直连主线
+
+**支线只分发文件，配置一律直连主线。**
+
+| 请求 | 去向 | 位置 |
+|---|---|---|
+| `config.json` | 直连主线 | `CNMirrors.MIRRORS_URL` |
+| `version_scenario.json` / `version_js.json` | 走支线 | `CNHotUpdateCheck.fetchMetaSafe` |
+| 15 个基础资源包 | 走支线 | `CNDownloaderFix.fetchArchive` |
+| 两个热更包 | 走支线 | `CNHotUpdate.download` |
+| `/magica/api/snaa`（端点发现） | 有代理配置走 `/stream/`，否则直连 | `CNDownloaderFix.snaaUrl()` |
+| **游戏本身的 API / 页面 / 图片** | 不经上述任何一条 | 见下 |
+| 同上，`proxy.web_mode=on` 的 GET | 经 `/stream/` 转发，失败回退直连 | `CNWebProxy.fetchViaProxy` |
+
+换线只改「从哪里取字节」。完成标记里记的始终是规范 URL
+（`CNMirrors.CANONICAL_BASE` + 文件名），换线不会让既有安装失效。
+
+### 游戏运行时的流量走 WebView
+
+```
+WebViewClientImpl.shouldInterceptRequest
+    ↓ URL 含 /magica/ → 映射到 <files>/magica/<其后部分>
+    ├─ 本地有 → 直接本地供给（不出网）
+    └─ 没有   → super()，真的走网络
+```
+
+**端点级代理已判定为零命中**，五次真机会话零样本；拦截层与端点级不是同一件事，
+黑屏别记到它头上。拿 WebView 实例要读 `WebViewHelper.sWebView`，不要遍历 view 树
+找 tag——`WebViewImpl` 构造里那个 `setTag` 随后就被覆盖掉了。`removeWebView()` 会
+换出新对象，所以等待线程长期比对实例身份，换了就重新包。
+
+### 为什么 ETag 只能在同一条线路上比对
+
+同一份字节，不同线路给出的 ETag 格式互不相同（转发型给被转发侧的版本号、CDN 给
+S3 分段上传的 `<md5>-<段数>`、自建 nginx 给 inode-mtime）。各家实现各自为政，改不了。
+
+> 有哪几条线、权重多少、实测值是什么，**故意不写在这里**：那是线上 `config.json`
+> 的内容，随时可改，写进文档只会同时做到「过期」和「泄露」。
+
+由此定下四条：
+
+1. **ETag 只在同一条线路上比对。** 跨线路照比，每次换线都会判「文件变了」并丢弃
+   断点，换线与续传互相抵消。断点元数据记录写入时的完整 URL：URL 相同才比 ETag，
+   不同则只依赖总长度一致。代价是跨线续传察觉不到两端内容不同，兜底是解压阶段的
+   `extractChecked`。
+2. **`min_speed_kbps` 按千**比特**每秒解释**（`* 1000 / 8` 换成字节每秒）。
+3. **`config.json` 拉不到要带退避重试**：`ensureLoadedAsync` 按 2/15/45/90 秒重试
+   四次。第一档特意缩到 2 秒以赶上 3 秒的配置到位窗口。四次都失败会弹框问
+   「再试一次 / 用内置线路」，不再静默收场。
+4. **拉版本 json 失败不打冷却。** 竞速量的是预热对象的吞吐，版本 json 是冷对象、
+   量的是首字节延迟，两件事不是一个维度——照旧逻辑会把自己刚选出来的最快线刷掉。
+   > `VER_READ_TIMEOUT_MS`（3.5s）与 6 秒总闸 `VERSION_QUERY_DEADLINE_MS`
+   > **只有连着看才成立**：要放宽单条必须同时抬总闸，否则总闸先到期。
+
+### 「过慢」是「换一条」，不是「不给你装」
+
+低于阈值就 abort 并抛 `IOException("线路过慢：…")`，`reportFailure` 打冷却，退避
+2/4/8 秒换线重试，最多 4 次。**每次换线前清掉该镜像的 `.part`**——不同镜像的未认证
+字节绝不复用，所以四次是每轮从零开始，不是接力续传。
+
+> `switch_after_failures: 1` 不是随手填的保守值：曾有一条最高权重线路对某类客户端
+> 整体 403，每次安装第一次尝试必撞。设成 1，代价被限制在一次尝试 + 2 秒退避。
+
+### 网络慢时问玩家，而不是替他决定
+
+`CNCNDownloadUI.askSlowNetwork(...)`：阻塞式，**只能在后台线程调**。两个调用点的
+取舍轴不同，所以按钮文案是参数：
+
+| 场景 | 玩家真的在等吗 | 问什么 |
+|---|---|---|
+| 热更版本查询 | **是**，卡在白屏期 | 继续等待 / 跳过 |
+| 线路表 `config.json` | **否**（内置线路始终可用） | 再试一次 / 用内置线路 |
+
+**护栏坏掉时一律退回原行为，绝不卡人**：浮层不在、误在 UI 线程调用、建框抛异常、
+选择处理抛异常，四条路径都 `countDown` 并返回 `SLOW_SKIP`，并记日志说明这是
+「没条件问」而非「玩家选了跳过」——排查时这两件事完全不同。
+
+---
+
+## 构建
+
+`.github/workflows/build-apk.yml`，**仅手动触发**。push 到 main 只跑两道检查类
+workflow（复验 + 全量回归并移动 `last-green`），不产出对外 APK。
+
+```
+fetch → apply → work/tree → native .so → BGM 转码 → 覆盖补丁 smali
+      → apktool b → zipalign → apksigner → artifact
+```
+
+所有读写工程树的步骤都经 `$TREE`；`tools/build-local.sh` 走同一套。
+
+- **d8 分两组出 dex**（`CNCNDownloadUI*` → classes2，其余 → classes3），两次调用都要把
+  **整个** `.build/classes` 作为 `--classpath` 传进去。它只供解析类型，不进输出。
+  不加会一直报 desugaring 告警——今天无害，但 minSdk 21 下 `default` 方法必须靠
+  desugar 才能在 API 21–23 上跑，哪天有人给跨组接口加了 `default`，报的还是同一句，
+  然后**静默产出装得上、跑起来炸的类**。所以补 `--classpath` 的同时把 d8 告警变成
+  红灯（`run_d8`，workflow 与 `build-local.sh` 各一份，改一处要改两处）。
+- **签名用 AOSP testkey**，与上游发行包同一签名身份，可直接覆盖安装。这是一把
+  公开测试密钥，**不提供任何真实性保证**。
+- **`apktool b` 会重新编码 dex/arsc/manifest**，产物与逐字节替换 dex 的做法不会二进制
+  相同，当时验过语义等价。唯一事实来源是 `patch/src/main/java/`。
+
+---
+
+## 前端资源汉化
+
+> 操作手册在 [`i18n/README.md`](i18n/README.md)。本节只讲原理。
+
+前端汉化不走 APK，走热更包 `cn_js_update.zip`：`tools/i18n-extract.py` 抽取 →
+`i18n-apply.py` 回填 → `i18n-package.py` 打包。客户端不需要改动。
+
+### 「进游戏后还是英文」分别归谁管
+
+**不能把所有英文都归到 JS 上**，不同来源要动的层完全不同：
+
+| 英文出现在哪 | 归谁管 |
+|---|---|
+| JS 的按钮/确认框/错误提示、HTML/EJS 模板、数据 JSON | 前端热更包 |
+| cocos2d 原生弹窗、下载错误、**战斗中与结束的角色台词** | native 文本 hook（`MagiaLegacy.cpp` 的 i18n 表） |
+| 原生中文被渲染成日文字形 | native 字体路径 hook（`fontPathOverwrite`） |
+| 资源下载浮层 | Java 补丁（`CNCNDownloadUI`） |
+| **烘焙进 PNG／plist 图集的英文** | 只能改图片资源 |
+| 服务端直接返回、未经注入器的字段 | 需扩展数据映射或服务端处理 |
+
+判据不靠猜：开 `logI18nMiss` 跑一遍，日志里出现该串就说明它流经 native 标签
+（补 `engine_i18n.tsv` 即可，热重载生效），没出现就得往前端或服务端找。
+猜错方向整批活白干。
+
+图片是提取器的盲区——它只找日文假名/汉字，文字被画进 PNG 就完全看不见。
+
+### 🔴 CSS 进过热更包就再也拿不出来了
+
+每个页面的 CSS 都走拦截：`index.html` 的 `<link>`，以及 requirejs 用 text 插件读进来
+注入 `<style>` 的那些，最后都是请求 `/magica/css/**`。而 `shouldInterceptRequest`
+**只按路径匹配、会把 `?<md5>` 丢掉**，再叠上热更**只写不删**——
+
+> **往热更包里放过一次某个 CSS，这个动作不可逆。** 从包里移除它只是以后不再更新
+> 它；设备上那份**永远留着、永远赢过服务端**。
+
+已经出过一次事故：某个页面 CSS 的快照缺了一条规则，那个 div 塌成 0 高度，
+**历史篇入口就此消失**，而模板、js、图片、控制台全都正常。解毒只有一条路：把服务端
+现役内容原样放回包里再发一次。
+
+包里 CSS 分三类，来路完全不同，弄混会出事：
+
+| 类别 | 来源 | 性质 |
+|---|---|---|
+| `_common/fonts.css` | **重写**，把 `src` 改指包内中文字体 | 完整覆盖——全站只有这一处 `@font-face` |
+| `_common/common.css` | **快照 + 追加**：线上原文原封不动，其后追加覆盖规则 | 冻结了线上文件 |
+| 其余 11 个 | **原样照抄服务端现役内容** | 纯解毒用，正确状态就是逐字节相同 |
+
+`tools/check-css-freeze.py` 守着第三类。范围刻意收窄（从 188 个收到 13 个）：
+放得越多将来要同步的越多，而每一个都是不可逆的。
+
+> ⚠ **这是个会过期的冻结。** 服务端改了 `common.css`，玩家端仍吃我们这份旧的，
+> 新增样式会静默消失。改版前先比对线上原文的 md5，不一致就用新原文重做快照，
+> 再把覆盖段重新追加上去。
+
+---
+
+## 调试开关目录（排查用）
+
+```
+/data/data/io.kamihama.totentanz/
+├── log/     ← 日志（CNLog）
+├── debug/   ← 调试开关：建同名空文件＝打开，删掉＝关闭，重启生效
+└── files/   ← 热更解压根，**不要**把排查工具放这里
+```
+
+`log/` 与 `debug/` 与 `files/` **平级**：`files/` 是热更解压根，`CNHotUpdateTx` 会按
+前缀算孤儿并删除。今天碰不到调试目录是**巧合而非保证**——前缀哪天放宽，开关就会在
+某次热更后集体消失且查不出原因。
+
+native 与 Java 两侧读同一个目录。包里没有 `android:debuggable`，`run-as` 用不了，
+这个目录只有能直写应用私有目录的环境碰得到。
+
+### 🔴 边界：只关我们自己加的东西
+
+这些开关一律只做一件事——**把客户端退回更接近原包的行为**。
+**绝不设置任何削弱安全判定的开关**：外链白名单、https 强制、配置来源校验、解压
+膨胀比上限一概不做成开关。否则这个目录就从排查工具变成攻击面。
+
+> 加新开关前先问：打开之后是「少一个我们加的功能」，还是「少一道防线」？
+> 后者一律不做。
+
+**这条不靠自觉**：`tools/check-debug-flag-boundary.py` 在 CI 里断言几个安全判据的
+正文里不出现 `CNDebugFlags` / `g_dbg*`。保护区是**方法级**的——`refresh()` 里加开关
+合法，`normalizeBase()` 里加就会被拦下。
+
+### 三类开关
+
+| 前缀 | 干什么 | 什么时候用 |
+|---|---|---|
+| `skipXxx` / `noXxx` | 跳过启动链某一步 / 不装某个 native 改动 | 二分定位「是哪一步把游戏搞挂的」 |
+| `failXxx` / `slowXxx` | 故障注入 | 验错误处理路径本身——平时只有网络真烂掉才跑得到 |
+| `logXxx` | **只记录，不改行为** | 日志里根本没有能回答这个问题的信息时 |
+
+开关名一律小驼峰，native 与 Java 同一风格。
+
+```
+Application.onCreate
+ └─ CNDownloaderFix.triggerInstaller()          ← 独立线程
+     ├─ CNWebProxy.install()                     skipWebProxy
+     ├─ [标记不存在] runInstaller()              skipInstaller
+     │    ├─ CNCNDownloadUI.show()               skipOverlay
+     │    ├─ 15 个包下载                          failDownload
+     │    ├─ 序章询问                             skipTutorialPrompt
+     │    └─ noticeAndRestart()                   skipRestart
+     └─ [标记存在] CNVersionCheck                skipVersionCheck
+          └─ CNHotUpdateCheck.start()             skipHotUpdate
+               ├─ CNMirrors                       skipMirrorConfig / failConfigFetch
+               ├─ 版本查询（6s 总闸）              failVersionQuery / slowVersionQuery
+               ├─ CNHotUpdateTx.apply()            failHotUpdateApply
+               └─ 慢网询问框                       skipSlowAsk
+
+（native）JNI_OnLoad → 34 个 hook
+ ├─ pushSceneTop 浮层闸门                         noOverlayGate
+ ├─ 强制序章 / WebView 看门狗                      noTutorialForce / noTutorialGuard
+ ├─ UrlConfig 端点重写                             noProxyEndpoint
+ ├─ initLabel / setString 文案替换                 noI18nLabel / noI18nSetString
+ │   └─（只记录）未命中的串                        logI18nMiss / logI18nMissAll
+ └─ HTTP2 并发数、ADX2 采样率                      noHttp2Bump / noAdxSampleRate
+```
+
+### 「空转」与「根本不装」是两回事
+
+`noI18nLabel` / `noI18nSetString` 只让钩子**空转**——钩子照样装着、照样按我们声明的
+原型转发。所以**原型声明本身写错时，这两个开关测不出来**。真机上正是这样定位到
+`cocos2d::Size` 的 ABI 偏差的：`noI18nLabel`（仍装着）黑屏，`noInitLabelHook`
+（根本不装）可完整战斗。
+
+| 开关 | 关掉的是 |
+|---|---|
+| `noInitLabelHook` | **不安装** `LbUtility::initLabel` 钩子 |
+| `noTtfHooks` | **不安装** `createWithTTF` / `setTTFConfig` 三个钩子 |
+
+排查顺序因此是两级：先用「空转」版看是不是**行为**的锅，再用「不装」版看是不是
+**钩子存在本身**（含原型/ABI）的锅。
+
+### 故障注入能验到什么
+
+| 开关 | 验的是哪条错误路径 |
+|---|---|
+| `failConfigFetch` | 2/15/45/90 秒退避重试，以及跑完那个「再试一次 / 用内置线路」框 |
+| `slowVersionQuery` | 慢网询问框（注入 9 秒 > 6 秒总闸必定触发）与选「继续等待」的续期 |
+| `failVersionQuery` | 版本查询失败后 fail-open，且「已是最新」不谎报 |
+| `failDownload` | 换线、冷却、重试上限 |
+| `failHotUpdateApply` | `CNHotUpdateTx` 的整体回滚与 journal 恢复 |
+
+### 用法
+
+```bash
+adb shell "run-as io.kamihama.totentanz mkdir -p debug && touch debug/<开关名>"
+# 重启游戏，走一遍要查的流程，然后取日志：
+adb shell "run-as io.kamihama.totentanz cat log/<最新>.log"
+```
+
+---
+
+## 测试
+
+`tools/` 下是补丁层的测试套件，跑在 JVM 上，不需要设备。
+
+```bash
+python3 tools/inject-endpoints.py --test        # 先注入占位端点，否则白名单是空的
+javac -nowarn -source 8 -target 8 -encoding UTF-8 \
+      -cp .cache/deps/android.jar -d .build-test \
+      $(find patch/src/main/java -name '*.java') tools/*Test.java
+java -cp .build-test:.cache/deps/android.jar <类名>
+python3 tools/inject-endpoints.py --reset       # 跑完还原，别把注入结果提交进去
+```
+
+⚠ **运行时也要挂 `android.jar`**，不只是编译时。少了它 `BgmLoopTest` /
+`ThrottleTest` 会以 `NoClassDefFoundError` 挂掉——看起来像测试失败，其实是
+classpath 少了一截。
+
+| 测试 | 覆盖 |
+|---|---|
+| `HotUpdateTxTest` | 事务化应用：提交、回滚、崩溃在提交前/后的两个恢复方向、恶意包拒收、幂等、清单与孤儿清理 |
+| `SafeLinkTest` | 外链白名单：协议、authority 伪装、公共后缀、空白与控制字符、大小写与末尾点归一化 |
+| `ConfigGuardTest` | 云端可控字符串的准入：只收 https、CRLF 与控制字符注入、`proxy.domains` 最小粒度 |
+| `WebProxyTest` | 代理改写判据：后缀匹配卡在点上、排除自身、只改 https、配置不全一律透传 |
+| `ProxyFetchTest` | **需服务器**。真跑 `fetchViaProxy`：gzip、304 不接管、跨协议 301、5xx 进冷却、4xx 不进 |
+| `ResumeTest` | **需服务器**。断点复用、同线 ETag 变化拒绝复用、跨线续传、服务端忽略 Range 返回 200 |
+| `HotUpdateTest` | **需服务器**。非主线走直连、提前断流不提交残缺文件、承接残片续传 |
+
+> 完整清单见 `tools/*Test.java`（26 个），断言数以当次运行为准。
+
+集成测试要先起 `tools/proxy-test-server.py` / `tools/server.py`。
+`ProxyFetchTest` 还要把 `tools/teststubs/android/webkit/WebResourceResponse.java`
+加进源文件列表——android.jar 里那个构造函数是 `throw new RuntimeException("Stub!")`，
+不盖掉这条路径一步都跑不了。
+
+有一条**桌面上验不到**：Android 的 `HttpURLConnection` 底层是 OkHttp，会自己加
+`Accept-Encoding: gzip` 并透明解压；桌面 JDK 不会。测试会打一行 `⏭` 明说这件事，
+而不是假装验过了。
+
+---
+
+## 原始署名与免责声明
+
+**原始包**：本仓库的基础 APK 来自游戏 **《魔法纪录 魔法少女小圆外传》**（原作
+《魔法少女小圆》系列），一切游戏内容、角色、立绘、语音、音乐与剧情文本的版权归
+**Aniplex / f4samurai / 版权方（魔法少女小圆 + 魔法纪录）** 所有。
+
+> ⚠ **免责声明**：本仓库与上述版权方无任何关联，未获其授权或认可。**维护者自己
+> 不会将本仓库用于商业用途**；但对于从版权方或上游获得合法授权的人，本声明不
+> 构成使用限制。本仓库的**原创代码**（补丁层与工具）按 GPLv3 条款授权；**游戏
+> 内容与素材**（角色、立绘、语音、音乐、剧情文本等）归版权方所有，其使用以版权方
+> 自己的条款为准，本仓库不代为授权。**版权方若认为本仓库构成侵权，请通过仓库
+> 联系方式告知，我们将配合下架相关内容。**
+
+**二次开发**：本仓库在其上的逆向分析与改造（引擎 hook、UI 改造、下载系统、
+汉化补丁）由 **Totentanz** 组织完成（GitHub 组织
+[Puella-Care](https://github.com/Puella-Care)，部分 smali 补丁来源）。
+
+**Totentanz MIT 许可来源**：本仓库的部分 smali 补丁与构建脚手架来自 Totentanz 项目
+[`Puella-Care/client-apk`](https://github.com/Puella-Care/client-apk)
+（即 Totentanz client），它本身是
+[`rayshift/magiatranslate`](https://github.com/rayshift/magiatranslate)
+（MagiaTranslate）的 fork，**Copyright (c) 2023 Rayshift，MIT License**。
+按 MIT 要求，原版权声明（Copyright (c) 2023 Rayshift）在本仓库
+[`LICENSE.additional-terms`](LICENSE.additional-terms) §4 声明保留；MIT 只覆盖
+这些派生部分，其余归 GPL v3 管。
+
+**历史汉化贡献**（更早的汉化工作）：MadeInMagius（核心逆向开发，独立完成汉化
+引擎、下载系统与日服国服资源合并）、水银h2oag（国服文件之外的翻译和校对）、
+CyberNova（下载加速及资源自动化推送）、segfault（国服数据留存）、@PhotonFlow
+（国内加速与修复）。
+
+项目官网见客户端「署名」区（地址构建期注入，不写在仓库里）
+
+## 许可证
+
+本仓库的**补丁层与工具**（`patch/`、`tools/`、`docs/` 与仓库内文档）以
+**GNU General Public License v3.0** 授权，见 [`LICENSE`](LICENSE)，并受
+[`LICENSE.additional-terms`](LICENSE.additional-terms) 的附加条款约束。
+
+**不归 GPLv3 覆盖**的第三方部分（`smali/` 引擎字节码、`assets/`/`lib/`/`res/`
+等游戏资源、`original/` 解码参考）归原权利方所有——这条
+作为附加条款 §3 写入 `LICENSE.additional-terms`。
+
+**但 `assets/`、`lib/` 里有几个不是原包的东西**，是我们自己塞进去的自由软件，
+逐个登记在 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)，附加条款 §5 指向它：
+
+| 文件 | 是什么 | 许可 | 义务 |
+|---|---|---|---|
+| `assets/aria2/aria2c-arm{,64}` | aria2 1.37.0，全静态 | **GPLv2+**（附 OpenSSL 链接例外） | **要提供对应源码**——源码指向与三年书面要约见声明文件 |
+| `lib/*/libshadowhook.so` | ShadowHook 2.0.1（ByteDance），**CI 从上游源码构建，且我们改过它的源码** | MIT | 附版权声明与许可全文；改动照实写在声明文件里 |
+| `assets/fonts/mbm_20160902.ttf` | MagiReco CN Medium（Source Han 派生） | Apache-2.0 | 附许可、注明改动（§4(b)） |
+
+原先 §3 把这些一并划给了游戏版权方，两头都错：既把与人家无关的自由软件记到人家
+名下，又漏掉了这些许可证要求的声明。`tools/check-third-party-notices.py` 在 CI
+里守着——打进包的组件少一条声明就红灯。
+
+> aria2c 以**独立子进程**运行，与游戏本体既不链接也不同进程，是「单纯聚合」里
+> 最干净的形态，不向任何其他部分传播 GPL。
+
+**另有 MIT 来源**（部分 smali 补丁/脚手架，来自
+Totentanz 项目 →
+[`rayshift/magiatranslate`](https://github.com/rayshift/magiatranslate)，Copyright
+Rayshift）：版权声明在 §4 声明保留，MIT 只覆盖那些派生部分。
+
+---
+
+---
+
+## 提交与分支纪律（有钩子在管，不是靠自觉）
+
+**完整纪律见 [`CLAUDE.md`](CLAUDE.md)（提交约定 / 钩子机制）与
+[`AGENTS.md`](AGENTS.md)（§0 分支纪律、§1 提交规范）。** 本仓库的特色是钩子由
+`tools/agent-guard.py` 在 Agent 跑第一条命令时自动接电；没跑过 Agent 的克隆手动补一次
+`bash tools/install-hooks.sh`（Windows: `tools\install-hooks.cmd`）。
+
+关键一条：`commit-msg` 只管得住「提交发生在装有钩子的克隆里」，`pre-push` 才是
+兜底——2026-08-08 那 12 个英文标题提交就是在别处产生、作为分支推进来的。
+逃生口：`[skip-hooks]`（信息内顶格独占一行）、`SKIP_MSG_HOOK=1`、`SKIP_BRANCH_HOOK=1`。
+
+## 远端分支现状（动态，以脚本为准）
+
+远端分支**只应**有 `main` / `hotfix/*` / `surgery/*`（另有具名临时例外，见
+[`AGENTS.md`](AGENTS.md) §0），退役一律走「🗄️ 归档分支为 tag」CI（先打
+`archive/<原名>` tag 再删分支）。实时复核：`python3 tools/check-branch-hygiene.py`。
+历史研究/功能分支均已归档为 `archive/*` tag（只读、不可变），不再以分支存在。
+
+---
+
+## 状态提醒
+
+本仓库不做自动发版：CI 只有手动触发，产物只上传为 workflow artifact，不建
+Release。游戏后端不由我们掌控，自动产出对外包只会让玩家装到连不通的版本。
