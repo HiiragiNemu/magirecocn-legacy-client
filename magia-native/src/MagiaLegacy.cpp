@@ -145,9 +145,9 @@ namespace cocos2d {
 //
 // ## 为什么放在 app 私有目录
 //
-// 现状（e2c00727 起）：包里没有 android:debuggable，`run-as` 用不了，这个目录
+// 现状：包里没有 android:debuggable，`run-as` 用不了，这个目录
 // 只有能直写应用私有目录的环境（root/su、模拟器）碰得到。公测期曾短暂打开过
-// debuggable（2de18e15），两天后又收了回去——不是因为收紧，而是这条路根本送不到
+// debuggable（7aebb871），两天后又收了回去——不是因为收紧，而是这条路根本送不到
 // 人：要用它得会 adb 或 Termux，实际会用的人几乎没有。
 //
 // 安全边界从来不靠目录的隐蔽性，而靠下面这条：开关只退功能，绝不退防线。
@@ -1227,7 +1227,7 @@ static jstring nativeClientVersion(JNIEnv* env, jclass) {
 //   真正需要悬浮窗的人 = 建不出那个文件的人。
 //
 // 挡住的正好是要服务的那批，放进来的正好是不需要它的那批。这不是假想——
-// android:debuggable 就是这么白开了两天又收回去的（2de18e15 → e2c00727）：
+// android:debuggable 就是这么白开了两天又收回去的（7aebb871 打开，两天后收回）：
 // 那条路要求会用 Termux，而实际会用的人几乎没有。同一个错误不该犯第二次。
 //
 // ## 公测结束怎么收
@@ -1301,10 +1301,10 @@ static jobjectArray nativeDebugFlagTable(JNIEnv* env, jclass) {
 
 // ═══ 【已停用 · v1】setURI 改写 —— 当前没有任何 H() 安装 setURI_hook ═══
 //
-// 停用于 eb62854f（真机黑屏卡死）。下面的实现完整保留，作为反向工程记录。
+// 停用于 cf9a8dfc（真机黑屏卡死）。下面的实现完整保留，作为反向工程记录。
 //
 // ⚠ 关于「setURI 运行时 0 调用，是废弃 API」这个说法，证据没有看上去那么硬：
-//   那次观测（0cf0cb59 加了无条件日志、eb62854f 记录结果）的现场是**游戏黑屏
+//   那次观测（cb1c9f6d 加了无条件日志、cf9a8dfc 记录结果）的现场是**游戏黑屏
 //   卡死**。「一次都没调」与「根本没跑到会调它的阶段」在那份日志里区分不开。
 //   后续 v2/v3/v4 都建立在「setURI 已废弃」之上，但这个前提**从未在游戏能正常
 //   进入的会话里复验过**。
@@ -1322,7 +1322,7 @@ static jobjectArray nativeDebugFlagTable(JNIEnv* env, jclass) {
 // 经 nativeSetProxyConfig 注入——不在本文件硬编码, 换节点只改 config.json。
 // 配置缺失(未下发)时原样直连, 兼容旧版。
 //
-// 安全要点(同 fontPathOverwrite 2584f380 的教训):
+// 安全要点(同 fontPathOverwrite 8aea5734 的教训):
 //   - 不原地改 const std::string&; 用局部 std::string 传给原函数
 //     (引擎 setURI 会把传入串拷进 m_uri, 不持有引用, 局部串安全)
 //   - 不用共享静态缓冲: 网络线程并发调 setURI, 引擎 dtor 会 free
@@ -1423,7 +1423,7 @@ static bool tryRewriteUrl(const std::string& uri, const std::string& base,
     return true;
 }
 
-// 【已停用 · v1】没有 H() 安装它。停用于 eb62854f（真机黑屏卡死）。
+// 【已停用 · v1】没有 H() 安装它。停用于 cf9a8dfc（真机黑屏卡死）。
 // 「setURI 运行时 0 调用」这个前提未在能正常进游戏的会话里复验过，详见上文。
 static void setURI_hook(void* self, const std::string& uri) {
     if (!g_origSetURI) { LOGI("[proxy] setURI called but g_origSetURI NULL"); return; }
@@ -1443,10 +1443,10 @@ static void setURI_hook(void* self, const std::string& uri) {
 
 // ═══ 【已停用】WebView loadURL 改写 —— 没有任何 H() 安装这两个钩子 ═══
 //
-// 与 setURI 一起停用于 eb62854f。它是「黑屏嫌疑人」之一，但**从未被单独验证过**
+// 与 setURI 一起停用于 cf9a8dfc。它是「黑屏嫌疑人」之一，但**从未被单独验证过**
 // ——那次两个钩子是一起装、一起撤的，谁的责任分不开。
 //
-// 后来 d3999f5b 从另一条路（端点级 web 重写）复现了黑屏，并查明原因：
+// 后来 caaca4f5 从另一条路（端点级 web 重写）复现了黑屏，并查明原因：
 // **WebView 的本地文件拦截规则只认原始域名**，页面一旦走代理，拦截失效、
 // 本地资源取不到，页面加载卡死。这条结论同样适用于 loadURL——所以即便要重启
 // 这个钩子，也得先解决拦截规则按代理后域名匹配的问题，否则必然重蹈覆辙。
@@ -1460,8 +1460,8 @@ using LoadURLFn = void (*)(void* self, const std::string& url);
 static LoadURLFn g_origWebViewLoadURL       = nullptr;
 static LoadURLFn g_origWebViewImplLoadURL   = nullptr;
 
-// 【已停用】没有 H() 安装它。停用于 eb62854f；黑屏责任未单独验证过，
-// 但 d3999f5b 已从另一条路查明根因：WebView 本地文件拦截只认原始域名。
+// 【已停用】没有 H() 安装它。停用于 cf9a8dfc；黑屏责任未单独验证过，
+// 但 caaca4f5 已从另一条路查明根因：WebView 本地文件拦截只认原始域名。
 static void webViewLoadURL_hook(void* self, const std::string& url) {
     if (!g_origWebViewLoadURL) return;
     std::string base;
@@ -1475,7 +1475,7 @@ static void webViewLoadURL_hook(void* self, const std::string& url) {
     g_origWebViewLoadURL(self, url);
 }
 
-// 【已停用】没有 H() 安装它。与 webViewLoadURL_hook 同批停用于 eb62854f。
+// 【已停用】没有 H() 安装它。与 webViewLoadURL_hook 同批停用于 cf9a8dfc。
 static void webViewImplLoadURL_hook(void* self, const std::string& url) {
     if (!g_origWebViewImplLoadURL) return;
     std::string base;
@@ -1678,7 +1678,7 @@ static const std::string* urlConfigApiNew(void* self, int type) {
     try { probeEndpointSlots(self); } catch (...) {}   // 钩子边界绝不外抛
     return endpointRewrite(urlConfigApiOld, self, type, 0, "api");
 }
-// 【已停用】web 端点的**改写**没有 H() 安装它（d3999f5b）。
+// 【已停用】web 端点的**改写**没有 H() 安装它（caaca4f5）。
 // 原因是查明的、可复现的：web 端点走代理后页面加载卡死黑屏
 // （真机表现：只剩厂商 logo 的点击特效）。
 // 实现本身是好的，留着是因为解决了 origin/跨域问题之后就能直接复用。
@@ -1697,7 +1697,7 @@ static const std::string* urlConfigChatNew(void* self, int type) {
  * web 端点的**观测专用**钩子：只记日志，一个字节都不改。
  *
  * <p>为什么单独写一个而不复用 endpointRewrite：那个函数会改写。web 端点一改写
- * 就黑屏（d3999f5b 真机复现），但我们又确实需要知道它的取值——2026-08-07 那次
+ * 就黑屏（caaca4f5 真机复现），但我们又确实需要知道它的取值——2026-08-07 那次
  * 真机查明，游戏的 API 流量根本不走 UrlConfig::api，而是走 WebView 的
  * {@code shouldInterceptRequest}；WebView 加载哪个 origin，前端就往哪里发请求。
  * 所以 web 端点的值是理解整条链路的关键，却又是最不能乱动的一个。
@@ -1721,15 +1721,15 @@ static const std::string* urlConfigWebObserve(void* self, int type) {
 // ═══ 【已停用 · v2/v3】nghttp2 逐请求改写 —— 没有 H() 安装这三个钩子 ═══
 //
 // 这是**唯一一条有硬证据判死刑**的路线，两次真机、两种形态：
-//   v2 (ac67ce17) → 直接闪退，3d6c80c1 禁用
-//   v3 (9a23387b) 加了整体 try/catch 与透传兜底后重新启用 → **仍崩**，
+//   v2 (5592dad7) → 直接闪退，4bc0cc52 禁用
+//   v3 (320636c9) 加了整体 try/catch 与透传兜底后重新启用 → **仍崩**，
 //      栈落在 request_impl::on_response —— 回调 UAF。
 //
 // 结论：异常安全救不了它。逐请求改写会破坏 nghttp2 内部的请求状态机——改写发生
 // 在请求已注册进 session 之后，回调触发时引用的对象已经不是原来那个了。这不是
 // 加保护能绕开的，是路线本身与 nghttp2 的生命周期模型冲突。
 //
-// 8bc8ea93 因此改走端点级（UrlConfig getter），让引擎**自己**以代理为 host 建连，
+// 1e9cbbbc 因此改走端点级（UrlConfig getter），让引擎**自己**以代理为 host 建连，
 // 完全不碰 nghttp2 内部。那条路活到了现在。
 //
 // ⚠ 不要再启用这三个钩子。真要重来，先解决「改写时机早于 session 注册」这个前提。
@@ -1850,7 +1850,7 @@ static void nativeSetProxyConfig(JNIEnv* env, jclass, jstring base, jobjectArray
 
 // 代理配置**不做任何缓存**，只认本次启动 Java 侧下发的那一份。
 //
-// 曾经有过一份磁盘缓存（cn_proxy_config.tsv，8dea228f），让这里在 JNI_OnLoad 就
+// 曾经有过一份磁盘缓存（cn_proxy_config.tsv，1de40fe9），让这里在 JNI_OnLoad 就
 // 预读到代理配置，赶在引擎首个请求之前生效。但它带来一个更糟的失败模式：
 // config.json 拉不到时缓存既不更新也不删除，于是每次启动都把请求重写到一个可能
 // 早已不存在的代理——而端点级重写**没有失败回退**（改完就交给引擎去连，这里根本
@@ -2470,7 +2470,7 @@ static void fontPathFix(void* strObj, const char* tag) {
     // 短串上限只有 10，二者都走 long。fontPathOverwrite 必须同时覆盖这两种路径。
     // 先前的 "fonts/TTZhiHeiGB3-W4.ttf" 是 24 字符，超了，于是每次重定向都要走
     // fontPathOverwrite 末尾那条「另分配缓冲交给引擎 string 持有」的路径——
-    // 也就是 2584f380 修过堆破坏的那一条。现在它基本不会再被走到。
+    // 也就是 8aea5734 修过堆破坏的那一条。现在它基本不会再被走到。
     // 若将来把目标换成超过 22 字符的路径，ARM64 也会进入独立分配路径，届时
     // 请重新审视它的所有权约定；ARMv7 现在已经持续覆盖这条路径。
     NdkStrView v = ndkStrRead(strObj);

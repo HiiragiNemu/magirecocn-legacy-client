@@ -771,7 +771,7 @@ public class CNCNDownloadUI {
                 0, ViewGroup.LayoutParams.MATCH_PARENT,
                 CNDownloadUiAssist.leftWeight(act)));
 
-        // Logo 整幅在上、贡献者列表在下。9688f7e7 曾改成「Logo 122dp 靠左 +
+        // Logo 整幅在上、贡献者列表在下。c1bb57a0 曾改成「Logo 122dp 靠左 +
         // 右侧三行品牌文字」，观感上不成立，已退回。那三行文字也一并去掉：
         // MadeInMagius / PhotonFlow 在下方贡献者列表与底部署名条里都已经有，
         // 品牌区再写一遍是重复，不是信息。
@@ -1655,10 +1655,10 @@ public class CNCNDownloadUI {
             tintBar(bar, 0x55888888);
             // 整宽，与上一行右对齐的「文字进度」右端对齐。
             //
-            // 9688f7e7 曾把它塞进一个 3:1 的横排里（条占 3、右边留 1 份空白），
+            // c1bb57a0 曾把它塞进一个 3:1 的横排里（条占 3、右边留 1 份空白），
             // 于是进度条在 75% 处就断了，而同一行右上角的文字进度仍然顶到最右——
             // 两条右边界对不上，整块就散了。总进度条那个同款 spacer 已在
-            // 0788a801 退掉，这里是漏网的第二处。
+            // 2261c9a1 退掉，这里是漏网的第二处。
             LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 6));
             barLp.topMargin = dp(act, 2);
