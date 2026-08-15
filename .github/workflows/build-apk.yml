@@ -150,10 +150,11 @@ jobs:
           # 主机名常量恒为空串，缺了照样能编出 APK，但那个包装上去什么都不会
           # 发生（线路表为空、外链全不放行、热更地址拼不出来）。所以在这里拦，
           # 而不是等玩家装上才发现。
-          NEED="BASELINE_APK_URL OVERLAY_URL  CLIENT_ROOT_DOMAIN CLIENT_PAGES_HOSTS"
-          # 发版相关的只有真要发版时才需要
+          NEED="BASELINE_APK_URL OVERLAY_URL CLIENT_ROOT_DOMAIN CLIENT_PAGES_HOSTS"
+          # 发版相关的只有真要发版时才需要。 也在这一档——取 overlay
+          # 现在走 OVERLAY_URL（凭证若需要就带在 URL 里），构建本身不再用它。
           if [ "${{ inputs.verify_only }}" != "true" ]; then
-            NEED="$NEED TARGET_REPO TARGET_REPO"
+            NEED="$NEED  TARGET_REPO TARGET_REPO"
           fi
           MISSING=""
           for v in $NEED; do
@@ -211,10 +212,10 @@ jobs:
       # Totentanz 整包与构建工具都在公开仓库，不需要 token。
       - name: 🌱 从Totentanz 整包重建工程树
         env:
-          : ${{ secrets. }}
-          # 图集从哪取：逗号分隔的 owner/repo，按序试。地址由 secret 给，
-          # 内容仍按 baseline.json 的 sha256 认——地址错了拿不到，地址对了
-          # 内容也还要过 hash，两层各管各的。
+          # 图集从哪取：整条 URL 由变量给（逗号分隔可列多条，按序试；需要
+          # 凭证时按 https://<user>:<token>@… 写，脚本会拆出来改用请求头发送，
+          # 不会进日志）。内容仍按 baseline.json 的 sha256 认——地址错了拿不到，
+          # 地址对了内容也还要过 hash，两层各管各的。
           OVERLAY_URL: ${{ secrets.OVERLAY_URL }}
           BASELINE_APK_URL: ${{ secrets.BASELINE_APK_URL }}
         run: |

@@ -151,8 +151,6 @@ SOFTWARE.
   `assets/resource/image_native/bg/web/web_common0.png`**，一个字节没改，同样归原包
   版权方。它**哪儿都不存**：`baseline.json` 里那条 op 是 `from: baseline` + `src`，
   构建时从基线树拷过来，post hash 照常核对。
-
-
 - **`lib/*/libMagiaLegacy.so`** —— 本项目自制，源码在 `magia-native/`，归 GPLv3。
 - **`assets/fonts/witchText-export.png`** —— 在原包位图字体基础上重绘的汉化图集，
   属于对原包素材的衍生，归原包版权方一侧，见 `LICENSE.additional-terms` §3。

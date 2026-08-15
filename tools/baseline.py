@@ -47,6 +47,7 @@
 """
 
 import argparse
+import base64
 import difflib
 import hashlib
 import json
@@ -55,6 +56,7 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -229,61 +231,90 @@ def cmd_fetch(args):
     return 0
 
 
+def _split_credentials(url):
+    """把 URL 里的 user:token 拆出来。
+
+    返回 (干净 URL, Authorization 头或 None)。
+
+    为什么自己拆而不交给 urllib：`urlopen` **不会**把 URL 里的 userinfo 变成
+    Authorization 头，它会把 `user:token@host` 整个当主机名，于是解析失败或者
+    把凭证发到一个错的地方。拆出来自己发，行为是确定的。
+
+    顺带一条实际限制，别踩：token 拼进 URL 只对**接受 basic auth 的端点**有效
+    （API 那类）。浏览器下载直链（`/releases/download/...`）不吃这一套——私有
+    来源那条会跳登录流，拿回来的是一个 HTML 页面而不是 zip。真那样的话 sha256
+    会当场对不上，不会静默装错东西，但错误信息会指向「哈希不符」而不是「没权限」，
+    所以这里先说清楚。
+    """
+    m = re.match(r"^(https?://)([^/@]+)@(.*)$", url)
+    if not m:
+        return url, None
+    scheme, cred, rest = m.groups()
+    return scheme + rest, "Basic " + base64.b64encode(
+        urllib.parse.unquote(cred).encode("utf-8")).decode("ascii")
+
+
 def fetch_overlay(conf):
     """取回 overlay 包并解开。
 
-    这些是人手重绘的图集：无法从原包重建，也不该躺在代码仓库里，所以放在外部来源的
-    Release。地址由环境变量给（见 baseline.json 的 repos_env），本仓库里不写死。
+    这些是人手重绘的图集：无法从原包重建，也不该躺在代码仓库里，所以放在外部，
+    取件地址整条由环境变量给（见 baseline.json 的 url_env），本仓库里不写。
 
-    **内容一律按 sha256 认**——地址只决定「去哪拿」，拿到的东西对不对由 hash 说了算。
-    所以地址不是安全边界，挪进 Secret 不降低任何保证；列多个来源也只是别在某个源
-    不可用时卡住构建，而不是「信任其中任何一个」。
+    **内容一律按 sha256 认**——地址只决定「去哪拿」，拿到的东西对不对由 hash
+    说了算。所以地址不是安全边界；列多条也只是别在某个来源不可用时卡住构建，
+    而不是「信任其中任何一个」。
+
+    日志里**从不回显地址**：它可能带着凭证，而构建日志会长期留存。
     """
     spec = conf.get("overlay")
     if not spec:
         return
-    repos = [r.strip() for r in os.environ.get(spec.get("repos_env", "OVERLAY_URL"), "").split(",")
-             if r.strip()]
     if os.path.isdir(OVERLAY) and os.listdir(OVERLAY):
         print("overlay 已解开：%s" % OVERLAY)
         return
 
+    env = spec.get("url_env", "OVERLAY_URL")
+    urls = [u.strip() for u in os.environ.get(env, "").split(",") if u.strip()]
+
     zip_path = os.path.join(WORK, spec["asset"])
     if not (os.path.isfile(zip_path) and sha256_file(zip_path) == spec["sha256"]):
-        token = os.environ.get(spec.get("token_env", ""), "")
-        if not repos:
+        if not urls:
             raise SystemExit(
-                "没有 %s：取件地址由环境变量给（逗号分隔，按序试），"
-                "本仓库里不写死。" % spec.get("repos_env", "OVERLAY_URL"))
+                "没有 %s：取件地址整条由环境变量给（逗号分隔可列多条，按序试），"
+                "本仓库里不写。" % env)
         errors = []
-        for repo in repos:
-            url = "https://github.com/%s/releases/download/%s/%s" % (
-                repo, spec["tag"], spec["asset"])
-            print("取 overlay（来源由 secret 提供，日志不回显地址）…")
+        for i, raw in enumerate(urls, 1):
+            clean, auth = _split_credentials(raw)
+            print("取 overlay（第 %d/%d 个来源；日志不回显地址）…" % (i, len(urls)))
             try:
-                req = urllib.request.Request(url)
-                if token:
-                    req.add_header("Authorization", "Bearer " + token)
+                req = urllib.request.Request(clean)
+                # 让 API 那类端点直接回字节而不是 JSON 元数据；对普通静态直链
+                # 是个无害的 Accept，服务端照常回文件。
+                req.add_header("Accept", "application/octet-stream")
+                if auth:
+                    req.add_header("Authorization", auth)
                 tmp = zip_path + ".part"
                 with urllib.request.urlopen(req) as r, open(tmp, "wb") as f:
                     shutil.copyfileobj(r, f)
                 os.replace(tmp, zip_path)
                 break
             except Exception as e:
-                errors.append("%s：%s" % (repo, e))
+                # 只记第几个来源与错误本身，不记地址——它可能带凭证。
+                errors.append("第 %d 个来源：%s" % (i, e))
                 print("  取不到：%s" % e)
         else:
             raise SystemExit(
                 "overlay 一个来源都取不到：\n  %s\n"
-                "  来源若需要凭证，要能读它的 %s（本 job 里没有就是没传进来）。"
-                % ("\n  ".join(errors), spec.get("token_env", "")))
+                "  来源若需要凭证，把它按 https://<user>:<token>@… 的形式写进 %s。"
+                % ("\n  ".join(errors), env))
         got = sha256_file(zip_path)
         if got != spec["sha256"]:
             os.remove(zip_path)
             raise SystemExit(
                 "overlay sha256 不符：期望 %s，实得 %s\n"
-                "  内容变了就要用 tools/make-overlay.py 重打、重传资产、并同步"
-                "baseline.json 的 overlay.sha256——三件事缺一不可。"
+                "  内容变了就要用 tools/make-overlay.py 重打、重传、并同步"
+                "baseline.json 的 overlay.sha256——三件事缺一不可。\n"
+                "  另一种可能：来源需要凭证但没给对，拿回来的是一个错误页而不是 zip。"
                 % (spec["sha256"], got))
 
     import zipfile
@@ -292,7 +323,7 @@ def fetch_overlay(conf):
     os.makedirs(OVERLAY)
     with zipfile.ZipFile(zip_path) as z:
         for name in z.namelist():
-            # 压缩包来自另一个仓库，按不可信内容对待：不许 ../ 逃出解压目录
+            # 压缩包来自外部，按不可信内容对待：不许 ../ 逃出解压目录
             dst = os.path.normpath(os.path.join(OVERLAY, name))
             if not dst.startswith(os.path.abspath(OVERLAY) + os.sep):
                 raise SystemExit("overlay 里有越界路径：%s" % name)

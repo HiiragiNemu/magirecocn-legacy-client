@@ -68,7 +68,7 @@ sha256 与树指纹钉死。
 | secret | 给谁 |
 |---|---|
 | `BASELINE_APK_URL` | 基线整包 |
-| `OVERLAY_URL` | 汉化图集外部来源，逗号分隔按序试 |
+| `OVERLAY_URL` | 汉化图集取件地址（整条 URL，逗号分隔可列多条按序试；需要凭证时按 `https://<user>:<token>@…` 写） |
 | `TARGET_REPO` / `TARGET_REPO` | 发版与归档目标 |
 | `` | 上面几处的读写凭证 |
 | `CLIENT_ROOT_DOMAIN` / `CLIENT_PAGES_HOSTS` | 对外主机名，见 `CNEndpoints` |
