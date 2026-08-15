@@ -498,6 +498,8 @@ public class CNCNDownloadUI {
     private static LinearLayout vContribList;
     private static TextView     vThemeChip;
     private static TextView     vGitHubChip;
+    /** 右上角胶囊行（主题 / GitHub / 字号）。assist 把字号胶囊挂进来。 */
+    public static LinearLayout headRightRow;
     private static GradientDrawable githubChipBg;
     private static FrameLayout  supportModal;
     private static TextView     vLogPill;
@@ -974,7 +976,7 @@ public class CNCNDownloadUI {
         vOfflinePill.setTypeface(vOfflinePill.getTypeface(), Typeface.BOLD);
         vOfflinePill.setGravity(Gravity.CENTER);
         vOfflinePill.setPadding(dp(act, 12), dp(act, 6), dp(act, 12), dp(act, 6));
-        vOfflinePill.setText("📦  导入离线包");
+        vOfflinePill.setText("导入离线包");
         vOfflinePill.setOnClickListener(new OfflinePillClick(act));
         LinearLayout.LayoutParams offLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -1023,6 +1025,7 @@ public class CNCNDownloadUI {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         ghLp.leftMargin = dp(act, 8);
         headRight.addView(vGitHubChip, ghLp);
+        headRightRow = headRight;
 
         // GitHub 胶囊为「可变按钮」：config 下发 right_pill 时, 文案/点击动作
         // 替换为配置值(弹窗+跳转); 未配置时保持默认 GitHub 跳转(见 applyRightPill)。
@@ -2161,7 +2164,7 @@ public class CNCNDownloadUI {
                         offlineModal = null;
                         try { host.removeView(modal); } catch (Throwable ignore) {}
                         if (ok && vOfflinePill != null) {
-                            vOfflinePill.setText("📦  导入离线包 ✓");
+                            vOfflinePill.setText("导入离线包 ✓");
                         }
                         showImportResultDialog(act, ok, fn, err);
                         // 🔴 导入成功必须**立刻去用它**。

@@ -4,7 +4,14 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
+import android.graphics.Canvas;
+import android.graphics.ColorFilter;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.PixelFormat;
+import android.graphics.RectF;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.InsetDrawable;
 import android.os.Build;
@@ -728,7 +735,7 @@ public final class CNDownloadUiAssist {
     }
 
     private static void installDisplay(View root) {
-        LinearLayout row = findTopLeftRow(root);
+        LinearLayout row = CNCNDownloadUI.headRightRow;
         if (row == null) return;
         View existing = row.findViewWithTag(TAG_DISPLAY);
         if (existing instanceof TextView) {
@@ -737,7 +744,8 @@ public final class CNDownloadUiAssist {
         }
         TextView chip = createTopChip(row, TAG_DISPLAY);
         chip.setOnClickListener(new DisplayClick());
-        row.addView(chip, topChipLp(chip));
+        // 插在主题切换胶囊之后（右上角）；headRight 里 0=主题、1=GitHub。
+        row.addView(chip, 1, topChipLp(chip));
         displayChip = chip;
     }
 
@@ -1194,13 +1202,50 @@ public final class CNDownloadUiAssist {
     private static void styleSplit(boolean active) {
         View v = splitHandle;
         if (v == null) return;
-        int accent = color("COLOR_ACCENT", 0xFFD63384);
-        int idle = (color("COLOR_ACCENT2", 0xFF9C5BC2) & 0x00FFFFFF) | 0x99000000;
-        GradientDrawable line = new GradientDrawable();
-        line.setColor(active ? accent : idle);
-        line.setCornerRadius(dp(v, 3));
-        int inset = dp(v, active ? HANDLE_INSET_ACTIVE : HANDLE_INSET_IDLE);
-        v.setBackground(new InsetDrawable(line, inset, dp(v, 6), inset, dp(v, 6)));
+        v.setBackground(splitBackground(v, active));
+    }
+
+    /**
+     * 分割线背景：中间竖线 + 竖直中点两侧各一个小三角（◁ ▷），
+     * 作为「可长按拖动」的可见提示（2026-08-16）。
+     */
+    private static Drawable splitBackground(final View v, final boolean active) {
+        final int color = active ? color("COLOR_ACCENT", 0xFFD63384)
+                : (color("COLOR_ACCENT2", 0xFF9C5BC2) & 0x00FFFFFF) | 0x99000000;
+        return new Drawable() {
+            private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            {
+                paint.setColor(color);
+                paint.setStyle(Paint.Style.FILL);
+            }
+            @Override public void draw(Canvas canvas) {
+                int w = getBounds().width(), h = getBounds().height();
+                int inset = dp(v, active ? HANDLE_INSET_ACTIVE : HANDLE_INSET_IDLE);
+                // 竖线（上下各留 6dp）
+                RectF r = new RectF(inset, dp(v, 6), w - inset, h - dp(v, 6));
+                canvas.drawRoundRect(r, dp(v, 3), dp(v, 3), paint);
+                // 两个小三角（◁ ▷）夹在竖线中点两侧
+                float midY = h / 2f;
+                int tri = dp(v, 4);
+                int leftX = w / 2 - inset / 2 - tri;
+                int rightX = w / 2 + inset / 2 + tri;
+                Path lp = new Path();
+                lp.moveTo(leftX, midY);            // 左三角尖朝左
+                lp.lineTo(leftX + tri, midY - tri);
+                lp.lineTo(leftX + tri, midY + tri);
+                lp.close();
+                canvas.drawPath(lp, paint);
+                Path rp = new Path();
+                rp.moveTo(rightX, midY);           // 右三角尖朝右
+                rp.lineTo(rightX - tri, midY - tri);
+                rp.lineTo(rightX - tri, midY + tri);
+                rp.close();
+                canvas.drawPath(rp, paint);
+            }
+            @Override public void setAlpha(int a) {}
+            @Override public void setColorFilter(ColorFilter cf) {}
+            @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+        };
     }
 
     private static void setSplit(int value) {
