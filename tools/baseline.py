@@ -65,6 +65,7 @@ REPLACE_DIR = os.path.join(BASELINE_DIR, "replace")
 WORK = os.path.join(REPO, "work", "baseline")
 TREE = os.path.join(REPO, "work", "tree")   # apply 的默认落点，也是改补丁的工作树
 OVERLAY = os.path.join(WORK, "overlay")    # 从外部发布渠道取回并解开的汉化图集
+DEC = os.path.join(WORK, "dec")            # apktool 重建出来的基线树
 
 
 # ---------------------------------------------------------------- 基础工具
@@ -215,7 +216,7 @@ def cmd_fetch(args):
     java = args.java or "java"
     check_jdk(conf, java)
 
-    dec = os.path.join(WORK, "dec")
+    dec = DEC
     if args.force and os.path.isdir(dec):
         shutil.rmtree(dec)
     if os.path.isdir(dec):
@@ -456,13 +457,24 @@ def cmd_apply(args):
 def content_src(op, rel):
     """一条 op 的内容从哪来。
 
-    repo    —— 本仓库里那一份（我们自己写的东西：字体、自制图、预编译件）
-    overlay —— 外部发布渠道 Release 取回来的（汉化图集，见 fetch_overlay）
-    store   —— baseline/replace/ 下存的整份（默认；给 RestClient 那种我们基本重写的）
+    repo     —— 本仓库里那一份（我们自己写的东西：字体、预编译件）
+    baseline —— **基线树里的另一个路径**，由 op 的 `src` 指定。给「原包里本来
+                就有、我们只是换个位置用」的文件：那些字节归版权方，我们既不该
+                存进仓库，也没必要存到外部——基线树里现成就有一份。
+    overlay  —— 外部发布渠道 Release 取回来的（汉化图集等，见 fetch_overlay）
+    store    —— baseline/replace/ 下存的整份（默认；给 RestClient 那种我们基本重写的）
     """
     where = op.get("from", "store")
     if where == "repo":
         return os.path.join(REPO, rel)
+    if where == "baseline":
+        src = op.get("src")
+        if not src:
+            raise SystemExit("%s：from=baseline 必须给 src（基线树里的源路径）" % rel)
+        p = os.path.join(DEC, src)
+        if not os.path.isfile(p):
+            raise SystemExit("%s：基线树里没有 %s——先跑 baseline.py fetch" % (rel, src))
+        return p
     if where == "overlay":
         p = os.path.join(OVERLAY, rel)
         if not os.path.isfile(p):

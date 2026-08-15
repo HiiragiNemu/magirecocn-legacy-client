@@ -41,11 +41,17 @@ def bad(msg):
 
 
 def content_src(op, rel):
-    """一条 op 的内容在本地哪儿；from == overlay 时返回 None（内容不在本仓库）。"""
+    """一条 op 的内容在本地哪儿。
+
+    返回 None 表示**内容不在本仓库**，有两种：
+      overlay  —— 在外部发布渠道的 Release 里；
+      baseline —— 在基线树里的另一个路径（op 的 `src`），构建时现拷。
+    两种都要求「仓库里不能同时还躺着一份」，那是迁移做了一半。
+    """
     where = op.get("from", "store")
     if where == "repo":
         return os.path.join(REPO, rel)
-    if where == "overlay":
+    if where in ("overlay", "baseline"):
         return None
     return os.path.join(REPLACE_DIR, rel)
 
@@ -138,11 +144,16 @@ def run(conf_path=None, quiet=False):
                 bad("%s：post hash 没填或形状不对" % rel)
             src = content_src(op, rel)
             if src is None:
-                # from == overlay：内容在外部发布渠道的 Release 里，本地不一定取过。
-                # 取回来那一步由 baseline.py fetch 按 overlay.sha256 认，这里
-                # 只要求它别同时还躺在本仓库里——那说明迁移做了一半。
+                # 内容不在本仓库（overlay / baseline）。overlay 那份由
+                # baseline.py fetch 按 overlay.sha256 认；baseline 那份由 apply
+                # 按 post hash 认。这里只要求它别同时还躺在本仓库里——那说明
+                # 迁移做了一半。
+                where = op.get("from")
                 if os.path.isfile(in_tree):
-                    bad("%s：已改从 overlay 取，但仓库里那份还没删——迁移做了一半" % rel)
+                    bad("%s：已改从 %s 取，但仓库里那份还没删——迁移做了一半" % (rel, where))
+                if where == "baseline" and not op.get("src"):
+                    bad("%s：from=baseline 必须给 src（基线树里的源路径），"
+                        "否则构建时不知道去哪拷" % rel)
             elif not os.path.isfile(src):
                 bad("%s：内容文件缺失 %s" % (rel, os.path.relpath(src, REPO)))
             elif sha256_file(src) != op["post"]:

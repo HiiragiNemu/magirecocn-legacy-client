@@ -1001,17 +1001,18 @@
       "kind": "add",
       "path": "assets/magia/logo.png",
       "group": "美术",
-      "why": "下载浮层用的自制图",
+      "why": "下载浮层的 logo。**原样取自国服官方包**，一个字节没改，归原包版权方（LICENSE.additional-terms §3）。它不在本基线（日服/Totentanz 一脉）里，重建不出来，所以只能整份存着——与 85 个汉化图集同处，放外部发布渠道。",
       "post": "80d8bd90546a70376c836625ae8141ee7741df2f91ada0de9ada940b1b775129",
-      "from": "repo"
+      "from": "overlay"
     },
     {
       "kind": "add",
       "path": "assets/magia/background_light.png",
       "group": "美术",
-      "why": "下载浮层用的自制图",
+      "why": "下载浮层的背景。**原样取自基线树里的 web_common0.png**，一个字节没改——它归原包版权方，我们既不存进仓库，也不必存到外部：基线树里现成就有一份，构建时按 src 拷过来，post hash 照常核对。",
       "post": "adf0328be465f699d58d18b063c43f5cb4f4ad96298794c19bd1cddb5ad1de05",
-      "from": "repo"
+      "from": "baseline",
+      "src": "assets/resource/image_native/bg/web/web_common0.png"
     },
     {
       "kind": "add",

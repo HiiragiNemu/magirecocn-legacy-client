@@ -18,7 +18,7 @@ patch/src/main/java/   ← ★ 补丁源码，唯一事实来源
 baseline/              ← ★ 基线钉死项 + 可复现的 patchset
 magia-native/          ← native hook 源码（libMagiaLegacy.so）
 tools/                 ← 测试套件、构建前置检查、汉化与资源工具
-assets/ lib/ res/      ← 只剩我们自己的东西：中文字体、自制图、aria2c、
+assets/ lib/ res/      ← 只剩我们自己的东西：中文字体、aria2c、
                           shadowhook、network_security_config
 config.json            ← 线上配置的快照，仅供本地看字段长什么样，不参与构建
 ```
@@ -46,7 +46,7 @@ python3 tools/baseline.py apply --out work/tree
 |---|---:|---|
 | `patch` | 14 | 基线里有、我们改了几行 |
 | `replace` | 85 | 基本重写或二进制没法 diff：`RestClient.smali` 桩、中文字体、83 个汉化图集（从 overlay 取） |
-| `add` | 9 | 基线里没有：`network_security_config.xml`、aria2 与 shadowhook、自制图、2 个新增图集页 |
+| `add` | 9 | 基线里没有：`network_security_config.xml`、aria2 与 shadowhook、浮层用的 logo 与背景、2 个新增图集页 |
 | `remove` | 6 | 要删的：两个未引用的商业字体、被取代的 `libuwasa.so`、`RestClient$1/$2` |
 | `generated` | 5 | 构建期产出（Java→dex→smali、native `.so`、BGM 转码），不校验内容 |
 
@@ -73,11 +73,16 @@ sha256 与树指纹钉死。
 | `` | 上面几处的读写凭证 |
 | `CLIENT_ROOT_DOMAIN` / `CLIENT_PAGES_HOSTS` | 对外主机名，见 `CNEndpoints` |
 
-### overlay：85 个不在仓库里的汉化图集
+### 不在仓库里的那些
 
-人手重绘、无法从原包重现，放在外部资产源的 Release，构建时按 `sha256` 取回。
+85 个汉化图集加浮层那张 logo：人手重绘或原样取自国服官方包，**都归原包版权方**，
+且无法从本基线重现，只能整份存着——放在外部资产源的 Release，构建时按 `sha256` 取回。
 地址与 token 都由 secrets 注入。**内容一律按 hash 认**，所以列多个来源只是防止
 某个源不可用时卡住构建，不是「信任其中任何一个」。
+
+还有一类根本不必存：浮层背景就是基线树里的 `web_common0.png`，那条 op 写
+`from: baseline` + `src`，构建时现拷，post hash 照常核对。**原包里已经有的字节，
+我们不该再存第二份。**
 
 zip 必须由 `tools/make-overlay.py` 打（固定条目顺序、时间戳、权限位，同一批文件
 永远同一个 sha256）。改了图集要**三件事一起做**：重打包、重传、同步

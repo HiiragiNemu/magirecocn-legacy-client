@@ -143,8 +143,16 @@ SOFTWARE.
 
 ## 不在此列的（说明，免得下次又搞混）
 
-- **`assets/magia/logo.png`、`assets/magia/background_light.png`** —— 本项目自制，
-  归 GPLv3（`LICENSE`）。
+- **`assets/magia/logo.png`** —— 下载浮层的 logo，**原样取自国服官方包**，一个字节
+  没改，归原包版权方，见 `LICENSE.additional-terms` §3，**不归 GPLv3**。
+  它不在本基线（日服 / Totentanz 一脉）里、重建不出来，所以只能整份存着——
+  与 85 个汉化图集同处，放在外部发布渠道的 Release 里，构建时按 sha256 取回。
+- **`assets/magia/background_light.png`** —— 下载浮层的背景，**原样取自基线树里的
+  `assets/resource/image_native/bg/web/web_common0.png`**，一个字节没改，同样归原包
+  版权方。它**哪儿都不存**：`baseline.json` 里那条 op 是 `from: baseline` + `src`，
+  构建时从基线树拷过来，post hash 照常核对。
+
+
 - **`lib/*/libMagiaLegacy.so`** —— 本项目自制，源码在 `magia-native/`，归 GPLv3。
 - **`assets/fonts/witchText-export.png`** —— 在原包位图字体基础上重绘的汉化图集，
   属于对原包素材的衍生，归原包版权方一侧，见 `LICENSE.additional-terms` §3。

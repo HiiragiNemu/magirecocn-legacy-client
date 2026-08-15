@@ -39,14 +39,18 @@ BASELINE = os.path.join(REPO, "baseline", "baseline.json")
 # 打进包里、但归我们自己（GPLv3）的东西：不要求第三方声明，但要求在
 # 声明文件的「不在此列」一节里点名，理由同上。
 SELF_MADE = (
-    "assets/magia/",
     "lib/arm64-v8a/libMagiaLegacy.so",
     "lib/armeabi-v7a/libMagiaLegacy.so",
     "res/xml/network_security_config.xml",
 )
 
-# 原包素材的衍生（汉化重绘），归原包版权方一侧，由 LICENSE.additional-terms §3 管。
-DERIVED_FROM_BASE = ("assets/fonts/witchText-export.",)
+# 归原包版权方一侧的（原样取用或汉化重绘），由 LICENSE.additional-terms §3 管。
+# 不要求第三方声明，但**必须在「不在此列的」一节点名**——见下方那段说明。
+FROM_BASE = (
+    "assets/fonts/witchText-export.",
+    "assets/magia/logo.png",
+    "assets/magia/background_light.png",
+)
 
 WATCH_ROOTS = ("assets/", "lib/")
 
@@ -87,11 +91,15 @@ def run(notices_path=None, quiet=False):
             continue
         if not rel.startswith(WATCH_ROOTS):
             continue
-        if rel.startswith(DERIVED_FROM_BASE):
-            continue
-        if rel.startswith(SELF_MADE):
+        # 自制件与「原包素材的衍生」都不需要第三方声明，但**都要在「不在此列的」
+        # 一节点名**——那一节的意义就是「打进包的每样东西都有交代」。
+        # 早先衍生那一类是直接跳过的，等于归到这一类就不再要求任何说明；
+        # 而恰恰是这一类最容易被写错归属（曾把版权方素材记成自制、挂到 GPLv3 下）。
+        what = ("原包版权方一侧的素材" if rel.startswith(FROM_BASE)
+                else "自制件" if rel.startswith(SELF_MADE) else None)
+        if what:
             if rel.rsplit("/", 1)[-1] not in exempt_section and rel not in exempt_section:
-                bad("%s 是自制件，但「不在此列的」一节里没点它的名" % rel)
+                bad("%s 是%s，但「不在此列的」一节里没点它的名" % (rel, what))
             continue
         # 汉化图集是原包素材的衍生，走 §3，不是第三方组件
         if op.get("group") == "汉化图集":
@@ -101,9 +109,18 @@ def run(notices_path=None, quiet=False):
                 "要么补声明，要么说明它为什么不需要" % rel)
 
     # ── 二、声明里写的文件，必须真的在 ────────────────────────────────────
-    # 例外：清单里标了 from == overlay 的，内容在外部发布渠道的 Release 里而不在本仓库
-    # ——那是有意为之，不是「删文件忘了删声明」。
-    elsewhere = {op["path"] for op in conf["ops"] if op.get("from") == "overlay"}
+    # 例外：内容有意不在本仓库的三类，都不算「删文件忘了删声明」——
+    #   from == overlay   目标在外部发布渠道的 Release 里
+    #   from == baseline  目标构建时从基线树拷，且它引用的**基线树源路径**
+    #                     （op 的 src）本来就只存在于基线树里
+    elsewhere = set()
+    for op in conf["ops"]:
+        if op.get("from") == "overlay":
+            elsewhere.add(op["path"])
+        elif op.get("from") == "baseline":
+            elsewhere.add(op["path"])
+            if op.get("src"):
+                elsewhere.add(op["src"])
     for m in re.finditer(r"`((?:assets|lib|res)/[^`]+)`", notices):
         rel = m.group(1)
         if any(ch in rel for ch in "*?") or rel in elsewhere:

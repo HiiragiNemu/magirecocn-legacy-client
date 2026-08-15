@@ -66,8 +66,9 @@ check("声明里写着仓库里不存在的文件",
       "这个文件不在仓库里")
 
 # 只有 kind=add / replace 的自制件会被扫到；`lib/*/libMagiaLegacy.so` 在清单里是
-# kind=generated（CI 编出来的），不走这条路径，所以用 assets/magia/ 那两张图做用例。
-check("自制件没在「不在此列的」一节点名",
+# kind=generated（CI 编出来的），不走这条路径，所以用 assets/magia/ 那两张图做用例
+# （它们现已归为「原包素材的衍生」，点名要求与自制件相同）。
+check("打进包的豁免项没在「不在此列的」一节点名",
       lambda s: s.replace("`assets/magia/logo.png`", "（略）"),
       "「不在此列的」一节里没点它的名")
 
