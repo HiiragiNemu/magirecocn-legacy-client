@@ -144,7 +144,7 @@ push 到 main
 ### 规则一：独立发版必须登记「停止支持开关」
 
 非主线分支版本**只要对外发版**，发布动作里必须同步更新线上
-`config.json`（<https://api.example.test/legacy/config.json>，仓库根
+`config.json`（<https://api.\<主域\>/legacy/config.json>，仓库根
 `config.json` 是快照，改线上那份），在 `client` 段旁登记该分支版本并
 加「停止支持开关」：
 
@@ -152,7 +152,7 @@ push 到 main
 "branch_versions": {
   "single-thread": {
     "supported": true,
-    "mainline_apk_url": "https://assets.example/magireco-latest-legacy-client.apk"
+    "mainline_apk_url": "https://assets.example/client.apk"
   }
 }
 ```

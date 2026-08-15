@@ -142,6 +142,20 @@ add_library(MagiaLegacy SHARED
     src/MagiaLegacy.cpp
 )
 
+# ── 自有主域（构建期注入）────────────────────────────────────────────────
+# 源码里不留任何真实业务域名，主域由 CI 从 Secret 给进来，与 Java 侧的
+# CNEndpoints.ROOT_DOMAIN 同一个值、同一处给出。
+#
+# 本地手编不给 -DMAGIA_ROOT_DOMAIN 时是空串，proxyIsSelfHost 恒返回 false
+# ——只影响「自身域不重写」这一条判断，不会让库编不出来，也不会让本地调试
+# 连不上。真要出对外包时，build-apk.yml 的预检会先拦住缺 Secret 的情况。
+if(NOT DEFINED MAGIA_ROOT_DOMAIN)
+    set(MAGIA_ROOT_DOMAIN "")
+endif()
+target_compile_definitions(MagiaLegacy PRIVATE
+    MAGIA_ROOT_DOMAIN="${MAGIA_ROOT_DOMAIN}"
+)
+
 target_include_directories(MagiaLegacy PRIVATE
     ${shadowhook_SOURCE_DIR}/shadowhook/src/main/cpp/include
 )

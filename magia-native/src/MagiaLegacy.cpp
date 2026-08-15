@@ -1317,7 +1317,7 @@ static jobjectArray nativeDebugFlagTable(JNIEnv* env, jclass) {
 // 把走代理白名单的引擎请求从
 //     https://<host>/<path>
 // 改写为
-//     <proxyBase><host><path>   (proxyBase 如 https://api.example.test/stream/)
+//     <proxyBase><host><path>   (proxyBase 如 https://<api 子域>/stream/)
 // 代理入口与域名白名单由 CNMirrors 从 config.json 的 "proxy" 字段解析后
 // 经 nativeSetProxyConfig 注入——不在本文件硬编码, 换节点只改 config.json。
 // 配置缺失(未下发)时原样直连, 兼容旧版。
@@ -1374,9 +1374,23 @@ static bool proxyHostMatches(const std::string& host,
     return false;
 }
 
-// 排除自身: example.test 是 config/线路表/资源所在, 重写它会死循环
+// 排除自身: 自有主域及其子域是 config/线路表/资源所在, 重写它会死循环。
+//
+// 主域由构建期注入(MAGIA_ROOT_DOMAIN), 源码里不留真实域名——与 Java 侧的
+// CNEndpoints.ROOT_DOMAIN 是同一个值, 由 build-apk.yml 一处给出。
+// 注入缺失时宏是空串: 此时**一律不认作自身**, 于是不会有任何 host 被误判成
+// 自家域而跳过重写。方向是安全的那一边(宁可多重写一次, 不可漏掉死循环判断
+// 以外的东西), 而真正防呆的是构建期的预检——没注入根本出不了包。
+#ifndef MAGIA_ROOT_DOMAIN
+#define MAGIA_ROOT_DOMAIN ""
+#endif
 static bool proxyIsSelfHost(const std::string& host) {
-    return host == "example.test" || proxyEndsWith(host, ".example.test");
+    static const std::string root = MAGIA_ROOT_DOMAIN;
+    // 带点的后缀只拼一次: proxyEndsWith 收的是 const char*, 每次现拼会造一个
+    // 临时 std::string, 而这个判断在每条被改写的请求上都要走一遍。
+    static const std::string dotRoot = "." + root;
+    if (root.empty()) return false;
+    return host == root || proxyEndsWith(host, dotRoot.c_str());
 }
 
 static bool tryRewriteUrl(const std::string& uri, const std::string& base,
@@ -1727,13 +1741,13 @@ static const std::string* urlConfigWebObserve(void* self, int type) {
 // 分析证实: Http2Session::setURI 运行时 0 调用(废弃)。引擎实际路径:
 //   · Http2SessionManager::run() → nghttp2::asio_http2::host_service_from_uri
 //     (uri → host/service/path)。改 host 输出 → 连接/TLS/SNI/证书校验全走代理
-//     host(api.example.test 真实证书, 免证书 hook)。
+//     host(api 子域的真实证书, 免证书 hook)。
 //   · client::session::submit(ec, method, path, headers, prio): path 参数是完整
 //     URL(Http2Request+0x10), 直接改写为 base+host+path → :authority/:path 走
 //     /stream。两个 hook 缺一不可(:path 只来自 submit, host 只来自 host_service)。
 // 仍由 nativeSetProxyConfig 下发配置; 未下发即全部透传直连。
 
-// 从 base("https://api.example.test/stream/") 提取代理 host("api.example.test")
+// 从 base("https://<api 子域>/stream/") 提取代理 host("<api 子域>")
 static std::string proxyHostOf(const std::string& base) {
     if (base.compare(0, 8, "https://") != 0 && base.compare(0, 7, "http://") != 0) return "";
     size_t hs = base.find("://") + 3;

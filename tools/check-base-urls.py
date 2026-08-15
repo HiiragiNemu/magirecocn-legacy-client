@@ -1,136 +1,223 @@
 #!/usr/bin/env python3
-"""核对 CANONICAL_BASE 仍然是所有热更包/版本 json 地址的前缀。
+"""守住「补丁源码里不出现真实业务地址」，以及规范前缀的那几条老不变量。
 
-## 这个不变量是什么
+## 这个脚本换过一次职责，先说清楚为什么
 
-CNMirrors 里有两个长得很像的常量，它们是**两个概念**：
-
-    DEFAULT_BASE     兜底线路——「从哪里取字节」，随时可以换成任何一条快的线路
-    CANONICAL_BASE   规范前缀——「这条地址是不是主线资源」，是身份判据
-
-CANONICAL_BASE 被两处依赖：
+**旧版**核对的是「CNMirrors.CANONICAL_BASE 这个写死的串是不是还等于钉死值、
+CNHotUpdateCheck.PACKAGES 里那几条硬编码 URL 是不是都以它开头」。它拦的是一类
+**静默**故障：
 
     CNHotUpdate.mainLineFileName    前缀对不上 → 返回 null＝「非主线，直连下载」
                                     → 热更包悄悄退化成不换线
     CNHotUpdateCheck.fetchMeta      前缀对不上 → 剥不出文件名，name 保留整条 URL
-                                    → 拼出 https://<镜像>/https://r2.../version_js.json
+                                    → 拼出 https://<镜像>/https://…/version_js.json
                                     → 每条线路都失败，热更**静默停摆**
 
-而热更包与版本 json 的地址是硬编码在 CNHotUpdateCheck.PACKAGES 里的。
-两边任何一边单独改动，前缀就对不上了。
+坏掉的时候没有任何报错：查询在每条线路上失败，被 fetchMetaSafe 吞掉，玩家看到的
+是「已是最新」。等有人发现台词包几个月没更新，已经隔了很久，而且没人会想到是改
+兜底线路引起的。
 
-## 为什么必须机器核对
+**现在**这两处的地址不再各写一份了：`PACKAGES` 与 `CNCNDownloadUI.FILE_URLS` 都是
+拿文件名去拼 `CANONICAL_BASE`，「前缀对不上」在结构上不可能发生。所以本脚本转去守
+**那个结构本身**——只要没人把绝对地址写回去，上面那类故障就回不来。
 
-因为坏掉的时候**没有任何报错**。热更查询在每条线路上失败，被 fetchMetaSafe
-吞掉、记一行「版本查询失败，跳过本项」，玩家看到的是「已是最新」。等到有人
-发现台词包几个月没更新，已经隔了很久，而且没人会想到是改兜底线路引起的。
+顺带守住第二件事：真实业务域名不进仓库（见 `CNEndpoints` 与
+`tools/inject-endpoints.py`）。这两件事必须由同一个守卫看着，因为破坏它们的是
+同一个动作：图省事把一条完整 URL 直接写进源码。
 
-这两个常量早先本来就是同一个（都叫 DEFAULT_BASE）。把兜底线路换成 edge
-时才发现这个耦合——差一点就把热更改坏了。拆开之后加这个核对，是为了让下一个
-换线路的人不必重新踩一遍。
+## 规范前缀为什么不能改（这条没变）
+
+`https://assets.<主域>/` 已经写进每一台已安装设备的 15 个完成标记（marker 的
+`url=` 字段），`isMarkerValid` 做逐字符串比对。一改 → `allMarkersValid()` 全部
+返回 false → 安装器判定「没装过」→ **每个老玩家重下几个 GB**。
+
+明文钉死值已经移走：现在由 `tools/inject-endpoints.py` 用 **sha256** 核对注入
+结果——钉哈希而不是钉明文，才能同时满足「不许改」和「不入库」。
 
 用法：python3 tools/check-base-urls.py
 """
 
+import os
 import re
 import sys
 
-MIRRORS = "patch/src/main/java/io/kamihama/magianative/CNMirrors.java"
-HOTCHECK = "patch/src/main/java/io/kamihama/magianative/CNHotUpdateCheck.java"
+PATCH_DIR = "patch/src/main/java"
+ENDPOINTS = "patch/src/main/java/io/kamihama/magianative/CNEndpoints.java"
+MIRRORS   = "patch/src/main/java/io/kamihama/magianative/CNMirrors.java"
+HOTCHECK  = "patch/src/main/java/io/kamihama/magianative/CNHotUpdateCheck.java"
 INSTALLER = "patch/src/main/java/io/kamihama/magianative/CNDownloaderFix.java"
+DOWNUI    = "patch/src/main/java/io/kamihama/magianative/CNCNDownloadUI.java"
 
-# 规范前缀不能用具体 CDN 的域名。这个串**永远不会被真的请求**——两处用它的
-# 地方都是「剥出文件名后逐条线路试」。拿某个 CDN 当身份，那个 CDN 一停用，
-# 字符串就成了一句谎话，而且会误导下一个人以为它是个真实下载源。
-#
-# 已经发生过一次：早先规范前缀是 r2.assets.example.test，而 object-storage 自定义域只在
-# CDN 接管 DNS 时才生效，换 NS 之后那个子域彻底废掉。
-CDN_PREFIXES = ("r2.", "edge.", "esa.", "cdn1.", "cdn2.", "cdn3.")
+# 常量必须**委托**给这些表达式，而不是自带一个字面量。
+DELEGATES = [
+    (MIRRORS,   "MIRRORS_URL",       "CNEndpoints.MIRRORS_URL"),
+    (MIRRORS,   "DEFAULT_BASE",      "CNEndpoints.EDGEONE_BASE"),
+    (MIRRORS,   "CANONICAL_BASE",    "CNEndpoints.ASSETS_BASE"),
+    (INSTALLER, "RESOURCE_BASE_URL", "CNEndpoints.ASSETS_BASE"),
+]
 
-# 规范前缀被**钉死**在这个值上，理由与「它能不能解析」无关：
+# 允许留在补丁源码里的绝对地址。判据是「它是不是**我们的**基础设施」：
 #
-# 它已经写进每一台已安装设备的 15 个完成标记里（marker 文件的 url= 字段），
-# 而 isMarkerValid 做的是逐字符串比对。改动这个常量 → allMarkersValid() 对全部
-# 15 个包返回 false → 安装器判定「没装过」→ **每个老玩家重下几个 GB**。
+#   · 第三方公共站点（B 站、爱发电）—— 本来就不是我们的，藏起来没有意义，
+#     也不该跟着我们的 Secret 一起失效；
+#   · 游戏后端 Totentanz —— 它明明白白写在公开发行的原包
+#     smali 里，谁都能重建看到。在我们仓库里遮住它只是自欺；
+#   · 组织主页 —— 公开仓库的 owner，本来就露在外面。
 #
-# 这个域名在 2026-08 的 NS 迁移后可能解析不了。那是**正常的**：规范前缀从来不会
-# 被请求，它只是身份标识。看到死域名就「顺手修好」正是本条要拦的动作。
-#
-# 真要迁移：先给标记加 schema=2 与「认旧 url 也算有效」的迁移逻辑，再改这里。
-PINNED_CANONICAL = "https://assets.example.test/"
+# 除此之外的绝对地址一律拦下。要新增，先问一句「这条要是被人抄走，损失是什么」。
+ALLOWED_ABS = (
+    "https://b23.tv/",
+    "https://www.bilibili.com/",
+    "https://afdian.com/",
+    "https://ifdian.net/",
+    "https://github.com/MagirecoCN-Revival-Project",
+    "https://totentanz-",          # 游戏后端，上游原包里就有
+    "http://127.0.0.1:",           # 本机回环（调试桥）
+)
+
+# 结构片段：CNEndpoints 就是靠它们拼出真实地址的，那个文件整体豁免。
+EXEMPT_FILES = (ENDPOINTS,)
+
+ABS_URL = re.compile(r'"(https?://[^"\s]*)"')
 
 
-def const(text, name, path):
-    m = re.search(r'%s\s*=\s*"([^"]*)"' % re.escape(name), text)
-    if not m:
-        raise LookupError("在 %s 里找不到常量 %s" % (path, name))
-    return m.group(1)
+def const_rhs(text, name):
+    """取 `... String NAME = <RHS>;` 的右侧表达式原文。"""
+    m = re.search(r'\bString\s+%s\s*=\s*([^;]+);' % re.escape(name), text)
+    return m.group(1).strip() if m else None
+
+
+def block_after(text, marker):
+    """取 marker 之后那一对花括号里的内容；找不到返回 None。
+
+    marker 自身以 `{` 结尾，所以从它末尾开始按深度配对即可。字符串字面量里
+    的花括号在本仓库这几处不出现，不为它引入一个半吊子的 Java 词法分析。
+    """
+    i = text.find(marker)
+    if i < 0:
+        return None
+    i += len(marker)
+    depth, j = 1, i
+    while j < len(text) and depth:
+        if text[j] == "{":
+            depth += 1
+        elif text[j] == "}":
+            depth -= 1
+        j += 1
+    return text[i:j - 1] if depth == 0 else None
+
+
+def is_placeholder(url):
+    """注释里的示例、协议前缀片段、正则字面量——都不是真的地址。"""
+    if url in ("https://", "http://"):
+        return True
+    return any(c in url for c in "…<[\\")
+
+
+def java_files():
+    for root, _dirs, files in os.walk(PATCH_DIR):
+        for f in sorted(files):
+            if f.endswith(".java"):
+                yield os.path.join(root, f)
 
 
 def main():
+    problems = []
     try:
-        mirrors = open(MIRRORS, encoding="utf-8").read()
+        endpoints = open(ENDPOINTS, encoding="utf-8").read()
         hotcheck = open(HOTCHECK, encoding="utf-8").read()
-        installer = open(INSTALLER, encoding="utf-8").read()
-        canonical = const(mirrors, "CANONICAL_BASE", MIRRORS)
-        default = const(mirrors, "DEFAULT_BASE", MIRRORS)
-        resource = const(installer, "RESOURCE_BASE_URL", INSTALLER)
-    except (OSError, LookupError) as e:
+        downui = open(DOWNUI, encoding="utf-8").read()
+    except OSError as e:
         print("✘ %s" % e, file=sys.stderr)
         return 2
 
-    problems = []
-
-    if canonical != PINNED_CANONICAL:
-        problems.append(
-            "规范前缀被改动了：%s → %s\n"
-            "      **这会让每个老玩家重下几个 GB。**该串已经写进每一台已安装设备的\n"
-            "      15 个完成标记（marker 的 url= 字段），isMarkerValid 做逐字符串比对；\n"
-            "      一改，allMarkersValid() 全部返回 false，安装器判定「没装过」。\n"
-            "      注意：这个域名解析不了是**正常的**——规范前缀从不被请求，只是身份标识。\n"
-            "      真要迁移，先给标记加 schema=2 与「认旧 url 也算有效」的逻辑，再改这里\n"
-            "      （同时更新本脚本的 PINNED_CANONICAL）。"
-            % (PINNED_CANONICAL, canonical))
-
-    # 全仓库只该有一个规范前缀。曾经不是：安装器用 assets.example.test，
-    # 热更用 r2.assets.example.test，同一对 zip 有两个「规范」地址。
-    if canonical != resource:
-        problems.append(
-            "规范前缀有两个，必须统一：\n"
-            "        CNMirrors.CANONICAL_BASE        = %s\n"
-            "        CNDownloaderFix.RESOURCE_BASE_URL = %s\n"
-            "      安装器的完成标记与热更的文件名剥取都以「规范前缀」为准，"
-            "两者不一致时同一个文件会有两个身份。" % (canonical, resource))
-
-    host = canonical.split("//", 1)[-1]
-    for pre in CDN_PREFIXES:
-        if host.startswith(pre):
+    # ---- 1. 入库的源码里，注入位必须是空的 ----
+    #
+    # 拦的是「本地注入过、顺手 git add 了」。那样一来真实域名就跟着提交进了
+    # 历史，而这一整套的目的正是不让它进历史。
+    for name in ("ROOT_DOMAIN", "PAGES_HOSTS"):
+        m = re.search(r'public static final String\s+%s\s*=\s*"([^"]*)";' % name, endpoints)
+        if not m:
+            problems.append("%s 里找不到 %s 常量——注入脚本会失手，"
+                            "而失手的产物是一个「装上去什么都不会发生」的包。"
+                            % (ENDPOINTS, name))
+        elif m.group(1) != "":
             problems.append(
-                "规范前缀用了具体 CDN 的域名（%s）。它永远不会被真的请求，"
-                "只作身份标识；某个 CDN 停用后这个串就成了谎话。\n"
-                "      改用不绑定 CDN 的域名（当前约定：https://assets.example.test/）。"
-                % host.rstrip("/"))
-            break
-    if not canonical.endswith("/"):
-        problems.append("CANONICAL_BASE 必须以 / 结尾，否则剥文件名会多带一个字符：%s"
-                        % canonical)
-    if not default.endswith("/"):
-        problems.append("DEFAULT_BASE 必须以 / 结尾，否则拼出来的地址会少一个分隔符：%s"
-                        % default)
+                "%s 的 %s 不是空串（当前 %d 个字符）。\n"
+                "      真实取值只该由 tools/inject-endpoints.py 在**构建时**写入，\n"
+                "      不该入库。看到这条多半是本地注入过之后顺手提交了——\n"
+                "      跑 `git checkout -- %s` 还原即可。"
+                % (ENDPOINTS, name, len(m.group(1)), ENDPOINTS))
 
-    # PACKAGES 表里的分发地址与版本 json
-    urls = re.findall(r'"(https://[^"]+?\.(?:json|zip))"', hotcheck)
-    if not urls:
-        problems.append("在 %s 里没找到任何热更地址——PACKAGES 表被改了写法？"
-                        % HOTCHECK)
-    for u in urls:
-        if not u.startswith(canonical):
+    # ---- 2. 几个基址常量必须委托给 CNEndpoints，不能自带字面量 ----
+    for path, name, expect in DELEGATES:
+        try:
+            text = open(path, encoding="utf-8").read()
+        except OSError as e:
+            problems.append(str(e))
+            continue
+        rhs = const_rhs(text, name)
+        if rhs is None:
+            problems.append("%s 里找不到常量 %s" % (path, name))
+        elif rhs != expect:
             problems.append(
-                "%s\n      不以 CANONICAL_BASE（%s）开头。\n"
-                "      后果是静默的：版本查询在每条线路上失败 → 被当成"
-                "「已是最新」→ 热更永远不再生效。\n"
-                "      改地址时请同步 CNMirrors.CANONICAL_BASE。"
-                % (u, canonical))
+                "%s 的 %s 应当委托给 %s，实际是 %s。\n"
+                "      全仓库只该有一个规范前缀：安装器的完成标记与热更的文件名剥取\n"
+                "      都以它为准，两者不一致时同一个文件会有两个身份。"
+                % (path, name, expect, rhs))
+
+    # ---- 3. 热更表与浮层文件表里不得再出现绝对地址 ----
+    #
+    # 这两处曾经各写一份完整 URL，改一边就静默失效（见文件头）。现在都是拿
+    # 文件名拼 CANONICAL_BASE，所以只要这两个**块内**不出现绝对地址，那个故障
+    # 就回不来。只看块内而不是整份文件：同一个文件里还有署名区那些第三方外链，
+    # 它们与本条无关，混在一起报会把真问题淹掉。
+    blocks = [
+        (HOTCHECK, "PACKAGES 表", block_after(hotcheck, "Pkg[] PACKAGES = {")),
+        (DOWNUI, "FILE_NAMES 表", block_after(downui, "String[] FILE_NAMES = {")),
+        (DOWNUI, "buildFileUrls()", block_after(downui, "private static String[] buildFileUrls() {")),
+    ]
+    for path, what, body in blocks:
+        if body is None:
+            problems.append("%s 里找不到 %s——写法被改了？本条守卫会失效。" % (path, what))
+            continue
+        for m in ABS_URL.finditer(body):
+            url = m.group(1)
+            if is_placeholder(url):
+                continue
+            problems.append(
+                "%s 的 %s 里出现了绝对地址 %s。\n"
+                "      这里只该写**文件名**，完整地址由 CANONICAL_BASE 当场拼出来。\n"
+                "      各写一份的后果是静默的：前缀对不上 → 每条线路都失败 →\n"
+                "      玩家看到「已是最新」，热更从此不再生效。"
+                % (path, what, url))
+
+    # ---- 4. FILE_URLS 必须由 FILE_NAMES 拼出来 ----
+    if "buildFileUrls()" not in downui or "CNMirrors.CANONICAL_BASE + FILE_NAMES[i]" not in downui:
+        problems.append(
+            "%s 的 FILE_URLS 不再是由 FILE_NAMES 逐项拼出来的。\n"
+            "      两张表必须按下标严格并行；分开写就有写歪一行的机会，而写歪的\n"
+            "      后果是那一个包的完成标记永远对不上，玩家反复重下同一个包。"
+            % DOWNUI)
+
+    # ---- 5. 补丁源码里不得有未列入白名单的绝对地址 ----
+    for path in java_files():
+        if path in EXEMPT_FILES:
+            continue
+        try:
+            text = open(path, encoding="utf-8").read()
+        except OSError:
+            continue
+        for m in ABS_URL.finditer(text):
+            url = m.group(1)
+            if is_placeholder(url) or url.startswith(ALLOWED_ABS):
+                continue
+            problems.append(
+                "%s 里出现了绝对地址 %s。\n"
+                "      我们自己的地址一律走 CNEndpoints（构建期注入），不入库。\n"
+                "      确实是第三方公共站点的话，把前缀加进本脚本的 ALLOWED_ABS，\n"
+                "      并在那里写清楚「它被抄走的损失是什么」。"
+                % (path, url))
 
     if problems:
         print("✘ 基址核对未通过：", file=sys.stderr)
@@ -139,11 +226,11 @@ def main():
         return 1
 
     print("✔ 基址核对通过")
-    print("    规范前缀 = %s" % canonical)
-    print("      · 与 CNDownloaderFix.RESOURCE_BASE_URL 一致")
-    print("      · %d 条热更地址全部以它开头" % len(urls))
-    print("      · 未绑定任何具体 CDN")
-    print("    兜底线路 = %s（可独立更换，不牵动上面任何一条）" % default)
+    print("    · CNEndpoints 的两个注入位都是空串（真实取值不入库）")
+    print("    · %d 个基址常量全部委托给 CNEndpoints" % len(DELEGATES))
+    print("    · 热更表与浮层文件表里没有绝对地址（前缀对不上在结构上已不可能）")
+    print("    · FILE_URLS 由 FILE_NAMES 逐项拼出")
+    print("    · 补丁源码里没有白名单之外的绝对地址")
     return 0
 
 

@@ -49,6 +49,27 @@ echo "重建树：$(find "$TREE" -type f | wc -l) 个文件"
 python3 tools/check-fonts.py --tree "$TREE"
 python3 tools/check-webview-interceptor.py
 
+# ── 0'. 端点注入 ─────────────────────────────────────────────
+# 源码里 CNEndpoints 的主机名常量恒为空串，真值不入库。本地出包默认用**占位**
+# 域名（example.test / *.pages.example）——够跑通全流程与全部自检，但那个包
+# **连不上任何真实服务**，不要拿去装。
+#
+# 要出能真用的本地包：设 CLIENT_ROOT_DOMAIN 与 CLIENT_PAGES_HOSTS 再跑，
+# 脚本会用真值注入（规范前缀 sha256 对不上时会当场失败——那一串是写进已装
+# 设备 15 个完成标记里的身份串，注错等于让老玩家重下几个 GB）。
+#
+# 退出时一律还原成空串，避免注入结果被顺手提交进历史。
+say "注入端点"
+if [ -n "${CLIENT_ROOT_DOMAIN:-}" ] && [ -n "${CLIENT_PAGES_HOSTS:-}" ]; then
+    python3 tools/inject-endpoints.py
+    ENDPOINT_ROOT="$(python3 tools/inject-endpoints.py --print-root)"
+else
+    echo "⚠ 未设 CLIENT_ROOT_DOMAIN / CLIENT_PAGES_HOSTS，用占位域名——本包连不上真实服务"
+    python3 tools/inject-endpoints.py --test
+    ENDPOINT_ROOT="example.test"
+fi
+trap 'python3 tools/inject-endpoints.py --reset >/dev/null 2>&1 || true' EXIT
+
 # ── 1. native ────────────────────────────────────────────────
 say "编译 native（${#ABIS[@]} 个 ABI）"
 for abi in "${ABIS[@]}"; do
@@ -57,7 +78,13 @@ for abi in "${ABIS[@]}"; do
         cmake -G Ninja \
               -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
               -DANDROID_ABI="$abi" -DANDROID_PLATFORM=android-21 \
+              -DMAGIA_ROOT_DOMAIN="$ENDPOINT_ROOT" \
               -B "$bdir" magia-native
+    else
+        # 缓存已在时 configure 不会重跑，光靠上面那一行改不动主域。显式重设，
+        # 否则换了 CLIENT_ROOT_DOMAIN 之后 native 侧还用着上一次的值——而
+        # 「自身域不重写」两侧不一致会打成死循环，是最难查的那类症状。
+        cmake -DMAGIA_ROOT_DOMAIN="$ENDPOINT_ROOT" -B "$bdir" magia-native >/dev/null
     fi
     cmake --build "$bdir"
 done

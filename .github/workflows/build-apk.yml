@@ -144,9 +144,15 @@ jobs:
           : ${{ secrets. }}
           TARGET_REPO: ${{ secrets.TARGET_REPO }}
           TARGET_REPO: ${{ secrets.TARGET_REPO }}
+          CLIENT_ROOT_DOMAIN: ${{ secrets.CLIENT_ROOT_DOMAIN }}
+          CLIENT_PAGES_HOSTS: ${{ secrets.CLIENT_PAGES_HOSTS }}
         run: |
           set -euo pipefail
-          NEED="BASELINE_APK_URL OVERLAY_URL "
+          # CLIENT_ROOT_DOMAIN / CLIENT_PAGES_HOSTS 是**每次**都要的：源码里的
+          # 主机名常量恒为空串，缺了照样能编出 APK，但那个包装上去什么都不会
+          # 发生（线路表为空、外链全不放行、热更地址拼不出来）。所以在这里拦，
+          # 而不是等玩家装上才发现。
+          NEED="BASELINE_APK_URL OVERLAY_URL  CLIENT_ROOT_DOMAIN CLIENT_PAGES_HOSTS"
           # 发版相关的只有真要发版时才需要
           if [ "${{ inputs.verify_only }}" != "true" ]; then
             NEED="$NEED TARGET_REPO TARGET_REPO"
@@ -305,6 +311,24 @@ jobs:
             || { echo "::error::版本号注入失败（CNUserAgent.CLIENT_VERSION 常量没匹配上）"; exit 1; }
           echo "CLIENT_VERSION=${VER}" >> "$GITHUB_ENV"
 
+      # 真实主机名不入库：源码里 CNEndpoints 的两个常量恒为空串，取值在这里
+      # 从 Secret 写进去。脚本同时做两件构建期必须做的核对：
+      #   · 拼出来的规范前缀 sha256 必须等于钉死值——它是写进每台已装设备 15 个
+      #     完成标记里的**身份串**，注错一个字符就是全员重下几个 GB；
+      #   · 主域同时导出给 native（MAGIA_ROOT_DOMAIN），两侧「自身域不重写」的
+      #     判断必须同源，否则会打成死循环或漏判。
+      # 刻意不 echo 取值：run 日志是公开的。
+      - name: 🌐 注入端点（主域与署名区主机名）
+        env:
+          CLIENT_ROOT_DOMAIN: ${{ secrets.CLIENT_ROOT_DOMAIN }}
+          CLIENT_PAGES_HOSTS: ${{ secrets.CLIENT_PAGES_HOSTS }}
+        run: |
+          set -euo pipefail
+          python3 tools/inject-endpoints.py
+          ROOT="$(python3 tools/inject-endpoints.py --print-root)"
+          echo "::add-mask::$ROOT"
+          echo "MAGIA_ROOT_DOMAIN=$ROOT" >> "$GITHUB_ENV"
+
       - name: 🛠 编译 libMagiaLegacy.so（magia-native）
         run: |
           set -euo pipefail
@@ -331,6 +355,7 @@ jobs:
               -DCMAKE_TOOLCHAIN_FILE="$NDK_ROOT/build/cmake/android.toolchain.cmake" \
               -DANDROID_ABI="$ABI" -DANDROID_PLATFORM=android-21 \
               -DCMAKE_BUILD_TYPE=Release \
+              -DMAGIA_ROOT_DOMAIN="${MAGIA_ROOT_DOMAIN}" \
               -B "$BUILD_DIR" magia-native
             cmake --build "$BUILD_DIR" --parallel
             SO="$BUILD_DIR/libMagiaLegacy.so"

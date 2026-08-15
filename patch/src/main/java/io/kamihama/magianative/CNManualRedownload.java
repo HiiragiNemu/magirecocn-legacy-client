@@ -27,7 +27,7 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
 public final class CNManualRedownload {
     private static final String TAG = "CNManualRedownload";
     private static final int MAX_PARALLEL_FILES = 3;
-    private static final String CANONICAL_BASE = "https://assets.example.test/";
+    private static final String CANONICAL_BASE = CNMirrors.CANONICAL_BASE;
     private static final String REQUEST_NAME = "manual-redownload.request";
     private static final String BACKUP_SUFFIX = ".manual-redownload.bak";
 

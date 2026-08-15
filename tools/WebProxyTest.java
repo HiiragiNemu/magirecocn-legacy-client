@@ -99,7 +99,7 @@ public class WebProxyTest {
 
         System.out.println("\n[5] 排除自身：改写它会打成死循环");
         no("https://api.example.test/legacy/config.json", "config.json 所在");
-        no("https://example.test/x", "裸的 example.test");
+        no("https://example.test/x", "裸的自有主域");
         no("https://assets.example/cn_js_update.zip", "线路表里的资源域");
 
         System.out.println("\n[6] 只改 https");

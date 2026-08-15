@@ -56,7 +56,7 @@
    一个会拦下正常代码的检查比没有检查更糟。
 
 5. **线路表直连主线，其余一律走换线**。只有 `config.json`（线路表本身）必须
-   直连 `api.example.test`——它定义了线路，没得选。两份 version json
+   直连线路表所在的 api 子域——它定义了线路，没得选。两份 version json
    （`version_js.json` / `version_scenario.json`）与资源文件一样走换线
    （2026-08-03 起；此前它们也直连主线，铁律已改）。改动涉及下载路径时，
    对照 README 的「网络出口」表逐条确认。

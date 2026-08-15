@@ -598,7 +598,7 @@ public final class CNWebProxy {
      * 把 {@code https://host/path} 改成 {@code base + host + path}。
      *
      * <p>规则与 native 的 {@code tryRewriteUrl} 保持一致，包括「排除自身」——
-     * {@code *.example.test} 是 config/线路表/资源所在，改写它会打成死循环。
+     * 自有主域及其子域是 config/线路表/资源所在，改写它会打成死循环。
      *
      * <p>用当前选中的线路改写。线路的选取见 {@link #currentLine()}。
      *
@@ -649,7 +649,9 @@ public final class CNWebProxy {
     }
 
     private static boolean isSelfHost(String host) {
-        return "example.test".equals(host) || host.endsWith(".example.test");
+        if (CNEndpoints.ROOT_DOMAIN.isEmpty()) return false;
+        return CNEndpoints.ROOT_DOMAIN.equals(host)
+                || host.endsWith("." + CNEndpoints.ROOT_DOMAIN);
     }
 
     /** 后缀白名单："magi-reco.com" 匹配 "dorothy.magi-reco.com"，但不匹配 "evilmagi-reco.com"。 */

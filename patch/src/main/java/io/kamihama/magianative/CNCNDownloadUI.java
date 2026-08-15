@@ -79,26 +79,6 @@ public class CNCNDownloadUI {
 
     // 顺序与 CNDownloaderFix.FILE_NAMES 逐项对齐（三张表按下标并行）。
     // 热更新的两个包排最前，理由见 CNDownloaderFix.FILE_NAMES 的注释。
-    // ⚠ 这一列是**规范名（身份标识）**，不是下载地址：标记连续性依赖它，
-    // 域名废弃也不改；实际下载地址由 CNMirrors 线路给出。
-    public static final String[] FILE_URLS = {
-        "https://assets.example.test/cn_scenario_update.zip",
-        "https://assets.example.test/cn_js_update.zip",
-        "https://assets.example.test/cn_base_00_db.zip",
-        "https://assets.example.test/cn_base_01_json.zip",
-        "https://assets.example.test/cn_base_02.zip",
-        "https://assets.example.test/cn_base_03.zip",
-        "https://assets.example.test/cn_base_04.zip",
-        "https://assets.example.test/cn_base_05.zip",
-        "https://assets.example.test/cn_base_06.zip",
-        "https://assets.example.test/cn_magica_resource.zip",
-        "https://assets.example.test/cn_scenario_img.zip",
-        "https://assets.example.test/cn_voice_01.zip",
-        "https://assets.example.test/cn_voice_02_done.zip",
-        "https://assets.example.test/movie.zip",
-        "https://assets.example.test/movie2.zip"
-    };
-
     public static final String[] FILE_NAMES = {
         "cn_scenario_update.zip", "cn_js_update.zip",
         "cn_base_00_db.zip", "cn_base_01_json.zip", "cn_base_02.zip",
@@ -107,6 +87,26 @@ public class CNCNDownloadUI {
         "cn_voice_01.zip", "cn_voice_02_done.zip",
         "movie.zip", "movie2.zip"
     };
+
+    /**
+     * 每个包的**规范 URL**，即身份标识——不是下载地址。
+     *
+     * <p>安装完成标记里记的就是这一串，{@code isMarkerValid} 做逐字符串比对；
+     * 域名废弃了也不能改，否则 15 个标记全部失效、老玩家重下几个 GB。实际
+     * 从哪里取字节由 {@code CNMirrors} 的线路给出，与这里无关。
+     *
+     * <p>由 {@link #FILE_NAMES} 逐项拼出而不是各写一份：两张表必须按下标严格
+     * 并行，分开写就有写歪一行的机会，而写歪的后果是那一个包的标记永远对不上。
+     */
+    public static final String[] FILE_URLS = buildFileUrls();
+
+    private static String[] buildFileUrls() {
+        String[] out = new String[FILE_NAMES.length];
+        for (int i = 0; i < FILE_NAMES.length; i++) {
+            out[i] = CNMirrors.CANONICAL_BASE + FILE_NAMES[i];
+        }
+        return out;
+    }
 
     // 槽位状态。0/1/2/3 是原有的四个；4 是这次补的。
     //
@@ -309,14 +309,14 @@ public class CNCNDownloadUI {
         "【核心逆向开发】MadeInMagius【B站ID】",
         "(独立完成汉化引擎以及下载系统和日服国服资源合并)",
         "其他个人网站",
-        "reader.pages.example【魔法纪录剧情中日双语阅读网站】",
-        "live2d.pages.example【MagiaExedra和魔法纪录Live2D网站】",
-        "callsearch.pages.example【魔法少女称呼关系搜索与身高对比网站】",
+        CNEndpoints.site(0) + "【魔法纪录剧情中日双语阅读网站】",
+        CNEndpoints.site(1) + "【MagiaExedra和魔法纪录Live2D网站】",
+        CNEndpoints.site(2) + "【魔法少女称呼关系搜索与身高对比网站】",
         "【协助与鸣谢】",
         "国服文件之外的翻译和校对：水银h2oag【阅读器网站为主，资源已同步至游戏】",
         "下载加速及资源自动化推送：CyberNova",
         "国服数据留存：segfault",
-        "项目官网：www.example.test【通往其他个人网站和提供联系方式】",
+        "项目官网：" + CNEndpoints.HOME_HOST + "【通往其他个人网站和提供联系方式】",
         "bilibili视频教程：BV1faRiBBExk"
     };
 
@@ -331,14 +331,14 @@ public class CNCNDownloadUI {
         "https://b23.tv/aNjcz1p",                               // MadeInMagius
         "",                                                     // 说明
         "",                                                     // 「其他个人网站」小标题
-        "https://reader.pages.example",
-        "https://live2d.pages.example",
-        "https://callsearch.pages.example",
+        CNEndpoints.siteUrl(0),
+        CNEndpoints.siteUrl(1),
+        CNEndpoints.siteUrl(2),
         "",                                                     // 「协助与鸣谢」小标题
         "https://b23.tv/ovvbrNw",                               // 水银h2oag
         "https://b23.tv/9vyRcI8",                               // CyberNova
         "https://b23.tv/xjXW9DI",                               // segfault
-        "https://www.example.test",
+        CNEndpoints.HOME_URL,
         "https://www.bilibili.com/video/BV1faRiBBExk"
     };
 
@@ -354,14 +354,14 @@ public class CNCNDownloadUI {
         "MadeInMagius",
         "",
         "",
-        "reader.pages.example",
-        "live2d.pages.example",
-        "callsearch.pages.example",
+        CNEndpoints.site(0),
+        CNEndpoints.site(1),
+        CNEndpoints.site(2),
         "",
         "水银h2oag",
         "CyberNova",
         "segfault",
-        "www.example.test",
+        CNEndpoints.HOME_HOST,
         "BV1faRiBBExk"
     };
 

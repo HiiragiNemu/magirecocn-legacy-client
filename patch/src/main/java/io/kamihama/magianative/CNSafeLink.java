@@ -28,14 +28,14 @@ import java.util.Locale;
  * <ul>
  *   <li>{@code intent://…#Intent;…;end} —— 在本机拉起任意组件；</li>
  *   <li>{@code file:///data/data/…} —— 把应用私有目录交给别的应用打开；</li>
- *   <li>{@code https://www.example.test@evil.example/} —— authority 里的 userinfo
+ *   <li>{@code https://www.<自家域>@evil.example/} —— authority 里的 userinfo
  *       让地址<b>看起来</b>是自家域名，实际连的是 evil.example；</li>
  *   <li>{@code http://} 明文站 —— 玩家看不出与正主的区别。</li>
  * </ul>
  *
  * <h3>这一层挡的到底是什么</h3>
  *
- * <b>不是中间人。</b>{@code api.example.test} 上了 DNSSEC，客户端做完整 TLS
+ * <b>不是中间人。</b>配置所在的 api 子域上了 DNSSEC，客户端做完整 TLS
  * 验证，网络路径上改配置这条路本来就走不通——能把内容换掉的人，基本等于已经
  * 进了服务器。所以这里挡的是另外两件更窄、但 TLS 管不了的事：
  *
@@ -59,43 +59,61 @@ import java.util.Locale;
  * <p>代价是<b>加一个新的外链域名需要发新包</b>。这是有意选的：与
  * {@code CNMirrors#MIRRORS_URL}、签名指纹这些信任锚一样，写死才叫锚。
  * 真被拦到时日志里会明写是哪个 host 没过，一眼能看出原因，不会变成哑谜。
+ *
+ * <h3>「写死」与「构建期注入」不冲突</h3>
+ *
+ * 自家域名与那三个站的主机名不再以明文躺在源码里，而是构建期从 Secret 注入
+ * （{@link CNEndpoints}）。这<b>不削弱</b>上面那条性质：注入发生在编译之前，
+ * 进包之后同样是常量池里的一个死串，配置改不动它。变的只是「谁能从仓库里读到
+ * 这份名单」，没变的是「谁能在运行期改这份名单」——后者依然是没有人。
+ *
+ * <p>注入缺失时列表里只剩第三方公共站点，自家域与那三个站<b>一个都不放行</b>。
+ * 这个方向是对的：宁可外链全打不开，也不能因为锚没注上就退回「什么都放行」。
  */
 public final class CNSafeLink {
 
     private static final String TAG = "MagiaCNSafeLink";
 
     /**
-     * 允许的域名，**含子域**（{@code example.test} 覆盖 www / api / assets /
+     * 允许的域名，**含子域**（自有主域一条即覆盖 www / api / assets /
      * r2.assets / docs 等）。
      */
-    private static final String[] ALLOW_DOMAINS = {
-        "example.test",     // 项目自有域：官网 / api / assets / r2.assets / docs
-        "bilibili.com",     // 视频教程与作者主页
-        "b23.tv",           // bilibili 短链，署名区几条都是这个
-        "github.com",       // ui_credits 的 github_url
-        // 2026-08-14：gh-proxy.org 已从白名单去掉。下载线路不再经任何公共
-        // GitHub 代理——内置镜像表里那两条也一并删了。下发新线路请改线上
-        // config.json，别再把这个域名加回来。
-        // 爱发电 —— right_pill（右上角可变按钮）的「支持我们」跳这里。
-        // 两个域名是同一个站：afdian.com 是现主域，ifdian.net 是备用域，
-        // 首页标题都是「爱发电 · 连接创作者与粉丝的会员制平台」。
-        // 更早的 afdian.net 已经解析不到，不列。
-        "afdian.com",
-        "ifdian.net",
-    };
+    private static final String[] ALLOW_DOMAINS = buildAllowDomains();
+
+    /**
+     * 自有主域由 {@link CNEndpoints#ROOT_DOMAIN} 注入，其余是第三方公共站点
+     * ——那些本来就不是我们的基础设施，写在源码里没有隐藏的必要，也不该跟着
+     * 我们的 Secret 一起失效。
+     */
+    private static String[] buildAllowDomains() {
+        java.util.ArrayList<String> l = new java.util.ArrayList<String>(6);
+        // 项目自有域：官网 / api / assets / 各 CDN 子域 / docs 都在它下面
+        if (!CNEndpoints.ROOT_DOMAIN.isEmpty()) l.add(CNEndpoints.ROOT_DOMAIN);
+        String[] third = {
+            "bilibili.com",     // 视频教程与作者主页
+            "b23.tv",           // bilibili 短链，署名区几条都是这个
+            "github.com",       // ui_credits 的 github_url
+            // 2026-08-14：gh-proxy.org 已从白名单去掉。下载线路不再经任何公共
+            // 代码托管站代理——内置镜像表里那两条也一并删了。下发新线路请改
+            // 线上 config.json，别再把这个域名加回来。
+            // 爱发电 —— right_pill（右上角可变按钮）的「支持我们」跳这里。
+            // 两个域名是同一个站：afdian.com 是现主域，ifdian.net 是备用域，
+            // 首页标题都是「爱发电 · 连接创作者与粉丝的会员制平台」。
+            // 更早的 afdian.net 已经解析不到，不列。
+            "afdian.com",
+            "ifdian.net",
+        };
+        for (int i = 0; i < third.length; i++) l.add(third[i]);
+        return l.toArray(new String[l.size()]);
+    }
 
     /**
      * 允许的**精确主机名**，不含子域。
      *
-     * <p>署名区那三个站都挂在 {@code pages}（CDN Pages）下，
-     * 而那是个**公共后缀**——按域名放行等于把任何人的 Pages 站都放进来了，
-     * 所以这三个只认全名。
+     * <p>署名区那三个站都挂在同一个静态站托管平台的**公共后缀**下——按域名
+     * 放行等于把任何人在那个平台上开的站都放进来了，所以这三个只认全名。
      */
-    private static final String[] ALLOW_HOSTS = {
-        "reader.pages.example",
-        "live2d.pages.example",
-        "callsearch.pages.example",
-    };
+    private static final String[] ALLOW_HOSTS = CNEndpoints.pagesHosts();
 
     private CNSafeLink() {}
 
@@ -154,7 +172,7 @@ public final class CNSafeLink {
         if (!"https".equals(scheme.toLowerCase(Locale.US))) {
             return "只允许 https，收到的是 " + scheme;
         }
-        // userinfo：https://www.example.test@evil.example/ 这类，肉眼看着像自家域名
+        // userinfo：https://www.<自家域>@evil.example/ 这类，肉眼看着像自家域名
         if (u.getUserInfo() != null) return "地址里带用户名，可能是伪装";
         String rawAuthority = u.getRawAuthority();
         if (rawAuthority != null && rawAuthority.indexOf('@') >= 0) {
@@ -178,7 +196,7 @@ public final class CNSafeLink {
         }
         for (int i = 0; i < ALLOW_DOMAINS.length; i++) {
             String d = ALLOW_DOMAINS[i];
-            // 必须是 d 本身或 *.d；用 endsWith(d) 会把 "evilexample.test" 放进来
+            // 必须是 d 本身或 *.d；用 endsWith(d) 会把 "evil<自家域>" 这种拼接放进来
             if (host.equals(d) || host.endsWith("." + d)) return true;
         }
         return false;

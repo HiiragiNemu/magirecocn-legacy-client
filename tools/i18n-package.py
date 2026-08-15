@@ -137,7 +137,7 @@ def main():
     print('底包沿用 %d 项，新增/覆盖 %d 项，共 %d 项' % (n_base, n_new, len(seen)))
     print('→ %s（%.1f MB）' % (args.out, size / 1024.0 / 1024.0))
     print('\n发布前还要做两件事（都在服务端，不在本仓库）：')
-    print('  1. 把包传到 assets.example.test/cn_js_update.zip')
+    print('  1. 把包传到资源站的 cn_js_update.zip')
     print('     （规范地址；实际分发走 config.json 里的线路表）')
     print('  2. version_js.json 的 version 加 1，否则客户端认为无更新、不会下载')
     return 0

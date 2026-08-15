@@ -22,9 +22,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@link #defaultList()} 那份**内置兜底线路表**，因此任何情况下都至少有一条
  * 可用线路。
  *
- * <p>内置那份的最后两条指向 GitHub Release 的公共代理，<b>与我们的域名、
- * 服务器、CDN 账号全都无关</b>——这是「服务器没了玩家也还能装、还能更新」这条
- * 路的落脚点。选它们不是因为快，而是因为它们不跟着我们一起死。
+ * <p>内置那份如今<b>全部落在自有主域下</b>（2026-08-14 去掉了经公共代理转
+ * 代码托管站的那两条）。代价是「我们的域名整个没了也还能装」这条最后兜底
+ * 不复存在；补偿手段是线上线路表：它随时可改、下发即生效，而内置表只有发
+ * 新版才动得了。
  *
  * <p>线路按 {@code weight} 由大到小排序（权重越大越优先）。下载失败会给该线路
  * 记一次失败并进入冷却，冷却期内不再被选中；{@code CNDownloaderFix} 的每一次
@@ -39,8 +40,8 @@ public final class CNMirrors {
 
     private static final String TAG = "MagiaCNMirrors";
 
-    /** 线路列表地址。 */
-    public static final String MIRRORS_URL = "https://api.example.test/legacy/config.json";
+    /** 线路列表地址。真实主机名构建期注入，见 {@link CNEndpoints}。 */
+    public static final String MIRRORS_URL = CNEndpoints.MIRRORS_URL;
 
     // 代理配置**刻意不做任何缓存**，始终以本次启动读到的 config.json 为准。
     //
@@ -63,8 +64,10 @@ public final class CNMirrors {
      * <p>选 edge 是因为它在 2026-08-06 的真机竞速里是最快的一条
      * （861–984 KB/s，对香港 CDN 的 261–608 KB/s）。改这个常量**不需要**动
      * {@link #CANONICAL_BASE}，两者已经解耦——这正是它们分开的意义。
+     *
+     * <p>真实主机名构建期注入，见 {@link CNEndpoints#EDGEONE_BASE}。
      */
-    public static final String DEFAULT_BASE = "https://assets.example/";
+    public static final String DEFAULT_BASE = CNEndpoints.EDGEONE_BASE;
 
     /**
      * 主线资源的**规范前缀**：判断「这是不是一条主线资源地址」、以及从地址里
@@ -78,12 +81,14 @@ public final class CNMirrors {
      *       null＝「非主线地址，直连下载」——热更包会**悄悄退化成不换线**。</li>
      *   <li>{@link CNHotUpdateCheck} 取版本 json 时用它剥文件名。前缀对不上，
      *       剥出来的就是整条 URL，再拼上镜像前缀会得到
-     *       {@code https://<镜像>/https://r2.assets.example.test/version_js.json}
+     *       {@code https://<镜像>/https://<另一个域>/version_js.json}
      *       这种东西——**每条线路都失败，热更静默停摆**。</li>
      * </ul>
      *
-     * <p>热更包与版本 json 的地址硬编码在 {@link CNHotUpdateCheck} 的
-     * {@code PACKAGES} 表里，改这个常量必须与那张表同步，否则前缀立刻对不上。
+     * <p>{@link CNHotUpdateCheck} 的 {@code PACKAGES} 表里只写<b>文件名</b>，
+     * 完整地址由本常量当场拼出来——所以「表和前缀对不上」这件事在结构上就不
+     * 可能发生了。早先那张表里写的是整条 URL，两边任何一边单独改动就会静默
+     * 失效，正是本段警告的由来。
      *
      * <p><b>取值必须与 {@code CNDownloaderFix.RESOURCE_BASE_URL} 一致</b>——
      * 全仓库只该有一个规范前缀。安装器的完成标记、安装器文件表里的
@@ -92,15 +97,20 @@ public final class CNMirrors {
      * <p>刻意<b>不</b>用任何具体 CDN 的域名（如 r2. / edge. 开头的那些）：
      * 这个串永远不会被真的请求——两处用它的地方都是「剥出文件名后逐条线路试」。
      * 拿某个 CDN 的域名当身份，那个 CDN 一停用，字符串就变成一句谎话。
-     * 早先这里是 {@code r2.assets.example.test}，而 object-storage 自定义域只在 CDN
-     * 接管 DNS 时才生效——换 NS 之后那个子域就彻底废了。
+     * 早先这里绑的是 object-storage 的自定义子域，而 object-storage 自定义域只在 CDN 接管 DNS
+     * 时才生效——换 NS 之后那个子域就彻底废了。
      *
      * <p><b>它解析不了也没关系，而且不许改。</b>身份标识不需要能被访问；
      * 更要紧的是，同一个串已经写进每一台已安装设备的 15 个完成标记里
      * （见 {@code CNDownloaderFix.RESOURCE_BASE_URL} 的说明），改动会让所有
      * 老玩家重下几个 GB。看到它 DNS 不通是正常的，不要「顺手修好」。
+     *
+     * <p>真实主机名构建期注入（{@link CNEndpoints#ASSETS_BASE}）。注入值被
+     * {@code tools/check-base-urls.py} 用<b>钉死的 sha256</b> 核对——钉哈希
+     * 而不是钉明文，是为了不把地址写回仓库；而校验强度不打折：差一个字符就
+     * 对不上，构建当场失败，不会产出让老玩家重下几个 GB 的包。
      */
-    public static final String CANONICAL_BASE = "https://assets.example.test/";
+    public static final String CANONICAL_BASE = CNEndpoints.ASSETS_BASE;
 
     private static final int CONNECT_TIMEOUT_MS = 2000;
     private static final int READ_TIMEOUT_MS    = 3000;
@@ -229,8 +239,8 @@ public final class CNMirrors {
      * 就把它替换掉了。所以选线的标准不是「快」，而是<b>「我们的基础设施全没了，
      * 还能不能下到东西」</b>。
      *
-     * <p>原先只有一条 {@code assets.example}，问题是它和 config.json
-     * 所在的 {@code api.example.test} <b>是同一个域名下的子域</b>。「服务器没了」
+     * <p>原先只有一条 edge，问题是它和 config.json 所在的 api 子域
+     * <b>同属一个主域</b>。「服务器没了」
      * 通常意味着整个域名一起没——2026-08-06 换 NS 那次，全域 24 小时无解析，就是
      * 一次实战演练。那种情况下这条兜底跟着一起死，等于没有兜底。
      *
@@ -251,10 +261,16 @@ public final class CNMirrors {
      */
     private static List<Mirror> defaultList() {
         List<Mirror> l = new ArrayList<Mirror>(2);
-        // 权重只决定内置表内部的先后，config.json 到位后整张表会被替换
-        l.add(new Mirror("内置兜底 • edge", DEFAULT_BASE, 100, 0, true));
-        l.add(new Mirror("内置兜底 • 阿里ESA",
-                "https://esa.assets.example.test/", 80, 0, true));
+        // 权重只决定内置表内部的先后，config.json 到位后整张表会被替换。
+        // 注入缺失时两条前缀都是空串——此时**一条都不加**，返回空表。空表比
+        // 「以空串为前缀的线路」好：后者会去请求 "cn_base_02.zip" 这种相对
+        // 地址，报出来的错莫名其妙；空表则直接走「没有可用线路」那条既有分支。
+        if (!DEFAULT_BASE.isEmpty()) {
+            l.add(new Mirror("内置兜底 • edge", DEFAULT_BASE, 100, 0, true));
+        }
+        if (!CNEndpoints.ESA_BASE.isEmpty()) {
+            l.add(new Mirror("内置兜底 • 阿里ESA", CNEndpoints.ESA_BASE, 80, 0, true));
+        }
         return l;
     }
 
@@ -523,7 +539,7 @@ public final class CNMirrors {
             //
             // 注意这里问的**不是**「要不要继续等」。线路表从设计上就不在启动关键
             // 路径里（见 ensureLoadedAsync 的说明：内置默认线路从进程启动起就可用，
-            // api.example.test 故障绝不能卡住启动），没有任何人在等它——问「继续等
+            // 线路表服务故障绝不能卡住启动），没有任何人在等它——问「继续等
             // 吗」是个假选择。真正的取舍是「再试一次，还是就用内置线路过日子」。
             askAfterExhausted();
         }
@@ -688,7 +704,7 @@ public final class CNMirrors {
     /**
      * 下发 Totentanz 代理配置到 native setURI hook（MagiaLegacy.cpp 实现）。
      *
-     * @param base    代理入口前缀，如 "https://api.example.test/stream/"
+     * @param base    代理入口前缀，如 "https://<api 子域>/stream/"
      * @param domains 要代理的域名后缀白名单，如 {"magi-reco.com", "sisyphus.systems"}
      */
     private static native void nativeSetProxyConfig(String base, String[] domains);

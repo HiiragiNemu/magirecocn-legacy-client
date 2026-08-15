@@ -183,7 +183,15 @@ public final class CNHotUpdateCheck {
 
     private CNHotUpdateCheck() {}
 
-    /** 一个热更包的全部参数。 */
+    /**
+     * 一个热更包的全部参数。
+     *
+     * <p>构造器收的是<b>文件名</b>，完整地址由 {@link CNMirrors#CANONICAL_BASE}
+     * 当场拼出来。这不只是为了让仓库里不留真实域名——更要紧的是，「PACKAGES 表
+     * 里的地址与规范前缀对不上」这个<b>静默</b>失效模式（前缀剥不掉 → 拼出
+     * {@code https://<镜像>/https://…} → 每条线路都失败 → 玩家看到「已是最新」）
+     * 在结构上不再可能发生。原先两边各写一份，改一边就会踩中。
+     */
     private static final class Pkg {
         final String label;        // 日志与 UI 上的名字
         final String versionUrl;   // 版本 json（直连主线）
@@ -192,12 +200,12 @@ public final class CNHotUpdateCheck {
         final String tmpName;      // 落地的临时文件名
         final String txTag;        // 事务工作区名（见 CNHotUpdateTx）
         final int    slot;         // 浮层进度槽位
-        Pkg(String label, String versionUrl, String versionKey,
-            String zipUrl, String tmpName, String txTag, int slot) {
+        Pkg(String label, String versionFile, String versionKey,
+            String zipFile, String tmpName, String txTag, int slot) {
             this.label = label;
-            this.versionUrl = versionUrl;
+            this.versionUrl = CNMirrors.CANONICAL_BASE + versionFile;
             this.versionKey = versionKey;
-            this.zipUrl = zipUrl;
+            this.zipUrl = CNMirrors.CANONICAL_BASE + zipFile;
             this.tmpName = tmpName;
             this.txTag = txTag;
             this.slot = slot;
@@ -208,12 +216,12 @@ public final class CNHotUpdateCheck {
     // 所以是 0 和 1——原实现里写的 14 / 11 是排序前的下标，照抄会画错行。
     private static final Pkg[] PACKAGES = {
         new Pkg("台词包",
-                "https://assets.example.test/version_scenario.json", "scenario_version",
-                "https://assets.example.test/cn_scenario_update.zip",
+                "version_scenario.json", "scenario_version",
+                "cn_scenario_update.zip",
                 "cn_scenario_update.zip", "scenario", 0),
         new Pkg("前端脚本",
-                "https://assets.example.test/version_js.json", "js_version",
-                "https://assets.example.test/cn_js_update.zip",
+                "version_js.json", "js_version",
+                "cn_js_update.zip",
                 "cn_js_update_hot.zip", "js", 1),
     };
 
@@ -278,7 +286,7 @@ public final class CNHotUpdateCheck {
         CNHotUpdateTx.recover(new File(FILES_DIR));
 
         // 线路表只做后台优化。内置默认线路从进程启动起就可用；
-        // api.example.test 故障绝不能进入启动关键路径。
+        // 线路表服务故障绝不能进入启动关键路径。
         CNMirrors.ensureLoadedAsync();
 
         // 注：WebView 拦截层代理的安装点在 CNDownloaderFix.triggerInstaller()，
@@ -766,7 +774,7 @@ public final class CNHotUpdateCheck {
         String base = CNMirrors.CANONICAL_BASE;
         String name = url.startsWith(base) ? url.substring(base.length()) : url;
         // 内置 fallback 一直存在；远程 config 只在后台刷新，绝不在
-        // 版本查询关键路径同步等 api.example.test。
+        // 版本查询关键路径同步等线路表服务。
         if (!CNMirrors.isLoaded()) CNMirrors.ensureLoadedAsync();
         Exception last = null;
         for (CNMirrors.Mirror m : CNMirrors.healthy()) {

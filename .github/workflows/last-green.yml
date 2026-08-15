@@ -68,6 +68,12 @@ jobs:
       - name: 🧪 编译补丁源码与测试（与本地自检同 classpath）
         run: |
           set -euo pipefail
+          # 先注入**占位**端点（example.test / *.pages.example，RFC 2606 保留域）。
+          # 源码里 CNEndpoints 的主机名常量恒为空串，不注入的话白名单是空的、
+          # 线路表是空的，SafeLinkTest 与 WebProxyTest 会整组红——而那是环境没
+          # 备好，不是代码坏了。用占位域而不是真值：测试验的是判据，与线上用
+          # 什么域名无关，真值也不该出现在公开的 CI 日志里。
+          python3 tools/inject-endpoints.py --test
           # RestClient 只作为编译期桩存在：真实实现在 smali_classes2 里，
           # 不在 patch/src 下（与 build-apk.yml 里的处理方式一致）。
           mkdir -p .build/stubs/io/kamihama/magianative
@@ -111,6 +117,9 @@ jobs:
       - name: 🛡 跑全部守卫
         run: |
           set -euo pipefail
+          # 把上一步注入的占位端点还原成空串：check-base-urls 会检查「入库的
+          # 源码里注入位必须是空的」，带着注入结果跑等于自己把自己判红。
+          python3 tools/inject-endpoints.py --reset
           # ⚠ check-fonts 与 check-webview-interceptor 已迁到 build-apk.yml。
           # 它们读的是**工程树**里的文件（字体、引擎 web 那几个 smali），而
           # 2026-08-14 起工程树不在仓库里了——要在这边跑就得先下 80 MB 重建一次，

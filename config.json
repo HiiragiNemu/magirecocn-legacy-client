@@ -1,7 +1,7 @@
 {
   "schema": 8,
   "updated": "2026-08-07T11:20:00Z",
-  "comment": "客户端从 https://api.example.test/legacy/config.json 读取本文件。settings 与 mirrors 都是可选的：settings 缺省时用客户端内置默认值；mirrors 为空或整个文件拉取失败时，客户端回退到内置默认线路 https://r2.assets.example.test/ ，行为与加入换线功能之前一致。client 段也是可选的：缺省时客户端跳过版本检查。proxy 段也是可选的：base 是代理入口前缀（必须以 / 结尾），domains 是允许被代理的域名后缀白名单，两者缺一则本次启动全程直连；web_mode 控制 WebView 拦截层代理，off = 纯透传（默认），measure = 仍然直连但后台配对测速并记日志，on = 本地文件没命中的 GET 改走代理、失败自动回退直连。",
+  "comment": "【屏蔽示例，不是线上文件】本文件用于说明 config.json 的字段与语义；其中所有主机名都换成了 RFC 2606 保留域（example.test / *.pages.example），真实地址不入库（见 patch/.../CNEndpoints.java 与 tools/inject-endpoints.py）。client.version 同理只是占位，不要拿它判断线上是什么版本。—— 客户端从 https://api.<主域>/legacy/config.json 读取本文件。settings 与 mirrors 都是可选的：settings 缺省时用客户端内置默认值；mirrors 为空或整个文件拉取失败时，客户端回退到内置默认线路，行为与加入换线功能之前一致。client 段也是可选的：缺省时客户端跳过版本检查。proxy 段也是可选的：base 是代理入口前缀（必须以 / 结尾），domains 是允许被代理的域名后缀白名单，两者缺一则本次启动全程直连；web_mode 控制 WebView 拦截层代理，off = 纯透传（默认），measure = 仍然直连但后台配对测速并记日志，on = 本地文件没命中的 GET 改走代理、失败自动回退直连.",
   "settings": {
     "chunks": 4,
     "min_chunk_bytes": 8388608,
@@ -11,8 +11,8 @@
     "cooldown_ms": 60000
   },
   "client": {
-    "version": "1.0.14",
-    "apk_url": "https://assets.example.test/legacy-client.apk",
+    "version": "0.0.0",
+    "apk_url": "https://assets.example.test/client.apk",
     "note": "你的客户端版本过低，请下载新版本后继续。由于运维团队精力有限，旧版本将不再获得任何技术支持。"
   },
   "mirrors": [

@@ -22,7 +22,7 @@ public class ManualRedownloadTest {
     }
 
     private static String marker(String name) {
-        return "schema=1\nfile=" + name + "\nurl=https://assets.example.test/"
+        return "schema=1\nfile=" + name + "\nurl=" + io.kamihama.magianative.CNMirrors.CANONICAL_BASE
                 + name + "\nbytes=123\netag=x\n";
     }
 

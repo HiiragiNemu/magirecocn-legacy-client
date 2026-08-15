@@ -109,7 +109,7 @@ public final class CNDownloaderFix {
      * 真要迁移，得先给标记文件加 schema=2 与迁移逻辑（认旧 url 也算有效），
      * 而不是直接改这个常量。{@code tools/check-base-urls.py} 会把它钉住。
      */
-    private static final String RESOURCE_BASE_URL = "https://assets.example.test/";
+    private static final String RESOURCE_BASE_URL = CNEndpoints.ASSETS_BASE;
     private static final String STATE_ROOT = FILE_ROOT + "/madomagi/magica/.cn_installer/r128-downloader-v1";
     private static final String TAG = "MagiaCNDownloader";
 
