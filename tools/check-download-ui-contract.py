@@ -532,8 +532,11 @@ checks = {
         > int(re.search(r"d\.setSize\(dp\(v, (\d+)\)", body(assist, "private static GradientDrawable scrollTrack(View v)")).group(1)),
     # 3. 热更新检查完就跳走，玩家来不及看清结果（尤其失败时）。停留窗口拉长；
     #    上限 PLAYER_WINDOW_MAX_MS 不动，手动「停留」按钮仍是唯一的无限期通道。
+    #    判据用下限而非钉死具体值：4 秒曾太短（看不清/够不着按钮）、9 秒又太长
+    #    （像卡死），2026-08-17 取中间 6 秒。下限钉在 5 秒之上，挡住「又缩回去」
+    #    的回归，同时允许后续微调不必改守卫。
     "热更新结果停留时间足够看清":
-        "IDLE_LINGER_MS = 9000L" in hot_check
+        int(re.search(r"IDLE_LINGER_MS = (\d+)L", hot_check).group(1)) >= 5000
         and "INTERACT_LINGER_MS = 12000L" in hot_check,
     # 4. 调大字号会把左右两栏撑大，再调小回不去——scrollX 停在旧内容宽度上，
     #    栏宽由权重算但滚动位置没归位。applyScale 收尾必须重新布局并复位滚动条。
