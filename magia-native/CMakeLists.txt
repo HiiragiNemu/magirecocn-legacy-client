@@ -151,6 +151,18 @@ target_compile_definitions(MagiaLegacy PRIVATE
     MAGIA_ROOT_DOMAIN="${MAGIA_ROOT_DOMAIN}"
 )
 
+# ── 调试悬浮窗总闸（构建期可选注入）────────────────────────────
+# MagiaLegacy.cpp 里 DEBUG_OVERLAY_ENABLED 的兜底默认是 1（公测期全开），所以
+# 这里**不设默认、只在显式给了值时才传**——本地手编不传 = 悬浮窗开（维持现状）；
+# CI 的「调试悬浮窗」选择框不勾时传 -DMAGIA_DEBUG_OVERLAY=0，出包即无悬浮窗。
+# 这与 MAGIA_ROOT_DOMAIN（恒注入）不同：主域必须两侧同源，悬浮窗是「默认开、
+# 可选关」。cpp 里的 #ifndef 兜底在非 CMake 的本地直编路径上仍生效。
+if(DEFINED MAGIA_DEBUG_OVERLAY)
+    target_compile_definitions(MagiaLegacy PRIVATE
+        MAGIA_DEBUG_OVERLAY=${MAGIA_DEBUG_OVERLAY}
+    )
+endif()
+
 target_include_directories(MagiaLegacy PRIVATE
     ${shadowhook_SOURCE_DIR}/shadowhook/src/main/cpp/include
 )

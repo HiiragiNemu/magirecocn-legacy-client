@@ -1102,9 +1102,10 @@ public final class CNDownloaderFix {
         }
 
         // 备用引擎：cloud=config.json 的 settings.force_aria2 强制启用；
-        // 本地=debug 开关 CNDebugFlags.useAria2。任一打开就先用 aria2 拉一把，
-        // 装好即返回；失败清掉 aria2 的半截产物（目标文件 + .aria2 控制文件），
-        // 走下面的主引擎整份重下。
+        // 本地=debug 开关 CNDebugFlags.useAria2；构建期=CNBuildConfig.MAIN_ENGINE
+        // 选 aria2c 时它就成了**默认主引擎**（每次先走 aria2）。三者任一打开都先
+        // 用 aria2 拉一把，装好即返回；失败清掉 aria2 的半截产物（目标文件 +
+        // .aria2 控制文件），走下面的主引擎整份重下。
         //
         // ⚠ 「默认关」这句话在 2026-08-13 之前就已经不成立了：线上 config.json
         // 里 force_aria2=true，也就是说**每个玩家的每个文件都先走这条路**。而这
@@ -1114,7 +1115,8 @@ public final class CNDownloaderFix {
         //
         // 线路不在这里挑：交给 tryAria2Download 按 attempt 逐轮换（原先固定
         // pick(1)，三次尝试全钉在同一条线路上）。
-        boolean aria2Forced = CNMirrors.forceAria2()
+        boolean aria2Forced = "aria2c".equals(CNBuildConfig.MAIN_ENGINE)
+                || CNMirrors.forceAria2()
                 || CNDebugFlags.isOn(CNDebugFlags.USE_ARIA2);
         if (aria2Forced && FORCE_REDOWNLOAD.get(index) == 0
                 && CNAria2.isAvailable()) {
@@ -1131,9 +1133,8 @@ public final class CNDownloaderFix {
             }
             // a2 == A2_MAIN → 回退主引擎重试
         }
-        // Do not delete a complete archive here. If the process was killed after 03 reached
-        // 100% but while its large ZIP was being extracted, the next launch must reuse that
-        // verified 1.4GB archive and resume extraction instead of downloading it again.
+        // 这里不能删「已完整下载」的包：进程若在 03 下到 100% 之后、大 zip 还在
+        // 解压时被杀，下次启动必须复用这份已校验的 1.4GB 包续解，而不是重新下载。
         deleteQuietly(new File(archive.getPath() + ".aria2"));
 
         // 重试上限做成变量：用尽之后要问玩家，玩家选「再试 / 改用单线程」时
@@ -1527,7 +1528,7 @@ public final class CNDownloaderFix {
      *
      * @param name     失败的资源包名
      * @param canRetry 是否还能给「重试备用引擎」这一项
-     * @return CNCNDownloadUI.ARIA2_RETRY / CONTINUE / OFFLINE
+     * @return 玩家在 aria2 失败后的选择：ARIA2_RETRY / CONTINUE / OFFLINE
      */
     private static int awaitAria2FallbackChoice(String name, boolean canRetry) {
         try {

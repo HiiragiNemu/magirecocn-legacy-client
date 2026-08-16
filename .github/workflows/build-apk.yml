@@ -40,6 +40,25 @@ on:
         description: '只构建校验，不发布（不勾＝构建完把 APK 传到发布目标）'
         type: boolean
         default: false
+      # 主下载引擎（构建期默认）。engine 选 aria2c 时，CNDownloaderFix 每次先走
+      # 进程内 aria2c，失败回退自建引擎；选 self（默认）则 aria2 仍作备用，
+      # 仅云端 force_aria2 或调试开关 useAria2 打开时才先用它。
+      engine:
+        description: '主下载引擎（构建期定死）。self＝自建分块引擎（默认）；aria2c＝进程内 aria2c 为主引擎，失败回退自建'
+        type: choice
+        options:
+          - self
+          - aria2c
+        default: self
+      # 调试悬浮窗是排查工具，不是玩家功能。只有维护者能触发本 workflow
+      # （workflow_dispatch 需写权限，fork 还有安全护栏），所以默认按**发布语义**
+      # 来：不勾＝对外包无调试悬浮窗；需要内部排查包时才勾上。
+      # 总闸烧在 native：不勾时 CMake 传 -DMAGIA_DEBUG_OVERLAY=0，
+      # DEBUG_OVERLAY_ENABLED=false，CNDebugOverlay 建不出来。
+      debug_overlay:
+        description: '是否把调试悬浮窗编进包（native 总闸 MAGIA_DEBUG_OVERLAY；默认关＝发布包不带调试工具）'
+        type: boolean
+        default: false
   # 供 main-checks.yml 复用（push 到 main 后的复验）。APK 构建本身的
   # **手动触发**属性不变——这里只是允许另一个 workflow 以 verify_only
   # 调进来跑一遍同样的流水线。见 CONTRIBUTING.md「CI 流水线」。
@@ -49,6 +68,14 @@ on:
         description: '只构建校验，不发布'
         type: boolean
         default: true
+      engine:
+        description: '主下载引擎：self / aria2c'
+        type: string
+        default: self
+      debug_overlay:
+        description: '是否编译调试悬浮窗（native MAGIA_DEBUG_OVERLAY）'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -355,6 +382,7 @@ jobs:
               -DANDROID_ABI="$ABI" -DANDROID_PLATFORM=android-21 \
               -DCMAKE_BUILD_TYPE=Release \
               -DMAGIA_ROOT_DOMAIN="${MAGIA_ROOT_DOMAIN}" \
+              -DMAGIA_DEBUG_OVERLAY=${{ inputs.debug_overlay && 1 || 0 }} \
               -B "$BUILD_DIR" magia-native
             cmake --build "$BUILD_DIR" --parallel
             SO="$BUILD_DIR/libMagiaLegacy.so"
@@ -406,6 +434,26 @@ jobs:
             if [ ! -s "${f}" ]; then echo "::warning::缺少 ${f}，本次 APK 浮层将没有 BGM"; fi
           done
           ls -la "${TREE}/assets/magia/"
+
+      # 主下载引擎是构建期默认：CNBuildConfig.MAIN_ENGINE 在源码里恒为 "self"，
+      # 取值在这里按「主引擎」选择框写进去（沿用 CLIENT_VERSION / CNEndpoints 的
+      # sed 注入模式）。它是编译期常量，javac 会内联引用处，所以必须排在 javac
+      # 之前。engine 只定「默认主引擎」，不封死运行时开关——云端 force_aria2 与
+      # 调试开关 useAria2 在任何构建里都仍可把 aria2 临时顶上去。
+      - name: 🚂 注入主下载引擎（构建期默认）
+        run: |
+          set -euo pipefail
+          ENGINE="${{ inputs.engine }}"
+          case "$ENGINE" in
+            self|aria2c) ;;
+            *) echo "::error::非法引擎值：$ENGINE（只接受 self / aria2c）"; exit 1 ;;
+          esac
+          sed -i -E "s/MAIN_ENGINE = \"[a-z0-9]+\"/MAIN_ENGINE = \"${ENGINE}\"/" \
+            patch/src/main/java/io/kamihama/magianative/CNBuildConfig.java
+          grep -q "MAIN_ENGINE = \"${ENGINE}\"" \
+            patch/src/main/java/io/kamihama/magianative/CNBuildConfig.java \
+            || { echo "::error::引擎注入失败（CNBuildConfig.MAIN_ENGINE 常量没匹配上）"; exit 1; }
+          echo "主下载引擎: ${ENGINE}"
 
       - name: ☕ 编译补丁源码 → dex
         run: |
@@ -701,6 +749,8 @@ jobs:
             if [ -f .build/legacy-client.apk ]; then
               echo "- 状态：✅ 成功"
               echo "- 客户端版本：\`${CLIENT_VERSION}\`（云端 config.json 的 client.version 抬过它即触发旧包强制更新）"
+              echo "- 主下载引擎：\`${{ inputs.engine }}\`"
+              echo "- 调试悬浮窗：\`${{ inputs.debug_overlay && '开' || '关' }}\`（native MAGIA_DEBUG_OVERLAY）"
               echo "- sha256：\`$(sha256sum .build/legacy-client.apk | cut -d' ' -f1)\`"
               echo "- 大小：$(( $(stat -c%s .build/legacy-client.apk) / 1024 / 1024 )) MB"
               echo "- 签名：AOSP testkey（v1+v2+v3）"
