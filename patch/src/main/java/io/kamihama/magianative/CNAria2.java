@@ -1,8 +1,5 @@
 package io.kamihama.magianative;
 
-import android.content.Context;
-import android.os.Build;
-
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -12,33 +9,36 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * aria2c 子进程备用引擎——替代原先的 libaria2 JNI 包装。
+ * aria2 进程内备用引擎（libaria2c.so，JNI 加载）——兜底下载引擎。
  *
  * <p>主分块下载器（{@link CNChunkedDownload}）修不动时兜底：单 URL 同步下载到
  * 本地，走 aria2 的多连接 + 断点续传。默认<b>不启用</b>——只有 debug 开关
- * {@link CNDebugFlags#USE_ARIA2} 或云端 {@code settings.force_aria2} 打开时才被
- * {@link CNDownloaderFix} 调用。
+ * {@link CNDebugFlags#USE_ARIA2}、云端 {@code settings.force_aria2}，或构建期
+ * 主引擎选了 aria2c 时才被 {@link CNDownloaderFix} 调用。
  *
- * <p>为什么改成子进程（2026-08-12）：旧的 JNI 版（{@code libaria2.so}，OpenSSL
- * 静态编进共享库但符号走 GLOBAL + JUMP_SLOT 动态重定位）在真机上被进程内其他
- * libssl/libcrypto 抢占/污染，TLS 路径 {@code br} 跳到 0，直接杀掉游戏进程（连崩
- * 两次）。现改为解压内置的<b>全静态</b> aria2c 可执行文件（v1.37.0，ELF 静态、
- * 0 条 NEEDED，来源 Cross-Compiled-Binaries-Android，sha256 见下），用
- * ProcessBuilder 起独立子进程 + JSON-RPC 控制：
+ * <p>为什么是<b>进程内 JNI</b>（libaria2c.so，2026-08 由 Kimi 交叉编译）：
  *
  * <ul>
- *   <li><b>崩溃隔离</b>：aria2 再崩只死子进程，Java 捕获进程退出→回退主引擎，
- *       App 永不闪退；</li>
- *   <li><b>无符号抢占</b>：独立进程命名空间 + 全静态二进制，JUMP_SLOT 这类
- *       共享库专利根本不存在。</li>
+ *   <li><b>SELinux exec 闸</b>：app targetSdk≥29 后，Android 10+ 禁止执行应用
+ *       私有目录下的二进制（error=13）。共享库走 {@code System.loadLibrary}，
+ *       由 linker 放置到只读 nativeLibraryDir，完全绕开 exec（与 libcnzip 同思路）；</li>
+ *   <li><b>16KB 页设备</b>：包内可执行文件都是 4KB 对齐，在 Android 15+ 的 16KB
+ *       页设备上 error=8 起不来。libaria2c.so 按 {@code -Wl,-z,max-page-size=16384}
+ *       构建，4KB/16KB 通吃；</li>
+ *   <li><b>符号卫生</b>：最早一版 JNI（{@code libaria2.so}）把 OpenSSL 符号以
+ *       GLOBAL + JUMP_SLOT 动态重定位暴露，被进程内其他 libssl/libcrypto 抢占
+ *       污染，TLS 路径 {@code br 0} 杀进程。本构建做彻底符号卫生，不再抢占。</li>
  * </ul>
+ *
+ * <p>期间曾改为解压内置全静态 aria2c 可执行文件跑独立子进程（崩溃隔离好、无
+ * 符号抢占），但 exec 路径撞上上面两条，才又回到进程内 JNI。构建与依赖明细见
+ * THIRD-PARTY-NOTICES.md。
  *
  * <p>线程：{@link #download} 是阻塞调用，必须在后台线程执行；进度回调
  * {@link Progress#onProgress} 在下载线程上触发，实现方自行切 UI 线程。
@@ -73,24 +73,10 @@ public final class CNAria2 {
 
     private static final String TAG = "CNAria2";
 
-    // 内置静态二进制：aria2 v1.37.0，全静态（0 条 NEEDED，OpenSSL 已编入）。
-    //   aria2c-arm64 sha256 6705bac56e0752b26b22d4aa98cf5caa0f4672904e6cbf0ac2f516cc5f05797d
-    //   aria2c-arm   sha256 b06494c59df4c3536ad68dfc1ce5b33d3e638cd1e845ae5452709b35ed1270bb
-    // 资产文件、对应 ABI 前缀、预期字节数三者同步维护；换二进制时三处一起改。
-    //
-    // 来源：github.com/Zackptg5/Cross-Compiled-Binaries-Android，路径
-    // aria2/aria2c.bin-arm 与 aria2/aria2c.bin-arm64（master @ 9c14dc3a，2026-08-14）。
-    // ⚠ 我们把 `.bin` 去掉了：上游那边不带 .bin 的同名文件是个 shell 包装脚本，
-    // 不是二进制——旧注释只写「来源 Cross-Compiled-Binaries-Android」，照着找会
-    // 拿到 142 字节的脚本，这是它当初再也没人复现得了的原因。
-    //
-    // 🔴 aria2 是 GPLv2-or-later（附 OpenSSL 链接例外）。分发这两个文件带着
-    // 「提供对应源码」的义务，源码指向与书面要约写在 THIRD-PARTY-NOTICES.md，
+    // 🔴 aria2 是 GPLv2-or-later（附 OpenSSL 链接例外）。libaria2c.so 由我们
+    // 交叉编译（aria2 1.37.0，OpenSSL 1.1.1w 静态链入），分发它带着「提供对应
+    // 源码」的义务，构建来源与书面要约写在 THIRD-PARTY-NOTICES.md，
     // tools/check-third-party-notices.py 在 CI 里守着，别把那条删了。
-    private static final String[][] ASSETS = {
-            {"arm64-v8a", "aria2/aria2c-arm64", "10146592"},
-            {"armeabi-v7a", "aria2/aria2c-arm", "8319744"},
-    };
 
     /** busy 门：同一时刻只允许一个下载（原 native 的 {@code g_inUse} 语义）。 */
     private static final AtomicBoolean inUse = new AtomicBoolean(false);
@@ -106,13 +92,9 @@ public final class CNAria2 {
         if (initDone) return available;
         synchronized (INIT_LOCK) {
             if (initDone) return available;
-            boolean ok = false;
-            try {
-                ok = ensureBinary() && checkExecutable();
-            } catch (Throwable t) {
-                CNLog.w(TAG, "aria2c 初始化异常: " + t);
-                ok = false;
-            }
+            // 进程内 JNI：检查 libaria2c.so 能否加载（CNAria2Lib.isAvailable）。
+            // 不需要 exec 二进制，所以没有 SELinux/16KB 页问题；加载失败回退主引擎。
+            boolean ok = CNAria2Lib.isAvailable();
             available = ok;
             initDone = true;
             return available;
@@ -142,7 +124,6 @@ public final class CNAria2 {
             CNLog.w(TAG, "已有下载在跑（busy），拒绝并发");
             return ERR_BUSY;
         }
-        Process proc = null;
         try {
             if (url == null || url.isEmpty() || outName == null) return ERR_ADD;
             if (!isAvailable()) {
@@ -151,6 +132,7 @@ public final class CNAria2 {
             }
             if (outDir == null) outDir = CNPaths.filesDir();
             int maxC = (maxConns > 0 && maxConns <= 16) ? maxConns : 8;
+            File ariaDir = new File(CNPaths.filesDir(), "aria2");
 
             int port = 16000 + (int) (Math.random() * 7000); // 16000-22999
             // RPC 只听 127.0.0.1，但**同机的其它应用照样够得着**，挡住它们的
@@ -159,30 +141,35 @@ public final class CNAria2 {
             // （dir/out 都是 RPC 参数），随后正是安装器要去解压的地方。
             String secret = "cn" + Long.toHexString(
                     new java.security.SecureRandom().nextLong() & 0x7fffffffffffffffL);
-            File ariaDir = new File(CNPaths.filesDir(), "aria2");
-            File bin = new File(ariaDir, "aria2c");
 
             List<String> args = new ArrayList<>();
-            args.add(bin.getAbsolutePath());
             args.add("--enable-rpc");
             args.add("--rpc-listen-port=" + port);
             args.add("--rpc-listen-all=false");
             args.add("--rpc-secret=" + secret);
             args.add("--async-dns");
-            // Android 8+ 没有 /etc/resolv.conf，静态二进制必须显式给 DNS。
-            args.add("--async-dns-server=223.5.5.5,119.29.29.29");
+            // Android 8+ 没有 /etc/resolv.conf，进程内 aria2 用 bionic getaddrinfo
+            // （Kimi 构建已说明不用 c-ares），DNS 由系统解析。
             args.add("--file-allocation=none");   // 1.3GB 文件 prealloc 会坑闪存
             args.add("--allow-overwrite=true");
             args.add("--auto-file-renaming=false");
             args.add("--no-conf");
             args.add("--daemon=false");
             args.add("--log-level=warn");
-            args.add("--log=" + new File(ariaDir, "aria2.log").getAbsolutePath());
+            args.add("--log=" + new File(CNPaths.filesDir(), "aria2").getAbsolutePath()
+                    + "/aria2.log");
 
-            proc = new ProcessBuilder(args).redirectErrorStream(true).start();
+            // 进程内 JNI 启动 aria2 线程（libaria2c.so），替代 exec 子进程：
+            // 绕开 SELinux exec 闸 + 16KB 页对齐，且符号卫生避免 OpenSSL 抢占崩溃。
+            int startRc = CNAria2Lib.start(args.toArray(new String[0]));
+            if (startRc != 0) {
+                CNLog.w(TAG, "libaria2c 启动失败 rc=" + startRc);
+                return ERR_INIT;
+            }
 
-            if (!waitRpc(port, secret, proc, cancel)) {
+            if (!waitRpc(port, secret, cancel)) {
                 CNLog.w(TAG, "aria2c RPC 未就绪（进程可能已退出）");
+                shutdownAria2(port, secret);
                 return ERR_INIT;
             }
 
@@ -248,8 +235,8 @@ public final class CNAria2 {
                     CNLog.w(TAG, "aria2 下载被取消: " + outName);
                     return CANCELLED;
                 }
-                if (!proc.isAlive()) {
-                    CNLog.w(TAG, "aria2c 子进程意外退出: " + outName);
+                if (!CNAria2Lib.isRunning()) {
+                    CNLog.w(TAG, "aria2c 进程内线程意外退出: " + outName);
                     result = ERR_RUN;
                     break;
                 }
@@ -290,14 +277,27 @@ public final class CNAria2 {
             }
             return result;
         } catch (Throwable t) {
-            CNLog.w(TAG, "aria2 子进程异常: " + t);
+            CNLog.w(TAG, "aria2 进程内异常: " + t);
             return ERR_OTHER;
         } finally {
-            if (proc != null) {
-                try { proc.destroy(); } catch (Throwable ignore) {}
-            }
+            shutdownAria2(0, null);
             inUse.set(false);
         }
+    }
+
+    /**
+     * 关闭进程内 aria2 线程。优先 RPC shutdown（优雅），失败则 waitStopped 兜底。
+     * {@code port/secret} 传 0/null 时跳过 RPC（例如启动失败、从未拿到端口）。
+     */
+    private static void shutdownAria2(int port, String secret) {
+        try {
+            if (port > 0 && secret != null) {
+                rpc(port, secret, "aria2.shutdown");   // best-effort
+            }
+        } catch (Throwable ignore) {}
+        try {
+            CNAria2Lib.waitStopped(3000L);
+        } catch (Throwable ignore) {}
     }
 
     // ==================================================================
@@ -305,10 +305,10 @@ public final class CNAria2 {
     // ==================================================================
 
     /** 等待 RPC 就绪（getVersion 轮询，200ms×40≈8s）。进程提前死或取消→false。 */
-    private static boolean waitRpc(int port, String secret, Process proc, Cancel cancel) {
+    private static boolean waitRpc(int port, String secret, Cancel cancel) {
         for (int i = 0; i < 40; i++) {
             if (cancel != null && cancel.isCancelled()) return false;
-            if (!proc.isAlive()) return false;
+            if (!CNAria2Lib.isRunning()) return false;
             if (rpc(port, secret, "aria2.getVersion") != null) return true;
             sleep(200);
         }
@@ -372,101 +372,8 @@ public final class CNAria2 {
     }
 
     // ==================================================================
-    // 二进制解压与 CA 证书
+    // CA 证书
     // ==================================================================
-
-    /** 按 ABI 选资产解压到 files/aria2/aria2c（尺寸不符才重抽）。 */
-    private static boolean ensureBinary() {
-        String abi = primaryAbi();
-        String asset = null;
-        long expect = -1;
-        for (String[] row : ASSETS) {
-            if (abi.startsWith(row[0])) {
-                asset = row[1];
-                try { expect = Long.parseLong(row[2]); } catch (Throwable ignore) {}
-                break;
-            }
-        }
-        if (asset == null) {
-            CNLog.w(TAG, "不支持的 ABI: " + abi + "（备用引擎不可用）");
-            return false;
-        }
-        try {
-            File dir = new File(CNPaths.filesDir(), "aria2");
-            if (!dir.isDirectory() && !dir.mkdirs()) {
-                CNLog.w(TAG, "创建 aria2 目录失败: " + dir);
-                return false;
-            }
-            File bin = new File(dir, "aria2c");
-            if (bin.isFile() && bin.length() == expect) {
-                bin.setExecutable(true, false);
-                // 二进制已经在了也要确认 CA 桶还在：这条早退路径原先直接 return，
-                // 于是 pem 一旦缺失（首次拼装失败、被清理、换过系统）就再也不会
-                // 重建——而缺了它的后果见 download() 里那段红字。
-                ensureCacerts(dir);
-                return true;
-            }
-            Context ctx = appContext();
-            if (ctx == null) {
-                CNLog.w(TAG, "拿不到 Application Context，无法解压 aria2c");
-                return false;
-            }
-            InputStream in = ctx.getAssets().open(asset);
-            try {
-                File tmp = new File(dir, "aria2c.tmp");
-                FileOutputStream fos = new FileOutputStream(tmp);
-                try {
-                    byte[] buf = new byte[64 * 1024];
-                    int n;
-                    while ((n = in.read(buf)) > 0) fos.write(buf, 0, n);
-                } finally {
-                    close(fos);
-                }
-                if (tmp.length() != expect) {
-                    CNLog.w(TAG, "aria2c 资产尺寸不符 expected=" + expect + " actual=" + tmp.length());
-                    deleteQuietly(tmp);
-                    return false;
-                }
-                if (!tmp.setExecutable(true, false)) {
-                    deleteQuietly(tmp);
-                    return false;
-                }
-                if (bin.exists() && !bin.delete()) {
-                    deleteQuietly(tmp);
-                    return false;
-                }
-                if (!tmp.renameTo(bin)) {
-                    deleteQuietly(tmp);
-                    return false;
-                }
-            } finally {
-                close(in);
-            }
-            ensureCacerts(dir);
-            return true;
-        } catch (Throwable t) {
-            CNLog.w(TAG, "aria2c 解压失败: " + t);
-            return false;
-        }
-    }
-
-    /** 跑一次 {@code aria2c --version} 验证可执行（有界 5s）。 */
-    private static boolean checkExecutable() {
-        File bin = new File(new File(CNPaths.filesDir(), "aria2"), "aria2c");
-        try {
-            Process p = new ProcessBuilder(bin.getAbsolutePath(), "--version")
-                    .redirectErrorStream(true).start();
-            boolean exited = p.waitFor(5, TimeUnit.SECONDS);
-            if (!exited) {
-                try { p.destroy(); } catch (Throwable ignore) {}
-                return false;
-            }
-            return p.exitValue() == 0;
-        } catch (Throwable t) {
-            CNLog.w(TAG, "aria2c --version 执行失败: " + t);
-            return false;
-        }
-    }
 
     /** 缺了才拼；拼出来的空文件当没拼出来。 */
     private static boolean ensureCacerts(File dir) {
@@ -522,31 +429,6 @@ public final class CNAria2 {
             } catch (Throwable ignore) {}
         }
         return any;
-    }
-
-    /** 取主 ABI。优先 SUPPORTED_ABIS[0]（API 21+），兜底 CPU_ABI。 */
-    private static String primaryAbi() {
-        try {
-            if (Build.SUPPORTED_ABIS != null && Build.SUPPORTED_ABIS.length > 0) {
-                return Build.SUPPORTED_ABIS[0];
-            }
-        } catch (Throwable ignore) {}
-        try {
-            return Build.CPU_ABI;
-        } catch (Throwable t) {
-            return "";
-        }
-    }
-
-    /** 取 Application Context。与原包同一手法（反射 ActivityThread）。 */
-    private static Context appContext() {
-        try {
-            Class<?> cls = Class.forName("android.app.ActivityThread");
-            Object thread = cls.getMethod("currentActivityThread").invoke(null);
-            return (Context) cls.getMethod("getApplication").invoke(thread);
-        } catch (Throwable t) {
-            return null;
-        }
     }
 
     private static void sleep(long ms) {

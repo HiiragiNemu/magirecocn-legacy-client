@@ -13,25 +13,39 @@
 
 ---
 
-## aria2c（`assets/aria2/aria2c-arm`、`assets/aria2/aria2c-arm64`）
+## libaria2c（`lib/arm64-v8a/libaria2c.so`、`lib/armeabi-v7a/libaria2c.so`）
 
 | | |
 |---|---|
-| 软件 | aria2 —— The high speed download utility，v1.37.0 |
+| 软件 | aria2 —— The high speed download utility，v1.37.0，编译为**进程内共享库**（ET_DYN） |
 | 版权 | Copyright (C) 2006, 2019 Tatsuhiro Tsujikawa |
 | 许可 | **GNU General Public License v2 或（由你选择）任何更新版本**，附 OpenSSL 链接例外 |
 | 上游源码 | <https://github.com/aria2/aria2>，tag `release-1.37.0` |
-| 二进制来源 | <https://github.com/Zackptg5/Cross-Compiled-Binaries-Android>，路径 `aria2/aria2c.bin-arm` 与 `aria2/aria2c.bin-arm64`（**我们改了名**：去掉 `.bin`。上游那边不带 `.bin` 的是个 shell 包装脚本，不是二进制——这是当初只写「来源 Cross-Compiled-Binaries-Android」就再也找不回来的原因） |
-| 取用时该仓库 `master` | `9c14dc3ac040c7b085606e8353fd7cc136119ba9`（2026-08-14 记） |
-| sha256 | `aria2c-arm` = `b06494c59df4c3536ad68dfc1ce5b33d3e638cd1e845ae5452709b35ed1270bb`<br>`aria2c-arm64` = `6705bac56e0752b26b22d4aa98cf5caa0f4672904e6cbf0ac2f516cc5f05797d` |
+| 怎么来的 | 2026-08-16 用 Android NDK r25c（clang 14.0.7）交叉编译。TLS 后端 OpenSSL 1.1.1w，其余依赖（libxml2 2.9.14、zlib 1.3.1、sqlite3 3.44.2）**全部静态链入**；`-fvisibility=hidden` + version script 只导出 4 个 JNI 入口（`JNI_OnLoad` / `nativeStart` / `nativeIsRunning` / `nativeWaitStopped`），OpenSSL 等符号**零泄漏**；`-Wl,-z,max-page-size=16384` 使 LOAD 段 `p_align=0x4000`，4KB/16KB 页设备通吃。NEEDED 仅 liblog/libdl/libm/libc。构建参数与验证记录见归档（下述） |
+| sha256 | `libaria2c.so`（arm64-v8a）= `8e7084b7274cbc1cce1d34432ae15b18f72dac894ae4a7e5a226c60979a53643`<br>`libaria2c.so`（armeabi-v7a）= `a609e9236d38bf7a7ea19ffededceada72f68de42c849b6dbe16f65942d9dda2` |
 
-**用途**：备用下载引擎（默认关闭），以**独立子进程**运行，通过 JSON-RPC 控制。
-它与游戏本体既不链接、也不同进程——是「单纯聚合」里最干净的形态，不向任何其他部分
-传播 GPL。
+**用途**：进程内 aria2 下载引擎（备用，或构建期选择作为主引擎），经
+`System.loadLibrary("aria2c")` 由 linker 加载（落点在只读 nativeLibraryDir），
+**无 exec**——绕开 Android 10+ 的 SELinux W^X 闸与 16KB 页对齐限制（与 libcnzip
+同思路）。控制面是 loopback JSON-RPC，aria2 以线程跑在调用进程内。
+
+**备用后端（GnuTLS 组）**：同一 aria2 1.37.0 还交叉编译了一组 GnuTLS 3.8.3
+TLS 后端的 `libaria2c.so`（GnuTLS + nettle 3.9.1 + GMP 6.3.0），专作 **failover
+兜底**——若 OpenSSL 组在真机出现异常，整组替换同名 `.so` 重新打包即可（库名、
+JNI 入口、加载方式均不变，Java 侧零改动）。GnuTLS 组**不随当前 APK 分发**，
+构建归档于维护机 /mnt/android/aria2c-so.zip。
+
+> ⚠ **许可形态变化（2026-08-16）**。旧版（转发 Zackptg5 的预编译 aria2c 可执行
+> 文件）以**独立子进程**运行，曾主张「单纯聚合、不传播 GPL」。现改**进程内 JNI
+> 链接**——不再是聚合，而是链接进同一进程。合规依据是两层：本项目整体按 **GPLv3**
+> 分发，aria2 是 **GPLv2-or-later**（「或任何更新版本」条款使其可与 GPLv3 结合）；
+> 静态链入的 OpenSSL 由 aria2 源码头附带的**链接例外**覆盖（全文见下）。旧的两个
+> exec 二进制已删除（JNI 版代码不再走 exec 路径；API 21–23 的 32 位老机 loadLibrary
+> 失败时回退主引擎，行为不受影响）。
 
 ### OpenSSL 链接例外
 
-这两个是**全静态**二进制，OpenSSL 已编入。aria2 的源码文件头带有作者给出的例外
+libaria2c.so **静态链入** OpenSSL 1.1.1w。aria2 的源码文件头带有作者给出的例外
 （见 `release-1.37.0` 的 `src/*.cc` 头部，原文）：
 
 > In addition, as a special exception, the copyright holders give permission to
@@ -45,26 +59,21 @@
 ### 🔴 对应源码（GPL 第 3 条 / v3 第 6 条的义务）
 
 **分发二进制就要让接收者拿得到对应源码。** 这里的「对应源码」包含 aria2 本体、
-静态链进去的各个库，以及控制编译的脚本：
+静态链进去的各个库（OpenSSL 1.1.1w / libxml2 2.9.14 / zlib 1.3.1 /
+sqlite3 3.44.2），以及控制编译的脚本：
 
 1. **aria2 1.37.0 源码**：<https://github.com/aria2/aria2/tree/release-1.37.0>
    （发行 tarball 见该仓库 Releases）；
-2. **交叉编译脚本**：上述 Zackptg5 仓库的 `build_script/` 目录（同一 commit）。
+2. **交叉编译脚本与验证记录**：由构建方（Kimi）归档为 `aria2c-so.zip`，内含
+   README.md / SHA256SUMS.txt / VERIFICATION.md（构建参数见其中「复现信息」）。
+   归档暂存于维护机 /mnt/android/；书面要约下随对应源码一并提供。
 
 **书面要约**：任何收到本项目产物的人，可通过 README 所列联系方式向
 MagirecoCN-Revival-Project 索取上述对应源码的完整副本，我们按 GPL 要求提供，
 不收取超过介质成本的费用。本要约自分发之日起三年内有效。
 
-> ⚠ **诚实说明两点。**
->
-> 一、Zackptg5 的那个仓库**自身没有 LICENSE 文件**（GitHub 也识别不出许可），
-> 也就是说它转发 GPL 二进制时并未附上完整声明。所以我们**不能靠「转达上游的要约」
-> 来履行义务**，只能自己指向 aria2 官方源码与那份构建脚本，并自己给出上面的书面要约。
->
-> 二、我们**没有逐位复现过**这两个二进制与 aria2 1.37.0 官方源码的对应关系
-> ——只核验了 sha256 与上游文件一致、版本串为 `1.37.0`、内嵌版权与 GPL 声明
-> 属于 aria2。更彻底的做法是**自己在 CI 里从源码构建 aria2**，那样「对应源码」
-> 就是我们自己的构建输入，不再依赖第三方转发。目前没做，记在这里。
+> 相比旧版（转发 Zackptg5 的二进制）的进步：现在是**我们自己的构建**，「对应源码」
+> 就是我们自己的构建输入与存档，不再依赖第三方转发、也不再背「逐位复现不了」的账。
 
 ---
 

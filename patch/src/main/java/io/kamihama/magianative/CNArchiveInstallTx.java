@@ -21,7 +21,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipException;
 import java.util.zip.ZipFile;
 
-/** Crash-resumable base-resource extraction transaction. */
+/** 崩溃可恢复的基础资源解压事务（按 checkpoint 断点续解）。 */
 public final class CNArchiveInstallTx {
     private static final String TAG = "CNArchiveInstallTx";
     private static final String SCHEMA = "CNV-EXTRACT-1";

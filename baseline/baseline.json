@@ -964,22 +964,6 @@
     },
     {
       "kind": "add",
-      "path": "assets/aria2/aria2c-arm",
-      "group": "第三方",
-      "why": "aria2c 预编译二进制（armeabi-v7a）",
-      "post": "b06494c59df4c3536ad68dfc1ce5b33d3e638cd1e845ae5452709b35ed1270bb",
-      "from": "repo"
-    },
-    {
-      "kind": "add",
-      "path": "assets/aria2/aria2c-arm64",
-      "group": "第三方",
-      "why": "aria2c 预编译二进制（arm64-v8a）",
-      "post": "6705bac56e0752b26b22d4aa98cf5caa0f4672904e6cbf0ac2f516cc5f05797d",
-      "from": "repo"
-    },
-    {
-      "kind": "add",
       "path": "lib/armeabi-v7a/libshadowhook.so",
       "group": "第三方",
       "why": "shadowhook 预编译库",
@@ -1113,6 +1097,22 @@
       "group": "第三方",
       "why": "libcnzip 预编译库（libarchive 3.7.4 JNI 封装，arm64-v8a）",
       "post": "a730e1800d30b7656e36cc3c23fc69d5dd19a0a7271c547f9b8b7751720e7bc7",
+      "from": "repo"
+    },
+    {
+      "kind": "add",
+      "path": "lib/armeabi-v7a/libaria2c.so",
+      "group": "第三方",
+      "why": "aria2 进程内引擎库（1.37.0，OpenSSL 1.1.1w 静态链入，armeabi-v7a）",
+      "post": "a609e9236d38bf7a7ea19ffededceada72f68de42c849b6dbe16f65942d9dda2",
+      "from": "repo"
+    },
+    {
+      "kind": "add",
+      "path": "lib/arm64-v8a/libaria2c.so",
+      "group": "第三方",
+      "why": "aria2 进程内引擎库（1.37.0，OpenSSL 1.1.1w 静态链入，arm64-v8a）",
+      "post": "8e7084b7274cbc1cce1d34432ae15b18f72dac894ae4a7e5a226c60979a53643",
       "from": "repo"
     }
   ]
