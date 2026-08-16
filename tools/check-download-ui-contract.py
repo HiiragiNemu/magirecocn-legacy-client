@@ -191,7 +191,7 @@ checks = {
         and "currentUseful - lastSpeedBytes" in chunk,
     "03完整ZIP可复用并断点续解压": "CNArchiveInstallTx.extract" in downloader
         and "extract-resume-accept" in extract_tx
-        and "Do not delete a complete archive here" in downloader,
+        and "下次启动必须复用" in downloader,
     "下载中重下会中止并从头开始": "requestActiveRestart" in downloader
         and "manual-restart-active" in downloader
         and "停止当前传输" in manual,
