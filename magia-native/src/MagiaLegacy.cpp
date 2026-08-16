@@ -893,30 +893,22 @@ static void maybeReleaseDeferredTop() {
 }
 
 
-// v5: stage-transition-aware WebView guard. v4 forced INVISIBLE every 250ms and could
-// race ADV -> battle. A notifyJs/internal Top transition grants a grace window; after it
-// expires, the guard hides a WebView only if the tutorial is still active.
-static std::atomic<uint64_t> g_tutorialWebGraceUntilMs{0};
-static uint64_t tutorialNowMs() {
-    return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-}
-static void grantTutorialWebGrace(const char* why, uint64_t ms) {
-    uint64_t until = tutorialNowMs() + ms;
-    g_tutorialWebGraceUntilMs.store(until, std::memory_order_relaxed);
-    LOGI("[Tutorial] WebView guard grace reason=%s duration=%llums",
-         why ? why : "unknown", (unsigned long long)ms);
-}
+// v6: 序章全程压住前端界面的看门狗，回到 v4 语义（250ms 无条件按回隐藏）。
+// v5 曾给每次 notifyJs / 内部 Top 跳转各发 2500ms「宽限期」，担心 v4 的强压
+// 与 ADV->战斗 撞车。但宽限期生效的时刻与 WebView 自己复出的时刻**恰好重合**
+// ——段通知一到，前端就在段边界复出（见上文 v3 的教训），于是一连串 notifyJs
+// 把宽限期不断续满，看门狗全程待机，主页（含 Live2D）整场压在战斗画面上，
+// 直到段通知停了、最后一个宽限期耗尽才被按回去。玩家看到的就是「第一场战斗
+// 时主页 L2D 小人压在战斗前面，过一段时间又自己消失」（公测真机报告）。
+// 而且压 WebView 只是 setVisibility，挡不住也不影响 native 场景切换——
+// ADV->战斗 若真被卡，嫌疑在 Top 闸门（v5 已改为只吞精确匹配的主页 Top，
+// 本版保留），不在 WebView 的显隐。
 static std::atomic<bool> g_uiWatchdogOn{false};
 static void* uiWatchdogMain(void*) {
-    LOGI("[Tutorial] WebView guard started mode=transition-aware interval=500ms");
+    LOGI("[Tutorial] WebView guard started mode=always-hide interval=250ms");
     while (g_tutorialActive.load()) {
-        uint64_t now = tutorialNowMs();
-        uint64_t until = g_tutorialWebGraceUntilMs.load(std::memory_order_relaxed);
-        if (now >= until) {
-            setGameUiVisible(false);
-        }
-        usleep(500 * 1000);
+        setGameUiVisible(false);
+        usleep(250 * 1000);
     }
     g_uiWatchdogOn.store(false);
     LOGI("[Tutorial] WebView guard stopped");
@@ -959,7 +951,6 @@ static void pushSceneTopNew(void* self, const std::string& arg) {
             return;
         }
         LOGI("[Tutorial] pushSceneTop classify=internal/unknown allow arg=%s", arg.c_str());
-        grantTutorialWebGrace("internal-top", 2500);
         pushSceneTopOld(self, arg);
         return;
     }
@@ -996,8 +987,7 @@ static void pushSceneTopNew(void* self, const std::string& arg) {
         LOGI("[Tutorial] homepage Top identity captured arg=%s", arg.c_str());
         g_tutorialForced.store(true);
         g_tutorialActive.store(true);
-        // v5 guard: hide resurfaced WebView, but honor grace windows around actual
-        // front-end/native stage transitions so ADV -> battle is not interrupted.
+        // v6 guard: 序章全程无条件按回复出的 WebView（理由见 uiWatchdogMain 注释）。
         if (!g_dbgNoTutorialGuard && !g_uiWatchdogOn.exchange(true)) {
             pthread_t t;
             if (pthread_create(&t, nullptr, uiWatchdogMain, nullptr) == 0) {
@@ -1147,7 +1137,6 @@ static void prologueDtorNew(void* _this) {
 static void notifyJsNew(void* _this, const std::string& arg) {
     LOGI("[Tutorial::notifyJs] before callback arg=%s active=%d forced=%d",
          arg.c_str(), (int)g_tutorialActive.load(), (int)g_tutorialForced.load());
-    if (g_tutorialActive.load()) grantTutorialWebGrace("notifyJs", 2500);
     notifyJsOld(_this, arg);
     LOGI("[Tutorial::notifyJs] after callback arg=%s", arg.c_str());
     // 「prologue」是 OP020…OP080 全部播完后的最终完成信号。实测引擎此刻
