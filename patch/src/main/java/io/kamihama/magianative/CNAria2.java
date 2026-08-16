@@ -87,17 +87,43 @@ public final class CNAria2 {
 
     private CNAria2() {}
 
-    /** 备用引擎是否可用（静态二进制已解压、可执行、--version 能跑）。 */
+    /**
+     * 备用引擎是否可用：首次调用时按 failover 决策加载一个后端
+     * （Aria2EngineFailover 选 openssl/gnutls → {@code CNAria2Lib.load}；
+     * 加载期失败当场换组；两组都失败或连续死亡达上限则放弃）。结果进程内缓存。
+     */
     public static boolean isAvailable() {
         if (initDone) return available;
         synchronized (INIT_LOCK) {
             if (initDone) return available;
-            // 进程内 JNI：检查 libaria2c.so 能否加载（CNAria2Lib.isAvailable）。
-            // 不需要 exec 二进制，所以没有 SELinux/16KB 页问题；加载失败回退主引擎。
-            boolean ok = CNAria2Lib.isAvailable();
-            available = ok;
+            available = ensureEngineLoaded();
             initDone = true;
             return available;
+        }
+    }
+
+    /** 首次加载引擎：failover 决策 + 加载期当场换组。失败返回 false → 回退主引擎。 */
+    private static boolean ensureEngineLoaded() {
+        if (CNAria2Lib.loadedBackend() != null) return true;
+        if (Aria2EngineFailover.giveUp()) {
+            CNLog.w(TAG, "aria2 双后端连续死亡达上限，本进程不再尝试（回退主引擎）");
+            return false;
+        }
+        CNAria2Lib.Backend b = Aria2EngineFailover.pickBackend();
+        try {
+            CNAria2Lib.load(b);
+            return true;
+        } catch (UnsatisfiedLinkError e) {
+            CNLog.w(TAG, b + " 加载失败: " + e);
+            if (Aria2EngineFailover.giveUp()) return false;
+            CNAria2Lib.Backend b2 = Aria2EngineFailover.shouldFallbackOnLoadError(b);
+            try {
+                CNAria2Lib.load(b2);
+                return true;
+            } catch (UnsatisfiedLinkError e2) {
+                CNLog.e(TAG, b2 + " 也加载失败，aria2 不可用（回退主引擎）: " + e2);
+                return false;
+            }
         }
     }
 
@@ -161,6 +187,9 @@ public final class CNAria2 {
 
             // 进程内 JNI 启动 aria2 线程（libaria2c.so），替代 exec 子进程：
             // 绕开 SELinux exec 闸 + 16KB 页对齐，且符号卫生避免 OpenSSL 抢占崩溃。
+            // 立「生死状」：若 native 崩溃，armed 标记留在盘上，下次启动
+            // Aria2EngineFailover 读到就换后端（openssl ↔ gnutls）。
+            Aria2EngineFailover.arm();
             int startRc = CNAria2Lib.start(args.toArray(new String[0]));
             if (startRc != 0) {
                 CNLog.w(TAG, "libaria2c 启动失败 rc=" + startRc);
@@ -275,12 +304,20 @@ public final class CNAria2 {
                     result = ERR_DOWNLOAD;
                 }
             }
+            // 正常路径先 RPC 优雅关停 aria2，而不是只靠 finally 的兜底——
+            // 兜底那条 port=0 会跳过 RPC，线程将一直挂着，下一次 download
+            // 直接撞「已有实例运行」。
+            shutdownAria2(port, secret);
             return result;
         } catch (Throwable t) {
             CNLog.w(TAG, "aria2 进程内异常: " + t);
             return ERR_OTHER;
         } finally {
-            shutdownAria2(0, null);
+            shutdownAria2(0, null);          // 兜底：早退/异常路径（port=0 跳过 RPC）
+            // 进程活到这里 = 后端没把进程炸死，清除 armed 标记（下轮沿用当前后端）。
+            // 若 native 崩溃（SIGSEGV/SIGABRT），finally 根本来不及跑，标记留在盘上
+            // → 下次启动 Aria2EngineFailover.pickBackend() 读到就换组。
+            Aria2EngineFailover.disarm();
             inUse.set(false);
         }
     }

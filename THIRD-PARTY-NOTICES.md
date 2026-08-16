@@ -13,37 +13,38 @@
 
 ---
 
-## libaria2c（`lib/arm64-v8a/libaria2c.so`、`lib/armeabi-v7a/libaria2c.so`）
+## libaria2c（`lib/arm64-v8a/libaria2c_ossl.so`、`lib/armeabi-v7a/libaria2c_ossl.so`、`lib/arm64-v8a/libaria2c_gnutls.so`、`lib/armeabi-v7a/libaria2c_gnutls.so`）
 
 | | |
 |---|---|
-| 软件 | aria2 —— The high speed download utility，v1.37.0，编译为**进程内共享库**（ET_DYN） |
+| 软件 | aria2 —— The high speed download utility，v1.37.0，编译为**进程内共享库**（ET_DYN），**双 TLS 后端** |
 | 版权 | Copyright (C) 2006, 2019 Tatsuhiro Tsujikawa |
-| 许可 | **GNU General Public License v2 或（由你选择）任何更新版本**，附 OpenSSL 链接例外 |
+| 许可 | **GNU General Public License v2 或（由你选择）任何更新版本**；openssl 组附 OpenSSL 链接例外；gnutls 组额外静态链入 LGPL 组件（见下） |
 | 上游源码 | <https://github.com/aria2/aria2>，tag `release-1.37.0` |
-| 怎么来的 | 2026-08-16 用 Android NDK r25c（clang 14.0.7）交叉编译。TLS 后端 OpenSSL 1.1.1w，其余依赖（libxml2 2.9.14、zlib 1.3.1、sqlite3 3.44.2）**全部静态链入**；`-fvisibility=hidden` + version script 只导出 4 个 JNI 入口（`JNI_OnLoad` / `nativeStart` / `nativeIsRunning` / `nativeWaitStopped`），OpenSSL 等符号**零泄漏**；`-Wl,-z,max-page-size=16384` 使 LOAD 段 `p_align=0x4000`，4KB/16KB 页设备通吃。NEEDED 仅 liblog/libdl/libm/libc。构建参数与验证记录见归档（下述） |
-| sha256 | `libaria2c.so`（arm64-v8a）= `8e7084b7274cbc1cce1d34432ae15b18f72dac894ae4a7e5a226c60979a53643`<br>`libaria2c.so`（armeabi-v7a）= `a609e9236d38bf7a7ea19ffededceada72f68de42c849b6dbe16f65942d9dda2` |
+| 怎么来的 | 2026-08-17 用 Android NDK r25c（clang 14.0.7）交叉编译。**两个 ABI 均 minSdk 21**：armv7 用 `-D_LIBCPP_HAS_NO_OFF_T_FUNCTIONS` + `compat_arm.c` 消除 libc++ 对 fseeko/ftello（32 位 bionic 为 API24）的引用，动态符号表对 API21 零缺口。openssl 组 TLS=OpenSSL 1.1.1w；gnutls 组 TLS=GnuTLS 3.8.3 + nettle 3.9.1 + GMP 6.3.0。共同静态依赖 libxml2 2.9.14 / zlib 1.3.1 / sqlite3 3.44.2 / libssh2 1.11.0。`-fvisibility=hidden` + `-Wl,-Bsymbolic` + version script 只导出 4 个 JNI 入口（`JNI_OnLoad` / `nativeStart` / `nativeIsRunning` / `nativeWaitStopped`，`@@CNARIA2LIB_1.0`），TLS 库符号**零泄漏**；`-Wl,-z,max-page-size=16384` 使 LOAD 段 `p_align=0x4000`，4KB/16KB 页设备通吃。NEEDED 仅 liblog/libdl/libm/libc。构建与验证见归档（下述） |
+| sha256 | `libaria2c_ossl.so`（arm64-v8a）= `c922613488ca6f640a732784f31e71730ad8c17bbd3c659fdd9434b93a10d92e`<br>`libaria2c_ossl.so`（armeabi-v7a）= `49de737e8dc3897eb5189fe0540766ec3da0918ff2a77ec839423f5230922367`<br>`libaria2c_gnutls.so`（arm64-v8a）= `d8d6e7a221e9fdc0e33871299fc59ab8302590c5455b96a9cbaccce47ac39810`<br>`libaria2c_gnutls.so`（armeabi-v7a）= `e7792e1508f2b8db599be85b23a795620efc28ce21753c039b00437f2e859ec2` |
 
-**用途**：进程内 aria2 下载引擎（备用，或构建期选择作为主引擎），经
-`System.loadLibrary("aria2c")` 由 linker 加载（落点在只读 nativeLibraryDir），
-**无 exec**——绕开 Android 10+ 的 SELinux W^X 闸与 16KB 页对齐限制（与 libcnzip
-同思路）。控制面是 loopback JSON-RPC，aria2 以线程跑在调用进程内。
-
-> TLS 后端选型：当前这份是 **OpenSSL 1.1.1w** 后端。曾另备 GnuTLS 3.8.3 后端的
-> 构建配方（仅留档、不随包分发）；若 OpenSSL 后端在真机异常，再按配方重编替换。
+**用途**：进程内 aria2 下载引擎（备用，或构建期选择作为主引擎）。**两组一起打包**
+（文件名/SONAME 各异，bionic 按 SONAME 去重，故必须是重链产物而非 cp 改名）。
+默认加载 openssl 组；`Aria2EngineFailover` 的 dead-man's switch 在**原生崩溃**（进程死、
+armed 标记留在盘上）或**加载期失败**时自动换到另一组，连续 4 次死亡后放弃、回退
+自建引擎。控制面是 loopback JSON-RPC，aria2 以线程跑在调用进程内。经
+`System.loadLibrary` 由 linker 加载（落点在只读 nativeLibraryDir），**无 exec**——
+绕开 Android 10+ 的 SELinux W^X 闸与 16KB 页对齐限制（与 libcnzip 同思路）。
 
 > ⚠ **许可形态变化（2026-08-16）**。旧版（转发 Zackptg5 的预编译 aria2c 可执行
 > 文件）以**独立子进程**运行，曾主张「单纯聚合、不传播 GPL」。现改**进程内 JNI
 > 链接**——不再是聚合，而是链接进同一进程。合规依据是两层：本项目整体按 **GPLv3**
 > 分发，aria2 是 **GPLv2-or-later**（「或任何更新版本」条款使其可与 GPLv3 结合）；
-> 静态链入的 OpenSSL 由 aria2 源码头附带的**链接例外**覆盖（全文见下）。旧的两个
-> exec 二进制已删除（JNI 版代码不再走 exec 路径；API 21–23 的 32 位老机 loadLibrary
-> 失败时回退主引擎，行为不受影响）。
+> openssl 组静态链入的 OpenSSL 由 aria2 源码头附带的**链接例外**覆盖（全文见下）；
+> gnutls 组静态链入的 LGPL 组件（GnuTLS/nettle/GMP）在 GPLv3 工作里静态链接是
+> 许可的（LGPL 与 GPLv3 兼容），其「提供可重链对象 / 对应源码」义务由下方
+> 「🔴 对应源码」与书面要约一并覆盖。旧的两个 exec 二进制已删除。
 
 ### OpenSSL 链接例外
 
-libaria2c.so **静态链入** OpenSSL 1.1.1w。aria2 的源码文件头带有作者给出的例外
-（见 `release-1.37.0` 的 `src/*.cc` 头部，原文）：
+openssl 组（`libaria2c_ossl.so`）**静态链入** OpenSSL 1.1.1w。aria2 的源码文件头
+带有作者给出的例外（见 `release-1.37.0` 的 `src/*.cc` 头部，原文）：
 
 > In addition, as a special exception, the copyright holders give permission to
 > link the code of portions of this program with the OpenSSL library under
@@ -53,24 +54,43 @@ libaria2c.so **静态链入** OpenSSL 1.1.1w。aria2 的源码文件头带有作
 
 静态链接 OpenSSL 因此合规。
 
+### GnuTLS 组（LGPL 组件）
+
+gnutls 组（`libaria2c_gnutls.so`）的 TLS 路径 100% 走 **GnuTLS 3.8.3**，静态链入
+**GnuTLS 3.8.3（LGPL-2.1-or-later）+ nettle 3.9.1（LGPL-3.0-or-later）+ GMP 6.3.0
+（LGPL-3.0-or-later 与 GPL-2.0-or-later 双许可）**（内嵌的 libcrypto 1.1.1w 仅供
+libssh2 的 SFTP 原语，非 TLS 路径）。静态链接 LGPL 库进 GPLv3 工作是许可的；
+LGPL 第 4(d) 条要求的「可重链对象/源码」与本项目对 aria2 的对应源码义务
+（下方）合并履行——对应源码含全部静态链入组件与构建脚本，书面要约三年有效。
+
 ### 🔴 对应源码（GPL 第 3 条 / v3 第 6 条的义务）
 
 **分发二进制就要让接收者拿得到对应源码。** 这里的「对应源码」包含 aria2 本体、
-静态链进去的各个库（OpenSSL 1.1.1w / libxml2 2.9.14 / zlib 1.3.1 /
-sqlite3 3.44.2），以及控制编译的脚本：
+静态链进去的**全部**库（openssl 组：OpenSSL 1.1.1w / libxml2 2.9.14 / zlib 1.3.1 /
+sqlite3 3.44.2 / libssh2 1.11.0；gnutls 组另含 **GnuTLS 3.8.3 / nettle 3.9.1 /
+GMP 6.3.0**——这三个是 **LGPL**，其「接收者可替换并重链」的 relink 义务由
+「完整源码 + 构建脚本可整体重建」一并履行），以及控制编译的脚本：
 
 1. **aria2 1.37.0 源码**：<https://github.com/aria2/aria2/tree/release-1.37.0>
    （发行 tarball 见该仓库 Releases）；
+2. **LGPL 组件源码**（gnutls 组静态链入，可替换/重链所必需）：
+   - **GnuTLS 3.8.3**：<https://www.gnutls.org/>（LGPL-2.1-or-later）
+   - **nettle 3.9.1**：<https://ftp.gnu.org/gnu/nettle/>（LGPL-3.0-or-later）
+   - **GMP 6.3.0**：<https://ftp.gnu.org/gnu/gmp/>（LGPL-3.0-or-later 与 GPL-2.0-or-later 双许可）
 2. **交叉编译脚本与验证记录**：由构建方（Kimi）归档为 `aria2c-so.zip`，内含
-   README.md / SHA256SUMS.txt / VERIFICATION.md（构建参数见其中「复现信息」）。
-   归档暂存于维护机 /mnt/android/；书面要约下随对应源码一并提供。
+   README.md / SHA256SUMS.txt / VERIFICATION.md 与 **`build/` 全套**——
+   `rebuild-armv7-api21.sh`（含 `-D_LIBCPP_HAS_NO_OFF_T_FUNCTIONS` 与 compat 的
+   minSdk21 重编）、`compat_arm.c/h`、`aria2_jni.cpp`、smoke 脚本、各 ABI 完整
+   UND 清单（构建参数见 VERIFICATION「复现信息」）。归档暂存于维护机
+   /mnt/android/；书面要约下随对应源码一并提供。
 
 **书面要约**：任何收到本项目产物的人，可通过 README 所列联系方式向
 MagirecoCN-Revival-Project 索取上述对应源码的完整副本，我们按 GPL 要求提供，
 不收取超过介质成本的费用。本要约自分发之日起三年内有效。
 
 > 相比旧版（转发 Zackptg5 的二进制）的进步：现在是**我们自己的构建**，「对应源码」
-> 就是我们自己的构建输入与存档，不再依赖第三方转发、也不再背「逐位复现不了」的账。
+> 就是我们自己的构建输入与存档（含 `build/` 全套脚本，可逐位复现），不再依赖
+> 第三方转发、也不再背「逐位复现不了」的账。
 
 ---
 
