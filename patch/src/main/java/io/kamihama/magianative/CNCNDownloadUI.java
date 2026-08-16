@@ -187,6 +187,19 @@ public class CNCNDownloadUI {
     private static volatile String detailText =
             "正在初始化下载器…\n台词与前端脚本（热更新）显示在最前，下载按依赖顺序仍在最后";
 
+    /**
+     * 热更完成后自动进游戏的倒计时截止时刻（{@code uptimeMillis}；0 = 不在倒计时）。
+     * 由 {@code CNHotUpdateCheck.awaitPlayerWindow} 在停留窗口期间逐轮更新，
+     * {@link #renderAll} 据它渲染「N 秒后进入游戏」，让玩家知道浮层没卡死、
+     * 稍候自动进入；玩家点「停留本页」/开着弹窗时置 0（无限期，不数秒）。
+     */
+    private static volatile long autoEnterAtMs;
+
+    /** 设置自动进游戏倒计时截止时刻；0 关闭倒计时。 */
+    static void setAutoEnterCountdown(long atMs) {
+        autoEnterAtMs = atMs;
+    }
+
     // ---- 配色（取自 BootstrapActivity 的调色板） ----
     private static int COLOR_CARD_STK;
     private static int COLOR_ACCENT;
@@ -3749,7 +3762,17 @@ public class CNCNDownloadUI {
 
         // 阶段 / 明细
         if (vPhase  != null) vPhase.setText(phaseText);
-        if (vStatus != null) vStatus.setText(detailText);
+        if (vStatus != null) {
+            long remain = autoEnterAtMs - android.os.SystemClock.uptimeMillis();
+            if (autoEnterAtMs > 0 && remain > 0) {
+                // 倒计时让玩家一眼知道浮层没卡死、稍候自动进游戏。
+                // renderAll 每 500ms 跑一次，秒数按向上取整显示，最后 1 秒不跳 0 卡顿。
+                int secs = (int) ((remain + 999L) / 1000L);
+                vStatus.setText(detailText + "\n" + secs + " 秒后进入游戏");
+            } else {
+                vStatus.setText(detailText);
+            }
+        }
 
         // 槽位。slotList 按 DISPLAY_ORDER 排（热更两包显示在最前），
         // 状态/进度一律按槽位携带的 FILE_NAMES 下标查，与显示位置解耦。
@@ -4093,6 +4116,7 @@ public class CNCNDownloadUI {
     public static void hide() {
         // 浮层要收了，音乐也得停——否则安装完了背景音还在响。
         // 放在 isShowing 判断之前：即使浮层没建起来，也要保证不会有残留的播放线程。
+        autoEnterAtMs = 0;   // 收浮层即撤倒计时
         stopOverlayFlag();  // 先撤引擎闸门标记，引擎才能继续推进
         try { CNBgm.stop(); } catch (Throwable ignore) {}
         try { CNDownloadUiAssist.onOverlayDetached(); } catch (Throwable ignore) {}

@@ -916,6 +916,7 @@ public final class CNHotUpdateCheck {
             while (true) {
                 if (CNDownloadUiAssist.consumeLeaveRequest()) {
                     CNLog.i(TAG, "玩家点击“进入游戏”，结束资源页停留");
+                    CNCNDownloadUI.setAutoEnterCountdown(0);
                     break;
                 }
                 // 玩家明确停留、或正在操作任一模态框时不设强制上限，绝不能
@@ -923,6 +924,7 @@ public final class CNHotUpdateCheck {
                 if (CNDownloadUiAssist.shouldStayOnPage()
                         || CNCNDownloadUI.isModalOpen()
                         || CNDownloadUiAssist.isModalOpen()) {
+                    CNCNDownloadUI.setAutoEnterCountdown(0);   // 无限期，不数秒
                     Thread.sleep(100);
                     continue;
                 }
@@ -932,6 +934,10 @@ public final class CNHotUpdateCheck {
                 // 只认窗口开始后的交互；更早的触摸属于检查过程本身，不该顺延
                 long anchor = interacted ? lastTouch : start;
                 long linger = interacted ? INTERACT_LINGER_MS : IDLE_LINGER_MS;
+                // 倒计时截止时刻 = 无交互/有交互各自的停留终点，封顶总上限；
+                // 浮层据此渲染「N 秒后进入游戏」。
+                CNCNDownloadUI.setAutoEnterCountdown(
+                        Math.min(anchor + linger, start + PLAYER_WINDOW_MAX_MS));
                 if (now - anchor >= linger) break;
                 if (now - start >= PLAYER_WINDOW_MAX_MS) {
                     CNLog.w(TAG, "无人停留且无模态操作，玩家窗口到达总上限");
