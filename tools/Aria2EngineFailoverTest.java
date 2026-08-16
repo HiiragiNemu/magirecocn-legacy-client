@@ -64,6 +64,18 @@ public class Aria2EngineFailoverTest {
         Aria2EngineFailover.disarm();
         check("[6] disarm 清零后 giveUp=false", !Aria2EngineFailover.giveUp());
 
+        // [7] 版本变更即重置：伪造「旧版本、已 giveUp」的标记 → 读到即整体重置
+        java.io.FileWriter fw = new java.io.FileWriter(new File(dir, "aria2_failover"));
+        fw.write("backend=GNUTLS\narmed=1\ndeaths=9\ngen=0.0.0\n");
+        fw.close();
+        check("[7a] 旧版本标记读后 giveUp 被重置=false", !Aria2EngineFailover.giveUp());
+        check("[7b] 重置后 pickBackend 回默认 OSSL",
+                Aria2EngineFailover.pickBackend() == CNAria2Lib.Backend.OSSL);
+        check("[7c] 重置后 dump 为 backend=OSSL armed=false deaths=0",
+                Aria2EngineFailover.dump().contains("backend=OSSL")
+                        && Aria2EngineFailover.dump().contains("armed=false")
+                        && Aria2EngineFailover.dump().contains("deaths=0"));
+
         System.clearProperty("aria2.failover.dir");
         File[] leftover = dir.listFiles();
         if (leftover != null) { for (File f : leftover) f.delete(); }

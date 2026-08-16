@@ -26,6 +26,15 @@ public final class CNUserAgent {
     /** CI 注入点：build-apk.yml 按 CLIENT_VERSION 同样式 sed 替换。 */
     private static final String CLIENT_VERSION = "1.0.0";
 
+    /**
+     * 客户端版本号（与 native 侧 {@code CLIENT_VERSION} 同源，CI 注入）。
+     * {@link Aria2EngineFailover} 用作「版本变更即重置」的判据：新版本可能修了
+     * 后端/换了构建，aria2 的 giveUp 计数不该跨版本继承。
+     */
+    public static String clientVersion() {
+        return CLIENT_VERSION;
+    }
+
     private static volatile String cached;
 
     private CNUserAgent() {}

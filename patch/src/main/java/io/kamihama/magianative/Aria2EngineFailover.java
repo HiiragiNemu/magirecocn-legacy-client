@@ -29,7 +29,9 @@ import io.kamihama.magianative.CNAria2Lib.Backend;
  * <p>防抖：两组 so 的 BT/HTTP 协议栈是同一份 aria2 代码，若崩溃由负载触发
  * （而非 TLS 后端），换组也会连环炸。故连续 armed-death 达到
  * {@value #MAX_CONSECUTIVE_DEATHS} 后 {@link #giveUp()} 返回 true——调用方
- * 应停切、回退自建引擎，避免乒乓。
+ * 应停切、回退自建引擎，避免乒乓。giveUp 后 aria2 在该设备持续禁用，直到
+ * **客户端版本变更**（{@link CNUserAgent#clientVersion()} 与标记里的 gen 不符）
+ * 自动整体重置——新版本可能修了后端，计数不该跨版本继承。
  *
  * <p>标记是<b>文件</b>（{@code <filesDir>/madomagi/magica/aria2_failover}），
  * 不用 SharedPreferences——本层刻意不依赖 Context（补丁层在 Context 就绪前
@@ -59,7 +61,8 @@ public final class Aria2EngineFailover {
 
     private Aria2EngineFailover() {}
 
-    // ---- 盘面：backend=… / armed=… / deaths=… 三行 ----
+    // ---- 盘面：backend=… / armed=… / deaths=… / gen=… 四行 ----
+    // gen = 写入时的客户端版本；读出来不一致说明发了新版本 → 整体重置。
     // 标记目录默认 <filesDir>/madomagi/magica；测试可用系统属性
     // "aria2.failover.dir" 覆盖（Android 上该属性不存在，生产路径不受影响）。
 
@@ -75,34 +78,45 @@ public final class Aria2EngineFailover {
         Backend backend = Backend.OSSL;
         boolean armed;
         int deaths;
+        String gen = "";
     }
 
     private static synchronized State read() {
         State s = new State();
         File m = marker();
-        if (!m.isFile()) return s;
-        BufferedReader in = null;
-        try {
-            in = new BufferedReader(new InputStreamReader(
-                    new FileInputStream(m), Charset.forName("UTF-8")));
-            String line;
-            while ((line = in.readLine()) != null) {
-                int eq = line.indexOf('=');
-                if (eq <= 0) continue;
-                String k = line.substring(0, eq).trim();
-                String v = line.substring(eq + 1).trim();
-                if (k.equals("backend")) {
-                    try { s.backend = Backend.valueOf(v); } catch (Throwable ignore) {}
-                } else if (k.equals("armed")) {
-                    s.armed = "1".equals(v);
-                } else if (k.equals("deaths")) {
-                    try { s.deaths = Math.max(0, Integer.parseInt(v)); } catch (Throwable ignore) {}
+        if (m.isFile()) {
+            BufferedReader in = null;
+            try {
+                in = new BufferedReader(new InputStreamReader(
+                        new FileInputStream(m), Charset.forName("UTF-8")));
+                String line;
+                while ((line = in.readLine()) != null) {
+                    int eq = line.indexOf('=');
+                    if (eq <= 0) continue;
+                    String k = line.substring(0, eq).trim();
+                    String v = line.substring(eq + 1).trim();
+                    if (k.equals("backend")) {
+                        try { s.backend = Backend.valueOf(v); } catch (Throwable ignore) {}
+                    } else if (k.equals("armed")) {
+                        s.armed = "1".equals(v);
+                    } else if (k.equals("deaths")) {
+                        try { s.deaths = Math.max(0, Integer.parseInt(v)); } catch (Throwable ignore) {}
+                    } else if (k.equals("gen")) {
+                        s.gen = v;
+                    }
                 }
+            } catch (Throwable t) {
+                CNLog.w(TAG, "读 failover 标记失败（按默认处理）: " + t);
+            } finally {
+                if (in != null) { try { in.close(); } catch (Throwable ignore) {} }
             }
-        } catch (Throwable t) {
-            CNLog.w(TAG, "读 failover 标记失败（按默认处理）: " + t);
-        } finally {
-            if (in != null) { try { in.close(); } catch (Throwable ignore) {} }
+        }
+        // 版本变更即重置：新版本可能修了后端/换了构建，giveUp 计数不该跨版本继承。
+        // 重置成全新状态（默认 OSSL、未 armed、deaths=0）并把版本号烙进标记。
+        if (!CNUserAgent.clientVersion().equals(s.gen)) {
+            s = new State();
+            s.gen = CNUserAgent.clientVersion();
+            write(s.backend, s.armed, s.deaths);
         }
         return s;
     }
@@ -120,6 +134,7 @@ public final class Aria2EngineFailover {
                 sb.append("backend=").append(backend.name()).append('\n');
                 sb.append("armed=").append(armed ? "1" : "0").append('\n');
                 sb.append("deaths=").append(deaths).append('\n');
+                sb.append("gen=").append(CNUserAgent.clientVersion()).append('\n');
                 out.write(sb.toString().getBytes(Charset.forName("UTF-8")));
             } finally {
                 try { out.close(); } catch (Throwable ignore) {}
