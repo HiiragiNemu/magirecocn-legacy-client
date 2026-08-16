@@ -89,6 +89,19 @@ public class CNCNDownloadUI {
     };
 
     /**
+     * 浮层**显示顺序**，与 {@link #FILE_NAMES} 的**下标**解耦。
+     * 热更两包显示在最上面两行（玩家先看到它俩、知道汉化在包里），但实际
+     * 下载/安装顺序**不动**——它们仍按 {@code CNDownloaderFix.FILE_NAMES}
+     * 排最后，要等前置包装完才装（覆盖改好文件，装早了会静默回退，见那边注释）。
+     * 元素 = {@code FILE_NAMES} 的下标；改动它只影响显示，不影响下载与
+     * 完成标记（那些按文件名索引）。
+     */
+    private static final int[] DISPLAY_ORDER = {
+        13, 14,
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
+    };
+
+    /**
      * 每个包的**规范 URL**，即身份标识——不是下载地址。
      *
      * <p>安装完成标记里记的就是这一串，{@code isMarkerValid} 做逐字符串比对；
@@ -172,7 +185,7 @@ public class CNCNDownloadUI {
      * 只会觉得莫名其妙。
      */
     private static volatile String detailText =
-            "正在初始化下载器…\n台词与前端脚本（热更新内容）已排在最前，先下完即可用上最新汉化";
+            "正在初始化下载器…\n台词与前端脚本（热更新）显示在最前，下载按依赖顺序仍在最后";
 
     // ---- 配色（取自 BootstrapActivity 的调色板） ----
     private static int COLOR_CARD_STK;
@@ -536,13 +549,15 @@ public class CNCNDownloadUI {
 
     /** 每个文件一个槽位。 */
     private static final class SlotViews {
+        /** FILE_NAMES 下标（与显示位置解耦；状态/进度/重试都按它查）。 */
+        final int         fileIdx;
         final TextView    nameView;
         final TextView    infoView;
         final TextView    retryView;
         final ProgressBar bar;
         final View        divider;
-        SlotViews(TextView n, TextView i, TextView r, ProgressBar b, View d) {
-            nameView = n; infoView = i; retryView = r; bar = b; divider = d;
+        SlotViews(int f, TextView n, TextView i, TextView r, ProgressBar b, View d) {
+            fileIdx = f; nameView = n; infoView = i; retryView = r; bar = b; divider = d;
         }
     }
 
@@ -1590,7 +1605,8 @@ public class CNCNDownloadUI {
         if (slotContainer == null) return;
         slotContainer.removeAllViews();
         slotList.clear();
-        for (int i = 0; i < FILE_COUNT; i++) {
+        for (int d = 0; d < FILE_COUNT; d++) {
+            int fileIdx = DISPLAY_ORDER[d];   // 显示序 → FILE_NAMES 下标
             LinearLayout row = new LinearLayout(act);
             row.setOrientation(LinearLayout.VERTICAL);
             slotContainer.addView(row, new LinearLayout.LayoutParams(
@@ -1607,7 +1623,7 @@ public class CNCNDownloadUI {
             row.addView(headRow, hrLp);
 
             TextView name = new TextView(act);
-            name.setText((i + 1) + ". " + FILE_NAMES[i]);
+            name.setText((d + 1) + ". " + FILE_NAMES[fileIdx]);
             name.setTextColor(COLOR_TEXT);
             name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
             name.setSingleLine(true);
@@ -1634,7 +1650,7 @@ public class CNCNDownloadUI {
             retryBg.setCornerRadius(dp(act, 10));
             retry.setBackground(retryBg);
             retry.setVisibility(View.GONE);
-            retry.setOnClickListener(new RetryClick(act, i));
+            retry.setOnClickListener(new RetryClick(act, fileIdx));
             LinearLayout.LayoutParams retryLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -1679,7 +1695,7 @@ public class CNCNDownloadUI {
             divLp.topMargin = dp(act, 2);
             row.addView(div, divLp);
 
-            slotList.add(new SlotViews(name, info, retry, bar, div));
+            slotList.add(new SlotViews(fileIdx, name, info, retry, bar, div));
         }
     }
 
@@ -3735,12 +3751,14 @@ public class CNCNDownloadUI {
         if (vPhase  != null) vPhase.setText(phaseText);
         if (vStatus != null) vStatus.setText(detailText);
 
-        // 槽位
+        // 槽位。slotList 按 DISPLAY_ORDER 排（热更两包显示在最前），
+        // 状态/进度一律按槽位携带的 FILE_NAMES 下标查，与显示位置解耦。
         if (!slotList.isEmpty() && status != null && progress != null) {
             for (int i = 0; i < FILE_COUNT && i < slotList.size(); i++) {
                 SlotViews sv = slotList.get(i);
-                int st  = status[i];
-                int pct = progress[i];
+                int idx = sv.fileIdx;
+                int st  = status[idx];
+                int pct = progress[idx];
                 sv.bar.setProgress(pct);
 
                 int color;
@@ -3759,32 +3777,32 @@ public class CNCNDownloadUI {
                 sv.retryView.setVisibility(st == 3 ? View.VISIBLE : View.GONE);
                 if (st == 2) {
                     sv.infoView.setTextColor(0xFF66BB6A);
-                    sv.infoView.setText(size != null && size[i] > 0f
-                            ? ("✓ " + formatMb(size[i])) : "✓");
+                    sv.infoView.setText(size != null && size[idx] > 0f
+                            ? ("✓ " + formatMb(size[idx])) : "✓");
                 } else if (st == 3) {
                     sv.infoView.setTextColor(0xFFE53935);
                     sv.infoView.setText("✗");
                 } else if (st == 4) {
                     // 中性色、**不打勾**：勾是「本轮确认过」的意思，这里没确认过。
                     sv.infoView.setTextColor(COLOR_SUB);
-                    String note = (fileNote != null) ? fileNote[i] : null;
+                    String note = (fileNote != null) ? fileNote[idx] : null;
                     if (note == null || note.length() == 0) note = "本轮未检查";
                     sv.infoView.setText(note);
                 } else if (st == 1) {
                     sv.infoView.setTextColor(COLOR_SUB);
                     StringBuilder sb = new StringBuilder();
                     float exactPct = pct;
-                    if (downloaded != null && size != null && size[i] > 0f) {
+                    if (downloaded != null && size != null && size[idx] > 0f) {
                         exactPct = Math.max(exactPct,
-                                Math.min(100f, Math.max(0f, downloaded[i] * 100f / size[i])));
+                                Math.min(100f, Math.max(0f, downloaded[idx] * 100f / size[idx])));
                     }
                     sb.append(String.format(Locale.US, "%.1f%%", exactPct));
-                    if (downloaded != null && size != null && size[i] > 0f) {
-                        sb.append("  ").append(formatMb(downloaded[i]))
-                          .append(" / ").append(formatMb(size[i]));
+                    if (downloaded != null && size != null && size[idx] > 0f) {
+                        sb.append("  ").append(formatMb(downloaded[idx]))
+                          .append(" / ").append(formatMb(size[idx]));
                     }
-                    if (speed != null && speed[i] > 0f) {
-                        sb.append("  ").append(formatMbps(speed[i]));
+                    if (speed != null && speed[idx] > 0f) {
+                        sb.append("  ").append(formatMbps(speed[idx]));
                     }
                     sv.infoView.setText(sb.toString());
                 } else {
@@ -3792,8 +3810,8 @@ public class CNCNDownloadUI {
                     // 早先这里是空串，于是「还没开始下载的文件不显示大小」——
                     // 即便开跑前已经探完，玩家也看不到，观感上就像没探。
                     sv.infoView.setTextColor(COLOR_SUB);
-                    if (size != null && size[i] > 0f) {
-                        sv.infoView.setText("等待中 · " + formatMb(size[i]));
+                    if (size != null && size[idx] > 0f) {
+                        sv.infoView.setText("等待中 · " + formatMb(size[idx]));
                     } else {
                         sv.infoView.setText("等待中");
                     }
