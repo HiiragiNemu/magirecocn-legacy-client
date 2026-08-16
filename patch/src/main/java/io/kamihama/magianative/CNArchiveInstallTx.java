@@ -77,6 +77,9 @@ public final class CNArchiveInstallTx {
         // 「冗余 ZIP64」，老设备 ZipFile 可能打不开（见 CNZipTool 的说明）。
         // 这里不再逐条目续传——bsdtar 整包解压，中断则整包重解（放弃 stateFile
         // 的逐条目断点，换来对 ZIP64 的完整兼容）。
+        // isAvailable 含 --version 真探测：exec 被 SELinux / 16KB 页拦截的
+        // 设备会落到下面的 ZipFile 回退，而不是把「二进制起不来」误报成
+        // 「zip 结构非法」。
         if (CNZipTool.isAvailable()) {
             extractWithBsdtar(archive, root, cancel, progress);
             return;
@@ -94,20 +97,56 @@ public final class CNArchiveInstallTx {
         if (cancel != null && cancel.isCancelled()) {
             throw new CancelledException("Extraction cancelled before start");
         }
-        if (!CNArchiveValidate.isZipStructurallyValid(archive)) {
+        // 一次 -tvf 同时完成结构校验和「按解压顺序的条目大小表」：bsdtar 的
+        // zip 读取器走中央目录，列表不扫数据区，1.4GB 的包也是秒出。
+        CNZipTool.EntryTable table = CNZipTool.list(archive);
+        if (table == null || table.count <= 0) {
             throw corrupt("Cannot open ZIP central directory: " + archive, null);
         }
-        // 磁盘预检：bsdtar 整包解压前先确认装得下。按 zip 大小的一个合理上限
-        // 估算解压峰值（膨胀比最高的 03 是 2.11x，见 EXTRACT_MAX_RATIO 注释）。
-        long peak = archive.length() * 3L;   // 保守：给足 3x 膨胀余量
-        CNDiskSpace.require(root, peak, archive.getName() + " 解压");
-        if (progress != null) progress.onProgress(0, 1, 0L, peak);
-        CNLog.i(TAG, "extract-start(file) file=" + archive.getName() + " via=bsdtar");
-        boolean ok = CNZipTool.extract(archive, root);
+        // 磁盘预检用列表给出的**精确**总未压缩大小，替代原先 zip 体积 3x 的
+        // 保守估计——03 的解压预留从 4.3GB 降到真实的 2.9GB，存储紧张的设备
+        // 不再被误拒。zip-bomb 比例闸保留：自产包膨胀比 ~2x，声明总量超过
+        // zip 体积 50 倍只可能是包坏了（原 ZipFile 路径也有同样的闸，见
+        // EXTRACT_MAX_RATIO 注释）。
+        long total = table.totalBytes;
+        if (table.sizesReliable && total > Math.max(archive.length(), 1L) * 50L) {
+            throw corrupt("Declared uncompressed size suspicious: " + archive
+                    + " zip=" + archive.length() + " declared=" + total, null);
+        }
+        if (!table.sizesReliable || total <= 0L) {
+            total = archive.length() * 3L;   // 大小表不全时的保守兜底
+        }
+        CNDiskSpace.require(root, total, archive.getName() + " 解压");
+        final CNZipTool.EntryTable t = table;
+        final long totalF = total;
+        final Progress progressF = progress;   // 匿名类捕获用（显式 final，兼容老 source 级别）
+        if (progress != null) progress.onProgress(0, t.count, 0L, totalF);
+        CNLog.i(TAG, "extract-start(file) file=" + archive.getName()
+                + " via=bsdtar entries=" + t.count);
+        // 进度节流：03 有 11408 个条目，逐条回调会刷爆 UI 线程——
+        // 每 32 条目或 200ms 才上报一次，最后一次由下方满格回调补。
+        final int[] lastEntries = {0};
+        final long[] lastNs = {0L};
+        CNZipTool.ExtractProgress sink = progress == null ? null
+                : new CNZipTool.ExtractProgress() {
+            @Override public void onProgress(int doneEntries, long doneBytes) {
+                long now = System.nanoTime();
+                if (doneEntries < t.count
+                        && doneEntries - lastEntries[0] < 32
+                        && now - lastNs[0] < 200_000_000L) return;
+                lastEntries[0] = doneEntries;
+                lastNs[0] = now;
+                long bytes = t.sizesReliable ? doneBytes
+                        : totalF * Math.min(doneEntries, t.count) / t.count;
+                progressF.onProgress(Math.min(doneEntries, t.count), t.count,
+                        Math.min(bytes, totalF), totalF);
+            }
+        };
+        boolean ok = CNZipTool.extract(archive, root, table, sink);
         if (!ok) {
             throw corrupt("bsdtar 解压失败: " + archive.getName(), null);
         }
-        if (progress != null) progress.onProgress(1, 1, peak, peak);
+        if (progress != null) progress.onProgress(t.count, t.count, totalF, totalF);
         CNLog.i(TAG, "extract-complete file=" + archive.getName() + " via=bsdtar");
     }
 
