@@ -916,10 +916,16 @@ public final class CNDebugOverlay {
         }
     }
 
-    /** 速度/体积单位换算。CNCNDownloadUI 的数组与浮层同一份，单位沿用浮层口径（KB）。 */
-    private static String fmtMb(float kb) {
-        if (kb >= 1024f) return String.format(java.util.Locale.US, "%.1f MB", kb / 1024f);
-        return String.format(java.util.Locale.US, "%.0f KB", Math.max(0f, kb));
+    /**
+     * 体积显示：输入单位是 <b>MB</b>（{@code CNCNDownloadUI.fileSize/fileDownloaded}
+     * 的口径），小值显示 MB、超 1024 转 GB。名字里的 Mb 是「MB」的缩写。
+     *
+     * <p>曾把参数当 KB 处理、又用 1024 做分界，结果 45.6 MB 被显示成「46 KB」——
+     * 输入明明是 MB，判据却按 KB 写。固定：按 MB 收，只在 ≥1024 MB 时升 GB。
+     */
+    private static String fmtMb(float mb) {
+        if (mb >= 1024f) return String.format(java.util.Locale.US, "%.2f GB", mb / 1024f);
+        return String.format(java.util.Locale.US, "%.1f MB", Math.max(0f, mb));
     }
 
     private static String fmtSpeed(float kbps) {
