@@ -980,22 +980,6 @@
     },
     {
       "kind": "add",
-      "path": "assets/bsdtar/bsdtar-arm",
-      "group": "第三方",
-      "why": "bsdtar 预编译二进制（libarchive 3.7.4，armeabi-v7a）",
-      "post": "c65d5cfd4ff3b89023f47f19c220d1372fd08cd7093a782af2f1b0e6a330aa2f",
-      "from": "repo"
-    },
-    {
-      "kind": "add",
-      "path": "assets/bsdtar/bsdtar-arm64",
-      "group": "第三方",
-      "why": "bsdtar 预编译二进制（libarchive 3.7.4，arm64-v8a）",
-      "post": "a1048d33816451a39e93e65998ff090b24b9e8a604a10f73cbf3cfbc5079c4cf",
-      "from": "repo"
-    },
-    {
-      "kind": "add",
       "path": "lib/armeabi-v7a/libshadowhook.so",
       "group": "第三方",
       "why": "shadowhook 预编译库",
@@ -1114,6 +1098,22 @@
       "path": "assets/magia/bgm",
       "group": "构建期产物",
       "why": "构建期由 tools/convert-bgm.py 从 .hca 转出（bgm*.ogg / bgm.json）"
+    },
+    {
+      "kind": "add",
+      "path": "lib/armeabi-v7a/libcnzip.so",
+      "group": "第三方",
+      "why": "libcnzip 预编译库（libarchive 3.7.4 JNI 封装，armeabi-v7a）",
+      "post": "091e82eea67cb9dfcc50649fec91c4aa1c64d20fb6a2725990ab5c7c592ad858",
+      "from": "repo"
+    },
+    {
+      "kind": "add",
+      "path": "lib/arm64-v8a/libcnzip.so",
+      "group": "第三方",
+      "why": "libcnzip 预编译库（libarchive 3.7.4 JNI 封装，arm64-v8a）",
+      "post": "a730e1800d30b7656e36cc3c23fc69d5dd19a0a7271c547f9b8b7751720e7bc7",
+      "from": "repo"
     }
   ]
 }

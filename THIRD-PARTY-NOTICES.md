@@ -68,21 +68,23 @@ MagirecoCN-Revival-Project 索取上述对应源码的完整副本，我们按 G
 
 ---
 
-## bsdtar（`assets/bsdtar/bsdtar-arm`、`assets/bsdtar/bsdtar-arm64`）
+## libcnzip（`lib/arm64-v8a/libcnzip.so`、`lib/armeabi-v7a/libcnzip.so`）
 
 | | |
 |---|---|
-| 软件 | libarchive 3.7.4 的 bsdtar（归档/解压工具） |
+| 软件 | libarchive 3.7.4 的 JNI 封装（进程内解压 zip） |
 | 版权 | Copyright (c) 2003-2024 Tim Kientzle 及 libarchive 贡献者 |
 | 许可 | **BSD 2-Clause License**（与 GPLv3 兼容，无 copyleft / 无静态链接义务） |
 | 上游源码 | <https://github.com/libarchive/libarchive>，tag `v3.7.4` |
-| 交叉编译 | 用 Android NDK r25c 交叉编译（`CMAKE_TOOLCHAIN_FILE=android.toolchain.cmake`，`ANDROID_ABI=arm64-v8a / armeabi-v7a`，静态链接），zlib 为构建依赖 |
-| sha256 | `bsdtar-arm` = `c65d5cfd4ff3b89023f47f19c220d1372fd08cd7093a782af2f1b0e6a330aa2f`<br>`bsdtar-arm64` = `a1048d33816451a39e93e65998ff090b24b9e8a604a10f73cbf3cfbc5079c4cf` |
+| 交叉编译 | 用 Android NDK r25c 交叉编译（`CMAKE_TOOLCHAIN_FILE=android.toolchain.cmake`，`ANDROID_ABI=arm64-v8a / armeabi-v7a`），libarchive 静态链入，zlib 为构建依赖，`-static-libstdc++` 去掉 libc++_shared 依赖 |
+| sha256 | `libcnzip.so`（arm64-v8a）= `a730e1800d30b7656e36cc3c23fc69d5dd19a0a7271c547f9b8b7751720e7bc7`<br>`libcnzip.so`（armeabi-v7a）= `091e82eea67cb9dfcc50649fec91c4aa1c64d20fb6a2725990ab5c7c592ad858` |
 
 **用途**：解压基础资源包（zip），替代 `java.util.zip.ZipFile`。资源包含「冗余
 ZIP64」结构（普通 EOCD 自洽却多挂一个 zip64 EOCD），老设备 ZipFile 可能报
-「结构非法」；bsdtar 实测能正确处理。以**独立子进程**运行，与游戏本体既不链接
-也不同进程——与 aria2c 同一套「单纯聚合」原则，不向任何其他部分传播许可证。
+「结构非法」；libarchive 实测能正确处理。经 `System.loadLibrary` 由 linker 加载
+（落点在只读的 nativeLibraryDir），**无 exec**——绕开 Android 10+ 的 SELinux
+W^X 闸与 16KB 页对齐限制，这是从 exec bsdtar 改为 JNI 的原因。进程内解压，
+不向任何其他部分传播许可证。
 
 **zlib**：静态链入，zlib 许可证（zlib License，与 GPLv3 兼容）。zlib 的版权声明
 随 libarchive 的构建产物一并保留。

@@ -14,9 +14,9 @@ public final class CNArchiveValidate {
     private CNArchiveValidate() {}
 
     public static boolean isZipStructurallyValid(File f) {
-        // 用内置 bsdtar 校验，替代 java.util.zip.ZipFile：资源包含「冗余 ZIP64」，
-        // 老设备 ZipFile 可能报「结构非法」（见 CNZipTool 的说明）。bsdtar 不可用时
-        // 回退 ZipFile（结构校验失败总比误拒好——旧路径在 bsdtar 缺失时仍可用）。
+        // 用内置 libcnzip（libarchive JNI）校验，替代 java.util.zip.ZipFile：资源包含「冗余 ZIP64」，
+        // 老设备 ZipFile 可能报「结构非法」（见 CNZipTool 的说明）。libcnzip 不可用时
+        // 回退 ZipFile（结构校验失败总比误拒好——旧路径在 libcnzip 缺失时仍可用）。
         if (f == null || !f.isFile()) return false;
         if (CNZipTool.isAvailable()) {
             return CNZipTool.isValid(f);
