@@ -554,6 +554,7 @@ CyberNova（下载加速及资源自动化推送）、segfault（国服数据留
 | 文件 | 是什么 | 许可 | 义务 |
 |---|---|---|---|
 | `assets/aria2/aria2c-arm{,64}` | aria2 1.37.0，全静态 | **GPLv2+**（附 OpenSSL 链接例外） | **要提供对应源码**——源码指向与三年书面要约见声明文件 |
+| `assets/bsdtar/bsdtar-arm{,64}` | libarchive 3.7.4 的 bsdtar，全静态（解压资源包） | **BSD-2-Clause**（附 zlib 静态链接） | 附版权声明与许可全文（见声明文件） |
 | `lib/*/libshadowhook.so` | ShadowHook 2.0.1（ByteDance），**CI 从上游源码构建，且我们改过它的源码** | MIT | 附版权声明与许可全文；改动照实写在声明文件里 |
 | `assets/fonts/mbm_20160902.ttf` | MagiReco CN Medium（Source Han 派生） | Apache-2.0 | 附许可、注明改动（§4(b)） |
 

@@ -72,6 +72,49 @@ public final class CNArchiveInstallTx {
         if (root == null || (!root.isDirectory() && !root.mkdirs() && !root.isDirectory())) {
             throw new InstallIOException("Cannot create extraction root: " + root);
         }
+
+        // 用内置 bsdtar 校验结构并解压，替代 java.util.zip.ZipFile：资源包含
+        // 「冗余 ZIP64」，老设备 ZipFile 可能打不开（见 CNZipTool 的说明）。
+        // 这里不再逐条目续传——bsdtar 整包解压，中断则整包重解（放弃 stateFile
+        // 的逐条目断点，换来对 ZIP64 的完整兼容）。
+        if (CNZipTool.isAvailable()) {
+            extractWithBsdtar(archive, root, cancel, progress);
+            return;
+        }
+
+        // bsdtar 不可用（异常环境）时回退旧路径。仍用 ZipFile——虽然老设备可能
+        // 打不开，但总比完全不解压好（结构校验失败总比误拒好）。
+        extractWithZipFile(archive, root, stateFile, cancel, progress);
+    }
+
+    /** 用内置 bsdtar 整包解压（主路径）。 */
+    private static void extractWithBsdtar(File archive, File root,
+                                          Cancel cancel, Progress progress)
+            throws IOException {
+        if (cancel != null && cancel.isCancelled()) {
+            throw new CancelledException("Extraction cancelled before start");
+        }
+        if (!CNArchiveValidate.isZipStructurallyValid(archive)) {
+            throw corrupt("Cannot open ZIP central directory: " + archive, null);
+        }
+        // 磁盘预检：bsdtar 整包解压前先确认装得下。按 zip 大小的一个合理上限
+        // 估算解压峰值（膨胀比最高的 03 是 2.11x，见 EXTRACT_MAX_RATIO 注释）。
+        long peak = archive.length() * 3L;   // 保守：给足 3x 膨胀余量
+        CNDiskSpace.require(root, peak, archive.getName() + " 解压");
+        if (progress != null) progress.onProgress(0, 1, 0L, peak);
+        CNLog.i(TAG, "extract-start(file) file=" + archive.getName() + " via=bsdtar");
+        boolean ok = CNZipTool.extract(archive, root);
+        if (!ok) {
+            throw corrupt("bsdtar 解压失败: " + archive.getName(), null);
+        }
+        if (progress != null) progress.onProgress(1, 1, peak, peak);
+        CNLog.i(TAG, "extract-complete file=" + archive.getName() + " via=bsdtar");
+    }
+
+    /** 旧路径：ZipFile 逐条目解压（bsdtar 不可用时的回退）。 */
+    private static void extractWithZipFile(File archive, File root, File stateFile,
+                                           Cancel cancel, Progress progress)
+            throws IOException {
         File stateParent = stateFile == null ? null : stateFile.getParentFile();
         if (stateParent != null && !stateParent.isDirectory()
                 && !stateParent.mkdirs() && !stateParent.isDirectory()) {
@@ -96,8 +139,6 @@ public final class CNArchiveInstallTx {
             }
             if (entries.isEmpty()) throw new ZipException("Archive contains no entries: " + archive);
             // 第一道：按中央目录**声明**的未压缩总量看比例，一个字节都还没写就能拒。
-            // 声明可以撒谎，所以还有第二道（writeEntry 里的边写边看）。两道都在，
-            // 缺一不可：这道快而便宜，那道防谎报。阈值见 EXTRACT_MAX_RATIO。
             if (totalBytes >= EXTRACT_MIN_BYTES_BEFORE_RATIO
                     && archive.length() > 0
                     && totalBytes / archive.length() > EXTRACT_MAX_RATIO) {
@@ -122,17 +163,11 @@ public final class CNArchiveInstallTx {
                 ZipEntry e = entries.get(i);
                 if (!e.isDirectory() && e.getSize() > 0) doneBytes += e.getSize();
             }
-            // 这里是**唯一**能事先知道解压后要占多少的时刻（totalBytes 由 zip 目录
-            // 逐条累加而来）。先看装不装得下：不查的话，1.4G 的 03 会解压到一半写满，
-            // 玩家看到的是一句语焉不详的 extract-paused，而真正该做的是去腾空间。
-            // 断点与已解压的内容都保留，腾完接着装。
             CNDiskSpace.require(root, totalBytes - doneBytes, archive.getName() + " 解压");
             if (progress != null) progress.onProgress(next, entries.size(), doneBytes, totalBytes);
             CNLog.i(TAG, "extract-start file=" + archive.getName() + " entries="
                     + entries.size() + " resume=" + next);
 
-            // 每次解压重新计数。续解压时前面那些字节上一轮已经写过了，
-            // 不该算进本轮的「已写出」——否则续几次就会把比例判据顶爆。
             writtenThisRun = 0L;
             int sinceCheckpoint = 0;
             long bytesSinceCheckpoint = 0L;

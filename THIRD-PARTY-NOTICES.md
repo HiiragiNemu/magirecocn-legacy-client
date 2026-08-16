@@ -68,6 +68,27 @@ MagirecoCN-Revival-Project 索取上述对应源码的完整副本，我们按 G
 
 ---
 
+## bsdtar（`assets/bsdtar/bsdtar-arm`、`assets/bsdtar/bsdtar-arm64`）
+
+| | |
+|---|---|
+| 软件 | libarchive 3.7.4 的 bsdtar（归档/解压工具） |
+| 版权 | Copyright (c) 2003-2024 Tim Kientzle 及 libarchive 贡献者 |
+| 许可 | **BSD 2-Clause License**（与 GPLv3 兼容，无 copyleft / 无静态链接义务） |
+| 上游源码 | <https://github.com/libarchive/libarchive>，tag `v3.7.4` |
+| 交叉编译 | 用 Android NDK r25c 交叉编译（`CMAKE_TOOLCHAIN_FILE=android.toolchain.cmake`，`ANDROID_ABI=arm64-v8a / armeabi-v7a`，静态链接），zlib 为构建依赖 |
+| sha256 | `bsdtar-arm` = `c65d5cfd4ff3b89023f47f19c220d1372fd08cd7093a782af2f1b0e6a330aa2f`<br>`bsdtar-arm64` = `a1048d33816451a39e93e65998ff090b24b9e8a604a10f73cbf3cfbc5079c4cf` |
+
+**用途**：解压基础资源包（zip），替代 `java.util.zip.ZipFile`。资源包含「冗余
+ZIP64」结构（普通 EOCD 自洽却多挂一个 zip64 EOCD），老设备 ZipFile 可能报
+「结构非法」；bsdtar 实测能正确处理。以**独立子进程**运行，与游戏本体既不链接
+也不同进程——与 aria2c 同一套「单纯聚合」原则，不向任何其他部分传播许可证。
+
+**zlib**：静态链入，zlib 许可证（zlib License，与 GPLv3 兼容）。zlib 的版权声明
+随 libarchive 的构建产物一并保留。
+
+---
+
 ## ShadowHook（`lib/arm64-v8a/libshadowhook.so`、`lib/armeabi-v7a/libshadowhook.so`）
 
 | | |

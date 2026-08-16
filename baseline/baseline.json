@@ -980,6 +980,22 @@
     },
     {
       "kind": "add",
+      "path": "assets/bsdtar/bsdtar-arm",
+      "group": "第三方",
+      "why": "bsdtar 预编译二进制（libarchive 3.7.4，armeabi-v7a）",
+      "post": "c65d5cfd4ff3b89023f47f19c220d1372fd08cd7093a782af2f1b0e6a330aa2f",
+      "from": "repo"
+    },
+    {
+      "kind": "add",
+      "path": "assets/bsdtar/bsdtar-arm64",
+      "group": "第三方",
+      "why": "bsdtar 预编译二进制（libarchive 3.7.4，arm64-v8a）",
+      "post": "a1048d33816451a39e93e65998ff090b24b9e8a604a10f73cbf3cfbc5079c4cf",
+      "from": "repo"
+    },
+    {
+      "kind": "add",
       "path": "lib/armeabi-v7a/libshadowhook.so",
       "group": "第三方",
       "why": "shadowhook 预编译库",
