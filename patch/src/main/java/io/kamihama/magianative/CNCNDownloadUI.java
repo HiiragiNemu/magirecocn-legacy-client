@@ -827,6 +827,7 @@ public class CNCNDownloadUI {
 
         ScrollView contribScroll = new ScrollView(act);
         contribScroll.setFillViewport(true);
+        CNDownloadUiAssist.applyBuiltinScrollbar(contribScroll, false);
         LinearLayout contribList = new LinearLayout(act);
         contribList.setOrientation(LinearLayout.VERTICAL);
         contribScroll.addView(contribList, new ScrollView.LayoutParams(
@@ -958,7 +959,7 @@ public class CNCNDownloadUI {
         topLeft.setGravity(Gravity.CENTER_VERTICAL);
         // 左侧胶囊放进自己的横向视口；窄屏/高 DPI 时滚动，不再与右侧主题栏重叠。
         HorizontalScrollView topLeftScroll = new HorizontalScrollView(act);
-        topLeftScroll.setHorizontalScrollBarEnabled(false);
+        CNDownloadUiAssist.applyBuiltinScrollbar(topLeftScroll, true);
         topLeftScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
         topLeftScroll.setFillViewport(false);
         topLeftScroll.addView(topLeft, new HorizontalScrollView.LayoutParams(
@@ -1204,7 +1205,7 @@ public class CNCNDownloadUI {
         // 方角、灰底、跟着系统主题走，摆在玻璃拟态的浮层里像块补丁。
         // 横向可滚动，免得窄屏上三个挤成一团或被截断。
         HorizontalScrollView togScroll = new HorizontalScrollView(act);
-        togScroll.setHorizontalScrollBarEnabled(false);
+        CNDownloadUiAssist.applyBuiltinScrollbar(togScroll, true);
         togScroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
         panel.addView(togScroll, lpRow(0, dp(act, 8)));
 
@@ -1220,6 +1221,7 @@ public class CNCNDownloadUI {
         addLogChip(act, togRow, "原生日志", PREF_LOG_NATIVE, 2);
 
         vLogScroll = new ScrollView(act);
+        CNDownloadUiAssist.applyBuiltinScrollbar(vLogScroll, false);
         vLogScroll.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
         GradientDrawable logScrollBg = new GradientDrawable();
         logScrollBg.setColor(darkMode ? 0x44FFFFFF : 0x14000000);
@@ -2036,6 +2038,7 @@ public class CNCNDownloadUI {
         // cn_js_update.zip 走版本 json 通道，不提供离线导入）大字体下能滚动；行宽
         // MATCH_PARENT 让长文件名在面板内换行。
         ScrollView sv = new ScrollView(act);
+        CNDownloadUiAssist.applyBuiltinScrollbar(sv, false);
         LinearLayout list = new LinearLayout(act);
         list.setOrientation(LinearLayout.VERTICAL);
         String[] names = CNCNDownloadUI.FILE_NAMES;
@@ -3143,7 +3146,7 @@ public class CNCNDownloadUI {
         // 等比放大、文本变高，不封顶会把面板撑出屏幕、把下方按钮挤出可视区。
         // ScrollView 只滚动消息，标题与按钮始终留在面板内。
         ScrollView msgScroll = new ScrollView(act);
-        msgScroll.setVerticalScrollBarEnabled(false);
+        CNDownloadUiAssist.applyBuiltinScrollbar(msgScroll, false);
         msgScroll.setFillViewport(false);
         LinearLayout.LayoutParams msgSvLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);

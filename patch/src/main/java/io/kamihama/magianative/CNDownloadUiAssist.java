@@ -701,6 +701,40 @@ public final class CNDownloadUiAssist {
         return d;
     }
 
+    /**
+     * 给任意滚动视图挂<b>浮层内建</b>滚动条样式，让浮层里所有滚动条外观统一：
+     * 非淡出（一直可见）、{@code INSIDE_OVERLAY}、自定义 track/thumb（API29+），
+     * 并在现有 padding 上叠出槽边距（竖向加右侧、横向加底部）——只该在创建时
+     * 调一次，别重复叠加。
+     *
+     * <p>除 {@code styleScrollbars()} 处理的 hScroll/vScroll（主内容 + 文件列表）
+     * 之外的滚动区（日志面板、离线列表、贡献者、顶部胶囊、开关行、消息框）都走
+     * 这里，省得各创建点手抄一份系统默认条。
+     */
+    public static void applyBuiltinScrollbar(ViewGroup v, boolean horizontal) {
+        if (v == null) return;
+        v.setScrollbarFadingEnabled(false);
+        v.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+        v.setClipToPadding(false);
+        if (horizontal) {
+            v.setHorizontalScrollBarEnabled(true);
+            v.setPadding(v.getPaddingLeft(), v.getPaddingTop(),
+                    v.getPaddingRight(), v.getPaddingBottom() + dp(v, SCROLLBAR_GUTTER_DP));
+            if (Build.VERSION.SDK_INT >= 29) {
+                v.setHorizontalScrollbarThumbDrawable(scrollThumb(v));
+                v.setHorizontalScrollbarTrackDrawable(scrollTrack(v));
+            }
+        } else {
+            v.setVerticalScrollBarEnabled(true);
+            v.setPadding(v.getPaddingLeft(), v.getPaddingTop(),
+                    v.getPaddingRight() + dp(v, SCROLLBAR_GUTTER_DP), v.getPaddingBottom());
+            if (Build.VERSION.SDK_INT >= 29) {
+                v.setVerticalScrollbarThumbDrawable(scrollThumb(v));
+                v.setVerticalScrollbarTrackDrawable(scrollTrack(v));
+            }
+        }
+    }
+
     // ══ 顶部胶囊：停留 / 显示 ═══════════════════════════════════════════
 
     private static LinearLayout findTopLeftRow(View root) {
