@@ -29,11 +29,8 @@
 **无 exec**——绕开 Android 10+ 的 SELinux W^X 闸与 16KB 页对齐限制（与 libcnzip
 同思路）。控制面是 loopback JSON-RPC，aria2 以线程跑在调用进程内。
 
-**备用后端（GnuTLS 组）**：同一 aria2 1.37.0 还交叉编译了一组 GnuTLS 3.8.3
-TLS 后端的 `libaria2c.so`（GnuTLS + nettle 3.9.1 + GMP 6.3.0），专作 **failover
-兜底**——若 OpenSSL 组在真机出现异常，整组替换同名 `.so` 重新打包即可（库名、
-JNI 入口、加载方式均不变，Java 侧零改动）。GnuTLS 组**不随当前 APK 分发**，
-构建归档于维护机 /mnt/android/aria2c-so.zip。
+> TLS 后端选型：当前这份是 **OpenSSL 1.1.1w** 后端。曾另备 GnuTLS 3.8.3 后端的
+> 构建配方（仅留档、不随包分发）；若 OpenSSL 后端在真机异常，再按配方重编替换。
 
 > ⚠ **许可形态变化（2026-08-16）**。旧版（转发 Zackptg5 的预编译 aria2c 可执行
 > 文件）以**独立子进程**运行，曾主张「单纯聚合、不传播 GPL」。现改**进程内 JNI
