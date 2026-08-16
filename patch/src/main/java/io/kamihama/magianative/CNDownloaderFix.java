@@ -1630,6 +1630,15 @@ public final class CNDownloaderFix {
                     updateProgress(index, 0L, probe.total);
                     CNChunkedDownload.ChunkHashes hashes =
                             useManifest ? ChunkManifest.forFile(name) : null;
+                    if (useManifest && hashes == null) {
+                        // 该走分块清单的文件却拿不到清单：绝不能让 hashes==null
+                        // 悄悄落到 downloadByteSegments（无认证的传统分段续传）——
+                        // 跨镜像混装、缓存污染那类坏字节会一路拼进 zip，完工校验
+                        // 才翻车（03 历史 corrupt-zip 的入口）。此处抛错交给上层
+                        // 换线重试并重新拉清单，宁可重试也不降级认证。
+                        throw new IOException("分块清单获取失败，拒绝无认证下载 file="
+                                + name + " mirror=" + mirror.name);
+                    }
                     CNChunkedDownload.Result r = CNChunkedDownload.download(
                             url, archive, chunks, direct, probe,
                             new ArchiveSink(index, restartToken),
