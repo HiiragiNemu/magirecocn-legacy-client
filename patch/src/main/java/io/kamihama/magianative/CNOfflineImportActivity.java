@@ -36,7 +36,12 @@ public final class CNOfflineImportActivity extends Activity {
     /** 导入结果回调：success=是否校验通过，name=文件名，err=失败原因（成功时 null）。 */
     public interface Callback {
         void onResult(boolean success, String name, String err);
+
+        /** 进度回调。verifying=true 表示已进入分块校验阶段。 */
+        void onProgress(long done, long total, boolean verifying);
     }
+
+    /** 结果回调。 */
     private static volatile Callback callback;
 
     @Override protected void onCreate(Bundle state) {
@@ -89,13 +94,20 @@ public final class CNOfflineImportActivity extends Activity {
         @Override public void run() {
             String err = null;
             try {
-                File imported = CNOfflineImport.importZip(act, uri, name);
+                // Progress 必须用静态嵌套类（铁律 4）：run() 是实例方法，在里面
+                // new 匿名类会带 this$0、让 d8 崩。静态嵌套类 + 构造参数传值。
+                File imported = CNOfflineImport.importZip(
+                        act, uri, name, new ImportProgress());
                 if (imported != null) {
                     notifyResult(true, name, null);
                     finishSelf(act);
                     return;
                 }
-                err = "校验未通过（可能与官方包不一致）";
+                if (CNOfflineImport.isImporting()) {
+                    err = "已有导入正在进行，请等它完成";
+                } else {
+                    err = "校验未通过（可能与官方包不一致）";
+                }
             } catch (Throwable t) {
                 CNLog.e(TAG, "离线导入失败: " + t, t);
                 err = "导入失败: " + t.getMessage();
@@ -105,10 +117,32 @@ public final class CNOfflineImportActivity extends Activity {
         }
     }
 
+    /**
+     * {@link CNOfflineImport.Progress} 的静态实现：把进度转发到静态
+     * {@link #notifyProgress}。静态方法无 this$0，符合铁律 4。
+     */
+    private static final class ImportProgress implements CNOfflineImport.Progress {
+        ImportProgress() {}
+        @Override public void onProgress(long done, long total, boolean verifying) {
+            notifyProgress(done, total, verifying);
+        }
+    }
+
     private static void finishSelf(final Activity a) {
         try {
             new Handler(Looper.getMainLooper()).post(new Runnable() {
                 @Override public void run() { a.finish(); }
+            });
+        } catch (Throwable ignore) {}
+    }
+
+    private static void notifyProgress(final long done, final long total,
+                                       final boolean verifying) {
+        final Callback cb = callback;
+        if (cb == null) return;
+        try {
+            new Handler(Looper.getMainLooper()).post(new Runnable() {
+                @Override public void run() { cb.onProgress(done, total, verifying); }
             });
         } catch (Throwable ignore) {}
     }
@@ -127,6 +161,22 @@ public final class CNOfflineImportActivity extends Activity {
     /** 请求导入某文件。返回 true 表示已启动选择器。 */
     public static boolean requestImport(Activity act, String name, Callback cb) {
         if (act == null || name == null) return false;
+        // 重入保护：已有导入在进行时拒绝新请求。玩家很可能在「界面没动静」时
+        // 又点了一次——两个导入会并发写同一个 .importing 临时文件、互相覆盖，
+        // 且结果回调会串线。宁可明确告诉玩家「上一个还没完」，也别让两个打架。
+        if (CNOfflineImport.isImporting()) {
+            CNLog.w(TAG, "拒绝重复导入（已有导入在进行）: " + name);
+            if (cb != null) {
+                try {
+                    new Handler(Looper.getMainLooper()).post(new Runnable() {
+                        @Override public void run() {
+                            cb.onResult(false, name, "已有导入正在进行，请等它完成");
+                        }
+                    });
+                } catch (Throwable ignore) {}
+            }
+            return false;
+        }
         pendingName = name;
         callback = cb;
         try {

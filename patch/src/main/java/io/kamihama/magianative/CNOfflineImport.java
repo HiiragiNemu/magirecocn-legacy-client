@@ -18,12 +18,37 @@ import java.io.OutputStream;
  *
  * <p>校验：用 {@link ChunkManifest.forFile(name)} 的块指纹逐块比对——与在线下载
  * 同源，保证导入的是官方发布版。清单缺失/校验失败即拒收并删除临时文件。
+ *
+ * <p><b>进度与重入</b>：拷贝 1GB+ 的包要几十秒，{@link #importZip} 的拷贝循环会
+ * 逐 4MB 回调 {@link Progress}，调用方必须把它显示出来，否则玩家看到的是「选完
+ * 文件后界面定住」，极可能再导一次——两个导入线程会并发写同一个 {@code .importing}
+ * 临时文件、互相覆盖，{@code sweepStaleTemps} 还会把正在导的残留误删。因此
+ * {@code importZip} 开始时置 {@link #IMPORTING} 互斥位，重复请求直接拒绝。
  */
 public final class CNOfflineImport {
     private static final String TAG = "CNOfflineImport";
     /** 离线区相对 STATE_ROOT 的子目录名。 */
     public static final String OFFLINE_DIR = "offline";
     private static final long CHUNK = 16L * 1024 * 1024;
+    /** 拷贝进度回调粒度（字节），约 4MB 一次，避免高频回调刷爆主线程。 */
+    private static final long PROGRESS_STEP = 4L * 1024 * 1024;
+
+    /**
+     * 拷贝/校验进度。拷贝阶段按字节上报（{@code total} 是 URI 声明大小，可能为
+     * -1 未知）；校验阶段 {@code phase} 置 true 且 {@code done} 为已校验块数。
+     */
+    public interface Progress {
+        /** @param done 已完成字节数（拷贝）/ 已完成块数（校验）
+         *  @param total 总字节数 / 总块数；拷贝时可能为 -1（未知）
+         *  @param verifying true = 已进入分块校验阶段 */
+        void onProgress(long done, long total, boolean verifying);
+    }
+
+    /** 全局互斥：同一时刻只允许一个导入在进行，防并发写同一 {@code .importing}。 */
+    private static volatile boolean importing;
+
+    /** 是否有导入正在进行（供 UI 禁用重复入口）。 */
+    public static boolean isImporting() { return importing; }
 
     private CNOfflineImport() {}
 
@@ -59,8 +84,16 @@ public final class CNOfflineImport {
     /**
      * 拷贝玩家选中的 URI 到离线区并做分块校验。成功返回导入后的文件（已校验），
      * 失败返回 null 并清理临时文件。
+     *
+     * <p><b>重入保护</b>：同一时刻只允许一个导入。已有导入在进行时立即返回
+     * null（调用方据此提示「上一个导入还没完成」），避免两个线程并发写同一个
+     * {@code .importing} 临时文件、以及 {@code sweepStaleTemps} 误删正在导的残留。
+     *
+     * @param progress 进度回调（可为 null）。拷贝阶段每约 4MB 回调一次；
+     *                 校验阶段按块回调。
      */
-    public static File importZip(Context ctx, Uri uri, String fileName) throws Exception {
+    public static File importZip(Context ctx, Uri uri, String fileName,
+                                 Progress progress) throws Exception {
         if (ctx == null || uri == null || fileName == null) return null;
         // 热更包（cn_scenario_update.zip / cn_js_update.zip）走版本 json 通道，
         // 不该离线导入——直接拒收（见 isHotUpdateFile）。
@@ -68,11 +101,27 @@ public final class CNOfflineImport {
             CNLog.w(TAG, "热更包不支持离线导入: " + fileName);
             return null;
         }
+        if (importing) {
+            CNLog.w(TAG, "已有导入在进行，拒绝重复导入: " + fileName);
+            return null;
+        }
+        importing = true;
+        try {
+            return importZipLocked(ctx, uri, fileName, progress);
+        } finally {
+            importing = false;
+        }
+    }
+
+    /** {@link #importZip} 的持锁实现。 */
+    private static File importZipLocked(Context ctx, Uri uri, String fileName,
+                                        Progress progress) throws Exception {
         File dir = offlineDir();
         File target = new File(dir, fileName);
 
         // 上一次导入被中途杀掉留下的半截文件。它们跟目标同名加后缀，hasOffline
         // 看不见，于是既不会被用上、也永远没人删——而这类文件动辄一两个 G。
+        // 有 importing 互斥位在，这里删的一定不是「正在导」的那份。
         sweepStaleTemps(dir, fileName);
 
         // 先看装不装得下。导入是**再拷一份**：玩家自己下的那份还在（多半在下载
@@ -84,12 +133,23 @@ public final class CNOfflineImport {
         // TOCTOU 防护：一次性拷到临时文件，后续校验/解压都读它，避免 ContentProvider
         // 两次 openInputStream 返回不同字节。
         File tmp = new File(dir, fileName + ".importing");
+        long total = sizeOf(ctx, uri);
         try (InputStream src = ctx.getContentResolver().openInputStream(uri);
              OutputStream dst = new FileOutputStream(tmp)) {
             if (src == null) throw new java.io.IOException("无法打开所选文件");
             byte[] buf = new byte[1 << 16];
+            long done = 0L;
+            long lastReport = 0L;
             int n;
-            while ((n = src.read(buf)) != -1) dst.write(buf, 0, n);
+            while ((n = src.read(buf)) != -1) {
+                dst.write(buf, 0, n);
+                done += n;
+                if (progress != null && done - lastReport >= PROGRESS_STEP) {
+                    lastReport = done;
+                    progress.onProgress(done, total, false);
+                }
+            }
+            if (progress != null) progress.onProgress(done, total, false);
         } catch (Throwable t) {
             // 拷贝失败必须把半截文件带走，否则它就是下一个「永远没人删」。
             deleteQuietly(tmp);
@@ -109,7 +169,7 @@ public final class CNOfflineImport {
             deleteQuietly(tmp);
             return null;
         }
-        if (!CNArchiveValidate.verifyChunks(tmp, hashes)) {
+        if (!verifyChunksWithProgress(tmp, hashes, progress)) {
             CNLog.w(TAG, "离线包分块校验失败: " + fileName);
             deleteQuietly(tmp);
             return null;
@@ -126,6 +186,59 @@ public final class CNOfflineImport {
         }
         CNLog.i(TAG, "离线包导入成功: " + fileName + " (" + target.length() + " 字节)");
         return target;
+    }
+
+    /** {@link CNArchiveValidate#verifyChunks} 的带进度版本。 */
+    private static boolean verifyChunksWithProgress(File f,
+            CNChunkedDownload.ChunkHashes h, Progress progress) {
+        try {
+            java.io.FileInputStream in = new java.io.FileInputStream(f);
+            try {
+                byte[] buf = new byte[1 << 16];
+                long offset = 0L;
+                long lastReport = 0L;
+                for (int block = 0; block < h.count; block++) {
+                    long blockLen = Math.min(h.chunkSize, h.total - offset);
+                    java.security.MessageDigest md =
+                            java.security.MessageDigest.getInstance("MD5");
+                    long read = 0L;
+                    while (read < blockLen) {
+                        int want = (int) Math.min((long) buf.length, blockLen - read);
+                        int n = in.read(buf, 0, want);
+                        if (n < 0) return false;
+                        if (n == 0) continue;
+                        md.update(buf, 0, n);
+                        read += n;
+                    }
+                    long end = offset + blockLen;
+                    String got = hex(md.digest());
+                    String exp = h.hashFor(offset, end);
+                    if (exp == null || !exp.equalsIgnoreCase(got)) {
+                        CNLog.w(TAG, "块校验失败 offset=" + offset
+                                + " 期望=" + (exp == null ? "?" : exp) + " 实得=" + got);
+                        return false;
+                    }
+                    offset = end;
+                    if (progress != null && block - lastReport >= 4) {
+                        lastReport = block;
+                        progress.onProgress(block + 1L, h.count, true);
+                    }
+                }
+                if (progress != null) progress.onProgress(h.count, h.count, true);
+                return offset == h.total && in.read() < 0;
+            } finally {
+                try { in.close(); } catch (Throwable ignore) {}
+            }
+        } catch (Throwable t) {
+            CNLog.w(TAG, "分块校验异常: " + t);
+            return false;
+        }
+    }
+
+    private static String hex(byte[] b) {
+        StringBuilder sb = new StringBuilder(32);
+        for (byte x : b) sb.append(String.format(java.util.Locale.US, "%02x", x & 0xff));
+        return sb.toString();
     }
 
     /** 所选内容的字节数；取不到返回 -1（此时不预检，照旧拷，写满才失败）。 */

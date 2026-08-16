@@ -521,6 +521,11 @@ public class CNCNDownloadUI {
     private static FrameLayout offlineModal;
     /** 离线导入结果弹窗（成功/失败确认）。非空即表示正在显示，用于防重入。 */
     private static FrameLayout importResultModal;
+    /** 离线导入进行中进度框。非空即表示正在导入，用于防重入与进度更新。 */
+    private static FrameLayout importProgressModal;
+    private static TextView importProgressMsg;
+    /** 「正在导入」进度框的标题文字。非空即表示进度框已显示。 */
+    private static volatile TextView importProgressTitle;
 
     /**
      * 浮层上最后一次用户交互（任意按下）的时间（uptimeMillis）。
@@ -2061,6 +2066,83 @@ public class CNCNDownloadUI {
      * @param name 文件名
      * @param err  失败原因（成功时 null）
      */
+    /** 确保「正在导入」进度框已显示（幂等：已显示则不动）。 */
+    public static void ensureImportProgressDialog(final Activity act, final String name) {
+        final FrameLayout host = overlayView;
+        if (act == null || host == null) {
+            CNLog.w("离线", "浮层不在，无法显示导入进度");
+            return;
+        }
+        act.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                try {
+                    if (importProgressTitle != null || importResultModal != null
+                            || offlineModal != null) return;   // 已开着一个，别叠
+                    final FrameLayout modal = new FrameLayout(act);
+                    modal.setBackgroundColor(COLOR_DIM);
+                    modal.setClickable(true);
+                    modal.setFocusable(true);
+
+                    LinearLayout panel = new LinearLayout(act);
+                    panel.setOrientation(LinearLayout.VERTICAL);
+                    panel.setPadding(dp(act, 22), dp(act, 20), dp(act, 22), dp(act, 18));
+                    GradientDrawable panelBg = new GradientDrawable();
+                    panelBg.setColor(COLOR_LOG_PANEL_BG);
+                    panelBg.setCornerRadius(dp(act, 16));
+                    panelBg.setStroke(dp(act, 1), COLOR_CARD_STK);
+                    panel.setBackground(panelBg);
+                    FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
+                            dp(act, 330), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+                    panelLp.leftMargin = panelLp.rightMargin = dp(act, 20);
+                    modal.addView(panel, panelLp);
+
+                    TextView title = new TextView(act);
+                    title.setText("正在导入 " + name + " …");
+                    title.setTextColor(COLOR_LOG_PANEL_TEXT);
+                    title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f);
+                    title.setTypeface(title.getTypeface(), Typeface.BOLD);
+                    panel.addView(title, lpRow(0, dp(act, 10)));
+                    importProgressTitle = title;
+
+                    TextView msg = new TextView(act);
+                    msg.setText("正在拷贝并校验，请稍候…（大包可能要几分钟）");
+                    msg.setTextColor(COLOR_LOG_PANEL_TEXT);
+                    msg.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
+                    msg.setLineSpacing(dp(act, 2), 1f);
+                    panel.addView(msg, lpRow(0, dp(act, 18)));
+                    importProgressMsg = msg;
+
+                    host.addView(modal, new FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT));
+                    importProgressModal = modal;
+                } catch (Throwable t) {
+                    CNLog.e("离线", "构建导入进度框失败", t);
+                }
+            }
+        });
+    }
+
+    private static void updateImportProgress(final String text) {
+        final TextView m = importProgressMsg;
+        if (m == null) return;
+        try {
+            m.post(new Runnable() {
+                @Override public void run() { m.setText(text); }
+            });
+        } catch (Throwable ignore) {}
+    }
+
+    private static void closeImportProgressDialog() {
+        FrameLayout m = importProgressModal;
+        importProgressModal = null;
+        importProgressTitle = null;
+        importProgressMsg = null;
+        if (m != null && m.getParent() instanceof ViewGroup) {
+            ((ViewGroup) m.getParent()).removeView(m);
+        }
+    }
+
     public static void showImportResultDialog(final Activity act, final boolean ok,
                                               final String name, final String err) {
         final FrameLayout host = overlayView;
@@ -2159,8 +2241,10 @@ public class CNCNDownloadUI {
         boolean started = CNOfflineImportActivity.requestImport(act, name,
                 new CNOfflineImportActivity.Callback() {
                     @Override public void onResult(boolean ok, String fn, String err) {
-                        // 先关掉离线导入框，再改浮层内建弹窗给结果——系统 Toast 在
-                        // 引擎 Activity 上不可靠，玩家会以为没导入成功（2026-08-12）。
+                        // 先关掉导入进度框（若有）与离线导入框，再弹结果——
+                        // 系统 Toast 在引擎 Activity 上不可靠，玩家会以为没导入成功
+                        // （2026-08-12）。
+                        closeImportProgressDialog();
                         offlineModal = null;
                         try { host.removeView(modal); } catch (Throwable ignore) {}
                         if (ok && vOfflinePill != null) {
@@ -2175,8 +2259,25 @@ public class CNCNDownloadUI {
                         // （2026-08-13 真机反馈的两个症状，同一个根因）。
                         if (ok) applyOfflineAsync(fn);
                     }
+                    @Override public void onProgress(long done, long total, boolean verifying) {
+                        // 首次进度到达时才弹进度框（选择器还没返回时别盖在上面）。
+                        ensureImportProgressDialog(act, name);
+                        // 拷贝/校验进度：让玩家看到「有进展」，而不是选完文件界面定住
+                        // ——那正是玩家误以为没导入、再导一次、两个导入打架的根源。
+                        if (verifying) {
+                            updateImportProgress("正在校验（" + done + "/" + total + " 块）…");
+                        } else if (total > 0) {
+                            long pct = Math.min(100L, done * 100L / Math.max(1L, total));
+                            updateImportProgress("正在拷贝 " + pct + "%…");
+                        } else {
+                            updateImportProgress("正在拷贝 " + (done / (1024L * 1024L))
+                                    + " MB…");
+                        }
+                    }
                 });
-        if (!started) showImportResultDialog(act, false, name, "无法打开文件选择器");
+        if (!started) {
+            showImportResultDialog(act, false, name, "无法打开文件选择器");
+        }
     }
 
     /**
