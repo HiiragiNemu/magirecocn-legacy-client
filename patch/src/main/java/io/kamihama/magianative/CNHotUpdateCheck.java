@@ -949,9 +949,11 @@ public final class CNHotUpdateCheck {
      *   <li>无交互：停 {@link #IDLE_LINGER_MS} 就走；</li>
      *   <li>有交互：从最后一次按下起顺延 {@link #INTERACT_LINGER_MS}，
      *       给点教程胶囊（播序章）、BGM 胶囊、翻署名这些手动入口留时间；</li>
-     *   <li>弹窗/日志面板开着：一直等，玩家正在操作，不能从他手底下抽走；</li>
+     *   <li>弹窗/日志面板开着：等待玩家操作，但受总上限约束（X-C8：
+     *       modal split-brain 或真忘关时不能永远拦住启动）；</li>
      *   <li>总上限 {@link #PLAYER_WINDOW_MAX_MS}：弹窗忘了关也最终放行，
-     *       不把玩家永远拦在启动画面。</li>
+     *       不把玩家永远拦在启动画面。唯「显式停留」（玩家点过
+     *       「停留本页」）不受此限。</li>
      * </ul>
      */
     private static void awaitPlayerWindow() {
@@ -963,12 +965,28 @@ public final class CNHotUpdateCheck {
                     CNCNDownloadUI.setAutoEnterCountdown(0);
                     break;
                 }
-                // 玩家明确停留、或正在操作任一模态框时不设强制上限，绝不能
-                // 从手底下抽走页面。引擎闸门也要一直保留到真正 hide。
-                if (CNDownloadUiAssist.shouldStayOnPage()
-                        || CNCNDownloadUI.isModalOpen()
-                        || CNDownloadUiAssist.isModalOpen()) {
+                // 玩家明确停留不设强制上限（与 awaitExplicitStayRelease 同
+                // 语义），绝不能从手底下抽走页面。
+                if (CNDownloadUiAssist.shouldStayOnPage()) {
                     CNCNDownloadUI.setAutoEnterCountdown(0);   // 无限期，不数秒
+                    Thread.sleep(100);
+                    continue;
+                }
+                // X-C8：模态分支必须受 PLAYER_WINDOW_MAX_MS 总上限约束——
+                // 本方法 javadoc 承诺「弹窗忘了关也最终放行」，但原实现把
+                // maxMs 检查排在 modal continue 之后，永远到不了：一旦 modal
+                // split-brain（toggleTheme 重建树后字段残留，isModalOpen
+                // 永 true）或玩家真忘关，启动就永久卡在资源页。isModalOpen
+                // 已按「挂在当前树上」收紧（X-C8），这里再兜一道上限。
+                if (CNCNDownloadUI.isModalOpen()
+                        || CNDownloadUiAssist.isModalOpen()) {
+                    CNCNDownloadUI.setAutoEnterCountdown(0);   // 不数秒
+                    if (android.os.SystemClock.uptimeMillis() - start
+                            >= PLAYER_WINDOW_MAX_MS) {
+                        CNLog.w(TAG, "模态框持续超过 " + (PLAYER_WINDOW_MAX_MS / 1000)
+                                + " 秒未关，到达玩家窗口总上限，放行");
+                        break;
+                    }
                     Thread.sleep(100);
                     continue;
                 }

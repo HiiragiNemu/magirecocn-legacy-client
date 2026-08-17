@@ -1532,7 +1532,7 @@ public class CNCNDownloadUI {
     /**
      * 有任一弹窗/面板开着时为 true——玩家正在操作，自动收浮层必须等。
      * logModal 常驻视图树（GONE/VISIBLE 切换），看可见性；其余模态框
-     * 一律「字段非空即在显示」。
+     * 以「字段非空<b>且视图正挂在当前 overlayView 上</b>」为准。
      *
      * <p>⚠ 这里必须覆盖<b>全部</b>模态字段（F-C-03）：热更「玩家窗口」
      * （CNHotUpdateCheck.awaitPlayerWindow）拿它决定能不能收浮层——漏一个，
@@ -1540,16 +1540,30 @@ public class CNCNDownloadUI {
      * 之后新增的 aria2 询问框 / 离线包列表框 / 导入结果框 / 导入进度框就曾
      * 全部漏登记）。新增模态框时记得同步本方法，与 HideRunnable 清理列表
      * 是同一条纪律。
+     *
+     * <p>⚠ X-C8：判据不是「字段非空」而是「挂在当前树上」。toggleTheme
+     * 重建整棵 overlay 树，未迁移的 modal 字段会残留指向旧树视图——旧树
+     * 已从 decorView 摘除，玩家看不见也点不到，若按字段非空判定，
+     * isModalOpen 永远 true，awaitPlayerWindow 的 modal 分支无限 continue
+     * （maxMs 检查在其后，永远到不了），启动永久卡在资源页。本方法纯读、
+     * 不清字段（清字段是 toggleTheme/hide 的职责），避免与迁移窗口竞态。
      */
     public static boolean isModalOpen() {
-        if (supportModal != null || tutorialModal != null
-                || slowModal != null || versionModal != null
-                || aria2AskModal != null || offlineModal != null
-                || importResultModal != null || importProgressModal != null) {
+        FrameLayout ov = overlayView;
+        if (modalOnTree(supportModal, ov) || modalOnTree(tutorialModal, ov)
+                || modalOnTree(slowModal, ov) || modalOnTree(versionModal, ov)
+                || modalOnTree(aria2AskModal, ov) || modalOnTree(offlineModal, ov)
+                || modalOnTree(importResultModal, ov) || modalOnTree(importProgressModal, ov)) {
             return true;
         }
         FrameLayout lm = logModal;
-        return lm != null && lm.getVisibility() == View.VISIBLE;
+        return lm != null && lm.getParent() == ov && ov != null
+                && lm.getVisibility() == View.VISIBLE;
+    }
+
+    /** X-C8：modal 字段非空且其视图正挂在当前 overlayView 上才算「开着」。 */
+    private static boolean modalOnTree(FrameLayout m, FrameLayout ov) {
+        return m != null && ov != null && m.getParent() == ov;
     }
 
     /**
@@ -3940,12 +3954,71 @@ public class CNCNDownloadUI {
             ViewGroup dv = decorView;
             FrameLayout old = overlayView;
             if (dv == null) return;
+
+            // X-C8：主题切换 = 重建整棵 overlay 树。三类「等玩家回答 /
+            // 强阻断」的 modal 必须随树迁移，不能丢：
+            //  · versionModal  强更框——丢了玩家就能绕过强制更新进游戏；
+            //  · slowModal     慢网询问——latch 无超时，丢框又没放行的话
+            //                  后台下载线程永卡（releasePendingSlowAnswer
+            //                  的拆窗兜底只走 hide()/HideRunnable 路径）；
+            //  · aria2AskModal 下载询问——latch 60s，丢框白等一分钟。
+            // 迁移 = 先从旧树摘下、新树建成后再挂上去；视图对象自持全部
+            // 状态（输入内容、按钮监听里的 latch），玩家那边看起来只是
+            // 换了个皮肤。先摘后挂：一个视图同时只能有一个 parent。
+            FrameLayout vm = versionModal;
+            FrameLayout sm = slowModal;
+            FrameLayout am = aria2AskModal;
+            boolean logWasVisible = logModal != null
+                    && logModal.getVisibility() == View.VISIBLE;
+            if (old != null) {
+                try { if (vm != null) old.removeView(vm); } catch (Throwable t) {
+                    CNLog.w("界面", "主题切换：强更框摘离旧树失败: " + t); }
+                try { if (sm != null) old.removeView(sm); } catch (Throwable t) {
+                    CNLog.w("界面", "主题切换：慢网询问框摘离旧树失败: " + t); }
+                try { if (am != null) old.removeView(am); } catch (Throwable t) {
+                    CNLog.w("界面", "主题切换：下载询问框摘离旧树失败: " + t); }
+            }
+
             FrameLayout fresh = buildOverlay(act);
             if (old != null) dv.removeView(old);
             dv.addView(fresh, new ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT));
             overlayView = fresh;
+
+            // 迁移三框（buildOverlay 不碰这三个字段，引用仍有效）。
+            // 注意必须用 FrameLayout.LayoutParams——FrameLayout 布局时会
+            // 按子类 cast，传裸 ViewGroup.LayoutParams 会 ClassCastException。
+            FrameLayout.LayoutParams full = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT);
+            try { if (vm != null) fresh.addView(vm, full); } catch (Throwable t) {
+                CNLog.e("界面", "主题切换：强更框迁移失败: " + t); }
+            try { if (sm != null) fresh.addView(sm, full); } catch (Throwable t) {
+                CNLog.e("界面", "主题切换：慢网询问框迁移失败: " + t); }
+            try { if (am != null) fresh.addView(am, full); } catch (Throwable t) {
+                CNLog.e("界面", "主题切换：下载询问框迁移失败: " + t); }
+
+            // 信息类 modal 不迁移：视图随旧树一并摘除，字段清零（否则
+            // split-brain——字段非空但框已不可见）。它们全是回调式、没有
+            // latch 等待方，丢弃的最大代价是「这次查看/进度展示中断」；
+            // 后台导入线程不受影响（updateImportProgress 有 null 检查，
+            // 导入完成后结果框会弹到新树上）。
+            supportModal          = null;
+            tutorialModal         = null;
+            offlineModal          = null;
+            importResultModal     = null;
+            importProgressModal   = null;
+            importProgressMsg     = null;
+            importProgressTitle   = null;
+
+            // 日志面板只迁移可见性：logModal 字段已被 buildOverlay 重赋为
+            // 新树第 5 层（默认 GONE），内容随下一拍 renderLogModal 自愈。
+            FrameLayout lm = logModal;
+            if (logWasVisible && lm != null) {
+                try { lm.setVisibility(View.VISIBLE); } catch (Throwable ignore) {}
+            }
+
             CNDownloadUiAssist.ensureInstalled();
             // 立即把当前进度重新渲染到新视图上
             renderAll();
