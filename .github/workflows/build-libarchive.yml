@@ -1,7 +1,7 @@
 name: 🔧 构建 libarchive.so
 
 # 重建 libarchive.so（libarchive 3.7.4 + zlib 静态链的 JNI 解压库，两 ABI）。
-# libcnzip.so 曾是一次性手工交叉编译、CI 从不重建的预编译二进制——源码侧的
+# libarchive.so 曾以 libcnzip.so 之名一次性手工交叉编译、CI 从不重建——源码侧的
 # 安全修复（Zip Slip / 吞错 / 膨胀比闸）永远到不了设备。本 workflow 让重建
 # 可复现：手动触发，产物作为 artifact 上传，下载后替换 lib/<abi>/libarchive.so。
 #

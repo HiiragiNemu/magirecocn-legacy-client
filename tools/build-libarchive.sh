@@ -44,7 +44,12 @@ build_abi() {
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX="$PREFIX"
     run_log "$OUT/zlib-$abi-build.log" cmake --build "build-zlib-$abi" --target zlibstatic -j"$NPROC"
-    run_log "$OUT/zlib-$abi-install.log" cmake --install "build-zlib-$abi"
+    # 手动落位（zlib 的 cmake --install 在静态目标上偶发找不到产物）：
+    # zlib.h 在源码树、zconf.h 由 CMake 生成进构建目录、libz.a 在构建目录。
+    mkdir -p "$PREFIX/lib" "$PREFIX/include"
+    cp "$SRC_ZL/zlib.h" "$PREFIX/include/"
+    cp "build-zlib-$abi/zconf.h" "$PREFIX/include/"
+    cp "build-zlib-$abi/libz.a" "$PREFIX/lib/libz.a"
     echo "  ✓ libz.a"
 
     # ── 2. libarchive 静态（CMake + NDK toolchain） ──
