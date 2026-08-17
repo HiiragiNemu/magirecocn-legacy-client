@@ -1,20 +1,45 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  网络安全配置（API 24+ 生效；21–23 忽略本文件，行为与收紧前相同，没有变糟）。
+
+  收紧前的旧版是「全局允许明文 + 信任 user 证书」，与 baseline.json 里本文件
+  的登记理由「禁止明文流量，钉死信任锚」逐字相反（F-E-06）：
+
+  · 明文放行把 28+ 的系统默认安全显式关掉了。安装器那 15 个基础包没有
+    md5/sha 校验、完整性全押 TLS（见 CNMirrors 的投毒链分析）；明文一开，
+    「配置被改 → 明文线路 → 投毒 zip → 恶意 JS 落进 WebView 本地优先目录
+    永久执行」这条链的第一环就被解开了。Java 侧 CNMirrors.normalizeBase
+    已拒收 http://，本文件是同一道防线在系统层的另一半——两边都得是关的。
+  · user 证书是 device-admin 级中间人的入口：玩家装一个「清理大师」并授权
+    后，它的 CA 就能静默签出任意域的证书。24+ 的默认本来不信 user 证书，
+    旧版又显式加了回来。
+
+  收紧后的影响面（逐项核对过，见审计报告 F-E-06）：
+  · 游戏页面是 https，WebView 对 https 页面内的 http 子资源本来就按
+    MIXED_CONTENT_NEVER_ALLOW 拦（无人改默认），破图风险不新增；
+  · 下载/热更/版本检查的 URL 全部经 CNMirrors 强制 https，无明文依赖；
+  · 唯一明文刚需是 aria2 进程内 JSON-RPC 的 127.0.0.1（环回不出机、
+    无窃听面，且有 RPC secret 防同机其它应用），下面单独开口；
+  · 引擎 native 层（libcurl 等）流量不受本文件约束——那是 Java 层策略，
+    native 的 TLS 由引擎自己的栈管，收紧与否都不改变它。
+
+  抓包调试（mitmproxy 等）因此失效是**有意为之**：调试请临时改回本文件并
+  重打包，而不是让 Release 长期带着调试面。
+-->
 <network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+    <!-- 默认：禁明文，只信系统 CA。 -->
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
-            <certificates src="user" />
         </trust-anchors>
     </base-config>
+    <!-- 唯一例外：aria2 进程内 JSON-RPC（http://127.0.0.1:<port>/jsonrpc）。
+         环回地址不出机；includeSubdomains 对 IP 字面量无意义，写 false。 -->
     <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">magica-us.com</domain>
-        <domain includeSubdomains="true">sisyphus.systems</domain>
-        <domain includeSubdomains="true">raw.githubusercontent.com</domain>
-        <domain includeSubdomains="true">github.com</domain>
-        <domain includeSubdomains="true">crynetsystemscell.workers</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
         <trust-anchors>
             <certificates src="system" />
-            <certificates src="user" />
         </trust-anchors>
     </domain-config>
 </network-security-config>

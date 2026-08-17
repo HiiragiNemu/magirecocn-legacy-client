@@ -958,8 +958,8 @@
       "kind": "add",
       "path": "res/xml/network_security_config.xml",
       "group": "安全",
-      "why": "禁止明文流量，钉死信任锚",
-      "post": "03765ca79123ad7ecb649a9039e056055acfcfb39b17ec4670df4437e5752387",
+      "why": "禁止明文流量，钉死信任锚（2026-08 审计修复：旧文件曾与此 why 逐字相反——全局明文 + 信任 user 证书，F-E-06；现已收紧为默认禁明文/只信系统 CA，仅给 aria2 进程内 RPC 的 127.0.0.1 留明文口）",
+      "post": "205f5cb5a31f3f858936c8060db332e39e2de079e1435f7d90e9b39fcce51a25",
       "from": "repo"
     },
     {
