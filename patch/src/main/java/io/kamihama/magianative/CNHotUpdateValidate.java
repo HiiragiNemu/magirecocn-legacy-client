@@ -57,10 +57,15 @@ public final class CNHotUpdateValidate {
             try {
                 java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
                 InputStream in = new BufferedInputStream(new FileInputStream(f), 65536);
-                byte[] buf = new byte[65536];
-                int n;
-                while ((n = in.read(buf)) >= 0) md.update(buf, 0, n);
-                in.close();
+                try {
+                    byte[] buf = new byte[65536];
+                    int n;
+                    while ((n = in.read(buf)) >= 0) md.update(buf, 0, n);
+                } finally {
+                    // R4-01：流在 finally 关——md.update 中途抛异常（文件读取中断、
+                    // IO 错误）时也保证 FD 归还，否则每次 md5 中断就漏一个描述符。
+                    try { in.close(); } catch (Throwable ignore) {}
+                }
                 StringBuilder sb = new StringBuilder(32);
                 for (byte b : md.digest()) sb.append(String.format("%02x", b & 0xff));
                 if (!meta.md5.equalsIgnoreCase(sb.toString())) {

@@ -77,6 +77,11 @@ def main():
             # 静默跳过、红灯变假绿。
             all_errs.append(f"{root}: 路径不存在")
             continue
+        if os.path.isfile(root) and not root.endswith('.so'):
+            # R4-01：点名了一个**存在但不是 .so** 的路径。旧实现会静默跳过、
+            # checked 保持 0，以「✓ 0 个库」假绿收场——路径写错 = 检查根本没跑。
+            all_errs.append(f"{root}: 是文件但不是 .so，不会被检查（路径写错？）")
+            continue
         for so in iter_sos(root):
             checked += 1
             all_errs.extend(check_so(so))
@@ -86,7 +91,14 @@ def main():
         print(f"\n{len(all_errs)} 处 16KB 对齐违例（{checked} 个库）。"
               "重链请加 -Wl,-z,max-page-size=16384。")
         return 1
-    print(f"✓ {checked} 个 arm64 库 LOAD 段全部满足 16KB 页对齐")
+    if checked == 0:
+        # R4-01：一个 .so 都没扫到（空目录 / 目录里没有 .so / 上面已拦下的非
+        # .so 文件），同样不该以「✓ 0 个」假绿收场。契约是「点名路径必须真的
+        # 被检查」，空跑不算通过。
+        print(f"✗ 没扫到任何 .so 文件（{len(roots)} 个路径都为空或类型不符）")
+        return 1
+    # R4-01：措辞不再把 32 位库（按设计跳过、未真正校验对齐）计进「arm64 库」。
+    print(f"✓ {checked} 个 .so LOAD 段全部满足 16KB 页对齐（32 位库按设计自动跳过）")
     return 0
 
 

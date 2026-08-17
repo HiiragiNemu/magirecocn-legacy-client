@@ -157,6 +157,13 @@ def main():
                   f" total={meta['total']}")
             failed.append(name)
             continue
+        if meta["loop_end"] == meta["total"]:
+            # R4-01：loop_end==total 时循环区含文件尾部——编码器 padding 会被
+            # 播出来，接缝处有可闻空隙（现有两首都是 total-235 才对）。不阻断
+            # （也许真有整段循环的曲子），但必须打 WARN 让人确认。
+            print(f"::warning::{name} loop_end == total：循环区含文件尾部（编码器 "
+                  f"padding 会被播出来）。请确认该曲目确实整段循环，否则接缝会有 "
+                  f"空隙——现有两首的 loop_end 都是 total-235。")
         wav = os.path.join(OUT_DIR, f"bgm{track_id}.wav")
         ogg = os.path.join(OUT_DIR, f"bgm{track_id}.ogg")
 

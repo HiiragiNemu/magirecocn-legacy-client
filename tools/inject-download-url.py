@@ -54,6 +54,10 @@ def render(urls):
 
 
 def valid(u):
+    # R4-01：拒控制字符。DOWNLOAD_URLS 是部署参数，一旦带换行/回车，
+    # render() 会把它原样写进 markdown，列表结构被打破——一行封住这个注入面。
+    if re.search(r"[\x00-\x1f\x7f]", u):
+        return False
     p = urllib.parse.urlsplit(u)
     return p.scheme in ("http", "https") and bool(p.netloc) and bool(p.path)
 
