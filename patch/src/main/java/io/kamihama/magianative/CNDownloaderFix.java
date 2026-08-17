@@ -79,6 +79,14 @@ public final class CNDownloaderFix {
     /** {@link #tryAria2Download} 的返回：玩家选改用离线包，跳过主引擎重试。 */
     private static final int A2_OFFLINE   = -1;
     /**
+     * {@link #tryAria2Download} 的返回：磁盘满。与 A2_OFFLINE 分开是因为
+     * 调用方对 OFFLINE 的语义是「玩家不要这个包了」，会清掉半截产物——
+     * 而磁盘满时那 1.4GB 的完整/半截包恰恰是**最不能删**的东西：删完
+     * 玩家腾出来的空间又得拿去重下一遍。下层已 reportNoSpace，这里只
+     * 需要原样保留、静默退出，等他腾完空间点重试续传。
+     */
+    private static final int A2_NOSPACE   = -2;
+    /**
      * aria2 单文件最多尝试次数。与主引擎的 {@link #MAX_ATTEMPTS} 对齐，好让
      * {@code CNMirrors.pick(attempt)} 有机会把线路表轮一遍——线路只有轮得完，
      * 「换线」才叫换线。
@@ -1131,6 +1139,13 @@ public final class CNDownloaderFix {
                 CNLog.w(TAG, "玩家选择改用离线包，跳过主引擎重试: " + name);
                 return false;
             }
+            if (a2 == A2_NOSPACE) {
+                // 磁盘满：reportNoSpace 已在下层报过并内部 markFailed（与主引擎
+                // ENOSPC 分支同一出口，UI 有专门的空间不足提示）。产物与断点
+                // 全部保留——03 这种 1.4GB 的包删了，玩家腾完空间还得整份重下，
+                // ENOSPC 时最不该删的就是半截产物。
+                return false;
+            }
             // a2 == A2_MAIN → 回退主引擎重试
         }
         // 不能删「已完整下载」的包：进程若在 03 下到 100% 之后、大 zip 还在
@@ -1326,6 +1341,13 @@ public final class CNDownloaderFix {
                         markFailed(index);
                         return false;
                     }
+                    if (a2 == A2_NOSPACE) {
+                        // 磁盘满（与首调用点同一语义）：reportNoSpace 已在下层
+                        // 报过并内部 markFailed。保留产物与断点，不续主引擎轮
+                        // 白下一遍——否则 fetchArchive 会按 .aria2 存在把半截
+                        // 1.4GB 产物连同断点一起删掉，正是 ENOSPC 时最不该删的。
+                        return false;
+                    }
                     // aria2 也不行 → 落到下面再给主引擎一轮
                 }
                 // DL_SINGLE 的模式切换已由弹窗完成（见 CNCNDownloadUI.Aria2Choice），
@@ -1378,7 +1400,8 @@ public final class CNDownloaderFix {
      * 询问框不再给「重试备用」这一项。进度接到既有 UI，取消绑线程中断。
      *
      * @return {@link #A2_INSTALLED} 装好了；{@link #A2_MAIN} 走主引擎重试；
-     *         {@link #A2_OFFLINE} 玩家选改用离线包（跳过主引擎，走手动导入）。
+     *         {@link #A2_OFFLINE} 玩家选改用离线包（跳过主引擎，走手动导入）；
+     *         {@link #A2_NOSPACE} 磁盘满（产物与断点保留，不续主引擎轮）。
      */
     private static int tryAria2Download(String name, File archive, int index,
                                         File marker, String canonicalUrl) {
@@ -1504,13 +1527,15 @@ public final class CNDownloaderFix {
             } catch (CNDiskSpace.NotEnoughSpace e) {
                 // 装不下不是引擎的问题，换个引擎/换条线路都没用。断点与已解压
                 // 内容保留，直接把还差多少告诉玩家（与主引擎那条同一个出口）。
+                // 返回 A2_NOSPACE 而不是 A2_OFFLINE：OFFLINE 会被调用方当成
+                // 「玩家不要这个包了」清掉产物，与本注释承诺的「保留」正好相反。
                 reportNoSpace(index, name, e.getMessage());
-                return A2_OFFLINE;      // 别再回退主引擎白下一遍
+                return A2_NOSPACE;      // 别再回退主引擎白下一遍
             } catch (Throwable t) {
                 if (CNDiskSpace.isOutOfSpace(t)) {
                     reportNoSpace(index, name, CNDiskSpace.shortfall(
                             name, 0L, CNDiskSpace.usableBytes(archive)));
-                    return A2_OFFLINE;
+                    return A2_NOSPACE;  // 同上：保留产物，别走 OFFLINE 的删除路径
                 }
                 CNLog.w(TAG, "aria2 备用引擎异常 attempt=" + attempt + "/" + A2_MAX_ATTEMPTS
                         + " file=" + name + " : " + t);
