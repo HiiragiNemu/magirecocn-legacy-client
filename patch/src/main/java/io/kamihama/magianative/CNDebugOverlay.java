@@ -154,7 +154,11 @@ public final class CNDebugOverlay {
         Activity a = activityRef == null ? null : activityRef.get();
         if (a == null || a.isDestroyed()) {
             Activity fresh = RestClient.getCurrentActivity();
-            if (fresh != null) activityRef = new WeakReference<Activity>(fresh);
+            // F-R5-01：RestClient 拿到的也可能是刚销毁未移除的实例（重建窗口期
+            // mActivities 里还留着旧的）——再查一次 isDestroyed，宁缺毋滥。调用方
+            // 都已按 null 处理（render 跳过、轮询重试），这里可以放心返回 null。
+            if (fresh == null || fresh.isDestroyed()) return null;
+            activityRef = new WeakReference<Activity>(fresh);
             return fresh;
         }
         return a;
@@ -504,7 +508,7 @@ public final class CNDebugOverlay {
             }
             // 授权页往返后给一次自动重试：玩家开完回来，不用非得重启才看到小球。
             if (ui != null && act != null) {
-                ui.postDelayed(new PermRecheck(act), 10_000L);
+                ui.postDelayed(new PermRecheck(), 10_000L);
             }
         }
     }
@@ -536,12 +540,19 @@ public final class CNDebugOverlay {
     private static final class PermPoll implements Runnable {
         // F-R4-01：不钉挂载时的 Activity。config 重建后旧实例已销毁，isFinishing
         // 拦不住（重建不走 finish）——继续拿着它轮询就是钉着已销毁实例问权限。
-        // 每轮现查：重建后自动换到新 Activity；拿不到（全部销毁）就停，挂载无从谈起。
+        // 每轮现查：重建后自动换到新 Activity。
+        // F-R5-01：null 是**瞬时态**（重建窗口期 / 引导流程里 Activity 被系统
+        // 回收销毁、进程还活着、mActivities 空）。直接 return 会永久停轮询——
+        // 玩家开完权限回来小球再不出现，正是本功能要救的场景。短延时重试，
+        // 与「授权没有截止时间」的既有设计一致。
         @Override public void run() {
             try {
                 if (ballView != null) return;                 // 已经挂上了
                 Activity act = currentActivity();
-                if (act == null) return;
+                if (act == null) {
+                    if (ui != null) ui.postDelayed(new PermPoll(), 2000L);
+                    return;
+                }
                 if (CNDebugBridge.canDrawOverlays(act)) {
                     CNLog.i(TAG, "检测到悬浮窗权限已授予，挂载小球（等了 "
                             + permPolls + " 轮）");
@@ -559,11 +570,13 @@ public final class CNDebugOverlay {
     }
 
     private static final class PermRecheck implements Runnable {
-        private final Activity act;
-        PermRecheck(Activity act) { this.act = act; }
+        // F-R5-01：与 PermPoll 一致，每轮现查 currentActivity()——授权页往返后
+        // 若期间发生了 config 重建，不再拿点击时捕获的旧实例去 mount。
         @Override public void run() {
             try {
-                if (ballView == null && CNDebugBridge.canDrawOverlays(act)) mount(act);
+                Activity act = currentActivity();
+                if (act != null && ballView == null
+                        && CNDebugBridge.canDrawOverlays(act)) mount(act);
             } catch (Throwable ignore) {}
         }
     }
@@ -753,6 +766,7 @@ public final class CNDebugOverlay {
 
     private static void renderHome(LinearLayout content) {
         Activity act = currentActivity();
+        if (act == null) return;
         setTitle("调试小助手");
 
         // 状态卡：只说结论（设计 P3 / §7）
@@ -786,6 +800,7 @@ public final class CNDebugOverlay {
 
     private static void addEntry(LinearLayout content, String title, String sub, String page) {
         Activity act = currentActivity();
+        if (act == null) return;
         LinearLayout row = new LinearLayout(act);
         row.setOrientation(LinearLayout.VERTICAL);
         row.setPadding(dp(act, 16), dp(act, 12), dp(act, 16), dp(act, 12));
@@ -807,6 +822,7 @@ public final class CNDebugOverlay {
 
     private static void renderResources(LinearLayout content) {
         Activity act = currentActivity();
+        if (act == null) return;
         setTitle("资源修复");
         addGuideCard(content, new String[] {
                 "下载一直卡住不动",
@@ -1043,6 +1059,7 @@ public final class CNDebugOverlay {
 
     private static void renderEnter(LinearLayout content) {
         Activity act = currentActivity();
+        if (act == null) return;
         setTitle("进入游戏");
         addGuideCard(content, new String[] {
                 "资源还在后台处理，想先停在资源页看着它下完",
@@ -1098,6 +1115,7 @@ public final class CNDebugOverlay {
 
     private static void renderLog(LinearLayout content) {
         Activity act = currentActivity();
+        if (act == null) return;
         setTitle("日志与求助");
         addGuideCard(content, new String[] {
                 "要反馈问题，需要把日志发给开发者",
@@ -1338,8 +1356,15 @@ public final class CNDebugOverlay {
         private final File out;
         ShareLogResult(File out) { this.out = out; }
         @Override public void run() {
-            toast(out != null ? "日志包好了，选择要发去的应用"
-                              : "没有可分享的日志（打包失败），请稍后再试");
+            // F-R5-01：chooser 没能起来也要如实说——launch Runnable 先行（post 序
+            // 列保证），失败标志在 toast 前已可读。
+            if (CNDebugBridge.shareChooserFailed) {
+                CNDebugBridge.shareChooserFailed = false;
+                toast("日志包好了，但分享页面没能起来，请重试");
+            } else {
+                toast(out != null ? "日志包好了，选择要发去的应用"
+                                  : "没有可分享的日志（打包失败），请稍后再试");
+            }
         }
     }
 
@@ -1410,6 +1435,7 @@ public final class CNDebugOverlay {
 
     private static void renderGroups(LinearLayout content) {
         Activity act = currentActivity();
+        if (act == null) return;
         int total = flagSnapshot == null ? 0 : flagSnapshot.length;
         boolean nativeMissing = !hasNativeRows(flagSnapshot);
         setTitle("排查开关 · 共 " + total + " 项" + (nativeMissing ? "（引擎层未加载）" : ""));
@@ -1513,6 +1539,7 @@ public final class CNDebugOverlay {
 
     private static void renderCategory(LinearLayout content, String groupId) {
         Activity act = currentActivity();
+        if (act == null) return;
         GroupDef def = groupDef(groupId);
         int nativeCount = countSide(flagSnapshot, groupId, "native");
         setTitle(def.title);
@@ -1560,6 +1587,7 @@ public final class CNDebugOverlay {
     /** F 类默认折叠 + 二次展开（P5）。 */
     private static void renderDangerGate(LinearLayout content) {
         Activity act = currentActivity();
+        if (act == null) return;
         LinearLayout card = innerCard(content);
         TextView warn = text(act,
                 "这一页是开发自测用的「故意弄坏」开关：开了之后游戏某个环节一定会表现得像坏了一样，"
@@ -2482,6 +2510,7 @@ public final class CNDebugOverlay {
     /** 「什么时候用这里？」指引卡（P1：每个功能页顶部固定一张）。 */
     private static void addGuideCard(LinearLayout content, String[] scenes) {
         Activity act = currentActivity();
+        if (act == null) return;
         LinearLayout card = innerCard(content);
         TextView title = text(act, "什么时候用这里？", 13f,
                 color("COLOR_ACCENT2", 0xFF9C5BC2), true);
@@ -2500,6 +2529,7 @@ public final class CNDebugOverlay {
     /** 面板内的卡片：玻璃底 + 卡片描边（§9）。 */
     private static LinearLayout innerCard(LinearLayout content) {
         Activity act = currentActivity();
+        if (act == null) return null;
         LinearLayout card = new LinearLayout(act);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(act, 14), dp(act, 12), dp(act, 14), dp(act, 12));

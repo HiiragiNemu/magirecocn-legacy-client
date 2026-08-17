@@ -450,8 +450,16 @@ public final class CNDebugBridge {
      * <p>先 {@link CNLog#flushNow()}：攒着的 logcat 行不落盘的话，导出的包会比
      * 实际少一段，而少的那段往往正是刚出问题的那段。
      */
+    /**
+     * F-R5-01：chooser 是否没能起来（Runnable 在主线程跑完才可知，shareLog 本体
+     * 异步返回，靠这个包级标志把失败传回 {@code ShareLogResult}）。每次 shareLog
+     * 开头复位。
+     */
+    static volatile boolean shareChooserFailed;
+
     public static File shareLog(Activity act) {
         try {
+            shareChooserFailed = false;   // 复位放最前：本次调用的结果不带上一次的残留
             if (act == null) return null;
             CNLog.flushNow();
             File out = CNLogBundle.write(act, CNLog.logDirPath());
@@ -468,17 +476,23 @@ public final class CNDebugBridge {
             // 不确定性——shareLog 被设计成可在后台线程调（flush+打包不能卡 UI），
             // 但起 chooser 这一步要回主线程。已在主线程就直发，否则 post 回去。
             final Intent chooser = Intent.createChooser(send, "分享日志");
-            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
-                act.startActivity(chooser);
-            } else {
-                final Activity a = act;
-                a.runOnUiThread(new Runnable() {
-                    @Override public void run() {
-                        try { a.startActivity(chooser); } catch (Throwable t) {
-                            CNLog.w(TAG, "起分享 chooser 失败: " + t);
-                        }
+            final Activity a = act;
+            final Runnable launch = new Runnable() {
+                @Override public void run() {
+                    try {
+                        a.startActivity(chooser);
+                    } catch (Throwable t) {
+                        // F-R5-01：失败如实上报，别让「日志包好了」骗过玩家——
+                        // chooser 没起来，包是白打的。
+                        CNLog.w(TAG, "起分享 chooser 失败: " + t);
+                        shareChooserFailed = true;
                     }
-                });
+                }
+            };
+            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+                launch.run();
+            } else {
+                a.runOnUiThread(launch);
             }
             return out;
         } catch (Throwable t) {
