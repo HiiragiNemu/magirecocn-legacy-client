@@ -87,6 +87,12 @@ public final class CNHotUpdate {
                 markDone(index);
                 return true;
             } catch (Throwable t) {
+                // F-B-08：磁盘满不是下载失败——不清理断点（.part 保留，腾出
+                // 空间后重试即续传），走与镜像循环同一个空间不足出口。
+                if (CNDiskSpace.isOutOfSpace(t)) {
+                    reportNoSpace(index, displayName, dest);
+                    return false;
+                }
                 cleanupDownloadArtifacts(dest);
                 markFailed(index);
                 CNLog.e(TAG, "直连下载失败: " + url, t);
@@ -132,6 +138,19 @@ public final class CNHotUpdate {
                     CNCNDownloadUI.resetFileProgress(index);
                     attempt = 0;
                     continue;
+                }
+                // F-B-08：磁盘满不是线路故障。安装器主引擎/aria2 两条路都已
+                // 用 CNDiskSpace 分流（CNDownloaderFix 的 NotEnoughSpace /
+                // isOutOfSpace 分支），热更原先漏接——out.write 在磁盘满时抛的
+                // 是普通 IOException，落到下面的 reportFailure 就是「线路故障」：
+                // 线上 switch_after_failures=1，一次就把无辜线路打进 60 秒冷却，
+                // 四次重试把四条线各烧一遍，每次从头写、每次 ENOSPC。这里照同
+                // 一套模式分流：不 reportFailure、不冷却、**保留断点**（.part/
+                // .cpart/meta 不清，腾出空间后重试即续传）、不再换线白试——
+                // 空间不会因为多试四次就长出来。
+                if (CNDiskSpace.isOutOfSpace(t)) {
+                    reportNoSpace(index, displayName, dest);
+                    return false;
                 }
                 CNMirrors.reportFailure(mirror, String.valueOf(t.getMessage()));
                 CNLog.w(TAG, "下载失败 " + remoteName + " attempt=" + attempt
@@ -399,6 +418,23 @@ public final class CNHotUpdate {
             CNCNDownloadUI.fileStatus[index] = CNCNDownloadUI.ST_ERROR;
         }
         CNCNDownloadUI.throttledUpdate();
+    }
+
+    /**
+     * 「存储空间不足」出口（F-B-08），与 {@code CNDownloaderFix.reportNoSpace}
+     * 同语：话里要有数字（还差多少），而不是「失败了，请重试」——这个失败
+     * 点重试没意义，先去腾空间。断点与半成品一律保留：腾出空间后重试是
+     * 续传，不是从头来。
+     */
+    private static void reportNoSpace(int index, String displayName, File dest) {
+        String msg = CNDiskSpace.shortfall(displayName, 0L, CNDiskSpace.usableBytes(dest));
+        CNLog.e(TAG, "no-space file=" + displayName + " " + msg
+                + "（下载断点保留，不记线路冷却，不重试）");
+        try {
+            CNCNDownloadUI.updateSimple("存储空间不足",
+                    msg + "。请清理后点「重试」，已下好的部分会保留。", 0);
+        } catch (Throwable ignore) {}
+        markFailed(index);
     }
 
     private static long parseLong(String s, long dflt) {

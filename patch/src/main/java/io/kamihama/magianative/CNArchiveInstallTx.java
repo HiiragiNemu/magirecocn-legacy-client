@@ -11,6 +11,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
+import java.io.RandomAccessFile;
 import java.io.Writer;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -142,8 +143,26 @@ public final class CNArchiveInstallTx {
                         Math.min(bytes, totalF), totalF);
             }
         };
-        boolean ok = CNZipTool.extract(archive, root, table, sink);
+        // F-B-04：主路径原先全程不响应取消——JNI 进度回调恒返 true，2.79GB
+        // 的 03 解压几十秒到几分钟期间，玩家点的「重下」被静默吞掉，解压完
+        // 上层照常 writeMarker，FORCE_REDOWNLOAD 语义被破坏（回退路径本来
+        // 会在条目间抛 CancelledException）。现在把 cancel 一路接进 JNI 回调：
+        // native 每解完一个条目调一次，返回 false 即中断（cnExtract 早已支持）。
+        final Cancel cancelF = cancel;
+        boolean ok = CNZipTool.extract(archive, root, table, sink,
+                cancel == null ? null : new CNZipTool.ExtractCancel() {
+                    @Override public boolean isCancelled() {
+                        return cancelF.isCancelled();
+                    }
+                });
         if (!ok) {
+            // false 有两种来源：玩家取消（回调中断）与解压本身失败，必须区分。
+            // 取消要走 CancelledException——上层（CNDownloaderFix 主引擎/aria2）
+            // 据此转 ResetRequired 清断点重下，**不会**写 marker；若错当成普通
+            // 失败抛 corrupt，取消语义就又被吞回去了。
+            if (cancel != null && cancel.isCancelled()) {
+                throw new CancelledException("Extraction cancelled during libcnzip extract");
+            }
             throw corrupt("libcnzip 解压失败: " + archive.getName(), null);
         }
         if (progress != null) progress.onProgress(t.count, t.count, totalF, totalF);
@@ -518,6 +537,10 @@ public final class CNArchiveInstallTx {
             if (!temp.renameTo(file)) {
                 throw new InstallIOException("Cannot promote extraction state: " + file);
             }
+            // F-B-06：rename 落地的是**目录项**，上面对 temp 的 fsync 管不到它。
+            // 断点状态丢了不致命（下次整包重解），但对干净目录的 fsync 近乎
+            // 零成本，顺手把这个掉电窗口也关上。
+            syncDir(file.getParentFile());
         } catch (IOException e) {
             if (e instanceof InstallIOException) throw (InstallIOException) e;
             throw new InstallIOException("Cannot save extraction state: " + file, e);
@@ -525,6 +548,39 @@ public final class CNArchiveInstallTx {
             closeQuietly(writer);
             closeQuietly(raw);
             deleteQuietly(temp);
+        }
+    }
+
+    /**
+     * fsync 一个<b>目录</b>，让其中的目录项（创建/删除/rename）持久化（F-B-06）。
+     *
+     * <p>为什么需要它：ext4/f2fs 上 {@code getFD().sync()} 一个文件只保证该
+     * 文件的**内容**落盘，不保证「它出现在父目录里 / 旧名字消失」这类目录项
+     * 变更落盘。热更事务（{@code CNHotUpdateTx}）的崩溃恢复语义建立在
+     * 「journal 的持久化严格早于任何 rename」之上——不 fsync 目录，掉电后可能
+     * 出现 rename 生效而 journal/COMMITTED 的目录项丢失，恢复方向随之误判
+     * （把「已提交一半」当成「没动过」，连同回滚材料一起删掉）。
+     *
+     * <p>实现与取舍：Android 上不能以写模式打开目录（{@code new FileOutputStream(dir)}
+     * 直接抛异常），但只读打开拿到 fd 后 fsync 是可行的，SDK 21 即可用。部分
+     * 挂载（sdcardfs/FUSE/个别 OEM 内核）不支持 fsync 目录——此时<b>降级为记
+     * 日志而不是判失败</b>：文件内容本身都已逐次 fsync，缺的只是「目录项 vs
+     * 掉电」这最后一个窗口，为它放弃整笔事务得不偿失。
+     *
+     * <p>包内可见：{@code CNHotUpdateTx} 的 journal/COMMITTED/清单目录复用
+     * 同一份实现，别复制第二份。
+     */
+    static void syncDir(File dir) {
+        if (dir == null || !dir.isDirectory()) return;
+        RandomAccessFile raf = null;
+        try {
+            raf = new RandomAccessFile(dir, "r");
+            raf.getFD().sync();
+        } catch (Throwable t) {
+            CNLog.w(TAG, "目录 fsync 失败（该文件系统可能不支持，掉电窗口仍在）: "
+                    + dir + " : " + t);
+        } finally {
+            closeQuietly(raf);
         }
     }
 

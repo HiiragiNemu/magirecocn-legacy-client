@@ -15,6 +15,8 @@ import java.io.InputStream;
  * <p>纯静态工具类，编译 classpath 只有 android.jar + OkHttp/Okio。
  */
 public final class CNHotUpdateValidate {
+    private static final String TAG = "MagiaCNHotUpdate";
+
     private CNHotUpdateValidate() {}
 
     /**
@@ -29,13 +31,29 @@ public final class CNHotUpdateValidate {
 
     /**
      * 下载完工校验：size 对得上、md5 对得上才放行；返回 null 表示通过。
+     *
+     * <p><b>F-B-07（fail-closed）</b>：size 与 md5 <b>都缺</b>时不再放行。
+     * 原先两道校验各自「缺字段就跳过」，两者皆缺就直接 return null——
+     * 「校验通过」与「根本没有校验」在日志与 UI 上无法区分，version JSON
+     * 格式漂移/服务端漏发字段后，热更包（要写进拦截层本地优先目录的可执行
+     * JS）的完整性校验会整体静默消失。取舍：宁可因配置事故误拒一轮热更
+     * （下次启动还会重试），也不让未校验的字节流产出「完工」结论。
      */
     public static String verifyZip(File f, VerMeta meta) {
         if (meta == null || f == null || !f.isFile()) return "文件缺失";
-        if (meta.size > 0 && f.length() != meta.size) {
+        boolean hasSize = meta.size > 0;
+        boolean hasMd5 = meta.md5 != null && meta.md5.length() > 0;
+        if (!hasSize && !hasMd5) {
+            // 校验无法进行 = 不通过。记 WARN 让「这轮没有完整性校验」在日志里
+            // 可见，而不是和「校验通过」长得一模一样。
+            CNLog.w(TAG, "version JSON 缺 size/md5，完工校验无法进行，按失败处理: "
+                    + f + " version=" + meta.version);
+            return "version JSON 缺少 size/md5，完工校验无法进行";
+        }
+        if (hasSize && f.length() != meta.size) {
             return "大小不符 " + f.length() + " != " + meta.size;
         }
-        if (meta.md5 != null && meta.md5.length() > 0) {
+        if (hasMd5) {
             try {
                 java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
                 InputStream in = new BufferedInputStream(new FileInputStream(f), 65536);

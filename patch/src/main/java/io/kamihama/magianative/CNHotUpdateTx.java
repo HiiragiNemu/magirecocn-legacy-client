@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.Enumeration;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.zip.ZipEntry;
@@ -94,7 +95,11 @@ import java.util.zip.ZipFile;
  * 写的是同一棵树，共用的子树里「这一版没有它」不等于「不该有它」。
  * 首次启用时没有上一轮清单，什么都不删：<b>这套机制防的是以后再犯，补不了以前的账。</b>
  *
- * 总共两次 fsync（journal 一次、COMMITTED 一次）。
+ * 文件 fsync 共两次（journal 一次、COMMITTED 一次）；此外对 journal /
+ * COMMITTED / 清单所在的目录、以及提交阶段动过的每个目录各做一次<b>目录
+ * fsync</b>（F-B-06：fsync 文件管不到它的目录项，掉电时可能出现「rename
+ * 生效了但 journal 不在」，恰好击穿上面的恢复前提）。不支持 fsync 目录的
+ * 文件系统降级为记日志，不判事务失败。
  *
  * <h3>崩溃后的方向</h3>
  *
@@ -237,12 +242,28 @@ public final class CNHotUpdateTx {
                 sb.append(existed ? '1' : '0').append('+').append('\t').append(rel).append('\n');
             }
             writeSynced(journal, sb.toString());
+            // F-B-06：上面 fsync 的是 journal 的**内容**，而「journal 这个目录项
+            // 存在」是另一回事——ext4/f2fs 上目录项要单独 fsync 父目录才落盘。
+            // 不补这一下，掉电时序「journal 创建 → fsync 内容 → rename 落盘 →
+            // 掉电」恢复后会变成 rename 生效而 journal 不存在，rollback 会误判
+            // 「还没进提交阶段」直接删事务目录，把回滚材料（backup）一并销毁。
+            syncDir(journal.getParentFile());
             CNLog.i(TAG, "[" + tag + "] 提交计划已落盘：写入 " + rels.size() + " 个（覆盖 "
                     + countExisting(plan) + " 个），清理孤儿 " + orphans.size() + " 个");
 
             // ---- 阶段三：提交 ----
-            commit(root, stage, backup, plan, tag);
+            // F-B-06：提交阶段的 rename 改的全是目录项，逐个 fsync 文件管不到。
+            // 把动过的父目录（活动树侧与 backup 镜像侧）收集起来，提交后逐个
+            // fsync——恢复语义依赖「rename 与 journal/COMMITTED 的相对持久顺序」，
+            // 目录项不落盘，这个顺序在掉电后就没有意义。目录数量是几十量级，
+            // 一次干净目录的 fsync 近乎零成本，付得起。
+            Set<File> dirtyDirs = new LinkedHashSet<File>();
+            commit(root, stage, backup, plan, tag, dirtyDirs);
+            for (File d : dirtyDirs) syncDir(d);
             writeSynced(new File(tx, COMMITTED), "ok\n");
+            // COMMITTED 自己的目录项同理：recover() 靠「COMMITTED 在不在」决定
+            // 向前滚还是向后滚，这个标志位的目录项必须落盘。
+            syncDir(tx);
             CNLog.i(TAG, "[" + tag + "] 提交完成");
             // 清单在提交之后写。中间崩掉的话下一轮拿到的是**上一版**的清单，
             // 算出来的孤儿只会更少（漏删），不会多删——失败方向永远偏安全。
@@ -304,9 +325,14 @@ public final class CNHotUpdateTx {
         return n;
     }
 
-    /** 逐个换入：旧文件进 backup，暂存文件到位。任何一步失败都往上抛，由调用方回滚。 */
+    /**
+     * 逐个换入：旧文件进 backup，暂存文件到位。任何一步失败都往上抛，由调用方回滚。
+     *
+     * <p>{@code dirtyDirs} 收集本次 rename 动过的父目录（F-B-06），调用方在提交
+     * 完成后对它们逐个 fsync——见 apply 阶段三与 syncDir 的注释。传 null 表示不收集。
+     */
     private static void commit(File root, File stage, File backup,
-                               List<Entry> plan, String tag) throws IOException {
+                               List<Entry> plan, String tag, Set<File> dirtyDirs) throws IOException {
         for (int i = 0; i < plan.size(); i++) {
             Entry en = plan.get(i);
             File live = new File(root, en.rel);
@@ -322,10 +348,22 @@ public final class CNHotUpdateTx {
                 File to = new File(backup, en.rel);
                 ensureParent(to);
                 move(live, to);
+                if (dirtyDirs != null) {
+                    // 旧文件从活动树的这个目录里消失、出现在 backup 镜像里——
+                    // 两个目录的目录项都变了。
+                    File lp = live.getParentFile();
+                    File tp = to.getParentFile();
+                    if (lp != null) dirtyDirs.add(lp);
+                    if (tp != null) dirtyDirs.add(tp);
+                }
             }
             if (en.remove) continue;   // 孤儿：备份完就没了，没有 stage 文件要换入
             ensureParent(live);
             move(from, live);
+            if (dirtyDirs != null) {
+                File lp = live.getParentFile();
+                if (lp != null) dirtyDirs.add(lp);
+            }
         }
     }
 
@@ -444,6 +482,9 @@ public final class CNHotUpdateTx {
             File f = manifestFile(root, tag);
             ensureParent(f);
             writeSynced(f, sb.toString());
+            // F-B-06：清单的目录项也要落盘。它丢了不致命（下一轮只是不清理
+            // 孤儿，失败方向偏安全），但目录 fsync 近乎免费，顺手关上窗口。
+            syncDir(f.getParentFile());
         } catch (Throwable t) {
             // 写不下来只影响下一轮的孤儿计算（会漏删），不影响这次更新的正确性
             CNLog.w(TAG, "[" + tag + "] 清单写入失败，下一轮不会清理孤儿", t);
@@ -494,6 +535,24 @@ public final class CNHotUpdateTx {
         String[] prefixes = cleanupPrefixes(tag);
         if (prefixes.length == 0) return out;
         List<String> prev = readManifest(root, tag);
+        // F-B-05：清单文件（.cnv_manifest/<tag>.list）躺在解压根下，本身没有
+        // 任何完整性保护——能往 <files>/ 写文件的任何路径（例如 native 解压
+        // 曾经的 Zip Slip，F-B-01）都能种下一份假清单。而原先的过滤只有
+        // startsWith 前缀白名单：「magica/js/../../../databases/x」同样以合法
+        // 前缀开头，new File(root, rel) 解析后落在 <files>/ 之外，一旦进删除
+        // 计划就会被 rename 进 backup、提交后随事务目录一起删掉——「只写不删」
+        // 的热更语义被升级成跨目录定向删除（可删安装器状态、数据库）。
+        // 孤儿删除必须保守：每条目先做与补丁 01（cnExtract is_safe_entry_name）
+        // 同语的规范化校验，再做 canonical 前缀复核，非法条目跳过并记 WARN。
+        final String rootPrefix;
+        try {
+            rootPrefix = root.getCanonicalPath() + File.separator;
+        } catch (Throwable t) {
+            // 连基准路径都解析不出就做不了 canonical 复核——宁可本轮一个孤儿
+            // 都不删（漏删只是老文件多留一轮），也不在没有复核的情况下动删除。
+            CNLog.w(TAG, "[" + tag + "] 解压根 canonical 解析失败，本轮跳过孤儿清理", t);
+            return out;
+        }
         for (int i = 0; i < prev.size(); i++) {
             String rel = prev.get(i);
             if (current.contains(rel)) continue;
@@ -502,7 +561,23 @@ public final class CNHotUpdateTx {
                 if (rel.startsWith(prefixes[j])) { allowed = true; break; }
             }
             if (!allowed) continue;
+            if (!isSafeManifestEntry(rel)) {
+                CNLog.w(TAG, "[" + tag + "] 清单含非法路径条目，跳过: " + rel);
+                continue;
+            }
             File live = new File(root, rel);
+            try {
+                // canonical 复核：逐段字符串校验管不住「每段都合法、解析后却在
+                // 根外」的情况（活动树里混入符号链接时）。删除范围的最终判据
+                // 以解析后的真实路径为准。
+                if (!live.getCanonicalPath().startsWith(rootPrefix)) {
+                    CNLog.w(TAG, "[" + tag + "] 清单条目解析后落在解压根外，跳过: " + rel);
+                    continue;
+                }
+            } catch (Throwable t) {
+                CNLog.w(TAG, "[" + tag + "] 清单条目 canonical 解析失败，跳过: " + rel, t);
+                continue;
+            }
             if (live.isFile()) out.add(rel);
         }
         if (!out.isEmpty()) {
@@ -621,6 +696,33 @@ public final class CNHotUpdateTx {
     // ==================================================================
     // 小工具
     // ==================================================================
+
+    /**
+     * 清单条目的路径规范化校验（F-B-05），与补丁 01 native 侧
+     * {@code is_safe_entry_name} 同语：非空、不以 '/' 开头（绝对路径）、
+     * 不含反斜杠、逐段拒绝 ".."；另拒 ':'（盘符/协议分隔符，与
+     * {@link #listEntries} 对 zip 中央目录的判据一致）。
+     *
+     * <p>这只是第一道字符串闸，调用方还须做 canonical 前缀复核——字符串
+     * 合法不代表解析后仍在解压根内（符号链接）。
+     */
+    private static boolean isSafeManifestEntry(String rel) {
+        if (rel == null || rel.length() == 0) return false;
+        if (rel.charAt(0) == '/') return false;
+        if (rel.indexOf('\\') >= 0) return false;
+        if (rel.indexOf(':') >= 0) return false;
+        String[] segs = rel.split("/", -1);
+        for (int i = 0; i < segs.length; i++) {
+            if ("..".equals(segs[i])) return false;
+        }
+        return true;
+    }
+
+    /** F-B-06：目录 fsync 的全仓唯一实现挪在 {@link CNArchiveInstallTx#syncDir}
+     *  （解压状态文件也需要它），这里只是转调，别复制第二份——两份迟早漂。 */
+    private static void syncDir(File dir) {
+        CNArchiveInstallTx.syncDir(dir);
+    }
 
     static File txDir(File root, String tag) {
         return new File(new File(root, TX_DIR), tag);

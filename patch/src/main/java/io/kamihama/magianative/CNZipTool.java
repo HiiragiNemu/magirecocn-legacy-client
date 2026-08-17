@@ -151,6 +151,16 @@ public final class CNZipTool {
     }
 
     /**
+     * 解压取消判据（F-B-04）。原先 JNI 进度回调恒返 true、注释把取消推给
+     * 「外层」处理，而外层（{@code CNArchiveInstallTx.extractWithBsdtar}）
+     * 实际上没有处理——主路径整包解压期间「重下」请求被静默吞掉，解压完
+     * 上层照常写完成标记。现在回调每次被 native 调用时轮询本接口，返回
+     * false 即让 cnExtract 中断（native 早已支持，取消粒度为条目边界，
+     * 与 ZipFile 回退路径逐条目查 cancel 一致）。
+     */
+    public interface ExtractCancel { boolean isCancelled(); }
+
+    /**
      * 解压 zip 到目标目录。JNI 在进程内逐条目解压，每解完一个条目回调
      * {@code cb.onProgress(entriesDone, bytesDone)}。调用方需自行预检磁盘空间。
      *
@@ -162,6 +172,17 @@ public final class CNZipTool {
      */
     public static boolean extract(File zip, File dest, EntryTable table,
                                   ExtractProgress cb) {
+        return extract(zip, dest, table, cb, null);
+    }
+
+    /**
+     * 同 {@link #extract(File, File, EntryTable, ExtractProgress)}，额外接
+     * 取消判据（F-B-04）：{@code cancel} 报取消时 JNI 回调返回 false，native
+     * 在条目边界中断，本方法返回 false——由调用方（再查一次 cancel）区分
+     * 「因取消而 false」与「解压失败而 false」。
+     */
+    public static boolean extract(File zip, File dest, EntryTable table,
+                                  ExtractProgress cb, final ExtractCancel cancel) {
         if (zip == null || dest == null || !zip.isFile() || !dest.isDirectory()) {
             return false;
         }
@@ -171,9 +192,8 @@ public final class CNZipTool {
             return false;
         }
         try {
-            final EntryTable t = table;
-            final ExtractProgress p = cb;
             final long zipLen = zip.length();
+            final ExtractProgress p = cb;
             // 写时炸弹闸（补丁 03）：native 闸二不可达（libcnzip 是预编译二进制、
             // CI 不重建）期间的设备侧防线，判据镜像 archive_jni.cpp 的「累计写出
             // > zip 体积×200 且已过 256MB 即中止」。预检读的中央目录**声明**尺寸
@@ -190,7 +210,8 @@ public final class CNZipTool {
                         return false;
                     }
                     if (p != null) p.onProgress(doneEntries, bytesDone);
-                    return true;   // 不主动取消（CNArchiveInstallTx 的 Cancel 由外层处理）
+                    // false = 请 native 中断解压（F-B-04）；炸弹闸命中返回 false 同上。
+                    return cancel == null || !cancel.isCancelled();
                 }
             };
             return cnExtract(zip.getAbsolutePath(), dest.getAbsolutePath(), jp);

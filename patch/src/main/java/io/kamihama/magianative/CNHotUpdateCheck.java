@@ -397,6 +397,22 @@ public final class CNHotUpdateCheck {
                     CNCNDownloadUI.markFileDone(pkg.slot);
                     continue;
                 }
+                // F-B-07：三元组不齐的包不能进下载队列。CNHotUpdateValidate
+                // .verifyZip 对「size 与 md5 都缺」已 fail-closed，但等到下完
+                // 再拒会白烧一次下载与四条线路；而且只有 size 没有 md5 时身份
+                // 强度也配不上「写可执行 JS 进本地优先目录」这条通道。在这里
+                // 就按「校验无法进行」处理：记失败、不写版本号、不下载——
+                // 与 redownloadPackage 的拒收判据对齐（那边原先只查 size，
+                // 一并补上 md5）。失败方向偏安全：下次启动还会再查再试。
+                if (meta.size <= 0 || meta.md5 == null || meta.md5.length() == 0) {
+                    anyFailure = true;
+                    markHotFailed(pkg.slot);
+                    CNLog.e(TAG, "[" + pkg.label + "] version JSON 缺少 size/md5（size="
+                            + meta.size + "），完整性校验无法进行，本轮跳过且不更新");
+                    CNCNDownloadUI.updateSimple("检查热更新",
+                            pkg.label + "：版本信息缺少校验字段，已跳过", 0);
+                    continue;
+                }
                 // 需要更新的槽位回到等待/0%。（其余 13 个基础包本轮不检查，
                 // 已由 syncInstalledUiState 标成「未检查」，不再冒充完成。）
                 CNCNDownloadUI.markFilePending(pkg.slot);
@@ -511,9 +527,21 @@ public final class CNHotUpdateCheck {
                     // 应用失败时**不能**写新版本号，否则下次启动会以为已经更新过。
                     anyFailure = true;
                     markHotFailed(pkg.slot);
-                    CNLog.e(TAG, "[" + pkg.label + "] 应用失败（已回滚），版本号保持 " + local, t);
-                    CNCNDownloadUI.updateSimple("应用热更新",
-                            pkg.label + "：应用失败已回滚，已跳过（" + processedCount + "/" + needCount + "）", 0);
+                    if (CNDiskSpace.isOutOfSpace(t)) {
+                        // F-B-08 解压段：解压中途写满磁盘（CNArchiveInstallTx 的
+                        // 空间预检抛 NotEnoughSpace，或写盘 ENOSPC）不是「包坏了」。
+                        // 事务已整体回滚、活动树未受污染，把「去清空间」如实告诉
+                        // 玩家，而不是一句看不出原因的「应用失败」。
+                        CNLog.e(TAG, "[" + pkg.label + "] 应用失败：存储空间不足（已回滚），版本号保持 " + local, t);
+                        CNCNDownloadUI.updateSimple("存储空间不足",
+                                CNDiskSpace.shortfall(pkg.label + " 解压", 0L,
+                                        CNDiskSpace.usableBytes(new File(FILES_DIR)))
+                                        + "。请清理后点「重试」。", 0);
+                    } else {
+                        CNLog.e(TAG, "[" + pkg.label + "] 应用失败（已回滚），版本号保持 " + local, t);
+                        CNCNDownloadUI.updateSimple("应用热更新",
+                                pkg.label + "：应用失败已回滚，已跳过（" + processedCount + "/" + needCount + "）", 0);
+                    }
                     deleteQuietly(tmp);
                     continue;
                 }
@@ -599,7 +627,12 @@ public final class CNHotUpdateCheck {
             CNCNDownloadUI.updateSimple("重新下载热更新",
                     pkg.label + "：正在取得当前版本身份…", 0);
             CNHotUpdateValidate.VerMeta meta = fetchMeta(pkg.versionUrl);
-            if (meta == null || meta.size <= 0) throw new java.io.IOException("版本 JSON 缺少有效 size");
+            // F-B-07：md5 也纳入强制。verifyZip 的 fail-closed 只拦「两者
+            // 皆缺」；只有 size 没有 md5 仍会放行，而 size 相同、内容不同的
+            // 重打包在线上真实发生过——这条通道写的是可执行 JS，身份强度不该
+            // 停在 size 上。下完再拒等于白下一遍，所以在这里就拒。
+            if (meta == null || meta.size <= 0 || meta.md5 == null || meta.md5.length() == 0)
+                throw new java.io.IOException("版本 JSON 缺少有效 size/md5");
             CNCNDownloadUI.setFileSize(slot, (float) (meta.size / 1000000.0d));
             CNHotUpdate.cleanupDownloadArtifacts(tmp);
             boolean ok = CNHotUpdate.download(pkg.zipUrl, tmp.getAbsolutePath(),
