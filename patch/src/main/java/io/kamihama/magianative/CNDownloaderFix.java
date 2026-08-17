@@ -1237,7 +1237,12 @@ public final class CNDownloaderFix {
                     CNLog.i(TAG, "manual-restart-active file=" + name
                             + " attempt=" + attempt + "：清除该文件断点并从头重下");
                     CNDownloadRestart.clearInterrupt();
-                    cleanupArchiveDownloadState(index);
+                    // object-storage-01：清理是否保留离线候选由请求源决定（紫色重下=false、
+                    // installOfflineNow=true），不能写死——写死 false 会把玩家
+                    // 刚导入的离线包在持锁期间删掉；写死 true 会让紫色重下
+                    // 被离线候选劫持（重跑 installArchive 直接装离线包）。
+                    cleanupArchiveDownloadState(index,
+                            CNDownloadRestart.keepOfflineRequested(index));
                     CNCNDownloadUI.resetFileProgress(index);
                     attempt = 0;
                     continue;
@@ -1284,7 +1289,9 @@ public final class CNDownloaderFix {
                     CNLog.i(TAG, "manual-restart-active file=" + name
                             + " attempt=" + attempt + "：清除该文件断点并从头重下");
                     CNDownloadRestart.clearInterrupt();
-                    cleanupArchiveDownloadState(index);
+                    // object-storage-01：同 ResetRequired 分支——keepOffline 由请求源决定。
+                    cleanupArchiveDownloadState(index,
+                            CNDownloadRestart.keepOfflineRequested(index));
                     CNCNDownloadUI.resetFileProgress(index);
                     attempt = 0;
                     continue;
@@ -1522,12 +1529,15 @@ public final class CNDownloaderFix {
                         CNLog.i(TAG, "manual-restart-active(aria2) file=" + name
                                 + " attempt=" + attempt + "：清除该文件断点并从头重下");
                         CNDownloadRestart.clearInterrupt();
-                        // keepOffline=true：离线导入（installOfflineNow）也会走到
-                        // 这里——按默认 keepOffline=false 会把玩家刚导入的离线包
-                        // 删掉，随后 installOfflineNow 拿锁后报「离线包已消失」，
-                        // 重下结束又白下一遍。保留离线候选对「重下」也无害（重下
-                        // 走网络，不碰离线区）。
-                        cleanupArchiveDownloadState(index, true);
+                        // object-storage-01/02：keepOffline 由请求源携带的原因码决定——
+                        // installOfflineNow 登记 true（它就是奔着离线包来的，
+                        // 删了等锁后必报「离线包已消失」、导入作废白下一遍）；
+                        // 紫色「重下」登记 false（重跑 installArchive 时
+                        // FORCE_REDOWNLOAD 未设，离线候选还在就会被直接装而
+                        // 非真重下——「保留对重下无害」的论断不成立，离线分支
+                        // 在 installArchive 开头，重跑必经过）。
+                        cleanupArchiveDownloadState(index,
+                                CNDownloadRestart.keepOfflineRequested(index));
                         CNCNDownloadUI.resetFileProgress(index);
                         attempt = 0;
                         continue;
@@ -1636,8 +1646,9 @@ public final class CNDownloaderFix {
                         CNLog.i(TAG, "manual-restart-active(aria2-extract) file=" + name
                                 + "：清除该文件断点并从头重下");
                         CNDownloadRestart.clearInterrupt();
-                        // keepOffline=true：同下载期分支——离线导入的触发源不能删离线候选。
-                        cleanupArchiveDownloadState(index, true);
+                        // object-storage-01/02：同下载期分支——keepOffline 读请求源原因码。
+                        cleanupArchiveDownloadState(index,
+                                CNDownloadRestart.keepOfflineRequested(index));
                         CNCNDownloadUI.resetFileProgress(index);
                         attempt = 0;
                         continue;
@@ -2803,6 +2814,12 @@ public final class CNDownloaderFix {
         return index >= 0 && index < ARCHIVE_COUNT && CNDownloadRestart.request(index);
     }
 
+    /** installOfflineNow 专用：中止在传下载但保留同名离线候选（object-storage-01 原因码）。 */
+    static boolean requestActiveRestartKeepOffline(int index) {
+        return index >= 0 && index < ARCHIVE_COUNT
+                && CNDownloadRestart.request(index, true);
+    }
+
     /** Wake the first-install retry loop after an external manual task completed. */
     static void signalExternalCompletion() {
         synchronized (RETRY_LOCK) {
@@ -2852,7 +2869,9 @@ public final class CNDownloaderFix {
             return false;
         }
         CNLog.i(TAG, "离线包即时安装开始: " + name);
-        boolean signalled = requestActiveRestart(index);
+        // object-storage-01：登记「保留离线候选」的中断——worker 的 manual-restart 清理
+        // 会读这个原因码；用默认 requestActiveRestart 会把刚导入的包删掉。
+        boolean signalled = requestActiveRestartKeepOffline(index);
         if (signalled) CNLog.i(TAG, "已中止 " + name + " 在传的下载，改用离线包");
         CNDownloadRestart.register(index);
         try {

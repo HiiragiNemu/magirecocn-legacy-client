@@ -16,6 +16,16 @@ final class CNDownloadRestart {
     private static final AtomicIntegerArray GENERATION = new AtomicIntegerArray(COUNT);
     private static final AtomicReferenceArray<Thread> ACTIVE =
             new AtomicReferenceArray<Thread>(COUNT);
+    /**
+     * 与 GENERATION 平行的「本次重启请保留同名离线候选」标志（object-storage-01/02）。
+     *
+     * <p>manual-restart 分支有两个触发源，清理语义相反：紫色「重下」
+     * （CNManualRedownload）要删掉离线候选—— FORCE_REDOWNLOAD 之外的最后
+     * 一道「不许捡离线包」保障；installOfflineNow（离线即时安装）必须保留
+     * ——它就是奔着这个包来的，删了等锁后必然报「离线包已消失」、导入
+     * 作废且白下一遍。请求时覆盖写（含复位 false），消费时只读，无残留。
+     */
+    private static final AtomicIntegerArray KEEP_OFFLINE = new AtomicIntegerArray(COUNT);
 
     private CNDownloadRestart() {}
 
@@ -37,6 +47,7 @@ final class CNDownloadRestart {
 
     static boolean request(int index) {
         if (!valid(index)) return false;
+        KEEP_OFFLINE.set(index, 0);   // 默认「重下」语义：不保留离线候选
         GENERATION.incrementAndGet(index);
         Thread t = ACTIVE.get(index);
         if (t != null) {
@@ -44,6 +55,24 @@ final class CNDownloadRestart {
             return true;
         }
         return false;
+    }
+
+    /** installOfflineNow 专用变体：中止在传下载，但保留同名离线候选。 */
+    static boolean request(int index, boolean keepOffline) {
+        if (!valid(index)) return false;
+        KEEP_OFFLINE.set(index, keepOffline ? 1 : 0);
+        GENERATION.incrementAndGet(index);
+        Thread t = ACTIVE.get(index);
+        if (t != null) {
+            t.interrupt();
+            return true;
+        }
+        return false;
+    }
+
+    /** 当前登记的重启请求是否要求保留离线候选（消费侧只读）。 */
+    static boolean keepOfflineRequested(int index) {
+        return valid(index) && KEEP_OFFLINE.get(index) != 0;
     }
 
     static boolean changed(int index, int token) {
