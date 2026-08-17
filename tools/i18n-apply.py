@@ -39,6 +39,15 @@ HTML_TEXT = re.compile(r'>([^<>{}]*)<')
 HTML_ATTR = re.compile(r'((?:placeholder|title|alt|value)=")([^"]*)(")')
 
 
+def unesc(x):
+    """TSV 级反向转义（与 i18n-extract.py 同款）。必须「左到右、最长匹配优先」：
+    \\\\ 先于 \\t / \\n 命中，否则 JS 源里 \\n（反斜杠+n）会被误解成换行，
+    键对不上，含转义的串永远漏译。链式 replace 做不到，所以用单次正则。"""
+    return re.sub(r'\\\\|\\t|\\n',
+                  lambda m: {'\\\\': '\\', '\\t': '\t', '\\n': '\n'}[m.group(0)],
+                  x)
+
+
 def load_table(path):
     """读对照表，返回 {原文: 译文}。只取填了译文的行。"""
     table = {}
@@ -50,8 +59,8 @@ def load_table(path):
             col = line.rstrip('\n').split('\t')
             if len(col) < 2 or not col[1]:
                 continue
-            src = col[0].replace('\\t', '\t').replace('\\n', '\n').replace('\\\\', '\\')
-            dst = col[1].replace('\\t', '\t').replace('\\n', '\n').replace('\\\\', '\\')
+            src = unesc(col[0])
+            dst = unesc(col[1])
             why = unsafe_reason(src, dst)
             if why:
                 bad.append((lineno, src, dst, why))
@@ -153,7 +162,11 @@ def main():
                 continue
             col = line.rstrip('\n').split('\t')
             if len(col) >= 3 and col[0] and col[1] and col[2]:
-                dst = '' if col[2] == '<DELETE>' else col[2]
+                # F-R4-02：与全局表同款 unesc——overrides 也是按「TSV 级转义存、
+                # 回填时还原」的同一编码，漏掉这一步会导致覆盖译文与全局表行为
+                # 不一致（含转义的串被原样写进 JS）。unsafe_reason 对 overrides
+                # 保持豁免：按文件的覆盖表是维护者亲手维护的逃生口。
+                dst = '' if col[2] == '<DELETE>' else unesc(col[2])
                 overrides.append((col[0], col[1], dst))
         print('按文件的覆盖 %d 条' % len(overrides))
 
