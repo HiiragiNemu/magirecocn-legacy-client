@@ -150,6 +150,15 @@ public final class CNAria2 {
             CNLog.w(TAG, "已有下载在跑（busy），拒绝并发");
             return ERR_BUSY;
         }
+        // 会话句柄（F-A-05）：aria2 线程一旦 start 成功，本方法的**每一个**
+        // 出口——早退、取消、异常——都必须给它一次 RPC 优雅关停。只靠
+        // waitStopped 干等是没用的：没有任何人让 aria2 停，线程会一直挂着
+        // 监听 RPC 端口，本进程后续每次 CNAria2Lib.start() 都拿 -1
+        // （「已有实例运行」），备用引擎就此永久报废。livePort=0 /
+        // liveSecret=null 表示「会话还没起」，shutdownAria2 会跳过 RPC、
+        // 只做一次 waitStopped 快查。
+        int livePort = 0;
+        String liveSecret = null;
         try {
             if (url == null || url.isEmpty() || outName == null) return ERR_ADD;
             if (!isAvailable()) {
@@ -193,13 +202,22 @@ public final class CNAria2 {
             Aria2EngineFailover.arm();
             int startRc = CNAria2Lib.start(args.toArray(new String[0]));
             if (startRc != 0) {
+                // 出口归属：会话没起来，无需关停；finally 只走 waitStopped 快查。
                 CNLog.w(TAG, "libaria2c 启动失败 rc=" + startRc);
                 return ERR_INIT;
             }
+            // 会话自此活着：把句柄交给 finally——此后任何 return/throw 出口
+            // 都会先拿到一次 RPC shutdown，再 waitStopped 等它落地。
+            livePort = port;
+            liveSecret = secret;
 
             if (!waitRpc(port, secret, cancel)) {
                 CNLog.w(TAG, "aria2c RPC 未就绪（进程可能已退出）");
+                // 出口归属：本路径就地关停（RPC 多半还没就绪，shutdown 发不
+                // 出去也无妨，waitStopped 兜底）；句柄清零后 finally 退化为快查。
                 shutdownAria2(port, secret);
+                livePort = 0;
+                liveSecret = null;
                 return ERR_INIT;
             }
 
@@ -239,6 +257,8 @@ public final class CNAria2 {
                 ensureCacerts(ariaDir);
             }
             if (!cacerts.isFile() || cacerts.length() <= 0) {
+                // 出口归属：会话关停由 finally 凭 livePort/liveSecret 兜底
+                // （RPC 优雅关停），此处直接 return 即可。
                 CNLog.w(TAG, "拼不出 CA 证书桶，aria2 放弃本次下载（回退主引擎做完整 TLS 校验）");
                 return ERR_INIT;
             }
@@ -248,11 +268,13 @@ public final class CNAria2 {
 
             JSONObject addRes = rpc(port, secret, "aria2.addUri", uris, opt);
             if (addRes == null || addRes.optJSONObject("error") != null) {
+                // 出口归属：会话关停由 finally 凭 livePort/liveSecret 兜底。
                 CNLog.w(TAG, "aria2.addUri 失败: " + (addRes == null ? "无响应" : addRes.toString()));
                 return ERR_ADD;
             }
             String gid = addRes.optString("result", "");
             if (gid.isEmpty()) {
+                // 出口归属：同上，会话关停走 finally。
                 CNLog.w(TAG, "aria2.addUri 未返回 gid");
                 return ERR_ADD;
             }
@@ -262,6 +284,7 @@ public final class CNAria2 {
             while (true) {
                 if (cancel != null && cancel.isCancelled()) {
                     rpc(port, secret, "aria2.remove", gid); // best-effort
+                    // 出口归属：任务已 remove，会话关停由 finally 兜底（RPC 优雅关停）。
                     CNLog.w(TAG, "aria2 下载被取消: " + outName);
                     return CANCELLED;
                 }
@@ -305,16 +328,25 @@ public final class CNAria2 {
                     result = ERR_DOWNLOAD;
                 }
             }
-            // 正常路径先 RPC 优雅关停 aria2，而不是只靠 finally 的兜底——
-            // 兜底那条 port=0 会跳过 RPC，线程将一直挂着，下一次 download
-            // 直接撞「已有实例运行」。
+            // 正常路径的出口归属：就地 RPC 优雅关停 aria2 并把句柄清零，
+            // finally 随之退化为 waitStopped 快查。历史上 finally 的兜底是
+            // shutdownAria2(0, null)——port=0 跳过 RPC，没人让 aria2 停，
+            // 线程一直挂着，下一次 download 直接撞「已有实例运行」；现在兜底
+            // 拿着活句柄，早退/异常出口同样能优雅关停。
             shutdownAria2(port, secret);
+            livePort = 0;
+            liveSecret = null;
             return result;
         } catch (Throwable t) {
+            // 出口归属：会话关停由 finally 凭 livePort/liveSecret 兜底。
             CNLog.w(TAG, "aria2 进程内异常: " + t);
             return ERR_OTHER;
         } finally {
-            shutdownAria2(0, null);          // 兜底：早退/异常路径（port=0 跳过 RPC）
+            // 统一会话出口（F-A-05）：只要 aria2 线程 start 成功过
+            // （livePort > 0），无论从哪个 return/catch 出来，都在这里补一次
+            // RPC 优雅关停 + waitStopped；已在路径上就地关停过的出口把
+            // livePort 清了零，本调用退化为一次 waitStopped 快查，幂等无害。
+            shutdownAria2(livePort, liveSecret);
             // 进程活到这里 = 后端没把进程炸死，清除 armed 标记（下轮沿用当前后端）。
             // 若 native 崩溃（SIGSEGV/SIGABRT），finally 根本来不及跑，标记留在盘上
             // → 下次启动 Aria2EngineFailover.pickBackend() 读到就换组。

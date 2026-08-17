@@ -1427,6 +1427,11 @@ public final class CNDownloaderFix {
             // 固定 pick(1) 且从不回报——第一条线路对这个文件不行时三次全废在同
             // 一条上，而且它有多不行，健康表一无所知，主引擎回退后照样先挑它。
             CNMirrors.Mirror mirror = CNMirrors.pick(attempt);
+            // 本轮重发代际（F-A-06）：下载/解压期间玩家点「重下」或「改用
+            // 离线包」会让它过期（CNDownloadRestart.request → generation++
+            // 并 interrupt 本线程）。声明在 try 外是因为 catch 里也要凭它
+            // 把「玩家主动取消」与「线路失败」分开——前者不记冷却、不弹失败框。
+            final int a2RestartToken = CNDownloadRestart.generation(index);
             try {
                 final int idx = index;
                 CNAria2.Progress progress = new CNAria2.Progress() {
@@ -1500,6 +1505,37 @@ public final class CNDownloaderFix {
                     // 不弹失败框、不记线路失败（busy 不是线路的错）。主引擎 4 文件
                     // 并行本来就是批量主力，aria2 只服务抢到 slot 的那一个。
                     CNLog.i(TAG, "aria2 busy，让位主引擎 file=" + name);
+                    return A2_MAIN;
+                }
+                if (rv == CNAria2.CANCELLED || Thread.currentThread().isInterrupted()) {
+                    // 玩家取消 / 线程中断（F-A-06），不是线路失败：**不**
+                    // reportFailure（线上 switch_after_failures=1，记一次就把
+                    // 无辜线路冷却 60 秒）、不弹失败询问框，按主引擎同一套
+                    // 取消语义处理（对照 fetchArchive 重试循环的
+                    // manual-restart-active 分支）。中断也可能落在 OK/其它
+                    // 返回码上（取消请求恰好压在下载收尾），同样按取消论。
+                    if (CNDownloadRestart.changed(index, a2RestartToken)) {
+                        // 手动重下 / 改用离线包：清掉该文件全部断点与半截产物
+                        // （含 .aria2 控制文件与 sidecar），重置进度，本轮内
+                        // 从头重下。中断标记是 request() 故意打的，循环前必须
+                        // 清掉，否则下一轮 download 的取消回调立刻再触发。
+                        CNLog.i(TAG, "manual-restart-active(aria2) file=" + name
+                                + " attempt=" + attempt + "：清除该文件断点并从头重下");
+                        CNDownloadRestart.clearInterrupt();
+                        // keepOffline=true：离线导入（installOfflineNow）也会走到
+                        // 这里——按默认 keepOffline=false 会把玩家刚导入的离线包
+                        // 删掉，随后 installOfflineNow 拿锁后报「离线包已消失」，
+                        // 重下结束又白下一遍。保留离线候选对「重下」也无害（重下
+                        // 走网络，不碰离线区）。
+                        cleanupArchiveDownloadState(index, true);
+                        CNCNDownloadUI.resetFileProgress(index);
+                        attempt = 0;
+                        continue;
+                    }
+                    // 无重发意图的中断（整体停止/池回收）：保留产物与断点供
+                    // 下次会话续传，安静交回主引擎——它循环顶部的
+                    // isInterrupted 检查会 markFailed 收尾，全程不记冷却。
+                    CNLog.i(TAG, "aria2 下载被中断，安静退出（不记线路失败）file=" + name);
                     return A2_MAIN;
                 }
                 if (rv == CNAria2.OK && archive.isFile() && archive.length() > 0
@@ -1589,6 +1625,27 @@ public final class CNDownloaderFix {
                     reportNoSpace(index, name, CNDiskSpace.shortfall(
                             name, 0L, CNDiskSpace.usableBytes(archive)));
                     return A2_NOSPACE;  // 同上：保留产物，别走 OFFLINE 的删除路径
+                }
+                if (t instanceof CNArchiveInstallTx.CancelledException
+                        || Thread.currentThread().isInterrupted()) {
+                    // 解压期的手动中止（extract 的取消回调接到
+                    // CNDownloadRestart 后抛 CancelledException）与下载期
+                    // 同口径（F-A-06）：取消不是线路失败，不 reportFailure、
+                    // 不弹失败询问框。
+                    if (CNDownloadRestart.changed(index, a2RestartToken)) {
+                        CNLog.i(TAG, "manual-restart-active(aria2-extract) file=" + name
+                                + "：清除该文件断点并从头重下");
+                        CNDownloadRestart.clearInterrupt();
+                        // keepOffline=true：同下载期分支——离线导入的触发源不能删离线候选。
+                        cleanupArchiveDownloadState(index, true);
+                        CNCNDownloadUI.resetFileProgress(index);
+                        attempt = 0;
+                        continue;
+                    }
+                    // 无重发意图的中断：保留完整 ZIP / 解压检查点，安静交回
+                    // 主引擎，由它循环顶部的中断检查 markFailed 收尾。
+                    CNLog.i(TAG, "aria2 安装被中断，安静退出（不记线路失败）file=" + name);
+                    return A2_MAIN;
                 }
                 CNLog.w(TAG, "aria2 备用引擎异常 attempt=" + attempt + "/" + A2_MAX_ATTEMPTS
                         + " file=" + name + " : " + t);
