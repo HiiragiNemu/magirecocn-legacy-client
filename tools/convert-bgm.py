@@ -133,6 +133,30 @@ def main():
                                            if hdr["ciph"] else ""))
 
         meta = probe_loop(args.vgmstream, src)
+        # 循环点完整性闸：vgmstream 输出格式变动（升级/换 nightly）会让
+        # probe_loop 的某个 grab 拿到 None。None 一旦写进 bgm.json，Java 侧
+        # org.json.getLong 抛异常、整份元数据作废——玩家侧表现是「界面一切
+        # 正常、就是没声音」，且构建全程绿灯，最难排查的一类。
+        # 另外 CNBgm 的无缝 seek 实现以「loopStart == 0」为前提（见 CNBgm
+        # 类注释），loop_start 非 0 的曲子必须在这里拦下，而不是放进包里
+        # 让接缝爆出异响。
+        bad = [k for k in ("sample_rate", "channels", "loop_start",
+                           "loop_end", "total") if meta.get(k) is None]
+        if bad:
+            print(f"::error::{name} 循环点元数据缺项 {bad}（vgmstream 输出"
+                  f"格式可能已变，请核对 probe_loop 的正则）")
+            failed.append(name)
+            continue
+        if meta["loop_start"] != 0:
+            print(f"::error::{name} loop_start={meta['loop_start']} ≠ 0，"
+                  f"CNBgm 的无缝 seek 前提不成立——需要先改播放器再放行")
+            failed.append(name)
+            continue
+        if not (0 < meta["loop_end"] <= meta["total"]):
+            print(f"::error::{name} 循环区非法：loop_end={meta['loop_end']}"
+                  f" total={meta['total']}")
+            failed.append(name)
+            continue
         wav = os.path.join(OUT_DIR, f"bgm{track_id}.wav")
         ogg = os.path.join(OUT_DIR, f"bgm{track_id}.ogg")
 
