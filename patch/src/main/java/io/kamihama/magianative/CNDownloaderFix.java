@@ -2601,7 +2601,14 @@ public final class CNDownloaderFix {
     }
 
     private static boolean allBaseMarkersValid() {
-        for (int i = 2; i < ARCHIVE_COUNT; i++) {
+        // 按槽位语义挑基础包，绝不写死下标：热更两包曾从表头（0/1）挪到
+        // 表尾（13/14），写死的「i 从 2 开始」随之从「跳过两个热更槽」
+        // 悄悄变成「漏查 0/1 号基础包（db/json）、多查两个热更槽」——
+        // 前者让总完成标记在 db/json 缺失时被提交（玩家进游戏缺数据，
+        // 且标记在案永无自愈），后者让热更未跑时永远误拒补齐。
+        // HOT_SLOT_* 注释里那段「跟表序绑死」的教训，这里原样适用。
+        for (int i = 0; i < ARCHIVE_COUNT; i++) {
+            if (isHotSlot(i)) continue;   // 热更两包由热更事务负责，不归这里查
             String name = FILE_NAMES[i];
             if (!isMarkerValid(markerFor(name), name, RESOURCE_BASE_URL + name)) return false;
         }
