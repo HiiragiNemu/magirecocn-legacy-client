@@ -62,18 +62,41 @@ public class FlushTest {
         check("超时后一次写入把欠账一起冲掉", n3b==141,
               "超时前 "+n3a+" → 超时后 "+n3b+"（应为 141）");
 
-        System.out.println("\n[4] 自有模块的行仍然逐条落盘");
-        CNLog.i("测试","这一行必须立刻可见");
+        System.out.println("\n[4] 自有模块的行：INFO 走批量节流，ERROR 立即落盘（P-01）");
+        // P-01 之前 write() 每行同步 flush——「UI 线程打日志 = 主线程磁盘 I/O」。
+        // 改批量节流后，「立即落盘」只保留给 ERROR/FATAL（崩溃现场）与显式
+        // flushNow()（复制/分享日志前）；INFO/WARN 由 Flusher 线程 1Hz 兜底。
+        CNLog.i("测试","INFO 行走批量节流");
+        CNLog.flushNow();   // 等价于 Flusher 线程那一跳，不必真等 1 秒
         BufferedReader br=new BufferedReader(new InputStreamReader(new FileInputStream(f),"UTF-8"));
         String l,last=null; while((l=br.readLine())!=null) last=l; br.close();
-        check("最后一行就是刚写的自有日志",
-              last!=null && last.contains("这一行必须立刻可见"), String.valueOf(last));
+        check("flushNow 后 INFO 行可见",
+              last!=null && last.contains("INFO 行走批量节流"), String.valueOf(last));
+        CNLog.e("测试","ERROR 行必须立刻可见");
+        br=new BufferedReader(new InputStreamReader(new FileInputStream(f),"UTF-8"));
+        last=null; while((l=br.readLine())!=null) last=l; br.close();
+        check("ERROR 行不等 flush 就在文件里（崩溃不丢关键日志）",
+              last!=null && last.contains("ERROR 行必须立刻可见"), String.valueOf(last));
 
         System.out.println("\n[5] 无欠账时 flushNow 不做多余 I/O");
         long before=f.lastModified();
         Thread.sleep(1100);
         CNLog.flushNow();
         check("空转不改文件", f.lastModified()==before, "mtime 未变");
+
+        System.out.println("\n[6] 体积上限按 UTF-8 字节数统计，不是字符数（F-D-05）");
+        // 中文行 length() 按 UTF-16 code unit 计，UTF-8 落盘每 CJK 字符 3 字节；
+        // 按字符数统计时 24MB「上限」实际能写约 72MB。从磁盘读回最后一行，
+        // 精确断言 writtenBytes 的增量 == 该行的 UTF-8 字节数 + 1（换行）。
+        Field wb=CNLog.class.getDeclaredField("writtenBytes"); wb.setAccessible(true);
+        long b0=wb.getLong(null);
+        CNLog.e("测试","中文行字节统计验证");   // ERROR 立即落盘
+        long b1=wb.getLong(null);
+        br=new BufferedReader(new InputStreamReader(new FileInputStream(f),"UTF-8"));
+        last=null; while((l=br.readLine())!=null) last=l; br.close();
+        long expect=last.getBytes("UTF-8").length + 1L;
+        check("writtenBytes 增量 == UTF-8 字节数+1", b1-b0==expect,
+              "增量 "+(b1-b0)+" 应为 "+expect+"（按字符数则只有 "+(last.length()+1)+"）");
 
         CNLog.close();
         System.out.println("\n通过 "+pass+" / 失败 "+fail);

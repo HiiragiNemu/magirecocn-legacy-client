@@ -57,11 +57,50 @@ public final class CNLog {
      * <p>不会重复：{@code write()} 从不使用 {@code "CNLog"} 作 tag，两条路径没有
      * 交集。logcat 回收带 {@code -T 1000} 回灌，所以即使诊断发生在采集启动之前，
      * 也照样能被捞进文件。
+     *
+     * <h3>F-D-01：手抄名单曾经停在 5 个旧 tag，已补全 + 改为自动登记兜底</h3>
+     *
+     * 旧名单只有 5 个 tag，而全仓实际经 {@code CNLog.i/w/e} 打日志的组件有
+     * 30+ 个（下方按 {@code grep 'TAG =' 与 CNLog 调用的第一个参数} 全量补齐）。
+     * 漏掉的组件每一行都会被 logcat 回收**第二次**入库（一份 {@code write()}
+     * 格式、一份 logcat 原文），3000 条环形缓冲被稀释一半。但名单再全也挡不住
+     * 「下个新模块忘了登记」——所以真正的过滤器是 {@link #OWN_SET}：
+     * {@code write()} 每用一个组件名就自动登记，本表只作进程刚启动、还没人
+     * 打过日志那一小段时间的种子。
      */
     private static final String[] OWN_TAGS = {
+        // —— 下载 / 安装 / 热更（TAG 常量）——
         "MagiaCNDownloader", "MagiaCNChunk", "MagiaCNMirrors",
-        "MagiaCNHotUpdate", "界面"
+        "MagiaCNHotUpdate", "MagiaCNZipPlan", "MagiaCNDiskSpace",
+        "ChunkManifest", "CNArchiveInstallTx", "CNArchiveValidate",
+        "CNDownloadMode", "CNManualRedownload", "CNOfflineImport",
+        "CNZipTool",
+        // —— aria2 备用引擎 ——
+        "CNAria2", "Aria2EngineFailover",
+        // —— 代理 / 版本 / 重启 / 外链 / 序章场景 ——
+        "MagiaCNWebProxy", "CNWebLocalFiles", "CNVersion",
+        "MagiaCNRestart", "MagiaCNSafeLink", "MagiaCNScene0",
+        // —— 界面与调试 ——
+        "CNCNDownloadUI", "CNDebugBridge", "CNDebugFlags", "CNDebugHud",
+        "CNDebugOverlay", "CNLogBundle", "BGM",
+        // —— CNLog 调用直接用的字面量组件名（CNCNDownloadUI 与本类内部）——
+        "界面", "序章", "离线", "日志", "崩溃"
     };
+
+    /**
+     * {@link #write} 实际用过的组件名集合——logcat 回收侧按它<b>精确</b>过滤
+     * 本补丁自己打的行（{@code isOwnLine} / {@code classify}）。
+     *
+     * <p>为什么不只维护 {@link #OWN_TAGS} 手抄名单：它一定会随新模块加入而
+     * 腐化（F-D-01 的教训：名单停在 5 个旧 tag 期间，20+ 个组件的每行都
+     * 重复入库，且无人察觉）。自动登记后新模块零维护。
+     *
+     * <p>线程安全：synchronizedSet，add/contains 均为单次哈希操作；该集合的
+     * 锁是<b>叶子锁</b>——持有它期间不取任何别的锁，不进锁序图。
+     */
+    private static final java.util.Set<String> OWN_SET =
+            java.util.Collections.synchronizedSet(new java.util.HashSet<String>(
+                    java.util.Arrays.asList(OWN_TAGS)));
 
     /**
      * 日志目录名（相对基准目录）。每次启动一个新文件，命名为
@@ -154,6 +193,20 @@ public final class CNLog {
         if (src == SRC_LOGCAT) return showLogcat;
         return true;
     }
+    /**
+     * 文件写入锁。
+     *
+     * <h3>🔴 锁序约定（P-perf.md P-02）：FILE_LOCK 临界区内<b>不得</b>调用
+     * 任何会拿 {@code CNLog.class} 锁的方法</h3>
+     *
+     * 全仓唯一的反向锁边曾在这里：{@code initEarly()} 持 CNLog.class 锁、其
+     * 调用链要 FILE_LOCK（正向）；而 24MB 封口原先在 FILE_LOCK 临界区里直调
+     * {@code stopLogcatCapture()}——那是 synchronized 类方法，要 CNLog.class
+     * 锁（反向），构成潜伏的 AB-BA。现封口已改为置 {@link #capPending} 标记、
+     * 由 Flusher 线程在<b>锁外</b>执行，反向边消除。后续改动请保持这条
+     * 不变量：FILE_LOCK 临界区内只允许操作 writer/计数器，以及调用
+     * {@link Log}（叶子，不取本类任何锁）。
+     */
     private static final Object FILE_LOCK = new Object();
 
     /**
@@ -180,9 +233,12 @@ public final class CNLog {
     private static boolean openedOnce = false;
     /** 缓冲区有新内容时被调用（UI 用它刷新 LOG 面板）；可为 null。 */
     private static volatile Runnable listener;
-    /** writeRaw 的落盘计数：logcat 量大，逐行 flush 会造成明显的 I/O 压力。 */
+    /**
+     * 已写进 BufferedWriter 但还没 flush 的行数（{@code write} 与
+     * {@code writeRaw} 共用——P-01 之后两条路径走同一套批量节流）。
+     */
     private static int rawSinceFlush = 0;
-    /** 上次把 writeRaw 的内容落盘的时刻。 */
+    /** 上次落盘的时刻（两条写入路径共用）。 */
     private static long lastFlushMs = 0L;
     /** 落盘滞后上限：超过这个时间就强制 flush 一次，保证取出来的日志不缺尾巴。 */
     private static final long FLUSH_INTERVAL_MS = 1000L;
@@ -462,6 +518,10 @@ public final class CNLog {
         String text = msg == null ? "" : msg;
         if (t != null) text = text + " / " + t;
 
+        // F-D-01：登记组件名。logcat 回收侧（isOwnLine/classify）按 OWN_SET
+        // 精确过滤本补丁自己打的行，新模块不必再维护手抄名单。
+        OWN_SET.add(comp);
+
         // 1) logcat
         try {
             if ("ERROR".equals(lvl) || "FATAL".equals(lvl)) {
@@ -485,7 +545,28 @@ public final class CNLog {
 
         // 3) 文件
         synchronized (FILE_LOCK) {
-            writeFileLocked(line, true);
+            // P-01：原先这里每行都 flush=true，等于「每次打日志 = 在调用线程上
+            // 做一次同步磁盘写」。CNCNDownloadUI 一个文件就有 75 处调用、大量
+            // 在 onClick（UI 线程）里；同时 logcat 回灌线程每行都抢同一把
+            // FILE_LOCK（它的临界区里同样是一次磁盘写），慢闪存上表现为浮层
+            // 卡顿，叠加日志风暴极端可触 ANR。
+            //
+            // 取舍（chosen 方案 =「flush 移出调用线程 + 按条数/时间批量 flush」）：
+            // 本补丁自己的行与 writeRaw 走同一套节流——满 50 行或距上次落盘
+            // 超过 1 秒才 flush，Flusher 线程 1Hz 兜底，落盘滞后 ≤ 约 1 秒。
+            // 代价：进程在滞后窗口内被强杀，最多丢 1 秒内的 INFO/WARN 行。
+            // 用这点代价换「UI 线程零磁盘写」是值得的，且崩溃现场不依赖逐行
+            // flush，由三条独立保险兜住：
+            //   ① ERROR/FATAL 级仍同步 flush（下面的 sync 分支）——关键日志
+            //     不丢，这也是「崩溃时不丢关键日志」的收口；
+            //   ② CrashHandler 写完全栈后显式 flush 一次；
+            //   ③ flushNow()（复制/分享日志前）会把欠账冲掉。
+            boolean sync = "ERROR".equals(lvl) || "FATAL".equals(lvl);
+            long now = System.currentTimeMillis();
+            boolean doFlush = sync || (++rawSinceFlush >= 50)
+                    || (now - lastFlushMs >= FLUSH_INTERVAL_MS);
+            if (doFlush) { rawSinceFlush = 0; lastFlushMs = now; }
+            writeFileLocked(line, doFlush);
         }
 
         Runnable r = listener;
@@ -497,7 +578,7 @@ public final class CNLog {
     /**
      * 强制把攒着的内容落盘。定时线程与「玩家点复制日志」都会调用。
      *
-     * <p>writeRaw 的行数阈值只在**还有新行进来**时才会被跨过。如果 logcat 恰好
+     * <p>写入侧的行数阈值只在**还有新行进来**时才会被跨过。如果日志恰好
      * 安静下来（或 logcat 回收被关掉），最后那几行会一直留在 BufferedWriter 里
      * 出不去——玩家此刻把文件取走，看到的就是一份缺尾巴的日志。
      */
@@ -528,6 +609,15 @@ public final class CNLog {
                 try { Thread.sleep(FLUSH_INTERVAL_MS); }
                 catch (InterruptedException ie) { Thread.currentThread().interrupt(); return; }
                 try { flushNow(); } catch (Throwable ignore) {}
+                // 24MB 封口的「停 logcat 回收」在这里、锁外执行：
+                // stopLogcatCapture() 是 synchronized 类方法（要 CNLog.class
+                // 锁），在 FILE_LOCK 临界区里调它就是 P-02 的反向锁边，所以
+                // writeFileLocked 只置 capPending 标记。晚最多 1 秒执行无妨——
+                // 封口语义（不再疯长）在置标记那一刻已由 capReported 保证。
+                if (capPending) {
+                    capPending = false;
+                    try { stopLogcatCapture(); } catch (Throwable ignore) {}
+                }
             }
         }
     }
@@ -543,6 +633,36 @@ public final class CNLog {
     private static final long MAX_LOG_BYTES = 24L * 1024 * 1024;
     private static long    writtenBytes = 0L;
     private static boolean capReported  = false;
+    /**
+     * 置位后由 Flusher 线程在<b>锁外</b>停 logcat 回收。
+     * P-02：writeFileLocked 持 FILE_LOCK，而 stopLogcatCapture() 要拿
+     * CNLog.class 锁，直调就是反向锁边，故只置标记。
+     */
+    private static volatile boolean capPending = false;
+    /**
+     * 文件写是否正处在失败状态（F-D-08）。只用于「首次失败报一条、恢复成功
+     * 报一条」，防止磁盘满之后每行失败都刷一条 logcat。
+     */
+    private static boolean writeFailed  = false;
+
+    /**
+     * 字符串按 UTF-8 编码后的字节数（F-D-05）。
+     *
+     * <p>不用 {@code getBytes("UTF-8").length} 现编码一遍：logcat 回灌高峰
+     * 每秒数百行，每行一次堆分配不划算。按 UTF-16 code unit 扫描推算：
+     * ASCII 1 字节、U+0800 以下 2 字节、其余 3 字节。代理项一对实际编码为
+     * 4 字节，这里按 3+3=6 计——宁可高估不可低估，体积上限宁可早收不可晚收。
+     */
+    private static int utf8Bytes(String s) {
+        int n = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c < 0x80) n += 1;
+            else if (c < 0x800) n += 2;
+            else n += 3;
+        }
+        return n;
+    }
 
     /** 往日志文件写一行。调用方必须持有 FILE_LOCK。 */
     private static void writeFileLocked(String line, boolean flush) {
@@ -550,16 +670,44 @@ public final class CNLog {
             try {
                 writer.write(line); writer.write('\n');
                 if (flush) writer.flush();
-                writtenBytes += line.length() + 1;
+                // F-D-05：按 UTF-8 **字节数**统计，不是 String.length()。
+                // writer 以 UTF-8 落盘，CJK 字符占 3 字节而 length() 按 UTF-16
+                // code unit 计——本补丁的日志几乎全是中文，按字符数统计的话
+                // 24MB「上限」实际能写到约 72MB，体积收口承诺不成立。
+                writtenBytes += utf8Bytes(line) + 1;   // +1 是换行符
+                if (writeFailed) {
+                    // F-D-08：失败之后的第一次成功写，补一条恢复标记——「断尾
+                    // 之后续上了」和「从来没断过」在日志里必须能区分开。
+                    writeFailed = false;
+                    try { Log.i("CNLog", "日志文件写入已恢复"); }
+                    catch (Throwable ignore) {}
+                }
                 if (writtenBytes > MAX_LOG_BYTES && !capReported) {
                     capReported = true;
-                    try { stopLogcatCapture(); } catch (Throwable ignore) {}
+                    // P-02：这里持 FILE_LOCK，不能直调 stopLogcatCapture()
+                    // （synchronized 类方法，要 CNLog.class 锁）——那是全仓唯一
+                    // 的反向锁边。改为置标记，由 Flusher 线程在锁外执行。
+                    capPending = true;
                     writer.write("［日志］本次启动已写满 "
                             + (MAX_LOG_BYTES / 1024 / 1024)
                             + " MB，停止回灌 logcat，仅保留本客户端自己的日志\n");
                     writer.flush();
                 }
-            } catch (Throwable ignore) {}
+            } catch (Throwable t) {
+                // F-D-08：写失败（ENOSPC / EMFILE / 存储拔出）原先被完全静默
+                // 吞掉——writer 进入坏状态后每行都抛都吞，日志文件无声「断尾」，
+                // 玩家取走日志无法区分「就写到这里」与「写不进去了」（与
+                // 2026-08-08 .seq 写失败不可诊断是同一类沉默）。首次失败经
+                // android.util.Log 打一条 ERROR：tag 用 "CNLog"——它刻意不在
+                // OWN_SET 里（见 OWN_TAGS 注释），会被 logcat 回收捞进缓冲与
+                // 文件；而回收侧 writeRaw 若再次失败，writeFailed 已置位，
+                // 不会递归刷屏。writeFailed 在 FILE_LOCK 内读写，无需 volatile。
+                if (!writeFailed) {
+                    writeFailed = true;
+                    try { Log.e("CNLog", "日志文件写入失败，此后落盘可能中断（磁盘满？）: " + t); }
+                    catch (Throwable ignore) {}
+                }
+            }
         }
     }
 
@@ -683,12 +831,19 @@ public final class CNLog {
             }
         }
 
-        /** logcat 的 time 格式里 tag 出现在冒号之前，用包含判断即可。 */
+        /**
+         * 这行 logcat 是不是本补丁自己经 {@code write()} 打出去的。
+         *
+         * <p>F-D-01：旧实现用<b>全行</b> {@code contains} 匹配 OWN_TAGS，
+         * message 里恰好出现「界面」「MagiaCNDownloader」等字样的他源日志
+         * （chromium 打的页面文本就可能含「界面」）会被整条误杀。现在只截取
+         * tag 段与 {@link #OWN_SET} <b>精确</b>比对，message 不参与判定。
+         */
         private boolean isOwnLine(String line) {
-            for (int i = 0; i < OWN_TAGS.length; i++) {
-                if (line.contains(OWN_TAGS[i])) return true;
-            }
-            return false;
+            String tag = tagOf(line);
+            // 解析不出 tag 的行（"--------- beginning of ..." 之类）宁可放过
+            // 也不能误杀：放过的代价只是多留一行，误杀的代价是丢现场。
+            return tag != null && OWN_SET.contains(tag);
         }
     }
 
@@ -779,8 +934,38 @@ public final class CNLog {
         }
     }
 
-    /** 判定一行 logcat 是否来自 native / 引擎。 */
+    /**
+     * 从 {@code logcat -v time} 的行里截出 tag 段；截不出来返回 null。
+     *
+     * <p>格式形如 {@code 10-26 12:34:56.789  I/TagName( 1234): message}：
+     * tag 在第一个 {@code '/'} 之后、{@code '('} 之前；个别 ROM 省略
+     * {@code (pid)} 段，退而取到 {@code ':'} 为止。
+     */
+    private static String tagOf(String line) {
+        int slash = line.indexOf('/');
+        if (slash < 0) return null;
+        int end = line.indexOf('(', slash);
+        if (end < 0) end = line.indexOf(':', slash);
+        if (end < 0 || end <= slash + 1) return null;
+        return line.substring(slash + 1, end).trim();
+    }
+
+    /**
+     * 判定一行 logcat 是否来自 native / 引擎。
+     *
+     * <p>F-D-01：判定顺序必须是「<b>精确匹配优先于前缀（子串）匹配</b>」。
+     * NATIVE_HINTS 里挂着 {@code "Magia"} 这种短前缀，本补丁自己的
+     * {@code MagiaCNRestart}/{@code MagiaCNSafeLink} 等 tag 全被它命中，
+     * 于是重启、外链拦截这类纯 Java 诊断被归成「引擎日志」——玩家在面板
+     * 关掉「引擎日志」时它们跟着消失。所以先按 tag 段与 {@link #OWN_SET}
+     * 精确比对，确认不是本补丁的行，再退到全行子串匹配。
+     *
+     * <p>正常路径下本补丁的行在 {@code isOwnLine} 就被拦掉、走不到这里；
+     * 这一段是防御性的（面板/测试直接调 classify 时结论也必须一致）。
+     */
     static int classify(String line) {
+        String tag = tagOf(line);
+        if (tag != null && OWN_SET.contains(tag)) return SRC_APP;
         for (int i = 0; i < NATIVE_HINTS.length; i++) {
             if (line.contains(NATIVE_HINTS[i])) return SRC_NATIVE;
         }
