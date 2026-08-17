@@ -1491,10 +1491,28 @@ public final class CNDownloaderFix {
                     //
                     // 解压走全仓唯一那套事务：它给的是空间预检与断点续解压，
                     // 那不是「内容校验」，去掉只会让 03 那类大包白解压半天再翻车。
+                    //
+                    // 与主引擎同一道前置闸：热更两包装在 13 个前置包之前，覆盖
+                    // 修正会被基础包原样盖回且没有任何报错。原先 aria2 路径不过
+                    // 这道闸（主路径在 fetchArchive 之后、extract 之前），线上
+                    // force_aria2=true 时热更包可能抢跑。包已下好不用重下：交回
+                    // 主引擎轮次，它按「完整包复用」接手，先过闸再解压。
+                    if (!awaitPrereqInstalled(index, name)) {
+                        CNLog.w(TAG, "aria2 已下载但前置包未就绪，交主引擎轮次安装: " + name);
+                        return A2_MAIN;
+                    }
+                    // 解压取消也与主引擎同规格（原先传 null：解压全程不响应
+                    // 「重下」请求，几十秒的大包解压期间玩家点了也没反应）。
+                    final int a2ExtractToken = CNDownloadRestart.generation(index);
                     File a2State = CNArchiveInstallTx.stateFile(new File(STATE_ROOT), name);
                     synchronized (EXTRACT_LOCK) {
                         CNArchiveInstallTx.extract(archive, new File(INSTALL_ROOT),
-                                a2State, null, null);
+                                a2State,
+                                new CNArchiveInstallTx.Cancel() {
+                                    @Override public boolean isCancelled() {
+                                        return CNDownloadRestart.cancelled(index, a2ExtractToken);
+                                    }
+                                }, null);
                     }
                     CNMirrors.reportSuccess(mirror);
                     writeMarker(marker, name, canonicalUrl,
