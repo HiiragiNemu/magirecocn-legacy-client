@@ -21,6 +21,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.io.File;
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -107,7 +108,9 @@ public final class CNDebugOverlay {
     private static final long RES_REFRESH_MS = 800L;
 
     // ── 窗口与视图引用（全部静态，本类无实例）─────────────────────────
-    private static Activity activity;
+    // 宿主 Activity 用弱引用（F-R4-01）：config 重建后旧实例销毁，强持有会把它
+    // 连同视图树钉死在静态字段里。取用一律走 currentActivity()，见其注释。
+    private static WeakReference<Activity> activityRef;
     private static WindowManager wm;
     private static Handler ui;
     private static SharedPreferences prefs;
@@ -141,6 +144,22 @@ public final class CNDebugOverlay {
 
     private CNDebugOverlay() {}
 
+    /**
+     * 当前宿主 Activity（F-R4-01）。弱引用持有；ref 指向的实例已销毁时回
+     * {@link RestClient#getCurrentActivity()} 重指。为什么查 isDestroyed：config
+     * 重建（locale/uiMode/density 等不在 configChanges 里的变化会**同进程**重建
+     * Activity）不走 finish，isFinishing 拦不住，isDestroyed 才可靠。
+     */
+    private static Activity currentActivity() {
+        Activity a = activityRef == null ? null : activityRef.get();
+        if (a == null || a.isDestroyed()) {
+            Activity fresh = RestClient.getCurrentActivity();
+            if (fresh != null) activityRef = new WeakReference<Activity>(fresh);
+            return fresh;
+        }
+        return a;
+    }
+
     // ══ 挂载（反射入口，UI 线程）══════════════════════════════════════
 
     /**
@@ -160,7 +179,7 @@ public final class CNDebugOverlay {
                 new Handler(Looper.getMainLooper()).post(new MountRetry(act));
                 return false;
             }
-            activity = act;
+            activityRef = new WeakReference<Activity>(act);
             // 本面板整套配色都是反射读下载浮层那份调色板取的，而调试悬浮窗完全
             // 可能在下载浮层从未建出来时挂起（资源早装好，直接进游戏）。先确保
             // 调色板按玩家的主题加载过一次，否则读到的是未初始化的 0 = 全透明。
@@ -172,7 +191,7 @@ public final class CNDebugOverlay {
                 // 一样，只能靠读代码猜。
                 CNLog.i(TAG, "没有悬浮窗权限，挂权限引导页并开始轮询");
                 showPermissionGuide(act);
-                startPermPoll(act);
+                startPermPoll();
                 return false;
             }
             dismissPermissionGuide();
@@ -478,7 +497,7 @@ public final class CNDebugOverlay {
 
     private static final class PermGoClick implements View.OnClickListener {
         @Override public void onClick(View v) {
-            Activity act = activity;
+            Activity act = currentActivity();
             boolean opened = act != null && CNDebugBridge.requestOverlayPermission(act);
             if (!opened) {
                 toast("拉不起系统授权页，请手动到系统设置里找「显示在其他应用上层」");
@@ -508,19 +527,21 @@ public final class CNDebugOverlay {
     private static final int  PERM_POLL_FAST = 24;
     private static int permPolls;
 
-    private static void startPermPoll(Activity act) {
+    private static void startPermPoll() {
         if (ui == null) ui = new Handler(Looper.getMainLooper());
         permPolls = 0;
-        ui.postDelayed(new PermPoll(act), PERM_POLL_MS);
+        ui.postDelayed(new PermPoll(), PERM_POLL_MS);
     }
 
     private static final class PermPoll implements Runnable {
-        private final Activity act;
-        PermPoll(Activity act) { this.act = act; }
+        // F-R4-01：不钉挂载时的 Activity。config 重建后旧实例已销毁，isFinishing
+        // 拦不住（重建不走 finish）——继续拿着它轮询就是钉着已销毁实例问权限。
+        // 每轮现查：重建后自动换到新 Activity；拿不到（全部销毁）就停，挂载无从谈起。
         @Override public void run() {
             try {
                 if (ballView != null) return;                 // 已经挂上了
-                if (act.isFinishing()) return;                // Activity 没了，别再拿着它
+                Activity act = currentActivity();
+                if (act == null) return;
                 if (CNDebugBridge.canDrawOverlays(act)) {
                     CNLog.i(TAG, "检测到悬浮窗权限已授予，挂载小球（等了 "
                             + permPolls + " 轮）");
@@ -532,7 +553,7 @@ public final class CNDebugOverlay {
                     CNLog.i(TAG, "悬浮窗权限仍未授予，轮询转为 30 秒一次（不再停）");
                 }
                 long next = permPolls < PERM_POLL_FAST ? PERM_POLL_MS : PERM_POLL_SLOW_MS;
-                if (ui != null) ui.postDelayed(new PermPoll(act), next);
+                if (ui != null) ui.postDelayed(new PermPoll(), next);
             } catch (Throwable ignore) {}
         }
     }
@@ -577,7 +598,7 @@ public final class CNDebugOverlay {
      * 之后整轮渲染都用它；HUD 也在这里重读。
      */
     private static void openPanel() {
-        Activity act = activity;
+        Activity act = currentActivity();
         if (act == null || wm == null || panelRoot != null) return;
         try {
             loadFlags();
@@ -731,7 +752,7 @@ public final class CNDebugOverlay {
     // ── 首页：状态卡（结论式，P3）+ 四入口 ────────────────────────────
 
     private static void renderHome(LinearLayout content) {
-        Activity act = activity;
+        Activity act = currentActivity();
         setTitle("调试小助手");
 
         // 状态卡：只说结论（设计 P3 / §7）
@@ -764,7 +785,7 @@ public final class CNDebugOverlay {
     }
 
     private static void addEntry(LinearLayout content, String title, String sub, String page) {
-        Activity act = activity;
+        Activity act = currentActivity();
         LinearLayout row = new LinearLayout(act);
         row.setOrientation(LinearLayout.VERTICAL);
         row.setPadding(dp(act, 16), dp(act, 12), dp(act, 16), dp(act, 12));
@@ -785,7 +806,7 @@ public final class CNDebugOverlay {
     // ── 资源修复：15 包列表 + 四态结论 + 重下（确认框归本体）────────────
 
     private static void renderResources(LinearLayout content) {
-        Activity act = activity;
+        Activity act = currentActivity();
         setTitle("资源修复");
         addGuideCard(content, new String[] {
                 "下载一直卡住不动",
@@ -994,7 +1015,7 @@ public final class CNDebugOverlay {
      * 说清已下载部分会清掉、说清会自动停在资源页。
      */
     private static void confirmRedownload(int index) {
-        Activity act = activity;
+        Activity act = currentActivity();
         if (act == null) return;
         String[] names;
         try { names = CNDebugBridge.resourceNames(); }
@@ -1021,7 +1042,7 @@ public final class CNDebugOverlay {
     // ── 进入游戏：大状态 + 大按钮（停留状态转一道手，点完重读）───────────
 
     private static void renderEnter(LinearLayout content) {
-        Activity act = activity;
+        Activity act = currentActivity();
         setTitle("进入游戏");
         addGuideCard(content, new String[] {
                 "资源还在后台处理，想先停在资源页看着它下完",
@@ -1076,7 +1097,7 @@ public final class CNDebugOverlay {
     // ── 日志与求助：三步指引 + 预览 + 打包分享 ─────────────────────────
 
     private static void renderLog(LinearLayout content) {
-        Activity act = activity;
+        Activity act = currentActivity();
         setTitle("日志与求助");
         addGuideCard(content, new String[] {
                 "要反馈问题，需要把日志发给开发者",
@@ -1288,7 +1309,7 @@ public final class CNDebugOverlay {
 
     private static final class ShareLogClick implements View.OnClickListener {
         @Override public void onClick(View v) {
-            Activity act = activity;
+            Activity act = currentActivity();
             if (act == null) return;
             toast("正在打包日志…");
             if (bgExecutor == null) {
@@ -1388,7 +1409,7 @@ public final class CNDebugOverlay {
     // ── 分类总览：警告横幅 + 待重启提醒条 + 六分类入口 ─────────────────
 
     private static void renderGroups(LinearLayout content) {
-        Activity act = activity;
+        Activity act = currentActivity();
         int total = flagSnapshot == null ? 0 : flagSnapshot.length;
         boolean nativeMissing = !hasNativeRows(flagSnapshot);
         setTitle("排查开关 · 共 " + total + " 项" + (nativeMissing ? "（引擎层未加载）" : ""));
@@ -1491,7 +1512,7 @@ public final class CNDebugOverlay {
     // ── 分类子页：控件列表 + 底部「全部关闭 / 应用并重启」──────────────
 
     private static void renderCategory(LinearLayout content, String groupId) {
-        Activity act = activity;
+        Activity act = currentActivity();
         GroupDef def = groupDef(groupId);
         int nativeCount = countSide(flagSnapshot, groupId, "native");
         setTitle(def.title);
@@ -1538,7 +1559,7 @@ public final class CNDebugOverlay {
 
     /** F 类默认折叠 + 二次展开（P5）。 */
     private static void renderDangerGate(LinearLayout content) {
-        Activity act = activity;
+        Activity act = currentActivity();
         LinearLayout card = innerCard(content);
         TextView warn = text(act,
                 "这一页是开发自测用的「故意弄坏」开关：开了之后游戏某个环节一定会表现得像坏了一样，"
@@ -1968,7 +1989,7 @@ public final class CNDebugOverlay {
     private static void showModal(String title, String body, String yesLabel,
                                   boolean danger, boolean withCancel,
                                   View.OnClickListener onYes) {
-        Activity act = activity;
+        Activity act = currentActivity();
         if (act == null || panelRoot == null) return;
         closeModal();
         FrameLayout mask = new FrameLayout(act);
@@ -2460,7 +2481,7 @@ public final class CNDebugOverlay {
 
     /** 「什么时候用这里？」指引卡（P1：每个功能页顶部固定一张）。 */
     private static void addGuideCard(LinearLayout content, String[] scenes) {
-        Activity act = activity;
+        Activity act = currentActivity();
         LinearLayout card = innerCard(content);
         TextView title = text(act, "什么时候用这里？", 13f,
                 color("COLOR_ACCENT2", 0xFF9C5BC2), true);
@@ -2478,7 +2499,7 @@ public final class CNDebugOverlay {
 
     /** 面板内的卡片：玻璃底 + 卡片描边（§9）。 */
     private static LinearLayout innerCard(LinearLayout content) {
-        Activity act = activity;
+        Activity act = currentActivity();
         LinearLayout card = new LinearLayout(act);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(act, 14), dp(act, 12), dp(act, 14), dp(act, 12));
@@ -2545,7 +2566,7 @@ public final class CNDebugOverlay {
 
     private static void toast(String msg) {
         try {
-            Activity act = activity;
+            Activity act = currentActivity();
             if (act != null) {
                 android.widget.Toast.makeText(act.getApplicationContext(), msg,
                         android.widget.Toast.LENGTH_LONG).show();

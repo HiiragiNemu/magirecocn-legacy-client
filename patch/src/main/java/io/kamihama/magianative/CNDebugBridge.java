@@ -464,7 +464,22 @@ public final class CNDebugBridge {
             send.setType("text/plain");
             send.putExtra(Intent.EXTRA_STREAM, uri);
             send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            act.startActivity(Intent.createChooser(send, "分享日志"));
+            // F-R4-01：startActivity 从后台线程起 Activity 在个别 OEM/版本上有
+            // 不确定性——shareLog 被设计成可在后台线程调（flush+打包不能卡 UI），
+            // 但起 chooser 这一步要回主线程。已在主线程就直发，否则 post 回去。
+            final Intent chooser = Intent.createChooser(send, "分享日志");
+            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+                act.startActivity(chooser);
+            } else {
+                final Activity a = act;
+                a.runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        try { a.startActivity(chooser); } catch (Throwable t) {
+                            CNLog.w(TAG, "起分享 chooser 失败: " + t);
+                        }
+                    }
+                });
+            }
             return out;
         } catch (Throwable t) {
             CNLog.w(TAG, "分享日志失败: " + t);
