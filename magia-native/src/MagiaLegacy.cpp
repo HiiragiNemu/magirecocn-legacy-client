@@ -661,13 +661,30 @@ static bool checkParseJsonNew(void* _this, const cocos2d::Data& data) {
         // 有界搜索：缓冲区不保证 NUL 结尾，strstr 会越界
         std::string_view sv(reinterpret_cast<const char*>(data._bytes),
                             static_cast<size_t>(data._size));
-        if (sv.find("asset_optimize") != std::string_view::npos) {
+        // 与下方改写循环同一判据（带引号的键名）：预判裸子串会把「其它字段值里
+        // 恰好含 asset_optimize 字样」的清单误带进补丁分支，白走一遍无操作复制。
+        if (sv.find("\"asset_optimize\"") != std::string_view::npos) {
             LOGI("[checkParseJson] 修正 asset_optimize");
             std::string patched(sv);          // 栈上副本，避免静态存储的竞态
+            // 精准改写（F-F-05）：只翻 "asset_optimize" 键名下的 :1——旧版把
+            // 全串 ":1" 一律改 ":0"，清单里任何其它字段（计数值、嵌套对象、
+            // 字符串内容里的 ":1"）都会被误翻。规则：命中键名 → 跳过 JSON
+            // 空白 → 期望 ':' → 再跳空白 → 当前字符是 '1' 且后继不是数字
+            // （"1.0"→"0.0" 合法小数照旧翻；"10"~"19" 等整数不动）才翻。
             size_t pos = 0;
-            while ((pos = patched.find(":1", pos)) != std::string::npos) {
-                patched.replace(pos, 2, ":0");
-                pos += 2;
+            while ((pos = patched.find("\"asset_optimize\"", pos)) != std::string::npos) {
+                size_t p = pos + 16;          // 键名长度
+                while (p < patched.size() && (patched[p] == ' ' || patched[p] == '\t'
+                        || patched[p] == '\r' || patched[p] == '\n')) p++;
+                if (p >= patched.size() || patched[p] != ':') { pos += 16; continue; }
+                p++;
+                while (p < patched.size() && (patched[p] == ' ' || patched[p] == '\t'
+                        || patched[p] == '\r' || patched[p] == '\n')) p++;
+                if (p < patched.size() && patched[p] == '1'
+                        && (p + 1 >= patched.size() || patched[p + 1] < '0' || patched[p + 1] > '9')) {
+                    patched[p] = '0';
+                }
+                pos = p;
             }
             cocos2d::Data d;
             d._bytes = reinterpret_cast<unsigned char*>(patched.data());
@@ -679,6 +696,16 @@ static bool checkParseJsonNew(void* _this, const cocos2d::Data& data) {
 }
 
 // ─── 下载相关回调：资源已就位时一律静默 ──────────────────
+//
+// ⚠ 本段钩子的极性分两组，**不要顺手「统一」**（F-F-04）：
+//   · 静默组（selectURL/dlJson/mainSceneOnErr 等）：resourcesReady() 为真时
+//     吞掉回调——资源已装，引擎自身的下载/错误流程不必再跑；
+//   · 放行组（qbScene/questData，见下）：resourcesReady() 为**假**时吞掉——
+//     这两个回调驱动的是玩法场景数据，资源没装好前放行会让引擎拿着空资源
+//     进场景；装好之后才该原样透传。
+// 两组极性相反都是有意为之。注意：本结论由调用点行为反推（libcn_hook 无
+// 源码，引擎内部语义无从直接证实），若日后拿到引擎符号级证据显示某钩子
+// 极性反了，单独修那一个，不要整段翻转。
 static void selectURLOnRespNew(void* a, void* b, void* c) {
     if (resourcesReady()) { LOGI("[SelectURL::onResp] 静默"); return; }
     selectURLOnRespOld(a, b, c);
@@ -700,10 +727,13 @@ static void dlJsonOnRespErrNew(void* a) {
     dlJsonOnRespErrOld(a);
 }
 static void qbSceneOnRespNew(void* a, void* b, void* c) {
+    // 放行组（极性与上面静默组相反，见段首 F-F-04 注释）：资源未装时吞掉，
+    // 装好才透传——不要顺手翻转成「ready 时静默」。
     if (!resourcesReady()) return;
     qbSceneOnRespOld(a, b, c);
 }
 static void questDataOnRespNew(void* a, void* b, void* c) {
+    // 放行组：同上，极性有意相反，勿翻转。
     if (!resourcesReady()) return;
     questDataOnRespOld(a, b, c);
 }

@@ -370,8 +370,11 @@ jobs:
             echo "::error::找不到 Android NDK"; exit 1
           fi
           echo "[NDK] 使用 $NDK_ROOT"
-          # shadowhook v1.1.1 的 CMakeLists 要求 CMake >= 3.30.5，
-          # 低于此版本会在 configure 阶段直接失败
+          # shadowhook v2.0.1 的 CMakeLists 要求 CMake >= 4.0.2
+          # （magia-native/CMakeLists.txt 的 PATCH_COMMAND 已把它降回 3.22；
+          # sed 降级补丁的命中由 FetchContent_MakeAvailable 之后的守卫显式
+          # 核对，漏命中即 configure 阶段失败），低于降级后要求的 CMake 会
+          # 在 configure 阶段直接失败
           cmake --version | head -1
 
           STRIP="$(find "$NDK_ROOT/toolchains/llvm/prebuilt" -name llvm-strip 2>/dev/null | head -1)"
@@ -632,6 +635,10 @@ jobs:
           # 每个 .so 的 DT_NEEDED 都要能在包内或系统里解析到，
           # 否则 dlopen 只在真机启动那一刻才失败，静态自检全都发现不了
           python3 tools/check-so-deps.py "$APK"
+          # F-F-07：重链/新编的 arm64 库必须满足 16KB 页对齐（Android 15+ 上
+          # 不满足直接 dlopen 失败）。libcnzip 预编译违例由脚本内排除并留痕，
+          # 其余库（libMagiaLegacy / libaria2c）违例一票否决。
+          python3 tools/check-so-alignment.py
           # 包里的 .so 与补丁类必须都是这次构建的产物。踩过两次「编译了却没进包」：
           # CNBgm 不在任何一组 d8 输入里；libMagiaLegacy.so 忘了拷进 lib/。
           # 两次都能打包、能签名、能安装，只有真机跑起来才暴露，而且现象会把人

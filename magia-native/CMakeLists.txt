@@ -122,7 +122,26 @@ FetchContent_Declare(
                    shadowhook/src/main/cpp/CMakeLists.txt
                    shadowhook/src/main/cpp/shadowhook.c
 )
+
 FetchContent_MakeAvailable(shadowhook)
+
+# 守卫（F-F-08）：上面的 sed 补丁靠精确字符串匹配生效，而 sed 匹配不到时
+# 是静默成功的——上游哪天改了 GOTO_END(SHADOWHOOK_ERRNO_INIT_LINKER) 的
+# 写法（重构/改名/版本升级），降级补丁会悄悄失效，init-linker 失败路径
+# 复活。这里显式核对：打完补丁的源码里不该再出现这个调用。
+# ⚠ 必须放在 FetchContent_MakeAvailable **之后**：shadowhook_SOURCE_DIR
+# 由 MakeAvailable 在 populate 阶段写入，提前 GetProperties 拿到的是空串，
+# EXISTS "" 恒假、FATAL_ERROR 永不触发——守卫就成了静默空操作。
+FetchContent_GetProperties(shadowhook)
+if(EXISTS "${shadowhook_SOURCE_DIR}/src/main/cpp/shadowhook.c")
+    file(READ "${shadowhook_SOURCE_DIR}/src/main/cpp/shadowhook.c" _sh_src)
+    if(_sh_src MATCHES "GOTO_END\\(SHADOWHOOK_ERRNO_INIT_LINKER\\)")
+        message(FATAL_ERROR
+            "shadowhook 降级补丁未命中：shadowhook.c 里仍有 "
+            "GOTO_END(SHADOWHOOK_ERRNO_INIT_LINKER)。上游源码写法已变，"
+            "请核对 PATCH_COMMAND 的 sed 表达式后再构建。")
+    endif()
+endif()
 
 # shadowhook 的 CMakeLists 顺便建了一个叫 shadowhook_nothing 的"空壳
 # so"——用 -nostdlib -nostartfiles -nodefaultlibs 编出来作为占位符，
