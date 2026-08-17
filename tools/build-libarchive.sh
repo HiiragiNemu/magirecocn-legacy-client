@@ -4,7 +4,7 @@
 # -lgcc/sysroot/crt，无需本机工具链。
 #
 # 用法: NDK=<ndk路径> LIBARCHIVE_SRC=<源码目录> ZLIB_SRC=<源码目录> bash tools/build-libarchive.sh
-# 产物: out/<abi>/libarchive.so（相对当前目录）
+# 产物: out/<abi>/libarchive.so（相对当前目录，绝对路径）
 set -euo pipefail
 
 NDK="${NDK:?请设置 NDK}"
@@ -16,6 +16,17 @@ NPROC=$(nproc)
 # 绝对路径：zlib 构建会 cd 进临时目录，相对 out/ 会在那里重定向出错。
 OUT="$(pwd)/out"
 
+# 跑命令并落日志；失败打印日志尾部并退出（否则 CI 上错误被吞进文件看不见）。
+run_log() {
+    local log="$1"; shift
+    if ! "$@" >"$log" 2>&1; then
+        echo "✗ 命令失败：$*"
+        echo "── 日志（$log）──"
+        tail -50 "$log"
+        exit 1
+    fi
+}
+
 build_abi() {
     local abi="$1" clang="$2"
     local PREFIX="$OUT/$abi"
@@ -26,22 +37,20 @@ build_abi() {
     #    NDK clang 的 -Werror 探测太严会 abort，CMake 路径干净） ──
     echo "── zlib ($abi)"
     rm -rf "build-zlib-$abi"
-    cmake -S "$SRC_ZL" -B "build-zlib-$abi" \
+    run_log "$OUT/zlib-$abi-conf.log" cmake -S "$SRC_ZL" -B "build-zlib-$abi" \
         -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
         -DANDROID_ABI="$abi" -DANDROID_PLATFORM=android-21 \
         -DBUILD_SHARED_LIBS=OFF \
         -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-        >"$OUT/zlib-$abi-conf.log" 2>&1
-    cmake --build "build-zlib-$abi" --target zlibstatic -j"$NPROC" \
-        >"$OUT/zlib-$abi-build.log" 2>&1
-    cmake --install "build-zlib-$abi" >"$OUT/zlib-$abi-install.log" 2>&1
+        -DCMAKE_INSTALL_PREFIX="$PREFIX"
+    run_log "$OUT/zlib-$abi-build.log" cmake --build "build-zlib-$abi" --target zlibstatic -j"$NPROC"
+    run_log "$OUT/zlib-$abi-install.log" cmake --install "build-zlib-$abi"
     echo "  ✓ libz.a"
 
     # ── 2. libarchive 静态（CMake + NDK toolchain） ──
     echo "── libarchive ($abi)"
     rm -rf "cmake-$abi" && mkdir -p "cmake-$abi"
-    cmake -S "$SRC_LA" -B "cmake-$abi" \
+    run_log "$OUT/libarchive-$abi-conf.log" cmake -S "$SRC_LA" -B "cmake-$abi" \
         -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
         -DANDROID_ABI="$abi" -DANDROID_PLATFORM=android-21 \
         -DBUILD_SHARED_LIBS=OFF \
@@ -53,10 +62,8 @@ build_abi() {
         -DENABLE_ZSTD=OFF -DENABLE_LIBB2=OFF -DENABLE_OPENSSL=OFF -DENABLE_MBEDTLS=OFF -DENABLE_NETTLE=OFF \
         -DENABLE_LIBXML2=OFF -DENABLE_EXPAT=OFF -DENABLE_ACL=OFF -DENABLE_ICONV=OFF -DENABLE_XATTR=OFF \
         -DENABLE_PCREPOSIX=OFF -DENABLE_PCRE2POSIX=OFF -DENABLE_CNG=OFF -DENABLE_LIBGCC=OFF \
-        -DPOSIX_REGEX_LIB=NONE \
-        >"cmake-$abi/configure.log" 2>&1
-    cmake --build "cmake-$abi" --target archive_static -j"$NPROC" \
-        >"cmake-$abi/build.log" 2>&1
+        -DPOSIX_REGEX_LIB=NONE
+    run_log "$OUT/libarchive-$abi-build.log" cmake --build "cmake-$abi" --target archive_static -j"$NPROC"
     echo "  ✓ libarchive.a"
 
     # ── 3. JNI 包装 → libarchive.so ──
