@@ -157,7 +157,12 @@ public final class CNDebugOverlay {
             // F-R5-01：RestClient 拿到的也可能是刚销毁未移除的实例（重建窗口期
             // mActivities 里还留着旧的）——再查一次 isDestroyed，宁缺毋滥。调用方
             // 都已按 null 处理（render 跳过、轮询重试），这里可以放心返回 null。
-            if (fresh == null || fresh.isDestroyed()) return null;
+            if (fresh == null || fresh.isDestroyed()) {
+                // F-R6-01：把指向已销毁实例的脏引用清掉——下次调用直接走
+                // RestClient 重查，不留旧代际。
+                if (activityRef != null) activityRef = null;
+                return null;
+            }
             activityRef = new WeakReference<Activity>(fresh);
             return fresh;
         }
@@ -521,6 +526,12 @@ public final class CNDebugOverlay {
     private static final long PERM_POLL_MS      = 5000L;
     private static final long PERM_POLL_SLOW_MS = 30000L;
     /**
+     * F-R6-01：取不到 Activity（重建窗口 / 被系统回收）时的重试间隔。这个状态是
+     * 瞬时的，比 fast 档还短——「开完权限回来」的恢复要快。null 分支不递增
+     * permPolls：回来时 fast/slow 的档位计数不丢。
+     */
+    private static final long PERM_POLL_NULL_MS = 2000L;
+    /**
      * 快节奏轮询的次数（5 秒 × 24 ≈ 2 分钟），之后转 30 秒一次的慢节奏。
      *
      * <p>原先是 5 秒 × 120 然后<b>彻底停下</b>。玩家去系统设置里翻「显示在其他
@@ -550,7 +561,7 @@ public final class CNDebugOverlay {
                 if (ballView != null) return;                 // 已经挂上了
                 Activity act = currentActivity();
                 if (act == null) {
-                    if (ui != null) ui.postDelayed(new PermPoll(), 2000L);
+                    if (ui != null) ui.postDelayed(new PermPoll(), PERM_POLL_NULL_MS);
                     return;
                 }
                 if (CNDebugBridge.canDrawOverlays(act)) {
@@ -741,6 +752,12 @@ public final class CNDebugOverlay {
     private static void render() {
         LinearLayout content = pageContent;
         if (content == null || panelRoot == null) return;
+        // F-R6-01：**必须在 stopResourcePolling 之前**。render 前先取不到 Activity
+        // （config 重建窗口 / Activity 被回收）就整段跳过：否则「停轮询 + 清 content
+        // → renderResources 守卫空跳 → 末尾的 startResourcePolling 不执行」会让资源页
+        // 自动刷新永久死掉。守卫在这里，RES_REFRESH 的 `resourcePageActive` 保持 true、
+        // 照常重投，act 一恢复下个 tick 就正常渲染。
+        if (currentActivity() == null) return;
         stopResourcePolling();
         leaveLogPage();
         content.removeAllViews();
@@ -1339,7 +1356,10 @@ public final class CNDebugOverlay {
 
     /**
      * shareLog 内部有 flush + 打包（读写日志文件），接线清单明确「别在 UI 线程调」。
-     * 这里经 {@link #bgExecutor} 转后台，结果回到 UI 线程提示。
+     * 这里经 {@link #bgExecutor} 转后台。打包与起页面拆开（F-R6-01）：起 chooser 的
+     * 结果只有起的那一刻才可知，若塞进共享静态标志，连点两次分享时 bg 线程为下一次
+     * 复位会污染这一次的 toast——所以把「起 chooser + 如实 toast」整段放到
+     * {@link ShareLogLaunch}（主线程执行）。
      */
     private static final class ShareLogTask implements Runnable {
         private final Activity act;
@@ -1348,22 +1368,35 @@ public final class CNDebugOverlay {
             File out = null;
             try { out = CNDebugBridge.shareLog(act); }
             catch (Throwable t) { CNLog.w(TAG, "分享日志失败: " + t); }
-            if (ui != null) ui.post(new ShareLogResult(out));
+            if (out == null) {
+                if (ui != null) ui.post(new ShareLogResult());
+                return;
+            }
+            final android.content.Intent chooser = CNDebugBridge.shareChooserIntent(out);
+            if (ui != null) ui.post(new ShareLogLaunch(act, chooser));
         }
     }
 
     private static final class ShareLogResult implements Runnable {
-        private final File out;
-        ShareLogResult(File out) { this.out = out; }
         @Override public void run() {
-            // F-R5-01：chooser 没能起来也要如实说——launch Runnable 先行（post 序
-            // 列保证），失败标志在 toast 前已可读。
-            if (CNDebugBridge.shareChooserFailed) {
-                CNDebugBridge.shareChooserFailed = false;
+            toast("没有可分享的日志（打包失败），请稍后再试");
+        }
+    }
+
+    /** 主线程起分享 chooser；成败由当刻真实结果决定（F-R6-01）。 */
+    private static final class ShareLogLaunch implements Runnable {
+        private final Activity act;
+        private final android.content.Intent chooser;
+        ShareLogLaunch(Activity act, android.content.Intent chooser) {
+            this.act = act; this.chooser = chooser;
+        }
+        @Override public void run() {
+            try {
+                act.startActivity(chooser);
+                toast("日志包好了，选择要发去的应用");
+            } catch (Throwable t) {
+                CNLog.w(TAG, "起分享 chooser 失败: " + t);
                 toast("日志包好了，但分享页面没能起来，请重试");
-            } else {
-                toast(out != null ? "日志包好了，选择要发去的应用"
-                                  : "没有可分享的日志（打包失败），请稍后再试");
             }
         }
     }

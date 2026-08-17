@@ -445,60 +445,39 @@ public final class CNDebugBridge {
     // ══ 日志 ═════════════════════════════════════════════════════════
 
     /**
-     * 把启动日志打包并走系统分享。返回打好的文件，失败返回 {@code null}。
+     * 把启动日志打包成可分享的文件。返回打好的文件，失败返回 {@code null}。
      *
      * <p>先 {@link CNLog#flushNow()}：攒着的 logcat 行不落盘的话，导出的包会比
      * 实际少一段，而少的那段往往正是刚出问题的那段。
+     *
+     * <p><b>只打包、不起页面</b>（F-R6-01）。起 chooser 由调用方在**主线程**做
+     * （{@link CNDebugOverlay.ShareLogLaunch}）：后台线程 startActivity 在个别
+     * OEM 上有不确定性（原 L2），而「chooser 起没起来」只有起的那一刻才可知——
+     * 拆开让调用方在起完后按真实结果提示，不再需要把异步结果塞进共享静态标志
+     * （那会跨调用互相污染，连点两次分享时 toast 失真）。
      */
-    /**
-     * F-R5-01：chooser 是否没能起来（Runnable 在主线程跑完才可知，shareLog 本体
-     * 异步返回，靠这个包级标志把失败传回 {@code ShareLogResult}）。每次 shareLog
-     * 开头复位。
-     */
-    static volatile boolean shareChooserFailed;
-
     public static File shareLog(Activity act) {
         try {
-            shareChooserFailed = false;   // 复位放最前：本次调用的结果不带上一次的残留
             if (act == null) return null;
             CNLog.flushNow();
-            File out = CNLogBundle.write(act, CNLog.logDirPath());
-            if (out == null) return null;
-            // 编译 classpath 没有 androidx，用自带的只读 provider 临时授权
-            // （只开 cacheDir/share/，见 CNLogShareProvider）。
-            Uri uri = Uri.parse("content://" + CNLogShareProvider.AUTHORITY
-                    + "/" + Uri.encode(out.getName()));
-            Intent send = new Intent(Intent.ACTION_SEND);
-            send.setType("text/plain");
-            send.putExtra(Intent.EXTRA_STREAM, uri);
-            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            // F-R4-01：startActivity 从后台线程起 Activity 在个别 OEM/版本上有
-            // 不确定性——shareLog 被设计成可在后台线程调（flush+打包不能卡 UI），
-            // 但起 chooser 这一步要回主线程。已在主线程就直发，否则 post 回去。
-            final Intent chooser = Intent.createChooser(send, "分享日志");
-            final Activity a = act;
-            final Runnable launch = new Runnable() {
-                @Override public void run() {
-                    try {
-                        a.startActivity(chooser);
-                    } catch (Throwable t) {
-                        // F-R5-01：失败如实上报，别让「日志包好了」骗过玩家——
-                        // chooser 没起来，包是白打的。
-                        CNLog.w(TAG, "起分享 chooser 失败: " + t);
-                        shareChooserFailed = true;
-                    }
-                }
-            };
-            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
-                launch.run();
-            } else {
-                a.runOnUiThread(launch);
-            }
-            return out;
+            return CNLogBundle.write(act, CNLog.logDirPath());
         } catch (Throwable t) {
             CNLog.w(TAG, "分享日志失败: " + t);
             return null;
         }
+    }
+
+    /** 分享用的 ACTION_SEND chooser Intent（F-R6-01）。由调用方在主线程 startActivity。 */
+    public static Intent shareChooserIntent(File out) {
+        // 编译 classpath 没有 androidx，用自带的只读 provider 临时授权
+        // （只开 cacheDir/share/，见 CNLogShareProvider）。
+        Uri uri = Uri.parse("content://" + CNLogShareProvider.AUTHORITY
+                + "/" + Uri.encode(out.getName()));
+        Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType("text/plain");
+        send.putExtra(Intent.EXTRA_STREAM, uri);
+        send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        return Intent.createChooser(send, "分享日志");
     }
 
     /** 悬浮窗权限（API 23+ 要用户手动授予）。低版本恒为 true。 */
