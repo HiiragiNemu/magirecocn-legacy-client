@@ -554,6 +554,16 @@ public final class CNWebProxy {
             return null;
         }
 
+        // X-C2 修复：/magica/api/ 是游戏 API 路径，带会话（Cookie/Authorization）。
+        // 走代理必然剥身份头 → 未鉴权回源（4xx 每请求先空跑代理再回退、2xx 把
+        // 错误页/登录页直接交给 WebView，页面损坏）。MODE_ON 下 API 一律直连、
+        // 保留会话头——与 maybeMeasure 的「只拿静态资源测，绝不碰 /magica/api/」
+        // 同一口径。代理服务的是公共静态资产（JS/CSS/图片），不需要会话。
+        if (url != null && url.contains("/magica/api/")) {
+            notePassthrough("api", url);
+            return null;
+        }
+
         // Range 请求不接管。206 的语义要靠 Content-Range/Content-Length 一起表达，
         // 而我们下面为了避开分帧问题把 Content-Length 摘掉了，两者凑在一起容易出
         // 「读到一半就断」这种极难查的毛病。WebView 这层本来也几乎不发 Range
@@ -593,6 +603,44 @@ public final class CNWebProxy {
             || "TE".equalsIgnoreCase(k)
             || "Upgrade".equalsIgnoreCase(k)
             || "Content-Length".equalsIgnoreCase(k);
+    }
+
+    /**
+     * X-C2：身份/凭证类请求头——<b>绝不</b>转发给代理主机。
+     *
+     * <p>domains 白名单内的资源按设计是公共静态资产（JS/CSS/图片，见
+     * README「网络出口」），不需要任何会话；而代理 base 来自云端 config，
+     * 控制面被污染时可指向攻击者持有的合法证书主机——若不剥这些头，
+     * 玩家对游戏域名的 Cookie/Authorization 就随静态资源请求一起送进了
+     * 攻击者日志。剥离对正常功能零影响（静态资产不验会话），却是
+     * 「控制面被污染」场景下保住玩家会话的最后一道闸。
+     *
+     * <p>带会话的 API（{@code /magica/api/}）在 {@link #afterLocalMiss} 里
+     * 已被排除在代理之外（直连保留会话头），不会走到这里被剥。若将来确需
+     * 代理转发带会话的 API 请求，应做成显式配置项（默认仍剥离），而不是
+     * 悄悄放开这里。
+     *
+     * <p>残余：代理 URL 仍携带原始完整 query——若游戏/页面以 query 参数携带
+     * 身份（token/session/uid 等），它们会随 URL 交给代理主机。头方向的闸
+     * 关上了，query 方向不在本方法覆盖内（既有设计属性，注释留痕）。
+     */
+    private static boolean isIdentityRequestHeader(String k) {
+        return "Cookie".equalsIgnoreCase(k)
+            || "Cookie2".equalsIgnoreCase(k)
+            || "Authorization".equalsIgnoreCase(k)
+            || "Proxy-Authorization".equalsIgnoreCase(k)
+            || "sessionid".equalsIgnoreCase(k)
+            || startsWithIgnoreCase(k, "X-CSRF")
+            || startsWithIgnoreCase(k, "X-XSRF")
+            || startsWithIgnoreCase(k, "X-Auth")
+            || startsWithIgnoreCase(k, "X-Api-Key")
+            || startsWithIgnoreCase(k, "X-Token")
+            || startsWithIgnoreCase(k, "X-Session");
+    }
+
+    private static boolean startsWithIgnoreCase(String s, String prefix) {
+        return s != null && s.length() >= prefix.length()
+                && s.regionMatches(true, 0, prefix, 0, prefix.length());
     }
 
     /**
@@ -682,11 +730,14 @@ public final class CNWebProxy {
             c.setConnectTimeout(PROXY_CONNECT_TIMEOUT_MS);
             c.setReadTimeout(PROXY_READ_TIMEOUT_MS);
             c.setRequestMethod("GET");
-            // 带上 WebView 的请求头，但逐跳头与 Accept-Encoding 除外（见 isHopByHopRequestHeader）
+            // 带上 WebView 的请求头，但逐跳头与 Accept-Encoding 除外（见
+            // isHopByHopRequestHeader）；身份/凭证头同样除外（X-C2，
+            // 见 isIdentityRequestHeader——会话绝不交给代理主机）。
             if (reqHeaders != null) {
                 for (Map.Entry<String, String> e : reqHeaders.entrySet()) {
                     String k = e.getKey();
                     if (k == null || isHopByHopRequestHeader(k)) continue;
+                    if (isIdentityRequestHeader(k)) continue;
                     try { c.setRequestProperty(k, e.getValue()); } catch (Throwable ignore) {}
                 }
             }
@@ -745,6 +796,12 @@ public final class CNWebProxy {
                             || "Content-Length".equalsIgnoreCase(k)
                             || "Content-Type".equalsIgnoreCase(k)
                             || "Connection".equalsIgnoreCase(k)) continue;
+                    // X-C2（响应方向）：Set-Cookie 绝不转交——它会被 WebView
+                    // 以 origUrl（游戏域名）为作用域种下，被污染/恶意的
+                    // 代理主机借此向游戏域注入任意 Cookie（会话固定/覆盖）。
+                    // 静态资产响应本就不需要种 Cookie。
+                    if ("Set-Cookie".equalsIgnoreCase(k)
+                            || "Set-Cookie2".equalsIgnoreCase(k)) continue;
                     respHeaders.put(k, v.get(0));
                 }
             }
