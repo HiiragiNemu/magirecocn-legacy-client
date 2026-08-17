@@ -64,8 +64,9 @@ public final class CNLogBundle {
             for (File f : logs) {
                 String n = f.getName();
                 String seq = n.substring(0, n.indexOf('_'));
-                // 左补零到 10 位：10^10 次启动才可能溢出，而那时个位序也不影响
-                // 相对顺序（10 位内已按数字序排好）。
+                // 左补零到 10 位：launchSeq 是 int（≤2147483647，正好 10 位），
+                // 补零到 10 位覆盖整个 int 域——字典序即数字序，不会因进位错序。
+                // （若哪天序号变 long，这里要跟着扩位数，否则会截掉高位。）
                 String padded = ("0000000000" + seq);
                 padded = padded.substring(padded.length() - 10);
                 String key = padded + n.substring(n.indexOf('_'));
