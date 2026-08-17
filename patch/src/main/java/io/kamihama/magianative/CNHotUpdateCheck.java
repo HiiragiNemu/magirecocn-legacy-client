@@ -1013,7 +1013,21 @@ public final class CNHotUpdateCheck {
     /** 显式停留没有自动超时；按钮切回‘进入游戏’后才继续完成启动。 */
     private static void awaitExplicitStayRelease() {
         try {
-            while (CNDownloadUiAssist.shouldStayOnPage()) Thread.sleep(100L);
+            // R1-06：显式停留期间看门狗已停，Activity 重建会把浮层留在死树
+            // 上且无人补挂——「进入游戏」按钮随之死亡，shouldStayOnPage 永真，
+            // 本循环永久自旋、热更线程泄漏，玩家再也进不了游戏。浮层连续
+            // 3 秒不在活宿主上即认定停留语义不可达，fail-open 放行（方向：
+            // 宁可提前进游戏，也不把玩家永远拦在启动画面）。
+            int deadBeats = 0;
+            while (CNDownloadUiAssist.shouldStayOnPage()) {
+                if (CNCNDownloadUI.overlayRecoverable()) {
+                    deadBeats = 0;
+                } else if (++deadBeats >= 30) {   // 30 × 100ms = 3s
+                    CNLog.w(TAG, "显式停留期间浮层不可恢复（Activity 重建死树?），放行");
+                    break;
+                }
+                Thread.sleep(100L);
+            }
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
         }

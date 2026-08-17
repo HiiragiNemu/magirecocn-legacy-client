@@ -3924,7 +3924,12 @@ public class CNCNDownloadUI {
                     return;
                 }
                 // 整个浮层都没了（或从未建成）：重建一份
-                if (hostActivity == null) hostActivity = act;
+                // R1-01：hostActivity 必须无条件刷新。CreateUIRunnable 半途
+                // 失败会留下非 null 的旧值（:4267 先赋值后建视图），随后
+                // Activity 重建走到这里时旧值非 null 但已 isDestroyed——
+                // 条件赋值不覆盖，overlayAttachedToLiveHost 判活恒假、心跳
+                // 永不续期，native 闸门永久 fail-open（不卡死但闸不住）。
+                hostActivity = act;
                 loadPalette(darkMode);
                 FrameLayout fresh = buildOverlay(act);
                 dv.addView(fresh, new ViewGroup.LayoutParams(
@@ -3994,10 +3999,20 @@ public class CNCNDownloadUI {
                     ViewGroup.LayoutParams.MATCH_PARENT);
             try { if (vm != null) fresh.addView(vm, full); } catch (Throwable t) {
                 CNLog.e("界面", "主题切换：强更框迁移失败: " + t); }
+            boolean slowMigrated = true;
             try { if (sm != null) fresh.addView(sm, full); } catch (Throwable t) {
+                slowMigrated = false;
                 CNLog.e("界面", "主题切换：慢网询问框迁移失败: " + t); }
+            // R1-02：慢网框迁移失败 = 框没了但 latch 还在等（无超时）。
+            // hide()/HideRunnable 路径有 releasePendingSlowAnswer 兜底，
+            // toggleTheme 路径原先没有——下载/线路表路径的等待线程就是
+            // 下载线程本身，永卡即下载停滞。迁移失败即按拆窗口径放行。
+            if (sm != null && !slowMigrated) {
+                try { releasePendingSlowAnswer("主题切换迁移失败"); } catch (Throwable ignore) {}
+            }
             try { if (am != null) fresh.addView(am, full); } catch (Throwable t) {
                 CNLog.e("界面", "主题切换：下载询问框迁移失败: " + t); }
+            // aria2 询问迁移失败无须放行：其 latch 有 60s 超时兜底。
 
             // 信息类 modal 不迁移：视图随旧树一并摘除，字段清零（否则
             // split-brain——字段非空但框已不可见）。它们全是回调式、没有
@@ -4687,6 +4702,16 @@ public class CNCNDownloadUI {
      * 读错的最坏后果是本拍不续期、下拍自愈，方向安全（宁可闸不住也不卡死），
      * 故只做 try/catch 不加锁。
      */
+    /**
+     * R1-06：浮层是否处于「可交互」状态（显示中且挂在活宿主的视图树上）。
+     * 包内可见，供 CNHotUpdateCheck.awaitExplicitStayRelease 判断「显式停留」
+     * 语义是否仍可达——Activity 重建死树情形下返回 false，调用方据此
+     * fail-open 放行，避免永久自旋。
+     */
+    static boolean overlayRecoverable() {
+        return isShowing && overlayAttachedToLiveHost();
+    }
+
     private static boolean overlayAttachedToLiveHost() {
         try {
             FrameLayout ov = overlayView;
