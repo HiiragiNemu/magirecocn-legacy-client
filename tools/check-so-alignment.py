@@ -24,6 +24,16 @@ import sys
 PAGE_16K = 0x4000
 
 
+def is_elf64(path):
+    """是不是 64 位 ELF（32 位库按设计跳过，不计入「已检查」）。"""
+    try:
+        with open(path, 'rb') as fp:
+            h = fp.read(64)
+        return len(h) >= 6 and h[:4] == b'\x7fELF' and h[4] == 2
+    except OSError:
+        return False
+
+
 def check_so(path):
     """返回违例描述列表（空 = 合格）。纯 Python 解析 ELF64 程序头。"""
     with open(path, 'rb') as fp:
@@ -70,7 +80,8 @@ def iter_sos(path):
 def main():
     roots = sys.argv[1:] or ['lib/arm64-v8a']
     all_errs = []
-    checked = 0
+    checked = 0     # 真正校验过对齐的 64 位库数
+    skipped32 = 0   # 按设计跳过的 32 位库数
     for root in roots:
         if not os.path.exists(root):
             # 显式点名的路径不存在必须报错——否则 CI 里路径写错会被
@@ -83,7 +94,10 @@ def main():
             all_errs.append(f"{root}: 是文件但不是 .so，不会被检查（路径写错？）")
             continue
         for so in iter_sos(root):
-            checked += 1
+            if is_elf64(so):
+                checked += 1
+            else:
+                skipped32 += 1
             all_errs.extend(check_so(so))
     for e in all_errs:
         print('✗', e)
@@ -92,13 +106,15 @@ def main():
               "重链请加 -Wl,-z,max-page-size=16384。")
         return 1
     if checked == 0:
-        # R4-01：一个 .so 都没扫到（空目录 / 目录里没有 .so / 上面已拦下的非
-        # .so 文件），同样不该以「✓ 0 个」假绿收场。契约是「点名路径必须真的
-        # 被检查」，空跑不算通过。
-        print(f"✗ 没扫到任何 .so 文件（{len(roots)} 个路径都为空或类型不符）")
+        # R4-01/R5-01：一个 64 位库都没扫到（空目录 / 目录里只有 32 位库 /
+        # 上面已拦下的非 .so 文件），同样不该以「✓ 0 个」假绿收场。契约是
+        # 「点名路径必须真的被检查」，空跑不算通过。
+        print(f"✗ 没扫到任何 64 位库（{len(roots)} 个路径都为空、类型不符或只有 32 位库）")
         return 1
-    # R4-01：措辞不再把 32 位库（按设计跳过、未真正校验对齐）计进「arm64 库」。
-    print(f"✓ {checked} 个 .so LOAD 段全部满足 16KB 页对齐（32 位库按设计自动跳过）")
+    # R5-01：checked 只数 64 位库——32 位库（按设计跳过、未真正校验对齐）不再
+    # 混进「已检查」的计数里。
+    print(f"✓ {checked} 个 64 位库 LOAD 段全部满足 16KB 页对齐"
+          + (f"（{skipped32} 个 32 位库按设计跳过）" if skipped32 else ""))
     return 0
 
 
