@@ -20,11 +20,38 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/stat.h>
+#include <limits.h>
 #include <unistd.h>
 
 // 前向声明（供 cnExtract 使用）
 static void mkdir_recursive(const char* path);
 static void ensure_parent(const char* out);
+
+// ── 条目路径安全校验（Zip Slip 防护）─────────────────────────────────
+// 恶意 ZIP 可以把条目名写成 "../shared_prefs/x.xml" 或 "/data/..." 之
+// 类，拼到解压根之后逃逸到应用沙箱的任意位置写入。本函数在**写盘之前**
+// 对条目名做字符串级校验，命中任一规则即拒绝该条目：
+//   1. 绝对路径（'/' 开头）；
+//   2. 任何按 '/' 切分后等于 ".." 的段（上层目录逃逸）；
+//   3. 反斜杠 '\'（在部分平台上会被当作目录分隔符，统一拒绝最干净）；
+//   4. 空条目名。
+// 注意：只做「逐段相等」判断，不做子串匹配——"a..b"、"...、“./x” 这类
+// 正常名字不受影响（"." 段在 Linux 下原地不动，无穿越能力，放行）。
+static bool is_safe_entry_name(const char* name) {
+    if (!name || !name[0]) return false;          // 空名
+    if (name[0] == '/') return false;             // 绝对路径
+    const char* seg = name;
+    for (const char* p = name; ; p++) {
+        if (*p == '\\') return false;             // 反斜杠
+        if (*p == '/' || *p == '\0') {
+            // 段 [seg, p)：恰好是两个点即为 ".."
+            if (p - seg == 2 && seg[0] == '.' && seg[1] == '.') return false;
+            if (*p == '\0') break;
+            seg = p + 1;
+        }
+    }
+    return true;
+}
 
 static JavaVM* g_vm = nullptr;
 
@@ -157,8 +184,31 @@ Java_io_kamihama_magianative_CNZipTool_cnExtract(JNIEnv* env, jclass,
         const char* name = archive_entry_pathname(e);
         if (!name) { archive_read_data_skip(a); continue; }
 
+        // Zip Slip 防护：非法条目名（../、绝对路径、反斜杠）一律跳过。
+        // 跳过而不是中止：一个恶意条目不该让整个安装失败，但它一个字节
+        // 都不许落到解压根之外。libarchive 读 zip 时不会替我们做这层校验。
+        if (!is_safe_entry_name(name)) {
+            archive_read_data_skip(a);
+            continue;
+        }
+
+        // 符号链接/硬链接/FIFO 等特殊条目只跳过不落地：fopen 不会创建
+        // 符号链接，但把链接目标路径写成普通文件内容既没有意义也可能
+        // 被后续清理逻辑误用。ZIP 资源包只需要目录与常规文件。
+        mode_t ftype = archive_entry_filetype(e);
+        if (ftype != AE_IFDIR && ftype != AE_IFREG) {
+            archive_read_data_skip(a);
+            continue;
+        }
+
         char out[4096];
-        snprintf(out, sizeof(out), "%s/%s", destPath, name);
+        int outLen = snprintf(out, sizeof(out), "%s/%s", destPath, name);
+        // 路径被 4096 截断时宁可跳过：截断后的路径可能指向完全不同的
+        // 位置（截掉后半段后落进错误的目录），静默写入比跳过更危险。
+        if (outLen <= 0 || outLen >= (int)sizeof(out)) {
+            archive_read_data_skip(a);
+            continue;
+        }
         if (archive_entry_filetype(e) == AE_IFDIR) {
             mkdir_recursive(out);
         } else {
