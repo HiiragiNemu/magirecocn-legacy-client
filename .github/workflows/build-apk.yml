@@ -276,6 +276,37 @@ jobs:
           python3 tools/baseline.py apply --out "${TREE}"
           echo "重建树：$(find "${TREE}" -type f | wc -l) 个文件"
 
+      - name: 🗑 剔除死库：libbacktrace-native / libcrashpad_handler
+        run: |
+          set -euo pipefail
+          # 这两枚 .so 是游戏原版 APK 里 Backtrace.io 崩溃上报 SDK 的 native
+          # 组件（f4samurai 自带；上游 Puella-Care 与本项目均未添加，上游
+          # 仓库 lib/ 只有 Dobby/cocos/untp，Backtrace.patch 只改游戏自身
+          # smali 的上报端点）。1.1.1 → 1.2.0 换基线时已删除全部 358 个埋点
+          # SDK 类（含 backtrace Java 侧，见 tools/baseline.py 文档），官方
+          # 服务器也已停运——没有任何代码再加载它们，纯死重，且 4K 对齐
+          # 无法重链（无源码）。删掉既省体积又根除 16K 对齐扫描噪音。
+          #
+          # fail-closed：删之前全树搜引用，搜到即失败。将来换基线若重新
+          # 引入加载者，这里红灯拦住，而不是静默出一个启动即崩的包。
+          if grep -rlsI -e 'backtrace-native' -e 'crashpad' \
+               --include='*.smali' --include='*.xml' --include='*.json' \
+               --include='*.java' --include='*.cpp' --include='*.h' \
+               --include='*.txt' --include='*.yml' \
+               "${TREE}"; then
+            echo "::error::工程树里仍有 backtrace/crashpad 引用（见上），不能删库——请人工核对引用来源后再放行"
+            exit 1
+          fi
+          for ABI in arm64-v8a armeabi-v7a; do
+            rm -f "${TREE}/lib/${ABI}/libbacktrace-native.so" \
+                  "${TREE}/lib/${ABI}/libcrashpad_handler.so"
+          done
+          # 删除必须生效：任何一枚还在就是 rm 没追上基线变化，立即报
+          for f in "${TREE}"/lib/*/libbacktrace-native.so "${TREE}"/lib/*/libcrashpad_handler.so; do
+            if [ -e "$f" ]; then echo "::error::$f 删除失败"; exit 1; fi
+          done
+          echo "已剔除 4 枚死库（双 ABI × backtrace-native/crashpad_handler）"
+
       # 这两道守卫读的是**工程树**里的文件（字体、引擎 web 那几个 smali），
       # 所以必须排在重建之后。原先它们在 last-green.yml 里跑，那边没有树了，
       # 已迁到这里——守卫得待在它要检查的东西旁边。
