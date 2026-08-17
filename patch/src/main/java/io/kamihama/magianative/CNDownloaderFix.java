@@ -1133,9 +1133,10 @@ public final class CNDownloaderFix {
             }
             // a2 == A2_MAIN → 回退主引擎重试
         }
-        // 这里不能删「已完整下载」的包：进程若在 03 下到 100% 之后、大 zip 还在
+        // 不能删「已完整下载」的包：进程若在 03 下到 100% 之后、大 zip 还在
         // 解压时被杀，下次启动必须复用这份已校验的 1.4GB 包续解，而不是重新下载。
-        deleteQuietly(new File(archive.getPath() + ".aria2"));
+        // 也不能删 .aria2 断点文件：杀掉一半的 aria2 下载要靠它跨会话续传。半截
+        // 产物由 fetchArchive 按 .aria2 是否存在区分「复用 / 清掉重下」。
 
         // 重试上限做成变量：用尽之后要问玩家，玩家选「再试 / 改用单线程」时
         // 就地续一轮，而不是把整个方法重入一遍（重入会连 marker 检查、离线包
@@ -1381,6 +1382,21 @@ public final class CNDownloaderFix {
      */
     private static int tryAria2Download(String name, File archive, int index,
                                         File marker, String canonicalUrl) {
+        // 完整的包直接复用，别让 aria2 的 --allow-overwrite 把它重下一遍。场景是进程
+        // 在下到 100% 之后、解压之前被杀（.aria2 控制文件在 = 没下完，不在此列）。
+        // 交回主引擎，fetchArchive 按同一判据复用它。force_aria2 开着时这正是
+        // 「03完整ZIP可复用」哨兵能真正生效的前提——否则下到 1.4GB 全白费。
+        if (archive.isFile()
+                && !new File(archive.getPath() + ".aria2").isFile()
+                && FORCE_REDOWNLOAD.get(index) == 0) {
+            CNLog.i(TAG, "aria2 引擎：文件已完整，交主引擎复用 file=" + name);
+            return A2_MAIN;
+        }
+        // 跨会话断点续传的依据：本次 URL 必须和上次留下 .aria2 控制文件的那次一致，
+        // aria2 才会续（--continue=true）。换线了就得清掉旧断点与半截产物，否则 aria2
+        // 拿到一份对不上 URL 的控制文件，行为不可预期。首次尝试 prevUrl 为 null 不清，
+        // 正好让「上次会话杀到一半、这次又挑回同一镜像」的续传能接上。
+        String prevUrl = null;
         for (int attempt = 1; attempt <= A2_MAX_ATTEMPTS; attempt++) {
             // 换线走**与主引擎同一套**机制，不是简化版：逐轮 pick(attempt) 轮换，
             // 成败都回报给 CNMirrors 的健康表（失败记冷却、成功清计数）。原先
@@ -1414,6 +1430,12 @@ public final class CNDownloaderFix {
                 CNHotUpdateValidate.VerMeta a2Meta = usesChunkManifest(name) ? null
                         : CNHotUpdateCheck.metaForSlot(index);
                 String url = CNHotUpdate.withIdentity(mirror.urlFor(name), a2Meta);
+                if (prevUrl != null && !prevUrl.equals(url)) {
+                    // 换线了：上一轮留下的半截产物与断点文件对不上这条 URL，作废
+                    deleteQuietly(archive);
+                    deleteQuietly(new File(archive.getPath() + ".aria2"));
+                }
+                prevUrl = url;
                 // 连接数过同一个判据。CNDownloadMode.cap() 原先只管主引擎那四处，
                 // aria2 这里硬编码 16——于是玩家在失败弹窗里选了「改用单线程
                 // 下载」之后，下一个文件照样先走 aria2、照样 16 条连接，正好是
@@ -1424,6 +1446,14 @@ public final class CNDownloaderFix {
                         + " attempt=" + attempt + "/" + A2_MAX_ATTEMPTS);
                 int rv = CNAria2.download(url, FILE_ROOT, name,
                         CNUserAgent.get(), null, null, conns, null, progress, cancel);
+                if (rv == CNAria2.ERR_BUSY) {
+                    // busy 门：同进程同时只放一个 aria2 下载（native g_inUse 语义）。
+                    // 抢不到不是下载失败——是并发让位。静默交回主引擎，不空烧 attempt、
+                    // 不弹失败框、不记线路失败（busy 不是线路的错）。主引擎 4 文件
+                    // 并行本来就是批量主力，aria2 只服务抢到 slot 的那一个。
+                    CNLog.i(TAG, "aria2 busy，让位主引擎 file=" + name);
+                    return A2_MAIN;
+                }
                 if (rv == CNAria2.OK && archive.isFile() && archive.length() > 0
                         && isAria2ArchiveUsable(archive, name)) {
                     // ⚠ aria2 模式下**不叠加**额外的内容校验（维护者决定，2026-08-13）：
@@ -1456,8 +1486,9 @@ public final class CNDownloaderFix {
                 CNLog.w(TAG, "aria2 备用引擎失败 code=" + rv + " attempt=" + attempt
                         + "/" + A2_MAX_ATTEMPTS + " 线路=" + mirror.name + " file=" + name);
                 CNMirrors.reportFailure(mirror, "aria2 code=" + rv);
-                deleteQuietly(archive);
-                deleteQuietly(new File(archive.getPath() + ".aria2"));
+                // 保留半截产物 + .aria2 控制文件：同 URL 重试 / 跨会话续传要用它
+                // （--continue=true）。换线时顶部的 URL 判定清掉它们；最终回退主引擎
+                // 时 fetchArchive 按 .aria2 是否存在决定「复用 / 清掉重下」。
                 // 没轮完就自己换下一条线，不打断玩家。原先每失败一次就弹一次框，
                 // 三条线路要问三遍——而他能给的信息，前两遍就已经给完了。
                 if (attempt < A2_MAX_ATTEMPTS) continue;
@@ -1484,8 +1515,7 @@ public final class CNDownloaderFix {
                 CNLog.w(TAG, "aria2 备用引擎异常 attempt=" + attempt + "/" + A2_MAX_ATTEMPTS
                         + " file=" + name + " : " + t);
                 CNMirrors.reportFailure(mirror, "aria2 异常:" + t);
-                deleteQuietly(archive);
-                deleteQuietly(new File(archive.getPath() + ".aria2"));
+                // 同上：保留半截产物 + 控制文件供续传，换线/回退时由顶部与 fetchArchive 清理
                 if (attempt < A2_MAX_ATTEMPTS) continue;
                 int choice = awaitAria2FallbackChoice(name, false);
                 if (choice == CNCNDownloadUI.ARIA2_RETRY) continue;
@@ -1575,11 +1605,19 @@ public final class CNDownloaderFix {
                                                  File archive, int index, boolean direct,
                                                  int restartToken)
             throws IOException {
-        if (archive.isFile()) {
+        if (archive.isFile() && !new File(archive.getPath() + ".aria2").isFile()) {
+            // 复用「已完整下载」的包。.aria2 控制文件在 = aria2 没下完（aria2 在下到
+            // 100% 时会清掉控制文件），半截 zip 绝不能当完整的复用——会一路拼进解压、
+            // 解到一半才翻车。没有 .aria2 才是完整包，直接续解压。
             long len = archive.length();
             updateSize(index, len);
             return new DownloadMetadata(len, readSidecarEtag(archive));
         }
+        // 半截 aria2 产物（控制文件还在）：主引擎重下前清掉它和断点文件。主引擎用
+        // 自己的 .cpart 续传体系，aria2 的半截状态对它不可用，留着只会让上面的完整
+        // 判断下次再被 .aria2 拦住。
+        deleteQuietly(archive);
+        deleteQuietly(new File(archive.getPath() + ".aria2"));
 
         final boolean useManifest = usesChunkManifest(name);
         // 热更两包（scenario / js）在同一个 URL 上被反复重发，所以 CDN 各节点上

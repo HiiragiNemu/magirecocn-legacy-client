@@ -178,6 +178,7 @@ public final class CNAria2 {
             // （Kimi 构建已说明不用 c-ares），DNS 由系统解析。
             args.add("--file-allocation=none");   // 1.3GB 文件 prealloc 会坑闪存
             args.add("--allow-overwrite=true");
+            args.add("--continue=true");          // 断点续传：目标旁有 .aria2 控制文件就续，没有就从头
             args.add("--auto-file-renaming=false");
             args.add("--no-conf");
             args.add("--daemon=false");
