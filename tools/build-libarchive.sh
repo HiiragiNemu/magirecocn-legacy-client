@@ -13,7 +13,8 @@ SRC_ZL="${ZLIB_SRC:?请设置 ZLIB_SRC}"
 WRAPPER="$(cd "$(dirname "$0")/.." && pwd)/magia-native/src/archive_jni.cpp"
 TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
 NPROC=$(nproc)
-OUT="out"
+# 绝对路径：zlib 构建会 cd 进临时目录，相对 out/ 会在那里重定向出错。
+OUT="$(pwd)/out"
 
 build_abi() {
     local abi="$1" clang="$2"
@@ -21,18 +22,20 @@ build_abi() {
     echo "════ 构建 $abi ($clang) ════"
     mkdir -p "$PREFIX" "$OUT"
 
-    # ── 1. zlib 静态 ──
+    # ── 1. zlib 静态（CMake + NDK toolchain：zlib 的 autotools configure 对
+    #    NDK clang 的 -Werror 探测太严会 abort，CMake 路径干净） ──
     echo "── zlib ($abi)"
-    local zdir="build-zlib-$abi"
-    rm -rf "$zdir" && cp -r "$SRC_ZL" "$zdir"
-    (
-        cd "$zdir"
-        make distclean >/dev/null 2>&1 || true
-        CC="$clang" CFLAGS="-O2 -fPIC" \
-            ./configure --static --prefix="$PREFIX" >"$OUT/zlib-$abi-conf.log" 2>&1
-        make -j"$NPROC" >/dev/null
-        make install >/dev/null
-    )
+    rm -rf "build-zlib-$abi"
+    cmake -S "$SRC_ZL" -B "build-zlib-$abi" \
+        -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+        -DANDROID_ABI="$abi" -DANDROID_PLATFORM=android-21 \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+        >"$OUT/zlib-$abi-conf.log" 2>&1
+    cmake --build "build-zlib-$abi" --target zlibstatic -j"$NPROC" \
+        >"$OUT/zlib-$abi-build.log" 2>&1
+    cmake --install "build-zlib-$abi" >"$OUT/zlib-$abi-install.log" 2>&1
     echo "  ✓ libz.a"
 
     # ── 2. libarchive 静态（CMake + NDK toolchain） ──
