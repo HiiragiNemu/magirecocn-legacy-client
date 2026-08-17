@@ -4010,6 +4010,20 @@ public class CNCNDownloadUI {
                 githubChipBg  = null;
                 supportModal  = null;
                 vFooter       = null;
+                // ↓ 以下 9 个字段原先漏清——README 🔴规则「漏一个就把
+                // Activity 钉住」的事故形态。热更路径 hide() 后不重启进程，
+                // 这些 static 引用会把宿主 Activity 整场会话钉在内存里；
+                // versionModal 不置 null 还会让强更框「同进程只弹一次」、
+                // aria2AskModal 残留会让后续询问被静默替玩家做决定。
+                headRightRow          = null;
+                vOfflinePill          = null;
+                versionModal          = null;
+                aria2AskModal         = null;
+                offlineModal          = null;
+                importResultModal     = null;
+                importProgressModal   = null;
+                importProgressMsg     = null;
+                importProgressTitle   = null;
                 slotList.clear();
             } catch (Throwable e) {
             }
