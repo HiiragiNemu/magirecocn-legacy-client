@@ -251,6 +251,11 @@ public final class CNBgm {
         PlayThread p = thread;
         thread = null;
         if (p != null) {
+            // F-R5-01：先置 stopped 再 quit——run() finally 的自清守卫
+            // `thread == this && !stopped` 由此对正常终止路径永久失效，只有
+            // 真自死（从未被 stopInternal 终止过）才自清，不会在 join 超时后
+            // 误清新线程的引用并清空 current。
+            p.stopped = true;
             // F-C-06：quit() 里已顺手 pause+flush 旧 AudioTrack——立即静音、
             // 并尝试唤醒阻塞中的 write()（缓冲 0.5s 起步，失焦时甚至无限阻塞）。
             // 再 interrupt 一次兜底：线程若恰好睡在 dequeue/write 之外的地方
@@ -272,25 +277,33 @@ public final class CNBgm {
     // ==================================================================
 
     /**
-     * 把 {@link #pause}/{@link #resume} 接到宿主机 Activity 的停启上。
+     * 把 {@link #pause}/{@link #resume} 接到「应用整体进出后台」上。
      *
      * <p>这两个方法本是为「浮层隐藏/进后台时暂停、回来接着放」写的，但长期零调用方
      * ——注释描述的行为从未兑现，BGM 在切后台后照响不误。主机是基础 APK 的
      * Activity，Java 侧覆写不了它的 onStop，只能注册 Application 级生命周期回调。
-     * 主进程里真正会现身的 Activity 只有安装宿主机（CNRestartActivity 在独立进程，
-     * 分享 chooser 跑在别的进程），所以「任一 onStop 暂停 / 任一 onStart 续播」
-     * 等价于绑宿主机。resume 的「!paused || current<=0」守卫保证未播状态零副作用；
-     * 注册失败退回旧行为（安装期持续播），BGM 本来就是锦上添花。
+     *
+     * <p><b>为什么用前台 Activity 计数而不是「任一 onStop 就 pause」</b>（F-R5-01）：
+     * 主进程里不止宿主机一个 Activity——CNOfflineImportActivity 就在主进程。宿主被
+     * 同进程 Activity 盖住再回来时，Android 的确定顺序是 A.onStart → A.onResume →
+     * B.onStop；若裸绑 onStart/onStop，「先续播、再被迟到的 B.onStop 暂停」，BGM
+     * 卡在暂停态。计数法把语义修正为「应用整体还在前台就不动」：计数 1→0 才暂停、
+     * 0→1 才续播，迟到的那次 B.onStop 到不了 0，配对错乱从根上消失（与
+     * ProcessLifecycleOwner 的 onStart/onStop 计数同源）。代价是离线导入等前台遮挡
+     * 期间 BGM 继续放——符合「进后台才暂停」的字面语义。注册失败退回旧行为
+     * （安装期持续播），BGM 本来就是锦上添花。
      */
     private static volatile boolean lifecycleBound;
 
     private static synchronized void ensureLifecycle(Context ctx) {
         if (lifecycleBound) return;
-        // registerActivityLifecycleCallbacks 挂在 Application 上，而
-        // getApplicationContext() 的静态类型是 Context——运行期对象就是
-        // Application，直接 cast（也顺带让它自身成为回调持的 Context）。
-        final Application app = (Application) ctx.getApplicationContext();
         try {
+            // registerActivityLifecycleCallbacks 挂在 Application 上，而
+            // getApplicationContext() 的静态类型是 Context——运行期对象就是
+            // Application，直接 cast（也顺带让它自身成为回调持的 Context）。
+            // cast 与注册都放进 try：ContextWrapper 非常规实现或 getApplicationContext
+            // 返回非 Application 时优雅降级，别把崩溃点提前到 select 的热路径。
+            final Application app = (Application) ctx.getApplicationContext();
             app.registerActivityLifecycleCallbacks(new LifecycleHook(app));
             lifecycleBound = true;
         } catch (Throwable t) {
@@ -298,15 +311,27 @@ public final class CNBgm {
         }
     }
 
-    /** 见 {@link #ensureLifecycle}。空实现的那五个方法是接口要求，无实质作用。 */
+    /**
+     * 前台 Activity 计数（F-R5-01）。回调都在主线程串行执行，字段无需同步；计数只
+     * 反映「应用整体是否在前台」，与具体是哪个 Activity 无关——见 {@link #ensureLifecycle}。
+     * 空实现的那五个方法是接口要求，无实质作用。
+     */
     private static final class LifecycleHook implements Application.ActivityLifecycleCallbacks {
         private final Context app;
+        private int foreground;
         LifecycleHook(Context app) { this.app = app; }
         @Override public void onActivityStarted(Activity a) {
-            try { resume(app); } catch (Throwable ignore) {}
+            if (++foreground == 1) {
+                // 0→1：应用回到前台，接续播放（resume 内守卫，未暂停/未选曲是空操作）。
+                try { resume(app); } catch (Throwable ignore) {}
+            }
         }
         @Override public void onActivityStopped(Activity a) {
-            try { pause(); } catch (Throwable ignore) {}
+            if (--foreground <= 0) {
+                foreground = 0;   // 防御：不会出现负计数
+                // 1→0：应用整体进后台，暂停（thread==null 时也是空操作）。
+                try { pause(); } catch (Throwable ignore) {}
+            }
         }
         @Override public void onActivityCreated(Activity a, android.os.Bundle s) {}
         @Override public void onActivityResumed(Activity a) {}
@@ -323,6 +348,8 @@ public final class CNBgm {
         private final Context ctx;
         private final Track   track;
         private volatile boolean running = true;
+        /** 收到过 stopInternal 的终止请求（F-R5-01）：自清守卫让位，避免误清新线程引用。 */
+        private volatile boolean stopped;
         /**
          * 当前在写的 AudioTrack（F-C-06）。volatile：quit() 从别的线程
          * （多半是 UI 线程）拿它做 pause/flush。不置回 null——线程收尾的
@@ -428,9 +455,12 @@ public final class CNBgm {
                 // F-R4-01：播放线程自死（解码异常/设备掉队）时静默退出，静态
                 // thread 仍指向已死线程——current() 谎报「在播」、同 id 的
                 // select() 被早返回守卫吞掉，同一首再也点不响。收尾时若 thread
-                // 仍持有本线程就清掉，恢复「未播放」初始状态。==this 守卫保证
-                // 正常 stop/切曲路径（stopInternal 已把 thread 置 null/换新）不误清。
-                if (thread == this) {
+                // 仍持有本线程就清掉，恢复「未播放」初始状态。
+                // F-R5-01：再加 !stopped——stopInternal 先置 stopped 再 quit，
+                // 正常终止路径自此不会自清；只有真自死（从未被 stop 过）才清。
+                // 残余的「检查与写入之间被抢占」窗口是微秒级，对装饰性 BGM
+                // 足够；彻底原子化要持类锁，会与 stopInternal 持锁 join 死锁。
+                if (thread == this && !stopped) {
                     thread = null;
                     current = 0;
                 }
