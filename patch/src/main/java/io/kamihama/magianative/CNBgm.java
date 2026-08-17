@@ -304,7 +304,16 @@ public final class CNBgm {
             // cast 与注册都放进 try：ContextWrapper 非常规实现或 getApplicationContext
             // 返回非 Application 时优雅降级，别把崩溃点提前到 select 的热路径。
             final Application app = (Application) ctx.getApplicationContext();
-            app.registerActivityLifecycleCallbacks(new LifecycleHook(app));
+            LifecycleHook hook = new LifecycleHook(app);
+            // F-R6-01：**计数基线必须对齐注册时刻的前台状态**。回调不补发历史事件
+            // ——select()（点胶囊）才注册时宿主机已经 onStart，计数器若从 0 起算会
+            // 恒差一，第一次「被同进程 Activity 盖住再回来」就复现 F-2 想消灭的错乱
+            // （A.onStop→C=0→提前 pause）。胶囊只在安装浮层挂起时可点，彼时宿主机是
+            // 唯一（或最上层）已启动 Activity，seed 为 1 即 T 的下界；不会 over-seed
+            // 造成「该停不停」，最多在多 Activity 栈时把「进后台」的暂停延迟到最后一
+            // 个 onStop——可接受。
+            hook.foreground = 1;
+            app.registerActivityLifecycleCallbacks(hook);
             lifecycleBound = true;
         } catch (Throwable t) {
             CNLog.w(TAG, "生命周期回调注册失败，后台不自动暂停", t);
