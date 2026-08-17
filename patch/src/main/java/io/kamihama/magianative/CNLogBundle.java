@@ -54,15 +54,32 @@ public final class CNLogBundle {
                 }
             }
             if (logs.isEmpty()) return null;
-            // 名字里带启动序号与时间戳，字典序即时间序（File 实现 Comparable，
-            // 直接用自然排序，不用 Comparator——泛型 Comparator 会踩 d8 的坑，
-            // 见 CLAUDE.md 铁律 4）。升序后 reverse 成新→旧。
-            java.util.Collections.sort(logs);
-            java.util.Collections.reverse(logs);
-            if (logs.size() > MAX_FILES) {
-                logs = new java.util.ArrayList<File>(
-                        logs.subList(0, MAX_FILES));
+            // 名字 = 启动序号_时间戳。字典序只在序号**等宽**时等于时间序（File
+            // 的 Comparable 是名字字典序）；序号到 10000 后成了 5 位，9999 会被
+            // 排到 10001 后面，「最近 N 次」就选错了。这里把序号补零到定宽再比，
+            // 字典序即序号序。刻意不用 Comparator——泛型 Comparator 会踩 d8 的坑
+            // （CLAUDE.md 铁律 4），补零后的字符串自然序是纯 String 比较，安全。
+            java.util.List<String> order = new java.util.ArrayList<String>(logs.size());
+            java.util.Map<String, File> byKey = new java.util.HashMap<String, File>();
+            for (File f : logs) {
+                String n = f.getName();
+                String seq = n.substring(0, n.indexOf('_'));
+                // 左补零到 10 位：10^10 次启动才可能溢出，而那时个位序也不影响
+                // 相对顺序（10 位内已按数字序排好）。
+                String padded = ("0000000000" + seq);
+                padded = padded.substring(padded.length() - 10);
+                String key = padded + n.substring(n.indexOf('_'));
+                byKey.put(key, f);
+                order.add(key);
             }
+            java.util.Collections.sort(order);    // 升序 = 旧→新
+            java.util.Collections.reverse(order); // 新→旧
+            java.util.List<File> newest = new java.util.ArrayList<File>(MAX_FILES);
+            for (String key : order) {
+                newest.add(byKey.get(key));
+                if (newest.size() >= MAX_FILES) break;
+            }
+            logs = newest;
 
             File outDir = new File(ctx.getCacheDir(), "share");
             if (!outDir.isDirectory() && !outDir.mkdirs() && !outDir.isDirectory()) {
