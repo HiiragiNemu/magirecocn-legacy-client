@@ -1135,6 +1135,7 @@ public final class CNDownloaderFix {
                 // 玩家手动导入（导入写 marker 后，全局重试那一轮自然转正）。
                 deleteQuietly(archive);
                 deleteQuietly(new File(archive.getPath() + ".aria2"));
+                deleteQuietly(new File(archive.getPath() + ".aria2.url"));
                 markFailed(index);
                 CNLog.w(TAG, "玩家选择改用离线包，跳过主引擎重试: " + name);
                 return false;
@@ -1453,11 +1454,35 @@ public final class CNDownloaderFix {
                 CNHotUpdateValidate.VerMeta a2Meta = usesChunkManifest(name) ? null
                         : CNHotUpdateCheck.metaForSlot(index);
                 String url = CNHotUpdate.withIdentity(mirror.urlFor(name), a2Meta);
+                File aria2Ctrl = new File(archive.getPath() + ".aria2");
+                File urlTag = new File(archive.getPath() + ".aria2.url");
                 if (prevUrl != null && !prevUrl.equals(url)) {
                     // 换线了：上一轮留下的半截产物与断点文件对不上这条 URL，作废
                     deleteQuietly(archive);
-                    deleteQuietly(new File(archive.getPath() + ".aria2"));
+                    deleteQuietly(aria2Ctrl);
+                } else if (prevUrl == null && aria2Ctrl.isFile()) {
+                    // 本会话首次 attempt 碰上已有断点 = 跨会话续传。aria2 的
+                    // 控制文件只记位图不记内容哈希（官方对 --continue 的告诫正是
+                    // 「不校验服务端内容是否已变」），「上次是用哪条 URL 起的」
+                    // 只能问 sidecar——URL 里带着 cnv_hot=version-size-md5 的
+                    // 包身份，比对 URL 就是比对身份。身份不符还续传，拼出来的
+                    // 是前半旧、后半新的混合 zip（Z-01）。
+                    String tagUrl = readUrlTag(urlTag);
+                    if (tagUrl != null && !tagUrl.equals(url)) {
+                        CNLog.w(TAG, "跨会话续传身份不符，清断点重下 file=" + name
+                                + "（上次 " + tagUrl + "，本次 " + url + "）");
+                        deleteQuietly(archive);
+                        deleteQuietly(aria2Ctrl);
+                    }
+                    // tagUrl == null：断点来自本机制引入前的版本，身份无从比对，
+                    // 放行续上（这轮起就有 sidecar 了）。残余缝隙（旧版断点恰逢
+                    // 同 URL 内容已变）由解压期的逐条目 CRC 闸兜底——它现在
+                    // 如实报错，不再静默坏装。
                 }
+                // 起步即把本次完整 URL 写进 sidecar：下一轮换线、下一次会话都凭
+                // 它判定断点身份。必须写在 download 之前——下载中被杀，sidecar
+                // 也得已经在了。
+                writeUrlTag(urlTag, url);
                 prevUrl = url;
                 // 连接数过同一个判据。CNDownloadMode.cap() 原先只管主引擎那四处，
                 // aria2 这里硬编码 16——于是玩家在失败弹窗里选了「改用单线程
@@ -1517,12 +1542,22 @@ public final class CNDownloaderFix {
                     CNMirrors.reportSuccess(mirror);
                     writeMarker(marker, name, canonicalUrl,
                             new DownloadMetadata(archive.length(), "aria2"));
+                    deleteQuietly(urlTag);   // 装好了，身份凭据随产物一起清
                     if (!archive.delete() && archive.exists()) {
                         CNLog.w(TAG, "Installed archive retained: " + archive);
                     }
                     markDone(index);
                     CNLog.i(TAG, "aria2 备用引擎装好 file=" + name + " bytes=" + archive.length());
                     return A2_INSTALLED;
+                }
+                if (rv == CNAria2.OK) {
+                    // 下到 100% 但结构校验没过：这是一份「完整但坏」的包，不是
+                    // 续传素材——aria2 完成时已清控制文件，留着它，跨会话后顶部
+                    // 的「完整包复用」判据（无 .aria2 即完整）会把它当好包无校验
+                    // 装回（Z-03）。删掉，让下一轮/主引擎重下。
+                    CNLog.w(TAG, "aria2 下载完成但结构非法，删除坏包重下 file=" + name);
+                    deleteQuietly(archive);
+                    deleteQuietly(urlTag);
                 }
                 CNLog.w(TAG, "aria2 备用引擎失败 code=" + rv + " attempt=" + attempt
                         + "/" + A2_MAX_ATTEMPTS + " 线路=" + mirror.name + " file=" + name);
@@ -1652,15 +1687,30 @@ public final class CNDownloaderFix {
             // 复用「已完整下载」的包。.aria2 控制文件在 = aria2 没下完（aria2 在下到
             // 100% 时会清掉控制文件），半截 zip 绝不能当完整的复用——会一路拼进解压、
             // 解到一半才翻车。没有 .aria2 才是完整包，直接续解压。
-            long len = archive.length();
-            updateSize(index, len);
-            return new DownloadMetadata(len, readSidecarEtag(archive));
+            //
+            // 但「完整」不等于「能装」（Z-03）：下到 100% 后校验失败的坏包同样
+            // 满足上面的判据；「下完后服务端恰好重发」的陈旧热更包也是。复用前
+            // 补两道：结构校验（读中央目录，1.4GB 也秒出）拦坏包；热更槽位补
+            // verifyHotIdentity（size+整包 MD5，与下载完工路径同一套）拦陈旧——
+            // 185 MiB 算一遍 MD5 只要几秒，换「坏包/旧包不装机」很值。
+            if (!CNArchiveValidate.isZipStructurallyValid(archive)) {
+                CNLog.w(TAG, "复用判据命中但结构非法，按损坏处理重下: " + name);
+                deleteQuietly(archive);
+                deleteQuietly(new File(archive.getPath() + ".aria2.url"));
+            } else {
+                verifyHotIdentity(name, archive, usesChunkManifest(name) ? null
+                        : CNHotUpdateCheck.metaForSlot(index));
+                long len = archive.length();
+                updateSize(index, len);
+                return new DownloadMetadata(len, readSidecarEtag(archive));
+            }
         }
         // 半截 aria2 产物（控制文件还在）：主引擎重下前清掉它和断点文件。主引擎用
         // 自己的 .cpart 续传体系，aria2 的半截状态对它不可用，留着只会让上面的完整
         // 判断下次再被 .aria2 拦住。
         deleteQuietly(archive);
         deleteQuietly(new File(archive.getPath() + ".aria2"));
+        deleteQuietly(new File(archive.getPath() + ".aria2.url"));
 
         final boolean useManifest = usesChunkManifest(name);
         // 热更两包（scenario / js）在同一个 URL 上被反复重发，所以 CDN 各节点上
@@ -2317,6 +2367,39 @@ public final class CNDownloaderFix {
         }
     }
 
+    /**
+     * 读跨会话续传身份 sidecar（{@code <archive>.aria2.url}）：aria2 的控制
+     * 文件只记位图不记内容哈希，「这条断点是上会话用哪条 URL 起的」只能问
+     * 它。返回 null = 没有/读不出，按「身份不明」处理（调用方决定放行或
+     * 重下，不要在这里猜）。
+     */
+    private static String readUrlTag(File tag) {
+        try {
+            if (tag == null || !tag.isFile()) return null;
+            String s = readSmallUtf8(tag).trim();
+            return s.isEmpty() ? null : s;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * 把本次下载的完整 URL 写进续传身份 sidecar。best-effort：写不进只记
+     * 日志不阻断下载——代价是下一次会话的续传保护降级为「身份不明」。
+     */
+    private static void writeUrlTag(File tag, String url) {
+        FileOutputStream out = null;
+        try {
+            out = new FileOutputStream(tag, false);
+            out.write(url.getBytes(StandardCharsets.UTF_8));
+            out.getFD().sync();
+        } catch (Throwable t) {
+            CNLog.w(TAG, "续传身份 sidecar 写入失败，本次续传保护降级: " + tag);
+        } finally {
+            closeQuietly(out);
+        }
+    }
+
     private static void promotePart(File part, File target) throws IOException {
         if (target.exists() && !target.delete()) {
             throw new IOException("Cannot replace destination " + target);
@@ -2770,6 +2853,7 @@ public final class CNDownloaderFix {
         File archive = new File(FILE_ROOT, name);
         deleteQuietly(archive);
         deleteQuietly(new File(archive.getPath() + ".aria2"));
+        deleteQuietly(new File(archive.getPath() + ".aria2.url"));
         deleteQuietly(new File(archive.getPath() + ".part"));
         deleteQuietly(new File(archive.getPath() + ".part.meta"));
         deleteQuietly(new File(archive.getPath() + ".part.meta.tmp"));
