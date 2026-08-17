@@ -1,7 +1,15 @@
 package io.kamihama.magianative;
 
 import java.io.File;
+import java.io.IOException;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 /**
  * 内置 libarchive 的 JNI 封装：进程内解压 zip，替代 exec bsdtar 二进制。
@@ -192,6 +200,27 @@ public final class CNZipTool {
             return false;
         }
         try {
+            // ── 补丁 19 · 闸一（写出前）：Java 层 Zip Slip 预扫 ────────────
+            // cnExtract 跑在预编译 libcnzip.so 里，而它的源码
+            // （magia-native/src/archive_jni.cpp）**不在 CI 编译目标内**——
+            // 源码侧的 Zip Slip / 吞错修复（补丁 01/02）在 CI 重建并替换
+            // shipped 二进制之前到不了设备。设备上的即时防线由这里保证：
+            // 恶意包先在 Java 层被拒，根本不进 native。
+            // expect==null 表示 ZipFile 打不开（老设备 + 冗余 ZIP64，正是
+            // 当年上 JNI 的场景）——fail-open 放行并留痕，不能反过来禁用；
+            // 此时闸二一并跳过（没有条目表可核对），残余风险见方法注释。
+            Map<String, Long> expect;
+            try {
+                expect = scanJdkEntries(zip);
+            } catch (SecurityException se) {
+                CNLog.e(TAG, "拒绝解压：ZIP 含非法条目名（Zip Slip 防护）: "
+                        + zip.getName() + " : " + se.getMessage());
+                return false;
+            } catch (Throwable t) {
+                CNLog.w(TAG, "JDK 条目预扫不可用，fail-open 交给 native"
+                        + "（本机暂无 Zip Slip 防线）: " + zip.getName() + " : " + t);
+                expect = null;
+            }
             final long zipLen = zip.length();
             final ExtractProgress p = cb;
             // 写时炸弹闸（补丁 03）：native 闸二不可达（libcnzip 是预编译二进制、
@@ -214,12 +243,112 @@ public final class CNZipTool {
                     return cancel == null || !cancel.isCancelled();
                 }
             };
-            return cnExtract(zip.getAbsolutePath(), dest.getAbsolutePath(), jp);
+            boolean ok = cnExtract(zip.getAbsolutePath(), dest.getAbsolutePath(), jp);
+            // ── 补丁 19 · 闸二（写出后）：应产出文件的尺寸核对 ──────────
+            // shipped 旧二进制会把读写错误（ENOSPC 截断、CRC 失败、fopen 失败）
+            // 静默吞掉照报成功；只核对 isFile 的存在性抓不住「存在但截断」的
+            // 文件（isFile() 照样 true、照写完成标记）。核对**尺寸**把截断也
+            // 抓出来——缺文件或尺寸不符即按解压失败上报，由上层重下/回退，
+            // 绝不写完成标记。数万条目 stat 为秒级，相对解压本身可忽略。
+            // 炸弹闸命中的路径 ok==false，不会走到这里。
+            if (ok && expect != null) {
+                for (Map.Entry<String, Long> en : expect.entrySet()) {
+                    File f = new File(dest, en.getKey());
+                    long want = en.getValue().longValue();
+                    if (!f.isFile() || (want >= 0L && f.length() != want)) {
+                        CNLog.e(TAG, "解压后文件缺失或尺寸不符（native 吞错/截断?），"
+                                + "按失败上报: " + en.getKey() + " want=" + want
+                                + " @ " + zip.getName());
+                        return false;
+                    }
+                }
+            }
+            return ok;
         } catch (Throwable t) {
             CNLog.w(TAG, "JNI 解压失败: " + t);
             return false;
         } finally {
             busy.set(false);
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Java 层兜底闸（补丁 19）
+    // -----------------------------------------------------------------
+
+    /**
+     * JDK 预扫：返回 zip 应产出的唯一常规文件名 → 声明尺寸 的映射（相对路径，
+     * 目录条目与重名条目已归并——native 对同名条目后写覆盖先写，产出数按唯一
+     * 名计）。
+     *
+     * <p>不做类型区分：ZIP 中央目录不存文件类型，普通文件/符号链接/其它特殊
+     * 条目在 {@link ZipEntry} 看来一样。目录条目靠 {@code name.endsWith("/")}
+     * 识别——「无结尾斜杠的目录条目」（畸形包）会被当成文件加入 expect，native
+     * 按 AE_IFDIR 建目录后闸二 isFile 报 false。自产包无此形态，畸形包误报是
+     * fail-closed 方向，可接受。
+     *
+     * @return 文件名 → 声明尺寸（未知尺寸为 -1）；仅 ZipFile 能正常枚举时返回
+     * @throws SecurityException 发现 Zip Slip 条目（绝对路径 / 逐段 ".."
+     *         / 反斜杠 / 空名），调用方必须拒解压
+     * @throws IOException ZipFile 打不开（老设备冗余 ZIP64 等），调用方
+     *         fail-open 放行 native 路径
+     */
+    private static Map<String, Long> scanJdkEntries(File zip) throws IOException {
+        ZipFile zf = new ZipFile(zip);
+        try {
+            Map<String, Long> out = new HashMap<String, Long>();
+            Enumeration<? extends ZipEntry> en = zf.entries();
+            while (en.hasMoreElements()) {
+                ZipEntry e = en.nextElement();
+                String name = e.getName();
+                if (!isSafeEntryNameJdk(name)) {
+                    throw new SecurityException("非法条目名: " + abbrev(name));
+                }
+                if (e.isDirectory() || name.endsWith("/")) continue;
+                // 非 UTF-8 条目名被 ZipFile 解码成 U+FFFD 替换字符，与 native 写盘的
+                // 原始字节名对不上——闸二会误报「文件缺失」。跳过：防误报优先，
+                // 这类条目本就不该出现在自产包里。
+                if (name.indexOf('�') >= 0) continue;
+                out.put(name, e.getSize());
+            }
+            return out;
+        } finally {
+            try { zf.close(); } catch (Throwable ignore) {}
+        }
+    }
+
+    /**
+     * 与 native is_safe_entry_name（archive_jni.cpp，补丁 01）同语的条目名
+     * 校验：拒绝绝对路径（'/' 开头）、任何按 '/' 切分后恰好等于 ".." 的段、
+     * 反斜杠、空名。只做逐段相等判断——"a..b"、"./x" 这类正常名字不受影响
+     * （"." 段在 Linux 下原地不动，无穿越能力，放行）。
+     */
+    private static boolean isSafeEntryNameJdk(String name) {
+        if (name == null || name.isEmpty()) return false;
+        if (name.charAt(0) == '/') return false;
+        int seg = 0;
+        for (int i = 0; i <= name.length(); i++) {
+            char c = i < name.length() ? name.charAt(i) : '/';
+            if (c == '\\') return false;
+            if (c == '/') {
+                if (i - seg == 2 && name.charAt(seg) == '.' && name.charAt(seg + 1) == '.') {
+                    return false;
+                }
+                seg = i + 1;
+            }
+        }
+        return true;
+    }
+
+    /** 日志防注入：截断过长/含控制字符的条目名。 */
+    private static String abbrev(String s) {
+        if (s == null) return "null";
+        StringBuilder b = new StringBuilder(Math.min(s.length(), 120));
+        for (int i = 0; i < s.length() && b.length() < 120; i++) {
+            char c = s.charAt(i);
+            b.append(c < 0x20 || c == 0x7f ? '?' : c);
+        }
+        if (s.length() > 120) b.append("…");
+        return b.toString();
     }
 }
