@@ -217,4 +217,9 @@ target_link_options(MagiaLegacy PRIVATE
     -Wl,-z,relro
     -Wl,-z,now
     -Wl,-z,noexecstack
+    # 16KB 页对齐（F-F-07）：Android 15+ 的 16KB 页内核要求 arm64 库每个
+    # PT_LOAD 段 p_align >= 0x4000，否则 dlopen 直接失败。此 flag 对 armv7
+    # 无害（32 位不受该要求约束，lld 只是照搬设置）。shadowhook v2.0.1
+    # 上游已自带该 flag，本库此前漏了——CI 的 check-so-alignment 红灯抓出。
+    -Wl,-z,max-page-size=16384
 )

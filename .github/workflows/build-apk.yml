@@ -682,7 +682,13 @@ jobs:
           # R4-03：上面无参调用只扫**入库**的 4 枚预编译库；本次新编的
           # libMagiaLegacy/libshadowhook 落在重建树 ${TREE}/lib/arm64-v8a/
           # （见 native 编译 step 的 cp），不进包前的对齐违例必须在这里拦。
-          python3 tools/check-so-alignment.py "${TREE}/lib/arm64-v8a"
+          # 注意只逐枚点扫 CI 自建库，**不能**整目录扫：
+          # ${TREE} 里还有游戏历史包自带的预编译库（libbacktrace-native /
+          # libcrashpad_handler 等），它们不是本工程构建产物、4K 对齐是
+          # 既成事实且无法重链，整目录扫会把这些历史库卷进来误报红灯。
+          python3 tools/check-so-alignment.py \
+            "${TREE}/lib/arm64-v8a/libMagiaLegacy.so" \
+            "${TREE}/lib/arm64-v8a/libshadowhook.so"
           # 包里的 .so 与补丁类必须都是这次构建的产物。踩过两次「编译了却没进包」：
           # CNBgm 不在任何一组 d8 输入里；libMagiaLegacy.so 忘了拷进 lib/。
           # 两次都能打包、能签名、能安装，只有真机跑起来才暴露，而且现象会把人

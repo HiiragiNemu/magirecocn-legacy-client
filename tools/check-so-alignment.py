@@ -11,7 +11,10 @@ libarchive.so（libarchive 3.7.4 重建版）已按
 -Wl,-z,max-page-size=16384 重链；本脚本钉死这条红线：任何入库的
 arm64 库都必须满足对齐，违例一票否决。
 
-用法：python3 tools/check-so-alignment.py [lib/arm64-v8a]
+用法：python3 tools/check-so-alignment.py [路径 …]
+  每个路径可以是目录（递归扫 *.so）或单个 .so 文件；可给多个；
+  无参时默认扫 lib/arm64-v8a。只想钉某几枚库（例如 CI 新编的库，
+  不扫游戏自带的历史预编译库）时，把文件逐个列出来即可。
 退出码：0 = 全部合格；1 = 存在违例。
 """
 import os
@@ -52,16 +55,31 @@ def check_so(path):
     return errs
 
 
+def iter_sos(path):
+    """目录 → 递归产出 *.so；单文件 → 原样产出（须以 .so 结尾）。"""
+    if os.path.isfile(path):
+        if path.endswith('.so'):
+            yield path
+        return
+    for dirpath, _dirs, files in os.walk(path):
+        for name in sorted(files):
+            if name.endswith('.so'):
+                yield os.path.join(dirpath, name)
+
+
 def main():
-    root = sys.argv[1] if len(sys.argv) > 1 else 'lib/arm64-v8a'
+    roots = sys.argv[1:] or ['lib/arm64-v8a']
     all_errs = []
     checked = 0
-    for dirpath, _dirs, files in os.walk(root):
-        for name in sorted(files):
-            if not name.endswith('.so'):
-                continue
+    for root in roots:
+        if not os.path.exists(root):
+            # 显式点名的路径不存在必须报错——否则 CI 里路径写错会被
+            # 静默跳过、红灯变假绿。
+            all_errs.append(f"{root}: 路径不存在")
+            continue
+        for so in iter_sos(root):
             checked += 1
-            all_errs.extend(check_so(os.path.join(dirpath, name)))
+            all_errs.extend(check_so(so))
     for e in all_errs:
         print('✗', e)
     if all_errs:
