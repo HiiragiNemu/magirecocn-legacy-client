@@ -33,17 +33,46 @@ jobs:
         run: |
           echo "NDK=${ANDROID_NDK_HOME}" >> "$GITHUB_ENV"
           echo "NDK 主机工具链: ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          # R3-03：NDK 版本未钉死（用 runner 自带镜像），版本漂移会静默改变
+          # 产物的 note/工具链行为。打印实际版本并与本次 baseline pin 对应的
+          # 期望值（r27d）比对：不符只 WARN 不失败（runner 升级属正常演进，
+          # 但重建出的 .so 若换了 NDK，入库前必须重新做基线取证）。
+          NDK_VER="$(sed -n 's/^Pkg.Revision = //p' "${ANDROID_NDK_HOME}/source.properties" 2>/dev/null || echo unknown)"
+          echo "NDK 实际版本: ${NDK_VER}"
+          case "${NDK_VER}" in
+            27.*) ;;  # 期望：r27d 系（2026-08-17 baseline pin 的构建环境）
+            *) echo "::warning::NDK 版本为 ${NDK_VER}，非期望的 r27d 系——重建产物入库前请重新核对 baseline pin 与二进制取证" ;;
+          esac
 
       - name: 📥 下载 libarchive + zlib 源码
+        env:
+          # R4-02：inputs 经 env 传递，绝不把 ${{ github.event.inputs.* }}
+          # 直接插值进 run 脚本（脚本注入面）。
+          LA_TAG: ${{ github.event.inputs.libarchive_tag }}
+          ZL_TAG: ${{ github.event.inputs.zlib_tag }}
         run: |
           set -euo pipefail
+          # tag 形态白名单：vX.Y.Z（防 env 值里塞 shell 元字符/路径）
+          [[ "$LA_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::libarchive_tag 形态非法: $LA_TAG"; exit 1; }
+          [[ "$ZL_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::zlib_tag 形态非法: $ZL_TAG"; exit 1; }
           # zlib 的 release 资产名是 zlib-1.3.1.tar.gz（tag 是 v1.3.1，资产不带 v）
-          LA_VER="${{ github.event.inputs.libarchive_tag }}"; LA_VER="${LA_VER#v}"
-          ZL_VER="${{ github.event.inputs.zlib_tag }}"; ZL_VER="${ZL_VER#v}"
-          curl -sSL -o libarchive.tar.gz \
-            "https://github.com/libarchive/libarchive/archive/refs/tags/${{ github.event.inputs.libarchive_tag }}.tar.gz"
-          curl -sSL -o zlib.tar.gz \
-            "https://github.com/madler/zlib/releases/download/${{ github.event.inputs.zlib_tag }}/zlib-${ZL_VER}.tar.gz"
+          LA_VER="${LA_TAG#v}"
+          ZL_VER="${ZL_TAG#v}"
+          curl -fsSL -o libarchive.tar.gz \
+            "https://github.com/libarchive/libarchive/archive/refs/tags/${LA_TAG}.tar.gz"
+          curl -fsSL -o zlib.tar.gz \
+            "https://github.com/madler/zlib/releases/download/${ZL_TAG}/zlib-${ZL_VER}.tar.gz"
+          # R3-02/R4-01：源码 tarball 同可执行构件一样钉 sha256（X-C3 纪律）。
+          # 源码编出的 .so 直接进解压路径，带毒源码 = 带毒解压器。
+          # 默认 tag 用钉死值；换 tag 必须同步改这里，否则校验失败即停。
+          LA_SHA256_v3_7_4="cf7fc85b9f663c06dc2b7036b7ee54d02712167e04b07bdcc4c27553abf2d6ff"
+          ZL_SHA256_v1_3_1="9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
+          if [ "$LA_TAG" != "v3.7.4" ] || [ "$ZL_TAG" != "v1.3.1" ]; then
+            echo "::error::使用了非默认 tag（$LA_TAG / $ZL_TAG）——请先把对应 tarball 的 sha256 钉进本步骤再运行"
+            exit 1
+          fi
+          echo "$LA_SHA256_v3_7_4  libarchive.tar.gz" | sha256sum -c -
+          echo "$ZL_SHA256_v1_3_1  zlib.tar.gz" | sha256sum -c -
           tar xzf libarchive.tar.gz && mv "libarchive-${LA_VER}" libarchive-src
           tar xzf zlib.tar.gz && mv "zlib-${ZL_VER}" zlib-src
           echo "LIBARCHIVE_SRC=$PWD/libarchive-src" >> "$GITHUB_ENV"

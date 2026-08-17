@@ -59,18 +59,19 @@ def main():
     # 的 kBuildMarker，编进 .rodata、剥不去）。标记在 = 补丁 01/02/03 的修复
     # 确实进了二进制；不在 = 源码修了但二进制是旧的（漂移）。
     marker = 'libarchive-cn-jni-3.7.4-fix-20260817'
-    marker_in_so = False
+    # R3-04：逐 ABI 各自判定，绝不能「任一命中即算过」——只替换了一个
+    # ABI 的单边漂移（另一枚还是旧二进制）会被整体放行。
+    abi_status = {}   # abi -> True(含标记) / False(不含) / None(缺文件或读失败)
     for abi in ('arm64-v8a', 'armeabi-v7a'):
         so = os.path.join(REPO, 'lib', abi, 'libarchive.so')
         if not os.path.isfile(so):
+            abi_status[abi] = None
             continue
         try:
             data = open(so, 'rb').read()
-            if marker.encode('utf-8') in data:
-                marker_in_so = True
-                break
+            abi_status[abi] = marker.encode('utf-8') in data
         except OSError:
-            pass
+            abi_status[abi] = None
 
     for e in errs:
         print('✗', e)
@@ -79,15 +80,20 @@ def main():
               '是最后防线，请立即恢复源码修复。')
         return 1
 
-    if marker_in_so:
-        print('✓ shipped libarchive.so 含构建标记——补丁 01/02/03 的 native '
-              '修复已进二进制')
+    if abi_status and all(v is True for v in abi_status.values()):
+        print('✓ 两 ABI 的 shipped libarchive.so 均含构建标记——补丁 01/02/03 '
+              '的 native 修复已进二进制')
     else:
-        print('⚠ 源码防护在位，但 shipped libarchive.so 不含构建标记：')
-        print('  补丁 01/02/03 的 native 修复**尚未进二进制**（或构建标记')
-        print('  已随版本升级过时）。重建：手动触发 build-libarchive.yml，')
-        print('  下载 artifact 替换 lib/ 下两枚 libarchive.so）。在此之前')
-        print('  设备侧由 CNZipTool 的 Java 层双闸（补丁 19）兜底。')
+        for abi, st in abi_status.items():
+            state = {True: '✓ 含标记', False: '✗ 不含标记（旧二进制）',
+                     None: '✗ 缺文件/不可读'}[st]
+            print(f'  {abi}: {state}')
+        print('⚠ 源码防护在位，但至少一个 ABI 的 shipped libarchive.so 不含')
+        print('  构建标记：补丁 01/02/03 的 native 修复**尚未进二进制**（或标记')
+        print('  已随版本升级过时，或只替换了单个 ABI）。重建：手动触发')
+        print('  build-libarchive.yml，下载 artifact 替换 lib/ 下两枚')
+        print('  libarchive.so——两枚都要换。在此之前设备侧由 CNZipTool 的')
+        print('  Java 层双闸（补丁 19）兜底。')
         print('  本 WARN 每构建必现，刻意不静默——漂移不许被遗忘。')
     print(f'✓ 源码防护特征齐全（{len(SOURCE_FEATURES)}/{len(SOURCE_FEATURES)}）')
     return 0

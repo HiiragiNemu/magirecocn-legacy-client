@@ -102,8 +102,8 @@ MagirecoCN-Revival-Project 索取上述对应源码的完整副本，我们按 G
 | 版权 | Copyright (c) 2003-2024 Tim Kientzle 及 libarchive 贡献者 |
 | 许可 | **BSD 2-Clause License**（与 GPLv3 兼容，无 copyleft / 无静态链接义务） |
 | 上游源码 | <https://github.com/libarchive/libarchive>，tag `v3.7.4` |
-| 交叉编译 | 用 Android NDK r25c 交叉编译（`CMAKE_TOOLCHAIN_FILE=android.toolchain.cmake`，`ANDROID_ABI=arm64-v8a / armeabi-v7a`），libarchive 静态链入，zlib 为构建依赖，`-static-libstdc++` 去掉 libc++_shared 依赖 |
-| sha256 | `libarchive.so`（arm64-v8a）= `a730e1800d30b7656e36cc3c23fc69d5dd19a0a7271c547f9b8b7751720e7bc7`<br>`libarchive.so`（armeabi-v7a）= `091e82eea67cb9dfcc50649fec91c4aa1c64d20fb6a2725990ab5c7c592ad858` |
+| 交叉编译 | 用 Android NDK 交叉编译（构建脚本 `tools/build-libarchive.sh`，双 ABI `arm64-v8a / armeabi-v7a`，minApi 21），libarchive 静态链入，zlib 静态链入。**R3-03 订正**：实测产物的 NDK note 为 **r27d**（CI runner 自带 NDK，未在 workflow 中钉版本），并非此前描述的 r25c；实际构建**未使用** `-static-libstdc++`（链接命令以 clang C 驱动直接链入 libarchive 静态库与 libz.a，`-Wl,--no-undefined` 兜底无未定义符号——这也意味着该脚本依赖「clang 的 C 驱动能接受 `-std=c++17` 编译 C++ 源码」这一行为，升级 NDK 时若改走 c++ 驱动需复核链接参数）。如需可复现构建，建议将 runner 的 NDK 版本一并钉入 workflow（见 `build-libarchive.yml` 的 NDK 定位步骤，已加版本打印与期望值 WARN） |
+| sha256 | `libarchive.so`（arm64-v8a）= `f007ac464291ae0d7679f706d006f662350a41989f2d46c7e39813cee5b7836b`<br>`libarchive.so`（armeabi-v7a）= `692b1f876e0fb85a3cec67fe89f9ee064b2fa0d78f9210a046ae0a124ef9f4de`<br>（与 `baseline.json` 的 `post` pin 同值；R3-01：此前沿用了旧 libcnzip.so 的哈希） |
 
 **用途**：解压基础资源包（zip），替代 `java.util.zip.ZipFile`。资源包含「冗余
 ZIP64」结构（普通 EOCD 自洽却多挂一个 zip64 EOCD），老设备 ZipFile 可能报
