@@ -1,5 +1,7 @@
 package io.kamihama.magianative;
 
+import android.app.Activity;
+import android.app.Application;
 import android.content.Context;
 import android.content.res.AssetFileDescriptor;
 import android.media.AudioAttributes;
@@ -190,6 +192,7 @@ public final class CNBgm {
      * 一旦持久化，下次启动浮层一露脸就会自动起播，和引擎的 BGM 撞成二重奏。
      */
     public static synchronized void select(Context ctx, int id) {
+        ensureLifecycle(ctx);
         if (id == current && thread != null && !paused) return;
         stopInternal();
         current = id;
@@ -262,6 +265,54 @@ public final class CNBgm {
                 Thread.currentThread().interrupt();
             }
         }
+    }
+
+    // ==================================================================
+    // 后台/隐藏暂停接线（F-R4-02）
+    // ==================================================================
+
+    /**
+     * 把 {@link #pause}/{@link #resume} 接到宿主机 Activity 的停启上。
+     *
+     * <p>这两个方法本是为「浮层隐藏/进后台时暂停、回来接着放」写的，但长期零调用方
+     * ——注释描述的行为从未兑现，BGM 在切后台后照响不误。主机是基础 APK 的
+     * Activity，Java 侧覆写不了它的 onStop，只能注册 Application 级生命周期回调。
+     * 主进程里真正会现身的 Activity 只有安装宿主机（CNRestartActivity 在独立进程，
+     * 分享 chooser 跑在别的进程），所以「任一 onStop 暂停 / 任一 onStart 续播」
+     * 等价于绑宿主机。resume 的「!paused || current<=0」守卫保证未播状态零副作用；
+     * 注册失败退回旧行为（安装期持续播），BGM 本来就是锦上添花。
+     */
+    private static volatile boolean lifecycleBound;
+
+    private static synchronized void ensureLifecycle(Context ctx) {
+        if (lifecycleBound) return;
+        // registerActivityLifecycleCallbacks 挂在 Application 上，而
+        // getApplicationContext() 的静态类型是 Context——运行期对象就是
+        // Application，直接 cast（也顺带让它自身成为回调持的 Context）。
+        final Application app = (Application) ctx.getApplicationContext();
+        try {
+            app.registerActivityLifecycleCallbacks(new LifecycleHook(app));
+            lifecycleBound = true;
+        } catch (Throwable t) {
+            CNLog.w(TAG, "生命周期回调注册失败，后台不自动暂停", t);
+        }
+    }
+
+    /** 见 {@link #ensureLifecycle}。空实现的那五个方法是接口要求，无实质作用。 */
+    private static final class LifecycleHook implements Application.ActivityLifecycleCallbacks {
+        private final Context app;
+        LifecycleHook(Context app) { this.app = app; }
+        @Override public void onActivityStarted(Activity a) {
+            try { resume(app); } catch (Throwable ignore) {}
+        }
+        @Override public void onActivityStopped(Activity a) {
+            try { pause(); } catch (Throwable ignore) {}
+        }
+        @Override public void onActivityCreated(Activity a, android.os.Bundle s) {}
+        @Override public void onActivityResumed(Activity a) {}
+        @Override public void onActivityPaused(Activity a) {}
+        @Override public void onActivitySaveInstanceState(Activity a, android.os.Bundle s) {}
+        @Override public void onActivityDestroyed(Activity a) {}
     }
 
     // ==================================================================
@@ -374,6 +425,15 @@ public final class CNBgm {
                 }
                 if (ex != null)  try { ex.release(); }  catch (Throwable ignore) {}
                 if (afd != null) try { afd.close(); }   catch (Throwable ignore) {}
+                // F-R4-01：播放线程自死（解码异常/设备掉队）时静默退出，静态
+                // thread 仍指向已死线程——current() 谎报「在播」、同 id 的
+                // select() 被早返回守卫吞掉，同一首再也点不响。收尾时若 thread
+                // 仍持有本线程就清掉，恢复「未播放」初始状态。==this 守卫保证
+                // 正常 stop/切曲路径（stopInternal 已把 thread 置 null/换新）不误清。
+                if (thread == this) {
+                    thread = null;
+                    current = 0;
+                }
             }
         }
 
