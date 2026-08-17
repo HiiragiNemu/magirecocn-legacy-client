@@ -155,6 +155,24 @@ Java_io_kamihama_magianative_CNZipTool_cnExtract(JNIEnv* env, jclass,
         return JNI_FALSE;
     }
 
+    // ── zip 炸弹的两道「写出前/写出中」闸 ─────────────────────────────
+    // Java 侧的比例预检读的是中央目录**声明**的未压缩总量，而声明是可以
+    // 撒谎的：每条目都报小尺寸即可通过预检，deflate 实际膨胀比可达
+    // ~1000x。所以 native 必须在**写盘的同时**盯着真实字节数：
+    //   闸一（逐条目）：条目实际解出字节 > 中央目录声明尺寸 → 撒谎，中止；
+    //   闸二（总量）：累计写出 > zip 体积 ×200 且已超 256MB → 炸弹，中止。
+    // 与 Java 回退路径（CNArchiveInstallTx.EXTRACT_MAX_RATIO /
+    // EXTRACT_MIN_BYTES_BEFORE_RATIO）同一标准，自产包 ~2x 不会误伤。
+    long long zipSize = -1;
+    {
+        struct stat st;
+        if (stat(zipPath, &st) == 0) zipSize = (long long)st.st_size;
+    }
+    const long long maxWriteBytes =
+            (zipSize > 0 && zipSize < (LLONG_MAX / 200))
+                    ? zipSize * 200 : LLONG_MAX;
+    const long long minBytesBeforeRatio = 256LL * 1024 * 1024;
+
     // 缓存进度回调类/方法（首次）
     if (!g_progressClass && jProgress) {
         jclass cls = env->GetObjectClass(jProgress);
@@ -213,6 +231,10 @@ Java_io_kamihama_magianative_CNZipTool_cnExtract(JNIEnv* env, jclass,
         if (archive_entry_filetype(e) == AE_IFDIR) {
             mkdir_recursive(out);
         } else {
+            // 条目声明的未压缩尺寸（可撒谎；<0 表示未知，跳过逐条目闸，
+            // 此时只剩总量闸兜底）。
+            la_int64_t declared = archive_entry_size(e);
+            long long entryWritten = 0;
             ensure_parent(out);
             FILE* f = fopen(out, "wb");
             if (f) {
@@ -231,6 +253,17 @@ Java_io_kamihama_magianative_CNZipTool_cnExtract(JNIEnv* env, jclass,
                         break;
                     }
                     bytesDone += written;   // 进度按真实写入计
+                    entryWritten += written;
+                    // 闸一：实际解出超过声明尺寸 → 声明撒谎，按炸弹中止
+                    if (declared >= 0 && entryWritten > (long long)declared) {
+                        ioError = true;
+                        break;
+                    }
+                    // 闸二：累计写出超 zip 体积 200 倍且已过 256MB → 炸弹中止
+                    if (bytesDone > minBytesBeforeRatio && bytesDone > maxWriteBytes) {
+                        ioError = true;
+                        break;
+                    }
                 }
                 if (got < 0) ioError = true;            // 读侧错误（CRC/数据）
                 if (fclose(f) != 0) ioError = true;     // 写缓冲 flush 失败

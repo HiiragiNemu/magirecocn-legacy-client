@@ -90,11 +90,27 @@ public final class CNZipTool {
 
         EntryTable(long[] sizes, boolean sizesReliable) {
             this.count = sizes.length;
+            // 求和必须防溢出：archive_entry_size() 读的是 ZIP 中央目录里的
+            // **声明**尺寸，攻击者可以把条目声明成接近 Long.MAX_VALUE 的值让
+            // sum 溢出。溢出回绕成**负数**时，下游「total <= 0 → 按 zip 体积
+            // 3x 保守预检」的兜底恰好能接住；真正危险的是回绕成**小的正值**——
+            // 既过比例闸又过 >0 检查，被直接当成磁盘需求量以极小值放行，炸弹
+            // 整份通过。所以这里显式检测溢出并把 totalBytes 置 -1 交给保守
+            // 兜底，而不是靠回绕后的符号碰运气。对未知尺寸（-1）条目不参与
+            // 求和并把大小表降级为不可靠，让调用方走保守兜底。
             long sum = 0L;
-            for (long s : sizes) sum += s;
-            this.totalBytes = sum;
+            boolean reliable = sizesReliable;
+            boolean overflow = false;
+            for (long s : sizes) {
+                if (s < 0L) { reliable = false; continue; }
+                if (s > Long.MAX_VALUE - sum) { overflow = true; reliable = false; break; }
+                sum += s;
+            }
+            // 溢出时 totalBytes 置 -1：CNArchiveInstallTx 对 total <= 0 有
+            // 「按 zip 体积 3x」的保守预检兜底，不会拿溢出值放行。
+            this.totalBytes = overflow ? -1L : sum;
             this.sizes = sizes;
-            this.sizesReliable = sizesReliable;
+            this.sizesReliable = reliable;
         }
     }
 
@@ -157,9 +173,23 @@ public final class CNZipTool {
         try {
             final EntryTable t = table;
             final ExtractProgress p = cb;
-            JniProgress jp = p == null ? null : new JniProgress() {
+            final long zipLen = zip.length();
+            // 写时炸弹闸（补丁 03）：native 闸二不可达（libcnzip 是预编译二进制、
+            // CI 不重建）期间的设备侧防线，判据镜像 archive_jni.cpp 的「累计写出
+            // > zip 体积×200 且已过 256MB 即中止」。预检读的中央目录**声明**尺寸
+            // 可以撒谎，真实写出字节数才是硬证据。返回 false 让 cnExtract 停手，
+            // 调用方（extractWithBsdtar）把 !ok 按「包损坏」拒绝。
+            // 恒建 JniProgress：p==null 时也要跑炸弹闸，回调开销由 native 节流。
+            JniProgress jp = new JniProgress() {
                 @Override public boolean onProgress(int doneEntries, long bytesDone) {
-                    p.onProgress(doneEntries, bytesDone);
+                    if (zipLen > 0L && bytesDone > 256L * 1024 * 1024
+                            && bytesDone > zipLen * 200L) {
+                        CNLog.w(TAG, "解压膨胀比超限中止（zip 炸弹?）file="
+                                + zip.getName() + " written=" + bytesDone
+                                + " zip=" + zipLen);
+                        return false;
+                    }
+                    if (p != null) p.onProgress(doneEntries, bytesDone);
                     return true;   // 不主动取消（CNArchiveInstallTx 的 Cancel 由外层处理）
                 }
             };
