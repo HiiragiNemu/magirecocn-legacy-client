@@ -177,6 +177,7 @@ Java_io_kamihama_magianative_CNZipTool_cnExtract(JNIEnv* env, jclass,
 
     struct archive_entry* e;
     bool cancelled = false;
+    bool ioError = false;   // 任一读写错误：整次解压按失败上报
     int entriesDone = 0;
     long long bytesDone = 0;
     while ((r = archive_read_next_header(a, &e)) == ARCHIVE_OK) {
@@ -217,22 +218,40 @@ Java_io_kamihama_magianative_CNZipTool_cnExtract(JNIEnv* env, jclass,
             if (f) {
                 char buf[65536];
                 la_ssize_t got;
+                // got > 0：正常数据；got == 0：本条目 EOF；
+                // got < 0（ARCHIVE_WARN/FAILED/FATAL）：数据错误（含 CRC 校验
+                // 失败）——必须当失败处理，原来与 EOF 混为一谈会静默收下截断/
+                // 损坏的文件。
                 while ((got = archive_read_data(a, buf, sizeof(buf))) > 0) {
-                    fwrite(buf, 1, (size_t)got, f);
-                    bytesDone += got;
+                    // fwrite 返回值必须核对：ENOSPC 时静默截断会让半截文件
+                    // 落盘而被当成完整品。
+                    size_t written = fwrite(buf, 1, (size_t)got, f);
+                    if (written != (size_t)got) {
+                        ioError = true;
+                        break;
+                    }
+                    bytesDone += written;   // 进度按真实写入计
                 }
-                fclose(f);
+                if (got < 0) ioError = true;            // 读侧错误（CRC/数据）
+                if (fclose(f) != 0) ioError = true;     // 写缓冲 flush 失败
+                if (ioError) {
+                    // 半截文件不许留在盘上：上层拿到失败会走重试/回退，
+                    // 留下半截只会被后续「文件存在」判据误当完整品。
+                    remove(out);
+                }
             } else {
-                archive_read_data_skip(a);
+                // fopen 失败（权限/路径/FD 耗尽）同样是硬错误，不能 skip
+                // 了事还报成功。
+                ioError = true;
             }
         }
+        if (ioError) break;
         entriesDone++;
-        // 注意：bytesDone 已在上面解压循环里按实际写入累加（got），这里不重复加。
+        // 注意：bytesDone 已在上面解压循环里按实际写入累加，这里不重复加。
 
         // 进度回调（每条目）；返回 false 取消
         if (jProgress && g_onProgress) {
             JNIEnv* e2 = env;
-            bool detach = false;
             // 解压可能在 Java 后台线程调，JNI 环境一致即可
             jboolean cont = e2->CallBooleanMethod(jProgress, g_onProgress,
                                                   (jint)entriesDone,
@@ -246,10 +265,15 @@ Java_io_kamihama_magianative_CNZipTool_cnExtract(JNIEnv* env, jclass,
         }
     }
 
+    // 循环退出只有两种正常理由：读完全部条目（r == ARCHIVE_EOF）或被取消。
+    // 其它退出（archive_read_next_header 返回 WARN/FAILED/FATAL）都是包损坏，
+    // 原先不检查 r 会把「解到一半 CRC 炸了」报成成功。
+    if (!cancelled && !ioError && r != ARCHIVE_EOF) ioError = true;
+
     archive_read_free(a);
     env->ReleaseStringUTFChars(jZipPath, zipPath);
     env->ReleaseStringUTFChars(jDestPath, destPath);
-    return cancelled ? JNI_FALSE : JNI_TRUE;
+    return (cancelled || ioError) ? JNI_FALSE : JNI_TRUE;
 }
 
 // ── 辅助：mkdir -p ─────────────────────────────────────────────────
