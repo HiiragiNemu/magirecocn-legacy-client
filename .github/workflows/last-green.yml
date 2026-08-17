@@ -41,6 +41,11 @@ jobs:
           # force push，会被 ruleset「refs/tags/*」（禁强推）拦下——
           # github-actions[bot] 不能绕过 ruleset，PAT 在 bypass 列表。
           token: ${{ secrets. }}
+          # X-C3：不把 PAT 写进 .git/config（http.extraheader）。默认开启时，
+          # 后续每个 step 里跑的任何代码（下载脚本、被污染的依赖）都能随手
+          # 提走这个能绕过 ruleset 的写权限 PAT。关闭后，push 那步用
+          # git -c 显式注入，凭证只存在于那一条命令的进程里。
+          persist-credentials: false
 
       - name: ☕ 设置 JDK 17
         uses: actions/setup-java@v4
@@ -54,17 +59,28 @@ jobs:
           mkdir -p .cache/deps
           curl -sSL -o .cache/deps/platform.zip \
             "https://dl.google.com/android/repository/platform-33_r02.zip"
+          # X-C3：四个依赖全部 sha256 钉死（实测自官方源，与 build-apk.yml
+          # 同值）——它们进测试 classpath，被污染的 jar 会在回归测试里
+          # 执行任意代码。
+          echo "f851b13fe89f8510a1250df5e8593e86176b2428f4f3cbe0e304a85818c07bc8  .cache/deps/platform.zip" \
+            | sha256sum -c -
           unzip -o -q -j .cache/deps/platform.zip "*/android.jar" -d .cache/deps
           rm -f .cache/deps/platform.zip
           curl -sSL -o .cache/deps/okhttp.jar \
             "https://repo1.maven.org/maven2/com/squareup/okhttp3/okhttp/3.12.13/okhttp-3.12.13.jar"
+          echo "508234e024ef7e270ab1a6d5b356f5b98e786511239ca986d684fd1e2cf7bc82  .cache/deps/okhttp.jar" \
+            | sha256sum -c -
           curl -sSL -o .cache/deps/okio.jar \
             "https://repo1.maven.org/maven2/com/squareup/okio/okio/1.17.5/okio-1.17.5.jar"
+          echo "19a7ff48d86d3cf4497f7f250fbf295f430c13a528dd5b7b203f821802b886ad  .cache/deps/okio.jar" \
+            | sha256sum -c -
           # 真 org.json：android.jar 里的全是 stub（方法一调就抛 "Stub!"），
           # 测试 JVM 上要跑真解析（requireJsonBody 的试解析）就得拿真实现，
           # 且 classpath 必须排在 android.jar **前面**才轮得到它。
           curl -sSL -o .cache/deps/orgjson.jar \
             "https://repo1.maven.org/maven2/org/json/json/20231013/json-20231013.jar"
+          echo "0f18192df289114e17aa1a0d0a7f8372cc9f5c7e4f7e39adcf8906fe714fa7d3  .cache/deps/orgjson.jar" \
+            | sha256sum -c -
 
       - name: 🧪 编译补丁源码与测试（与本地自检同 classpath）
         run: |
@@ -135,12 +151,22 @@ jobs:
           python3 tools/check-download-ui-contract.py
 
       - name: 🟢 移动 last-green tag
+        env:
+          GH_PAT: ${{ secrets. }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -f last-green "${GITHUB_SHA}"
-          git push -f origin refs/tags/last-green
+          # X-C3：checkout 已 persist-credentials: false，凭证不落盘；
+          # 这里用 git -c 把 PAT 只注入这一条 push 命令的进程（会被
+          # Actions 日志自动打码），用完即随进程消失。
+          # GitHub 的 git-over-HTTPS 端点只认 **Basic**（actions/checkout
+          # 用的正是 basic base64(x-access-token:PAT)）；Bearer 头直接返回
+          # HTTP 400，last-green tag 会永远推不动。base64 输出经 GITHUB_ENV
+          # 之外的内联命令替换，不留盘。
+          git -c "http.https://github.com/.extraheader=Authorization: basic $(printf 'x-access-token:%s' "${GH_PAT}" | base64 | tr -d '\n')" \
+            push -f origin refs/tags/last-green
           echo "last-green → ${GITHUB_SHA}"
 
       - name: 🔴 红灯标记（回归失败时）

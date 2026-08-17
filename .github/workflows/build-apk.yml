@@ -119,6 +119,11 @@ jobs:
           # ── 构建工具 2.9.3 ───────────────────────────────────────────
           curl -sSL -o /tmp/apktool.jar \
             "https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar"
+          # X-C3：下载即校验 sha256（与 baseline.json 的 apktool pin 同值）——
+          # 这个 jar 随后被 sudo 装进 /usr/local/bin 执行；release 资产被替换
+          # 或下载链路被劫持时，没有内容校验就是 CI 远程命令执行入口。
+          echo "7956eb04194300ce0d0a84ad18771eebc94b89fb8d1ddcce8ea4c056818646f4  /tmp/apktool.jar" \
+            | sha256sum -c -
           sudo mv /tmp/apktool.jar /usr/local/bin/apktool.jar
           printf '#!/bin/bash\nexec java -jar /usr/local/bin/apktool.jar "$@"\n' \
             | sudo tee /usr/local/bin/apktool > /dev/null
@@ -127,6 +132,9 @@ jobs:
           # ── 解码器 3.0.9（Google 维护的延续版本，tag 无 v 前缀）──────
           curl -sSL -o /tmp/baksmali.jar \
             "https://github.com/baksmali/smali/releases/download/3.0.9/baksmali-3.0.9-fat-release.jar"
+          # X-C3：sha256 钉死（baksmali-3.0.9-fat-release.jar，实测自官方 release）
+          echo "1b206070701b2145bd1e6204abd6c14fea877f335486845cd4df149bf5f79c2e  /tmp/baksmali.jar" \
+            | sha256sum -c -
           sudo mv /tmp/baksmali.jar /usr/local/bin/baksmali.jar
           printf '#!/bin/bash\nexec java -jar /usr/local/bin/baksmali.jar "$@"\n' \
             | sudo tee /usr/local/bin/baksmali > /dev/null
@@ -152,12 +160,21 @@ jobs:
           mkdir -p .cache/deps
           curl -sSL -o .cache/deps/platform.zip \
             "https://dl.google.com/android/repository/platform-33_r02.zip"
+          # X-C3：三个依赖全部 sha256 钉死（platform-33_r02.zip / okhttp /
+          # okio，均实测自官方源）——它们进 javac/d8 的 classpath，被污染的
+          # jar 会把恶意字节码直接编进补丁 dex。
+          echo "f851b13fe89f8510a1250df5e8593e86176b2428f4f3cbe0e304a85818c07bc8  .cache/deps/platform.zip" \
+            | sha256sum -c -
           unzip -o -q -j .cache/deps/platform.zip "*/android.jar" -d .cache/deps
           rm -f .cache/deps/platform.zip
           curl -sSL -o .cache/deps/okhttp.jar \
             "https://repo1.maven.org/maven2/com/squareup/okhttp3/okhttp/3.12.13/okhttp-3.12.13.jar"
+          echo "508234e024ef7e270ab1a6d5b356f5b98e786511239ca986d684fd1e2cf7bc82  .cache/deps/okhttp.jar" \
+            | sha256sum -c -
           curl -sSL -o .cache/deps/okio.jar \
             "https://repo1.maven.org/maven2/com/squareup/okio/okio/1.17.5/okio-1.17.5.jar"
+          echo "19a7ff48d86d3cf4497f7f250fbf295f430c13a528dd5b7b203f821802b886ad  .cache/deps/okio.jar" \
+            | sha256sum -c -
           ls -la .cache/deps
 
       # 地址与凭证都搬进 secrets 之后，「没配」与「没传进来」长得一模一样：

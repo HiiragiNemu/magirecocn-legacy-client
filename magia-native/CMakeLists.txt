@@ -70,8 +70,14 @@ FetchContent_Declare(
     # 2023 年的版本，其 linker 适配跟不上新系统。v2.0.1 修了这一块。
     # API 与我们用到的四个函数（init / hook_sym_name / get_errno / to_errmsg）
     # 完全兼容，SHADOWHOOK_MODE_UNIQUE 仍为 1。
-    GIT_TAG        v2.0.1
-    GIT_SHALLOW    TRUE
+    # 供应链（X-C3）：钉完整 commit SHA 而不是可变 tag——tag 可以被强制移动
+    # 到带毒的同名重写提交，SHA 不能。854c775c… 即 v2.0.1 解引用后的提交
+    # （git ls-remote … refs/tags/v2.0.1^{}）。升级版本时：先 ls-remote 拿
+    # 新 tag 的解引用 SHA，连注释一起换。
+    # 注意 GIT_SHALLOW 与 commit SHA 不兼容（浅克隆按 ref 名取），钉 SHA
+    # 必须全克隆——首次拉取稍慢，FetchContent 有缓存只慢一次。
+    GIT_TAG        854c775c2c3676e57a0f383597ebf420b5204161
+    GIT_SHALLOW    FALSE
     # 真正的 CMake 工程在 shadowhook/src/main/cpp/，仓库根是 Gradle 工程。
     SOURCE_SUBDIR  shadowhook/src/main/cpp
     # v2.0.1 已经把编译选项都改成 PRIVATE 了（v1.1.1 那一堆 PUBLIC 传染问题
