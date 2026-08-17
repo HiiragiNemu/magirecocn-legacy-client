@@ -28,8 +28,44 @@ public final class ChunkManifest {
      * 每次调用现拉，不做进程缓存。请求同时带 cache-busting 查询参数和 no-cache
      * 头；某条线路的清单缺少目标文件时继续检查下一条，而不是把“旧清单缺项”
      * 错当成“服务端没有清单”并关闭完整性校验。
+     *
+     * <h3>并发约定（P-03 修复）：本方法<b>故意不加 synchronized</b></h3>
+     *
+     * 旧实现是 {@code static synchronized}——持<b>类锁</b>做网络 I/O。每条健康
+     * 线路最坏 connect 15s + read 30s（见 {@link #fetchDirect}），多条线路全挂时
+     * 一次调用可烧约 3 分钟。首装期间 4 路 ArchiveTask 并行开工、每个文件各调
+     * 一次本方法，类锁把这些调用<b>完全串行化</b>：线路故障时文件 B/C/D 的下载
+     * 线程全堵在类锁上，等文件 A 把全部线路的超时挨个烧完——「4 路并行池」在
+     * 网络故障场景退化回 1 路，与下载池的并发设计直接相悖。更糟的是
+     * CNDownloaderFix 的调用点在 ARCHIVE_LOCKS[index] 临界区内等这把类锁，玩家
+     * 对同一槽位点「重下」或「离线包即时安装」（同一把槽位锁）会被一并堵住，
+     * 最坏分钟级无响应。
+     *
+     * <p>这把锁换不来任何一致性收益，去掉是安全的，依据有三：
+     * <ol>
+     * <li><b>方法内无可变共享状态</b>：NEXT_START/NONCE 是 AtomicInteger；健康
+     *     线路表由 CNMirrors 自己保证并发可见（mirrors 字段为 volatile，
+     *     healthy()/pick() 本就供多个下载线程并发调用，ensureLoadedAsync 用
+     *     AtomicBoolean CAS 做内部单飞）；解析出的 map 是每次新建的局部变量；
+     *     返回的 ChunkHashes 字段全 final（不可变），各调用方持有独立实例。</li>
+     * <li><b>没有结果缓存就没有需要持锁的临界区</b>：「每次现拉」是本方法的有意
+     *     设计（对抗旧 CDN 缓存把清单钉死，见上段）。因此双重检查、
+     *     ConcurrentHashMap 缓存或 computeIfAbsent 单飞在这里没有保护对象——
+     *     引入它们反而会把「同 key 现拉」变成「同 key 复用他人结果」，改变
+     *     既有语义。同 key 并发调用极罕见（同一文件被同时重下/导入），各拉
+     *     一次与旧锁下「排队各拉一次」结果等价，且互不阻塞只会更快；线路
+     *     故障时独立拉取还能借 NEXT_START 的原子轮转天然错开起步线路，比
+     *     单飞（后来者干等先来者烧完全部超时）延迟更低。</li>
+     * <li><b>失败降级行为不变</b>：全部线路失败仍返回 null；单条线路抛异常仍
+     *     只换线、不计冷却（线路冷却由 CNMirrors.reportFailure 负责，本方法
+     *     从不调用它）。</li>
+     * </ol>
+     *
+     * <p>并发语义小结：不同 key（不同文件）的调用<b>真并行</b>；同 key 并发调用
+     * 各拉各的、互不排队，语义与旧实现等价——去锁不牺牲任何正确性，
+     * 只移除人为串行点。
      */
-    public static synchronized CNChunkedDownload.ChunkHashes forFile(String fileName) {
+    public static CNChunkedDownload.ChunkHashes forFile(String fileName) {
         if (!CNMirrors.isLoaded()) CNMirrors.ensureLoadedAsync();
         List<CNMirrors.Mirror> healthy = CNMirrors.healthy();
         if (healthy == null || healthy.isEmpty()) return null;
