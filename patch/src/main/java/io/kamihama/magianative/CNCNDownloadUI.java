@@ -195,9 +195,85 @@ public class CNCNDownloadUI {
      */
     private static volatile long autoEnterAtMs;
 
-    /** 设置自动进游戏倒计时截止时刻；0 关闭倒计时。 */
+    /**
+     * 浮层代际戳（F-C-07）：{@link #hide()} 每收一次浮层就 +1。
+     *
+     * <p>两个看门狗（CNDownloaderFix.SpeedWatchdog / CNHotUpdateCheck，1Hz）
+     * 都是 {@code shutdownNow()} 即走，不等已派发到主线程的 EnsureVisible
+     * 跑完——一个 in-flight tick 完全可能在 hide() 把浮层拆干净之后才执行，
+     * 此时 overlayView==null、decorView 无标记，重建分支会挂回一个**幽灵
+     * 浮层**盖住游戏，而安装/热更流程已结束、再没有人会来收它。投递时记下
+     * 当时的代际，执行时对照：代际已变说明浮层收过（或收过又重开了一轮），
+     * 这趟回调过期，直接丢弃。
+     */
+    private static volatile long overlayGeneration = 0L;
+
+    /**
+     * 「N 秒后进入游戏」倒计时的周期重绘 tick（Z-02/F-C-16）。
+     *
+     * <p>renderAll 的全部既有触发点（updateSimple / throttledUpdate /
+     * EnsureVisible / toggleTheme）在热更后的停留窗口里<b>全都不存在</b>：
+     * 下载已完成（无进度事件）、EnsureVisible 看门狗在进 awaitPlayerWindow
+     * 之前已停（CNHotUpdateCheck 先 stopWatchdog 再进窗口）、StayLoop 只在
+     * 玩家点「停留本页」后才起。所以倒计时不能指望任何既有周期驱动——
+     * 这里自己挂一个 1 秒一跳的轻量 tick，到点/撤场自停。
+     *
+     * <p>为什么<b>不</b>塞进全局 UpdateRunnable：它是「被显式 post 才跑
+     * 一帧」的一次性 Runnable，本身不自我续期，停留窗口内没有任何人 post
+     * 它（看门狗那时已停）；让它自我续期又会让整个下载期平白多一个永续
+     * 定时器。倒计时的生命周期只在停留窗口内，用独立的、可摘除的 tick
+     * 正好对上。
+     *
+     * <p>自停条件：autoEnterAtMs 被置 0（hide() / 玩家点停留 / 开着弹窗）、
+     * 浮层已收（isShowing=false）、uiHandler 已丢（HideRunnable 清场）。
+     * hide() 里还会显式 removeCallbacks 一次，双保险。停留窗口有
+     * PLAYER_WINDOW_MAX_MS 封顶，tick 不会无限续期。
+     *
+     * <p>具名常量而非匿名类：hide() 要靠 removeCallbacks(同一实例) 摘除；
+     * 且方法体内的匿名类在旧工具链上撞过 d8 内部错误（见 AGENTS.md §3）。
+     */
+    private static final Runnable COUNTDOWN_TICK = new Runnable() {
+        @Override public void run() {
+            try {
+                // 倒计时被撤 / 浮层已收：自停，不再续期。
+                if (autoEnterAtMs <= 0 || !isShowing) return;
+                renderAll();   // 重读 autoEnterAtMs，刷新 vStatus 上的秒数
+            } catch (Throwable ignore) {
+                // renderAll 异常不致命：日志已记，下个 tick 再试——但自续期
+                // 必须继续，否则这一拍之后 tick 永久死亡、倒计时文案冻结。
+            }
+            // 自续期放 try 外：即使 renderAll 抛异常被吞，这一拍也要把自己
+            // 重新排上，绝不因为一次渲染异常死掉（F-C-16 健壮性）。
+            Handler h = uiHandler;
+            if (h != null) h.postDelayed(this, 1000L);
+        }
+    };
+
+    /**
+     * 设置自动进游戏倒计时截止时刻；0 关闭倒计时。
+     *
+     * <p>Z-02/F-C-16：<b>不能只写字段</b>——renderAll 在停留窗口内没有任何
+     * 周期驱动（见 {@link #COUNTDOWN_TICK} 注释），纯写字段的话「N 秒后进入
+     * 游戏」一次都不会上屏。所以这里负责把重绘与周期 tick 挂起来/摘掉。
+     */
     static void setAutoEnterCountdown(long atMs) {
+        long prev = autoEnterAtMs;
         autoEnterAtMs = atMs;
+        Handler h = uiHandler;
+        if (h == null) return;
+        if (atMs > 0 && prev <= 0) {
+            // 倒计时刚开始：立刻刷一帧让首秒上屏，并挂上 1s tick。
+            h.post(new UpdateRunnable());
+            h.removeCallbacks(COUNTDOWN_TICK);
+            h.postDelayed(COUNTDOWN_TICK, 1000L);
+        } else if (atMs <= 0 && prev > 0) {
+            // 倒计时撤下：停 tick，并立刻刷掉「N 秒后进入游戏」的残留文案。
+            h.removeCallbacks(COUNTDOWN_TICK);
+            h.post(new UpdateRunnable());
+        }
+        // atMs>0 且 prev>0（awaitPlayerWindow 每 100ms 的续期写入）：不在此处
+        // 重排 tick——每次写入都把下一跳推后 1s 的话，tick 永远轮不到执行。
+        // tick 自己会每秒重读最新截止时刻。
     }
 
     // ---- 配色（取自 BootstrapActivity 的调色板） ----
@@ -1455,12 +1531,23 @@ public class CNCNDownloadUI {
 
     /**
      * 有任一弹窗/面板开着时为 true——玩家正在操作，自动收浮层必须等。
-     * logModal 常驻视图树（GONE/VISIBLE 切换），看可见性；其余三个
-     * 非空即在显示。
+     * logModal 常驻视图树（GONE/VISIBLE 切换），看可见性；其余模态框
+     * 一律「字段非空即在显示」。
+     *
+     * <p>⚠ 这里必须覆盖<b>全部</b>模态字段（F-C-03）：热更「玩家窗口」
+     * （CNHotUpdateCheck.awaitPlayerWindow）拿它决定能不能收浮层——漏一个，
+     * 玩家正操作那个弹窗时浮层就会被收走、弹窗随视图树一起消失（2026-08-12
+     * 之后新增的 aria2 询问框 / 离线包列表框 / 导入结果框 / 导入进度框就曾
+     * 全部漏登记）。新增模态框时记得同步本方法，与 HideRunnable 清理列表
+     * 是同一条纪律。
      */
     public static boolean isModalOpen() {
         if (supportModal != null || tutorialModal != null
-                || slowModal != null || versionModal != null) return true;
+                || slowModal != null || versionModal != null
+                || aria2AskModal != null || offlineModal != null
+                || importResultModal != null || importProgressModal != null) {
+            return true;
+        }
         FrameLayout lm = logModal;
         return lm != null && lm.getVisibility() == View.VISIBLE;
     }
@@ -1748,6 +1835,12 @@ public class CNCNDownloadUI {
     }
 
     /**
+     * 「分享日志」打包是否正在后台进行（F-C-05）。连点只打一次包。
+     * 布尔标志而非视图引用，无需进 HideRunnable 清理列表。
+     */
+    private static volatile boolean shareLogRunning;
+
+    /**
      * 「分享日志」：把日志目录里的启动日志文件合并打成一个 txt，走系统分享。
      *
      * <p>复制文本会被 QQ 等截断，也不是人人会用 Termux/adb 取文件——走
@@ -1755,34 +1848,107 @@ public class CNCNDownloadUI {
      * 文件落在 {@code cacheDir/share/}，由自带的只读 provider
      * {@link CNLogShareProvider}（编译 classpath 没有 androidx，故不用 FileProvider）
      * 以一次性读权限分享。
+     *
+     * <p>F-C-05：CNLogBundle.write 要读最多 5 份日志（单份上限 2MB、总量上限
+     * 8MB）再合并写出，慢闪存/低端机（minSdk 21 目标）上可达数百 ms 到秒级——
+     * 原先放在点击回调（UI 线程）里做，是实打实的 ANR 来源。现在 UI 线程只
+     * 弹提示，读写全部挪到后台守护线程，写完再回 UI 线程发分享 Intent。
      */
     private static final class ShareLogClick implements View.OnClickListener {
         private final Activity act;
         ShareLogClick(Activity act) { this.act = act; }
         @Override public void onClick(View v) {
-            try {
-                // 先落盘：剪贴板复制会 flush，分享走文件更要先把攒着的 logcat 行写进
-                // 日志文件，免得导出的包里比实际少一段。
-                CNLog.flushNow();
-                java.io.File out = CNLogBundle.write(act, CNLog.logDirPath());
-                if (out == null) {
-                    toast(act, "没有可分享的日志文件");
-                    return;
+            if (shareLogRunning) return;   // 连点只打包一次
+            shareLogRunning = true;
+            toast(act, "正在打包日志…");
+            noteInteraction();
+            // 线程启动挪进静态方法：方法体内的匿名 Runnable 在实例方法里会
+            // 引用外层实例（this$0）——CLAUDE.md 铁律 4 的 d8 崩溃形状，
+            // CI 的 check-d8-pitfalls 按字节扫 this$0 必拦。
+            startShareLogPack(act);
+        }
+    }
+
+    /**
+     * 后台打包日志 + 落盘 + 分享（线程入口）。static 而非实例方法：匿名
+     * Runnable 在静态上下文里只捕获参数（act/app）、无 this$0，避开 d8
+     * 已知崩溃形状（CLAUDE.md 铁律 4）。
+     *
+     * <p>ApplicationContext 足够 CNLogBundle 用（只取 cacheDir）：后台线程
+     * 不捏着 Activity 跑——打包要几秒，期间玩家完全可能离开安装界面，线程
+     * 结束后也只通过 runOnUiThread 碰 Activity，hide() 不存在「等待 UI」的
+     * 挂起点（本路径从不 await）。瞬态持有 act 无永久泄漏，try/catch 兜底。
+     */
+    private static void startShareLogPack(final Activity act) {
+        final Context app = act.getApplicationContext();
+        // Thread 体与 runOnUiThread 回调全部落在**静态方法**里：匿名类只捕获
+        // 参数（val$act/val$out），无 this$0——嵌套的匿名类（Thread 体内再
+        // new Runnable）会让内层引用外层匿名实例、产生 this$0，check-d8-pitfalls
+        // 按字节扫描必拦（CLAUDE.md 铁律 4）。两个 UI 回投抽成独立静态方法。
+        Thread t = new Thread(new Runnable() {
+            @Override public void run() {
+                try {
+                    // 先落盘：分享走文件，得先把攒着的 logcat 行写进日志
+                    // 文件，免得导出的包里比实际少一段。
+                    CNLog.flushNow();
+                    final java.io.File out =
+                            CNLogBundle.write(app, CNLog.logDirPath());
+                    postShareLogReady(act, out);
+                } catch (final Throwable bg) {
+                    CNLog.w("界面", "分享日志打包失败", bg);
+                    postShareLogFailed(act, bg);
+                } finally {
+                    shareLogRunning = false;
                 }
-                // 编译 classpath 没有 androidx，用自带的只读 provider 临时授权
-                // （只开 cacheDir/share/，见 CNLogShareProvider）。
-                Uri uri = Uri.parse("content://" + CNLogShareProvider.AUTHORITY
-                        + "/" + Uri.encode(out.getName()));
-                Intent send = new Intent(Intent.ACTION_SEND);
-                send.setType("text/plain");
-                send.putExtra(Intent.EXTRA_STREAM, uri);
-                send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                act.startActivity(Intent.createChooser(send, "分享日志"));
-                toast(act, "日志已打包：" + out.getName());
-            } catch (Throwable t) {
-                CNLog.w("界面", "分享日志失败", t);
-                toast(act, "分享失败：" + t.getMessage());
             }
+        }, "cn-log-share");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /** UI 线程回投：分享就绪。static——若在匿名类实例方法里造，内层匿名 Runnable 带 this$0。 */
+    private static void postShareLogReady(final Activity act, final java.io.File out) {
+        act.runOnUiThread(new Runnable() {
+            @Override public void run() { shareLogReady(act, out); }
+        });
+    }
+
+    /** UI 线程回投：分享失败。static——同上，避免嵌套匿名类产生 this$0。 */
+    private static void postShareLogFailed(final Activity act, final Throwable bg) {
+        try {
+            act.runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    toast(act, "分享失败：" + bg.getMessage());
+                }
+            });
+        } catch (Throwable ignore) {}
+    }
+
+    /**
+     * 日志打包完成后回到 UI 线程发系统分享 Intent（仅 {@link ShareLogClick} 用）。
+     *
+     * <p>浮层可能已 hide()：本方法不碰任何浮层视图，startActivity/toast 都
+     * 包在 try/catch 里，Activity 已销毁时安静记日志了事，不会崩也不会漏。
+     */
+    private static void shareLogReady(Activity act, java.io.File out) {
+        try {
+            if (out == null) {
+                toast(act, "没有可分享的日志文件");
+                return;
+            }
+            // 编译 classpath 没有 androidx，用自带的只读 provider 临时授权
+            // （只开 cacheDir/share/，见 CNLogShareProvider）。
+            Uri uri = Uri.parse("content://" + CNLogShareProvider.AUTHORITY
+                    + "/" + Uri.encode(out.getName()));
+            Intent send = new Intent(Intent.ACTION_SEND);
+            send.setType("text/plain");
+            send.putExtra(Intent.EXTRA_STREAM, uri);
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            act.startActivity(Intent.createChooser(send, "分享日志"));
+            toast(act, "日志已打包：" + out.getName());
+        } catch (Throwable t) {
+            CNLog.w("界面", "分享日志失败", t);
+            toast(act, "分享失败：" + t.getMessage());
         }
     }
 
@@ -2098,7 +2264,12 @@ public class CNCNDownloadUI {
      * @param name 文件名
      * @param err  失败原因（成功时 null）
      */
-    /** 确保「正在导入」进度框已显示（幂等：已显示则不动）。 */
+    /**
+     * 确保「正在导入」进度框已显示（幂等：已显示则不动）。
+     *
+     * <p>首次弹出时会顺带把「导入离线包」文件列表框收掉（F-C-04）：玩家已经
+     * 选完文件，列表框再留着只会挡住进度。
+     */
     public static void ensureImportProgressDialog(final Activity act, final String name) {
         final FrameLayout host = overlayView;
         if (act == null || host == null) {
@@ -2108,8 +2279,22 @@ public class CNCNDownloadUI {
         act.runOnUiThread(new Runnable() {
             @Override public void run() {
                 try {
-                    if (importProgressTitle != null || importResultModal != null
-                            || offlineModal != null) return;   // 已开着一个，别叠
+                    if (importProgressTitle != null || importResultModal != null) {
+                        return;   // 进度框/结果框已开着：幂等，别叠第二层
+                    }
+                    // F-C-04：旧守卫把 offlineModal（文件列表框）也算作「已开着
+                    // 一个」直接 return，但 importOne 在玩家点文件行后**不关**它
+                    // ——offlineModal 一直非空到 onResult——于是进度框永远弹不出，
+                    // 「正在导入」全程不可见，玩家面对的仍是本功能要消除的
+                    // 「选完文件界面定住」。改为：首次弹进度框时顺手把文件列表框
+                    // 收掉（它的使命在玩家选定文件那一刻已经完成）再弹进度框。
+                    // importOne.onResult 里对旧 modal 的 removeView 是 try/catch
+                    // 包裹的幂等操作，这里先摘掉后再执行一次无害。
+                    FrameLayout om = offlineModal;
+                    if (om != null) {
+                        offlineModal = null;
+                        try { host.removeView(om); } catch (Throwable ignore) {}
+                    }
                     final FrameLayout modal = new FrameLayout(act);
                     modal.setBackgroundColor(COLOR_DIM);
                     modal.setClickable(true);
@@ -3622,16 +3807,31 @@ public class CNCNDownloadUI {
      */
     public static void ensureVisible(final Activity act) {
         if (act == null) return;
+        // F-C-07：记下投递那一刻的浮层代际戳，交给 EnsureVisible 在执行时
+        // 对照——hide() 会把代际 +1，迟到的回调因此能被识别出来并丢弃。
+        final long gen = overlayGeneration;
         try {
-            act.runOnUiThread(new EnsureVisible(act));
+            act.runOnUiThread(new EnsureVisible(act, gen));
         } catch (Throwable ignore) {}
     }
 
     private static final class EnsureVisible implements Runnable {
         private final Activity act;
-        EnsureVisible(Activity act) { this.act = act; }
+        /** 投递那一刻的浮层代际戳（F-C-07），执行时对照，过期即弃。 */
+        private final long gen;
+        EnsureVisible(Activity act, long gen) { this.act = act; this.gen = gen; }
         @Override public void run() {
             try {
+                // F-C-07：迟到回调的闸。看门狗 shutdownNow 不等 in-flight
+                // tick，一个 HideRunnable 之后才跑到主线程的 tick 若不拦，
+                // 会因 overlayView==null、decorView 无 TAG 走进下面的认领/
+                // 重建分支，挂出一个再没人会收的「幽灵浮层」盖住游戏——且
+                // startOverlayFlag() 只在 show() 成功路径调，引擎闸门状态也
+                // 随之错乱，按钮还停在「停留本页」没有正常出口。hide() 先把
+                // 代际 +1、isShowing 置 false 再投 HideRunnable（见 hide()
+                // 注释），两个条件任一不满足都说明这趟回调已过期。
+                if (gen != overlayGeneration) return;
+                if (!isShowing) return;
                 FrameLayout ov = overlayView;
                 if (ov != null && ov.getParent() != null) return;   // 还在，无需处理
 
@@ -4177,6 +4377,11 @@ public class CNCNDownloadUI {
         // 浮层要收了，音乐也得停——否则安装完了背景音还在响。
         // 放在 isShowing 判断之前：即使浮层没建起来，也要保证不会有残留的播放线程。
         autoEnterAtMs = 0;   // 收浮层即撤倒计时
+        // Z-02/F-C-16：把倒计时周期重绘 tick 一并摘除（没挂上是空操作）。
+        // tick 自己看到 autoEnterAtMs==0 / isShowing==false 也会自停，这里是
+        // 双保险，不在主线程 Handler 队列里留尸体。
+        Handler h0 = uiHandler;
+        if (h0 != null) h0.removeCallbacks(COUNTDOWN_TICK);
         // 若屏上还挂着慢网询问框，先放行那个无超时等待的后台线程——它在
         // latch.await() 上没有超时，框没了就再也等不到回答，线程永久挂起。
         // 必须在 isShowing 早退判断之前做：早退路径同样可能留着一封未答的信。
@@ -4184,14 +4389,23 @@ public class CNCNDownloadUI {
         stopOverlayFlag();  // 先撤引擎闸门标记，引擎才能继续推进
         try { CNBgm.stop(); } catch (Throwable ignore) {}
         try { CNDownloadUiAssist.onOverlayDetached(); } catch (Throwable ignore) {}
+        // F-C-07：先把代际戳 +1、isShowing 置 false，**再**投 HideRunnable。
+        // 看门狗（SpeedWatchdog / 热更 watchdog，1Hz）都是 shutdownNow 即走、
+        // 不等已派发的任务：一个 in-flight tick 可以在浮层拆完之后才跑到主
+        // 线程。旧顺序（先 post HideRunnable、最后才置 isShowing=false）给
+        // 这种迟到回调留了窗口——它会在废墟上重建一个「幽灵浮层」盖住游戏。
+        // 代际戳还同时兜住「hide 之后又 show 了一轮新浮层」时上一轮残留的
+        // 回调（那时 isShowing 已重新为 true，单靠标志位拦不住）。
+        overlayGeneration++;
+        boolean wasShowing = isShowing;
+        isShowing = false;
         Handler handler;
-        if (!isShowing || (handler = uiHandler) == null) {
+        if (!wasShowing || (handler = uiHandler) == null) {
             // 即使浮层没真正建成/handler 已丢，也必须释放 native 闸门。
             releaseEngineGate();
             return;
         }
         handler.post(new HideRunnable());
-        isShowing = false;
         vBgmPill = null;
         vTutorialPill = null;
         tutorialModal = null;

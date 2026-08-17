@@ -248,8 +248,17 @@ public final class CNBgm {
         PlayThread p = thread;
         thread = null;
         if (p != null) {
+            // F-C-06：quit() 里已顺手 pause+flush 旧 AudioTrack——立即静音、
+            // 并尝试唤醒阻塞中的 write()（缓冲 0.5s 起步，失焦时甚至无限阻塞）。
+            // 再 interrupt 一次兜底：线程若恰好睡在 dequeue/write 之外的地方
+            // 能立刻醒。至此旧线程通常在几十 ms 内退出，join 上限从 800ms 降到
+            // 400ms 只是保险：即便超时，旧线程的 AudioTrack 也已被静音，快速
+            // 切曲不会再「二重奏」，UI 线程（BgmPillClick / StayClick→hide→stop）
+            // 的最坏卡顿也一并减半。join 留在调用线程是为了把新旧切换串行化，
+            // 但有了 pause 在前，它不再是防二重奏的关键路径。
             p.quit();
-            try { p.join(800L); } catch (InterruptedException ie) {
+            p.interrupt();
+            try { p.join(400L); } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
             }
         }
@@ -263,13 +272,32 @@ public final class CNBgm {
         private final Context ctx;
         private final Track   track;
         private volatile boolean running = true;
+        /**
+         * 当前在写的 AudioTrack（F-C-06）。volatile：quit() 从别的线程
+         * （多半是 UI 线程）拿它做 pause/flush。不置回 null——线程收尾的
+         * finally 里 release 之后若再有迟到的 quit()，pause 抛异常安静吞掉。
+         */
+        private volatile AudioTrack outRef;
 
         PlayThread(Context ctx, Track track) {
             super("cnv-bgm");
             this.ctx = ctx; this.track = track;
         }
 
-        void quit() { running = false; }
+        void quit() {
+            running = false;
+            // F-C-06：只置 running 标志唤不醒阻塞中的 AudioTrack.write()——
+            // 缓冲按 0.5s 起步，单次 write 最多阻塞整段缓冲时长；设备音频
+            // 失焦/挂起时甚至无限阻塞，stopInternal 的 join 超时后旧线程仍在
+            // 出声，快速连点 BGM 胶囊就成了「二重奏」。pause 让旧轨立即静音
+            // （线程晚死也不出声），flush 丢弃排队数据并唤醒阻塞的 write。
+            // 未在播放状态时 pause 会抛 IllegalStateException，安静吞掉即可。
+            AudioTrack at = outRef;
+            if (at != null) {
+                try { at.pause(); } catch (Throwable ignore) {}
+                try { at.flush(); } catch (Throwable ignore) {}
+            }
+        }
 
         @Override public void run() {
             MediaExtractor  ex    = null;
@@ -329,6 +357,7 @@ public final class CNBgm {
                 codec.start();
 
                 out = buildAudioTrack(srcRate, srcCh);
+                outRef = out;   // F-C-06：登记给 quit() 做 pause/flush
                 out.play();
 
                 decodeLoop(ex, codec, out, srcCh);
@@ -364,7 +393,9 @@ public final class CNBgm {
             long totalWritten = 0L;
             int  loops = 0;
 
-            while (running) {
+            // F-C-06：除 running 外也看线程中断标志——stopInternal 现在会
+            // interrupt，两处任一置位都应尽快退出，别等下一次 write 返回。
+            while (running && !Thread.currentThread().isInterrupted()) {
                 if (!sawInputEos) {
                     int inIdx = codec.dequeueInputBuffer(10000L);
                     if (inIdx >= 0) {
@@ -426,10 +457,20 @@ public final class CNBgm {
             }
         }
 
+        /** 单次 write 的最大字节数：8192B ≈ 46ms 的 44.1kHz 立体声 PCM。 */
+        private static final int WRITE_CHUNK_BYTES = 8192;
+
         private void writeAll(AudioTrack out, byte[] pcm) {
             int off = 0;
-            while (off < pcm.length && running) {
-                int n = out.write(pcm, off, pcm.length - off);
+            // F-C-06：分小块写、每块之间看一次退出标志。整段一次写时，单次
+            // write 最多阻塞「整段缓冲」的时长（0.5s 起步），收到 quit 也要
+            // 等它自然返回才停；切小后正常路径的退出延迟降到几十毫秒。
+            // （失焦导致的无限阻塞这条路靠 quit() 的 pause+flush 与 interrupt
+            // 解围，分块帮不上，但也不妨碍。）
+            while (off < pcm.length && running
+                    && !Thread.currentThread().isInterrupted()) {
+                int n = out.write(pcm, off,
+                        Math.min(pcm.length - off, WRITE_CHUNK_BYTES));
                 if (n <= 0) break;
                 off += n;
             }
