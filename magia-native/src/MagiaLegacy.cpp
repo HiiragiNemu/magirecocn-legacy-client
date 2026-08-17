@@ -1535,7 +1535,19 @@ static const int URLCFG_API_SLOTS  = 14;   // type 0..13
 static const int URLCFG_CHAT_SLOTS = 6;    // type 0..5
 static const int URLCFG_MAX_SLOTS  = 16;   // 数组容量，取整到 16
 
-static std::string g_endpointCache[3][URLCFG_MAX_SLOTS];   // [api/web/chat][type] 改写结果
+// [api/web/chat][type] 改写结果缓存。
+//
+// 为什么不能是裸 std::string 数组：这些 getter 由引擎的网络线程**并发**
+// 调用（本文件 1543 行自己也是这么论证 g_endpointSeen 的）。裸 string 的
+// 「比较 + 赋值 + 把引用交出去」在无锁并发下有两种炸法：
+//   1. 两个线程同时给同一槽位赋值 → std::string 数据竞争（UB）；
+//   2. 引擎经返回的引用长期持有对象，下一次 `= rw` 重赋值触发重新分配，
+//      引擎手里的引用悬空（UAF）。
+// 所以槽位里放的是**原子指针**，指向的对象一经创建永不修改、永不释放
+// （有意泄漏，换「返回引用的终身有效」）：端点取值在一局游戏里极少变化，
+// 每次变化只泄漏一个几十字节的对象，代价可忽略；而引擎任何时候解引用
+// 拿到的都是完整对象。这正是「写一次、永不改」语义。
+static std::atomic<const std::string*> g_endpointCache[3][URLCFG_MAX_SLOTS];
 
 /**
  * 观测去重用的指纹表：存**哈希**而不是字符串。
@@ -1592,11 +1604,16 @@ static const std::string* endpointRewrite(UrlGetterFn old, void* self, int type,
         if (!proxySnapshot(base, domains)) return orig;
         std::string rw;
         if (!tryRewriteUrl(*orig, base, domains, rw)) return orig;
-        if (g_endpointCache[slot][type] != rw) {
-            LOGI("[proxy] %s[%d]: %s -> %s", tag, type, orig->c_str(), rw.c_str());
-            g_endpointCache[slot][type] = rw;
-        }
-        return &g_endpointCache[slot][type];
+        // 无锁读改写：命中既有缓存直接复用；未命中或取值变了就**新建**
+        // 一个 string 并原子替换指针。旧对象故意不 delete——引擎可能正
+        // 持有它的引用，释放即 UAF；泄漏一个对象换引用终身有效。
+        const std::string* cur =
+                g_endpointCache[slot][type].load(std::memory_order_acquire);
+        if (cur && *cur == rw) return cur;
+        const std::string* nxt = new std::string(rw);
+        LOGI("[proxy] %s[%d]: %s -> %s", tag, type, orig->c_str(), rw.c_str());
+        g_endpointCache[slot][type].store(nxt, std::memory_order_release);
+        return nxt;
     } catch (...) {
         return orig;   // 钩子边界绝不外抛
     }
