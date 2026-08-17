@@ -12,8 +12,8 @@
 客户端这边**不需要任何改动**：现成的热更流程（CNHotUpdateCheck →
 CNHotUpdate.download → 解压到 <files>/）本来就把包解到
 `/data/data/<pkg>/files/`，而前端正是从那里读 `magica/js/**`、
-`magica/template/**`（真机日志里 `MagiaHook-URL … → MagiaHook-Path
-/data/data/…/files/magica/…` 就是这条路）。
+`magica/template/**`（日志里 `CNWebLocalFiles: [本地资源] 供给：…`
+就是这条路）。
 
 ## 包的结构
 

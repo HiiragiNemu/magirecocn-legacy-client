@@ -169,9 +169,9 @@
       "kind": "patch",
       "path": "smali/jp/f4samurai/web/WebViewImpl$WebViewClientImpl.smali",
       "group": "补丁",
-      "why": "WebView 资源改走 CNPaths->filesDir()（CLAUDE.md 铁律 2 允许的两处手工 smali 之一）",
+      "why": "WebView 本地资源拦截：判据全部收进 Java 补丁类 CNWebLocalFiles（scheme / http-host 归属 / path 前缀 / 点段与 canonical 四道闸），smali 只留一行调用（CLAUDE.md 铁律 2 允许的两处手工 smali 之一）。旧实现全串 contains(\"/magica/\") 无锚定无穿越校验（F-E-01/F-E-02），且每请求全量 logcat 完整 URL（F-E-03），一并废弃。",
       "pre": "679700219a3046ef6ec3c90291b6cc92a2f13bc73f77047dfdf357a6528ca040",
-      "post": "9e9bacf682e7d455774ef1c498b95f47363a7682ecc9e447d8f29675f3eacd31"
+      "post": "49470b813e8ca47143daaad9186993c0a09626d6fdc467ab37d6e14c270907c2"
     },
     {
       "kind": "patch",

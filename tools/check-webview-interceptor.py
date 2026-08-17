@@ -20,7 +20,11 @@
 
 ## 它不做什么
 
-不校验补丁层自己的代码——那有 javac / d8 / 单元测试管。这里只盯**输入**。
+不校验补丁层代码的**逻辑**——那有 javac / d8 / 单元测试管。但安全判据的
+**存在性**在这里钉住：WebView 本地资源拦截的判据 2026-08 起收进 Java 补丁类
+`CNWebLocalFiles`（旧 smali 实现出过 F-E-01 查询串路径穿越、F-E-02 任意源
+读本地文件、F-E-03 每请求全量 logcat 完整 URL），本脚本同时守两侧形状——
+smali 侧只许剩一行调用，Java 侧的四道闸一条都不许少。
 
 用法：
     python3 tools/check-webview-interceptor.py
@@ -63,11 +67,26 @@ def need(text, pattern, why, where, regex=False):
     return bool(hit)
 
 
+def must_not(text, pattern, why, where, regex=False):
+    """text 里必须不出现 pattern，否则记一条 finding（安全判据的反向守卫）。"""
+    global checked
+    checked += 1
+    hit = re.search(pattern, text) if regex else (pattern in text)
+    if hit:
+        findings.append("%s\n      不得在 %s 里出现: %s" % (why, where, pattern))
+    return not hit
+
+
 def main():
     helper = read(HELPER)
     runner = read(HELPER_RUN)
     impl   = read(IMPL)
     icept  = read(INTERCEPTOR)
+    # 判据在 Java 补丁侧（仓库正文，不在重建树里）：它的安全校验被悄悄拿掉
+    # 必须是构建失败，而不是运行时的静默放行。
+    jfiles = read(os.path.join(ROOT, "patch", "src", "main", "java",
+                               "io", "kamihama", "magianative",
+                               "CNWebLocalFiles.java"))
     if findings:
         report()
         return
@@ -108,32 +127,54 @@ def main():
          "request 重载必须转调 String 重载（否则包一层会漏掉一半请求）",
          "拦截器", regex=True)
 
-    # ── 4. 路径网关：/magica/ ────────────────────────────────────────
-    need(icept, 'const-string v0, "/magica/"',
-         "拦截只对 /magica/ 生效", "拦截器")
-
-    # ── 5. api/ 被排除 —— 游戏 API 因此才会落到 CNWebProxy 手里 ──────
-    need(icept, 'const-string v2, "api/"',
-         "拦截器对 api/ 开头的路径不处理，这是 API 请求能被代理接手的前提",
-         "拦截器")
-
-    # ── 6. ?<md5> 被丢掉 —— CSS 冻结那个不可逆坑的根源 ──────────────
-    need(icept, 'const-string v2, "?"',
-         "查询串被丢弃：本地文件一旦存在，服务端改版本号也不会生效"
-         "（CSS 冻结陷阱的根源，见 README）", "拦截器")
-
-    # ── 7. 本地根目录：经 CNPaths 动态解析（不再硬编码 /data/data）─────────
+    # ── 4. smali 只剩一行调用：判据全部在 CNWebLocalFiles（Java 侧）────────
+    # 安全判据放进 Java 补丁类才能被 javac/d8/单测/评审守住；smali 里留逻辑
+    # 的旧实现出过 F-E-01（查询串携 ../ 穿越读私有目录）与 F-E-02（任意源
+    # 页面读 <files>/magica/）。这两条的守卫就是下面的 must_not：判据一旦
+    # 回流 smali，构建当场失败。
     need(icept,
-         r"invoke-static \{\}, Lio/kamihama/magianative/CNPaths;->filesDir\(\)Ljava/lang/String;",
-         "本地文件根目录经 CNPaths 解析（/data/data 只是兼容软链，不能硬编码）",
+         r"invoke-static \{p2\}, Lio/kamihama/magianative/CNWebLocalFiles;"
+         r"->intercept\(Ljava/lang/String;\)Landroid/webkit/WebResourceResponse;",
+         "smali 必须只剩一行调用 CNWebLocalFiles.intercept（判据全在 Java 侧）",
          "拦截器", regex=True)
+    must_not(icept, 'const-string v0, "/magica/"',
+             "F-E-01/F-E-02 守卫：字符串 contains(\"/magica/\") 判据必须留在"
+             " Java 侧（结构化解析），不得回流 smali", "拦截器")
+    must_not(icept, "MagiaHook-URL",
+             "F-E-03 守卫：每请求全量 logcat 完整 URL 已废弃（敏感查询参数"
+             "进系统日志 + 高频 I/O），不得恢复", "拦截器")
+    must_not(icept, "Ljava/io/FileInputStream;",
+             "文件 I/O 必须在 Java 侧（canonical 校验之后），smali 不得直接开文件",
+             "拦截器")
 
-    # ── 8. 本地优先：exists() → 构造 WebResourceResponse ─────────────
-    need(icept, "invoke-virtual {v3}, Ljava/io/File;->exists()Z",
-         "本地文件存在性判断", "拦截器")
-    need(icept, "new-instance v6, Landroid/webkit/WebResourceResponse;",
-         "命中本地时直接构造响应（CNWebProxy 的 orig 返回非 null 即此路）",
-         "拦截器")
+    # ── 5. Java 侧安全判据的存在性守卫 ──────────────────────────────
+    # 判据既然在补丁类里，「被悄悄拿掉」就必须变成构建失败，而不是运行时的
+    # 静默放行。逐条钉住四道闸与两条既有语义。
+    need(jfiles, 'class CNWebLocalFiles',
+         "本地资源判据类必须存在", "CNWebLocalFiles.java")
+    need(jfiles, "GAME_HOST_SUFFIXES",
+         "闸 2：host 必须属于游戏域后缀白名单或项目自有域——F-E-02 的屏障",
+         "CNWebLocalFiles.java")
+    need(jfiles, 'startsWith(MAGIC_PREFIX)',
+         "闸 3：只对 path 分量做 /magica/ 前缀匹配，查询串不再命中——F-E-01 的屏障",
+         "CNWebLocalFiles.java")
+    need(jfiles, 'getCanonicalPath()',
+         "闸 4：canonical 复核，连符号链接逃逸一起拒",
+         "CNWebLocalFiles.java")
+    need(jfiles, '".."',
+         "闸 4：点段拒绝（../ 与 %2e%2e 解码后的原形）", "CNWebLocalFiles.java")
+    need(jfiles, 'API_PREFIX',
+         "api/ 前缀不接管——游戏 API 因此才会落到 CNWebProxy 手里",
+         "CNWebLocalFiles.java")
+    need(jfiles, "uri.getPath()",
+         "查询串剥离由 Uri.getPath() 天然承担：?<md5> 不参与文件名"
+         "（CSS 冻结取舍的语义保留，见 README）", "CNWebLocalFiles.java")
+    need(jfiles, "CNPaths.filesDir()",
+         "本地根目录经 CNPaths 解析（/data/data 只是兼容软链，不能硬编码）",
+         "CNWebLocalFiles.java")
+    need(jfiles, "new WebResourceResponse(",
+         "命中本地时构造响应（CNWebProxy 的 orig 返回非 null 即此路）",
+         "CNWebLocalFiles.java")
 
     # ── 9. 未命中回落 super —— 返回 null，代理才有机会接手 ───────────
     need(icept,

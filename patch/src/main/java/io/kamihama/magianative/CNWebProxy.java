@@ -40,7 +40,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * </ul>
  *
  * <p>而游戏真正的 API 流量走的是 WebView 的 {@code shouldInterceptRequest}
- * （日志里 {@code /magica/api/page/TopPage?…} 就是从那儿过的）。所以代理要真
+ * （拦截器日志里 {@code /magica/api/page/TopPage?…} 就是从那儿过的；该每请求
+ * 日志已于 2026-08 随 F-E-03 移除，流量路径不变）。所以代理要真
  * 生效，就得落在这一层。
  *
  * <h3>为什么这一层没有跨域问题</h3>
