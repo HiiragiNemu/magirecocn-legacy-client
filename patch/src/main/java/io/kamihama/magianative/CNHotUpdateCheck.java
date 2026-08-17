@@ -769,6 +769,8 @@ public final class CNHotUpdateCheck {
         CNLog.e(TAG, "浮层始终建不起来，热更将无界面运行");
     }
 
+    /** @param act 仅作「调用方认为当前已有宿主」的语义判断（null 则不起看门狗）；
+     *              看门狗每拍自行现取当前 Activity（Y-01），不再使用本参数。 */
     private static java.util.concurrent.ScheduledExecutorService startWatchdog(final Activity act) {
         if (act == null) return null;
         try {
@@ -776,7 +778,16 @@ public final class CNHotUpdateCheck {
                     java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
             ex.scheduleWithFixedDelay(new Runnable() {
                 @Override public void run() {
-                    try { CNCNDownloadUI.ensureVisible(act); } catch (Throwable ignore) {}
+                    // Y-01：每拍现取当前 Activity，而不是死守启动时捕获进
+                    // final 参数的那一只。Activity 重建（深色模式/字体缩放/
+                    // 分屏，configChanges 未覆盖 uiMode/density）后旧 act 已
+                    // 销毁，对它 ensureVisible 只会往死树上补挂，永远挂不回
+                    // 用户真正看到的界面。与 awaitUsableActivity 内（:735）、
+                    // SpeedWatchdog（CNDownloaderFix）的既有写法对齐。
+                    Activity cur = null;
+                    try { cur = RestClient.getCurrentActivity(); } catch (Throwable ignore) {}
+                    if (cur == null) return;   // 本拍没有可用宿主，下一拍再来
+                    try { CNCNDownloadUI.ensureVisible(cur); } catch (Throwable ignore) {}
                 }
             }, WATCHDOG_PERIOD_MS, WATCHDOG_PERIOD_MS,
                java.util.concurrent.TimeUnit.MILLISECONDS);

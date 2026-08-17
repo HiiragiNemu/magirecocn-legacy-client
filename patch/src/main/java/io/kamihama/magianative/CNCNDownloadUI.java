@@ -3807,6 +3807,11 @@ public class CNCNDownloadUI {
      */
     public static void ensureVisible(final Activity act) {
         if (act == null) return;
+        // Y-01：Activity 已销毁（重建/退出途中）就直接放弃。往死 Activity 的
+        // 视图树上挂/补浮层，只会造出一棵用户看不见、按钮点不动、心跳却
+        // 照跑的「死树」——那是进程级卡死链（Y-01）的入口之一。
+        // isDestroyed() 需 API 17+，本项目 minSdk 21，安全。
+        if (act.isDestroyed()) return;
         // F-C-07：记下投递那一刻的浮层代际戳，交给 EnsureVisible 在执行时
         // 对照——hide() 会把代际 +1，迟到的回调因此能被识别出来并丢弃。
         final long gen = overlayGeneration;
@@ -3832,11 +3837,19 @@ public class CNCNDownloadUI {
                 // 注释），两个条件任一不满足都说明这趟回调已过期。
                 if (gen != overlayGeneration) return;
                 if (!isShowing) return;
+                // Y-01：从 runOnUiThread 投递到本 Runnable 真正执行之间，
+                // act 可能已被销毁（重建/退出），执行时再闸一次。
+                if (act.isDestroyed()) return;
                 FrameLayout ov = overlayView;
-                if (ov != null && ov.getParent() != null) return;   // 还在，无需处理
-
                 ViewGroup dv = (ViewGroup) act.getWindow().getDecorView();
                 if (dv == null) return;
+                // Y-01：判活必须对照「本次调用传入的 act 的 decorView」。
+                // 旧写法只查 ov.getParent() != null——Activity 重建（深色
+                // 模式/字体缩放/分屏，configChanges 未覆盖 uiMode/density）
+                // 之后浮层仍挂在旧 Activity 的死树上，parent 非空，会被
+                // 误判为「还在」而跳过补挂，用户看到的却是没有浮层的界面，
+                // 浮层按钮也全在死树上点不动。
+                if (ov != null && ov.getParent() == dv) return;   // 还在当前宿主上，无需处理
 
                 // 先按 tag 认领**已在视图树上**的本类浮层：场景切换可能换过
                 // decorView 内容，静态 overlayView 与树脱节。若树里已有我们的
@@ -3856,6 +3869,7 @@ public class CNCNDownloadUI {
                 if (existing != null) {
                     overlayView = existing;
                     decorView   = dv;
+                    hostActivity = act;   // 重建后同样要刷新，否则判活恒假（见重挂分支注释）
                     isShowing   = true;
                     CNDownloadUiAssist.ensureInstalled();
                     CNLog.w("界面", "认领已在视图树上的浮层，跳过重建");
@@ -3864,12 +3878,35 @@ public class CNCNDownloadUI {
 
                 if (ov != null) {
                     // 仅仅是脱离了父节点：直接挂回去，保留现有状态
-                    try { dv.addView(ov, new ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT)); } catch (Throwable ignore) {}
+                    // Activity 重建只 detach 旧 decorView、不清理子视图的
+                    // mParent——此时 ov.getParent() 仍是旧父节点，直接 addView
+                    // 会抛 IllegalStateException（child already has a parent），
+                    // 被吞掉后浮层永远补挂不回。先拆下再挂。
+                    boolean reattached = false;
+                    try {
+                        Object oldParent = ov.getParent();
+                        if (oldParent instanceof ViewGroup) {
+                            ((ViewGroup) oldParent).removeView(ov);
+                        }
+                        dv.addView(ov, new ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT));
+                        reattached = true;
+                    } catch (Throwable ignore) {}
+                    // 重建后 hostActivity 仍指向已销毁的旧 Activity（只在
+                    // CreateUIRunnable 与重建分支赋值）——不刷新的话
+                    // overlayAttachedToLiveHost 的 isDestroyed 判活恒假、心跳
+                    // 永不续期、native 闸门重建后永久 fail-open。这里刷新。
+                    hostActivity = act;
                     decorView = dv;
-                    CNDownloadUiAssist.ensureInstalled();
-                    CNLog.w("界面", "浮层曾脱离视图树，已重新挂上");
+                    if (reattached) {
+                        CNDownloadUiAssist.ensureInstalled();
+                        CNLog.w("界面", "浮层曾脱离视图树，已重新挂上");
+                    } else {
+                        // addView 抛异常被吞 = 没挂上。绝不能打「已挂上」的成功
+                        // 日志误导排障——看门狗下一拍会重试，这里如实记录失败。
+                        CNLog.w("界面", "浮层重挂失败（addView 异常被吞），下拍重试");
+                    }
                     return;
                 }
                 // 整个浮层都没了（或从未建成）：重建一份
@@ -4132,6 +4169,11 @@ public class CNCNDownloadUI {
             try {
                 Activity activity = this.context;
                 if (activity == null) return;
+                // Y-01：Activity 已销毁则不建浮层——Activity 重建场景下迟到的
+                // CreateUIRunnable 若照旧 build+addView，会把整屏浮层建在
+                // 死树上（看不见、点不动、心跳照跑）。isDestroyed() 需 API 17+，
+                // 本项目 minSdk 21，安全。
+                if (activity.isDestroyed()) return;
 
                 // ⚠ 幂等守卫：decorView 上已挂着本类浮层就直接返回，不再叠一层。
                 // 旧实现里每次 show() 都无条件 buildOverlay + addView——弱机主线程
@@ -4552,11 +4594,38 @@ public class CNCNDownloadUI {
     // 浮层显示期间，native 侧会闸住引擎的主页跳转和 BGM
     // （见 MagiaLegacy.cpp 的 overlayActive/maybeReleaseDeferredTop）。
     // 这里 show 成功时创建标记文件，每 2 秒心跳 touch 续期；
-    // hide 时停止心跳并删除。进程被杀导致心跳中断时，标记 6 秒后自动失效，
+    // hide 时停止心跳并删除。进程被杀导致心跳中断时，标记 10 秒后自动失效（native mtime 失效窗口，MagiaLegacy.cpp），
     // native 侧自动放行，引擎不会被闸死。
     private static final String OVERLAY_FLAG =
         CNPaths.filesDir() + "/madomagi/cn_overlay_active.flag";
     private static Thread overlayHeartbeat;
+
+    /**
+     * Y-01 兜底判活：浮层是否仍挂在「活着的宿主 Activity」的视图树上。
+     *
+     * <p>心跳线程以此作为续闸条件（见 startOverlayFlag）。三个条件同时满足才算活：
+     * overlayView/decorView 非空、hostActivity 未销毁、overlayView 的直接父节点
+     * 正是 decorView（防 Activity 重建后浮层挂在旧 Activity 的死树上）。
+     *
+     * <p>hostActivity 可能为 null（看门狗「认领树上既有浮层」路径不设置它），
+     * 此时跳过销毁检查、只看视图树归属。
+     *
+     * <p>从后台（心跳）线程读视图状态，getParent() 理论上非线程安全；
+     * 读错的最坏后果是本拍不续期、下拍自愈，方向安全（宁可闸不住也不卡死），
+     * 故只做 try/catch 不加锁。
+     */
+    private static boolean overlayAttachedToLiveHost() {
+        try {
+            FrameLayout ov = overlayView;
+            ViewGroup dv = decorView;
+            Activity host = hostActivity;
+            if (ov == null || dv == null) return false;
+            if (host != null && host.isDestroyed()) return false;
+            return ov.getParent() == dv;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
 
     private static void startOverlayFlag() {
         try {
@@ -4572,7 +4641,16 @@ public class CNCNDownloadUI {
             @Override public void run() {
                 java.io.File f = new java.io.File(OVERLAY_FLAG);
                 while (isShowing) {
-                    try { f.setLastModified(System.currentTimeMillis()); } catch (Throwable ignore) {}
+                    // Y-01 兜底：浮层还挂在「活宿主」的视图树上才续期。
+                    // Activity 重建把浮层留在死树上时，isShowing 依旧为 true
+                    // （没人调 hide()），若只看 isShowing，native 闸门会被
+                    // 永久续期，而浮层上的按钮（RETRY_LOCK 等等待点的放行方）
+                    // 全在死树上点不动——进程级硬卡死。停续后闸门最多 10 秒
+                    // （native mtime 失效窗口）自愈放开；看门狗把浮层补挂回
+                    // 活树后，下一拍自动恢复续期，重建窗口内闸门不松手。
+                    if (overlayAttachedToLiveHost()) {
+                        try { f.setLastModified(System.currentTimeMillis()); } catch (Throwable ignore) {}
+                    }
                     try { Thread.sleep(2000L); } catch (InterruptedException ie) { return; }
                 }
             }
