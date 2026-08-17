@@ -2584,6 +2584,39 @@ public class CNCNDownloadUI {
     }
 
     /**
+     * 当前正挂在屏上、还没等到玩家回答的询问信箱；没有则为 null。
+     *
+     * <p>为什么需要它：{@link #askSlowNetwork} 在后台线程上
+     * {@code ans.latch.await()}（<b>无超时</b>，见该方法的 javadoc——等多久
+     * 交给玩家，不写死）。这要求「每一条拆框路径都必须有人放行 latch」：
+     * 玩家点按钮由 {@link SlowChoice} 放行、建框失败由 {@link SlowBuild}
+     * 放行，但<b>浮层整体收起</b>（{@link #hide()} / {@link HideRunnable}）
+     * 这条路径原先既拆窗又置空 {@link #slowModal}，却没有任何人碰 latch——
+     * 后台下载/配置线程从此永久挂起：热更路径那个线程一死，线路表与代理
+     * 配置在本会话内静默失能，且无一行日志。修法不是给 await 加超时
+     * （那会重新引入「替玩家做决定」的写死取舍），而是把挂着的信箱登记到
+     * 这里，拆窗时按默认的 {@link #SLOW_SKIP}（「没条件问」语义）放行。
+     *
+     * <p>volatile 足够：读写在 UI 线程与 hide() 调用线程之间交叉，但只有
+     * 引用的读/写，且 {@link java.util.concurrent.CountDownLatch#countDown()}
+     * 本身幂等、线程安全，重复放行无害。
+     */
+    private static volatile SlowAnswer pendingSlowAnswer;
+
+    /**
+     * 拆窗路径的统一放行口：若屏上还挂着无人回答的慢网询问框，按
+     * 「没条件问」的默认语义（{@link #SLOW_SKIP}）放行等待线程并记日志。
+     * 没有挂着的询问则什么也不做。可在任意线程调用。
+     */
+    private static void releasePendingSlowAnswer(String why) {
+        SlowAnswer pending = pendingSlowAnswer;
+        if (pending == null) return;
+        pendingSlowAnswer = null;
+        CNLog.w(TAG, "[慢网询问] " + why + "，框被一并拆掉，按「跳过」放行等待线程");
+        pending.latch.countDown();   // choice 保持默认 SLOW_SKIP，幂等
+    }
+
+    /**
      * 网络慢到超过预算时，<b>问玩家</b>要不要继续等，而不是替他决定。
      *
      * <h3>为什么要问</h3>
@@ -2743,6 +2776,9 @@ public class CNCNDownloadUI {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
         slowModal = modal;
+        // 登记「屏上挂着一封未回答的信箱」：之后无论谁拆窗（玩家点按钮之外的
+        // 路径，如 hide()/HideRunnable），都能凭它放行等在 latch 上的后台线程。
+        pendingSlowAnswer = ans;
     }
 
     /** 记下选择 → 关框 → 放行等在后台线程上的调用方。 */
@@ -2758,6 +2794,9 @@ public class CNCNDownloadUI {
             } catch (Throwable t) {
                 CNLog.e(TAG, "[慢网询问] 处理选择失败", t);
             } finally {
+                // 先摘登记再放行：这封信箱已由玩家作答，拆窗路径无须再替它兜底。
+                // （顺序不影响正确性——countDown 幂等——但日志语义更干净。）
+                pendingSlowAnswer = null;
                 ans.latch.countDown();   // 无论如何都要放行，否则后台线程永远卡在这
             }
         }
@@ -3997,6 +4036,10 @@ public class CNCNDownloadUI {
                 logModal      = null;
                 vTutorialPill = null;
                 tutorialModal = null;
+                // 先放行可能还挂在慢网询问框上的后台线程，再把框的引用清掉。
+                // hide() 入口处已放过一次；这里是第二道——覆盖「SlowBuild 在
+                // hide() 之后、本 Runnable 之前才建好框」的竞态窗口。
+                releasePendingSlowAnswer("浮层拆除");
                 slowModal     = null;
                 vLogScroll    = null;
                 themeChipBg   = null;
@@ -4134,6 +4177,10 @@ public class CNCNDownloadUI {
         // 浮层要收了，音乐也得停——否则安装完了背景音还在响。
         // 放在 isShowing 判断之前：即使浮层没建起来，也要保证不会有残留的播放线程。
         autoEnterAtMs = 0;   // 收浮层即撤倒计时
+        // 若屏上还挂着慢网询问框，先放行那个无超时等待的后台线程——它在
+        // latch.await() 上没有超时，框没了就再也等不到回答，线程永久挂起。
+        // 必须在 isShowing 早退判断之前做：早退路径同样可能留着一封未答的信。
+        releasePendingSlowAnswer("浮层收起");
         stopOverlayFlag();  // 先撤引擎闸门标记，引擎才能继续推进
         try { CNBgm.stop(); } catch (Throwable ignore) {}
         try { CNDownloadUiAssist.onOverlayDetached(); } catch (Throwable ignore) {}
