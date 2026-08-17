@@ -23,6 +23,13 @@
 #include <limits.h>
 #include <unistd.h>
 
+// 构建标记（2026-08-17）：libarchive 3.7.4 重建后编入 .so 的 .rodata。
+// `used` 属性保证即使无引用也不会被链接器/剥离去掉——check-cnzip-guards.py
+// 用 strings 探测它，确认「补丁 01/02/03 的修复已进二进制」（源码侧修了、
+// 二进制没重建的漂移由此现形）。改 build-aria2 同款惯例：升级时换新值。
+static const char kBuildMarker[] __attribute__((used)) =
+        "libarchive-cn-jni-3.7.4-fix-20260817";
+
 // 前向声明（供 cnExtract 使用）
 static void mkdir_recursive(const char* path);
 static void ensure_parent(const char* out);

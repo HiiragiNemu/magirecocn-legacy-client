@@ -1,0 +1,68 @@
+name: 🔧 构建 libarchive.so
+
+# 重建 libarchive.so（libarchive 3.7.4 + zlib 静态链的 JNI 解压库，两 ABI）。
+# libcnzip.so 曾是一次性手工交叉编译、CI 从不重建的预编译二进制——源码侧的
+# 安全修复（Zip Slip / 吞错 / 膨胀比闸）永远到不了设备。本 workflow 让重建
+# 可复现：手动触发，产物作为 artifact 上传，下载后替换 lib/<abi>/libarchive.so。
+#
+# 只产出 .so artifact，不构建 APK、不建 Release——与「不做自动发版」约定不冲突。
+on:
+  workflow_dispatch:
+    inputs:
+      libarchive_tag:
+        description: 'libarchive 版本 tag（默认 v3.7.4，与基线一致）'
+        type: string
+        default: 'v3.7.4'
+      zlib_tag:
+        description: 'zlib 版本 tag'
+        type: string
+        default: 'v1.3.1'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 📦 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 📍 定位 NDK
+        run: |
+          echo "NDK=${ANDROID_NDK_HOME}" >> "$GITHUB_ENV"
+          echo "NDK 主机工具链: ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+      - name: 📥 下载 libarchive + zlib 源码
+        run: |
+          set -euo pipefail
+          curl -sSL -o libarchive.tar.gz \
+            "https://github.com/libarchive/libarchive/archive/refs/tags/${{ github.event.inputs.libarchive_tag }}.tar.gz"
+          curl -sSL -o zlib.tar.gz \
+            "https://github.com/madler/zlib/releases/download/${{ github.event.inputs.zlib_tag }}/zlib-${{ github.event.inputs.zlib_tag }}.tar.gz"
+          # libarchive tag 形如 v3.7.4 → 目录 libarchive-3.7.4
+          LA_VER="${{ github.event.inputs.libarchive_tag }}"; LA_VER="${LA_VER#v}"
+          ZL_VER="${{ github.event.inputs.zlib_tag }}"; ZL_VER="${ZL_VER#v}"
+          tar xzf libarchive.tar.gz && mv "libarchive-${LA_VER}" libarchive-src
+          tar xzf zlib.tar.gz && mv "zlib-${ZL_VER}" zlib-src
+          echo "LIBARCHIVE_SRC=$PWD/libarchive-src" >> "$GITHUB_ENV"
+          echo "ZLIB_SRC=$PWD/zlib-src" >> "$GITHUB_ENV"
+
+      - name: 🩹 修补 libarchive CMakeLists（Android 无 libmd，跳过探测）
+        run: |
+          # libarchive 无条件探测 FreeBSD libmd，Android 上没有 → LIBMD_LIBRARY
+          # NOTFOUND 硬报错。注释掉该行（加密能力非解压必需，禁用可接受）。
+          sed -i 's|^CHECK_CRYPTO("MD5;RMD160;SHA1;SHA256;SHA512" LIBMD)$|# CHECK_CRYPTO("MD5;RMD160;SHA1;SHA256;SHA512" LIBMD)   # Android 无 libmd，跳过|' \
+            libarchive-src/CMakeLists.txt
+          grep -q "libmd，跳过" libarchive-src/CMakeLists.txt && echo "✓ LIBMD 探测已跳过"
+
+      - name: 🛠 构建两 ABI
+        run: bash tools/build-libarchive.sh
+
+      - name: 🚚 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: libarchive-so
+          path: out/*/libarchive.so
+          if-no-files-found: error
