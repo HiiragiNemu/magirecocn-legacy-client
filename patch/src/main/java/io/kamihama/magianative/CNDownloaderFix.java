@@ -1672,8 +1672,8 @@ public final class CNDownloaderFix {
                 CNLog.w(TAG, "aria2 下载的包结构非法: " + name);
                 return false;
             }
-            // 用内置 libcnzip（libarchive JNI）验证条目（替代 ZipFile.entries()，见 CNZipTool 说明）。
-            // libcnzip 不可用时回退 ZipFile。
+            // 用内置 libarchive（libarchive JNI）验证条目（替代 ZipFile.entries()，见 CNZipTool 说明）。
+            // libarchive 不可用时回退 ZipFile。
             if (CNZipTool.isAvailable()) {
                 return CNZipTool.isValid(archive);
             }

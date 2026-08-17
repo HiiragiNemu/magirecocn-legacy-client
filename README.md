@@ -46,7 +46,7 @@ python3 tools/baseline.py apply --out work/tree
 |---|---:|---|
 | `patch` | 14 | 基线里有、我们改了几行 |
 | `replace` | 85 | 基本重写或二进制没法 diff：`RestClient.smali` 桩、中文字体、83 个汉化图集（从 overlay 取） |
-| `add` | 13 | 基线里没有：`network_security_config.xml`、libaria2c×4（双后端）与 libcnzip/shadowhook、浮层用的 logo 与背景、2 个新增图集页 |
+| `add` | 13 | 基线里没有：`network_security_config.xml`、libaria2c×4（双后端）与 libarchive/shadowhook、浮层用的 logo 与背景、2 个新增图集页 |
 | `remove` | 6 | 要删的：两个未引用的商业字体、被取代的 `libuwasa.so`、`RestClient$1/$2` |
 | `generated` | 5 | 构建期产出（Java→dex→smali、native `.so`、BGM 转码），不校验内容 |
 
@@ -126,7 +126,7 @@ python3 tools/baseline.py apply --out <目录>   # 只重建，不比对
 | `CNZipPlan` | **下载前算出安装峰值**。装一个包的磁盘峰值是 ZIP + 解压后（ZIP 要留到解压成功才删），而这个比例各包差得很远：`cn_base_03.zip` 1.32→2.79 GiB（**2.11x**），其余全在 1.02–1.16x。03 因此拥有 15 个包里最高的安装峰值 **4.11 GiB**，而进度条上只写着 1.3 GB——玩家按这个数去清理空间，然后在解压阶段翻车。 |
 | `CNEndpoints` | **全部对外主机名的唯一来源**。源码里只留结构（`assets.` 子域 + 主域这样的拼法），真实取值由 `tools/inject-endpoints.py` 在构建期从 Secret 注入，仓库与历史里都不出现。注入缺失时 fail-closed：放行列表不含自有域、线路表为空、热更地址拼不出来——退化成「什么都下不了」，而不是退回某个不受控的默认值。 |
 | `CNMirrors` | 线路目录：从 `config.json` 拉取线路表，失败/停滞/过慢时自动换线 |
-| `CNAria2` | **进程内 aria2 引擎**（`libaria2c_{ossl,gnutls}.so`，JNI 加载，备用或构建期选作主引擎）：**双 TLS 后端共存 + dead-man's switch**（`Aria2EngineFailover`）——默认 openssl 后端，原生崩溃或加载失败自动换 gnutls 后端，连 4 次死亡才回退主引擎。由 linker 加载共享库、**无 exec**，绕开 SELinux exec 闸与 16KB 页对齐（与 libcnzip 同思路）。loopback JSON-RPC 控制，单文件同步下载、多连接 + 断点续传。构建与许可明细见 THIRD-PARTY-NOTICES.md。 |
+| `CNAria2` | **进程内 aria2 引擎**（`libaria2c_{ossl,gnutls}.so`，JNI 加载，备用或构建期选作主引擎）：**双 TLS 后端共存 + dead-man's switch**（`Aria2EngineFailover`）——默认 openssl 后端，原生崩溃或加载失败自动换 gnutls 后端，连 4 次死亡才回退主引擎。由 linker 加载共享库、**无 exec**，绕开 SELinux exec 闸与 16KB 页对齐（与 libarchive 同思路）。loopback JSON-RPC 控制，单文件同步下载、多连接 + 断点续传。构建与许可明细见 THIRD-PARTY-NOTICES.md。 |
 | `CNHotUpdate` | 热更新的文件下载，与首次安装共用同一套选线与分片逻辑 |
 | `CNHotUpdateCheck` | 热更检查流程：启动时比对台词包/前端脚本包版本，必要时下载并应用。重写自原包的 `RestClient.checkAndApplyHotUpdate`——那版浮层自始至终不出现，无从判断跑没跑 |
 | `CNHotUpdateTx` | 热更包的**事务化应用**：暂存 → 备份 → 换入，出错整体回滚，崩溃后按 journal 恢复。只用于热更，安装器的大包仍直接解压 |
@@ -555,7 +555,7 @@ CyberNova（下载加速及资源自动化推送）、segfault（国服数据留
 |---|---|---|---|
 | `lib/*/libaria2c_ossl.so` | aria2 1.37.0 进程内共享库（OpenSSL 1.1.1w 后端） | **GPLv2+**（附 OpenSSL 链接例外） | **要提供对应源码**——源码指向与三年书面要约见声明文件 |
 | `lib/*/libaria2c_gnutls.so` | aria2 1.37.0 进程内共享库（GnuTLS 3.8.3 后端） | **GPLv2+**，静态链入 **LGPL** 组件（GnuTLS/nettle/GMP） | **要提供对应源码 + LGPL 可重链**——源码指向与书面要约见声明文件 |
-| `lib/*/libcnzip.so` | libarchive 3.7.4 的 JNI 封装（进程内解压资源包） | **BSD-2-Clause**（附 zlib 静态链接） | 附版权声明与许可全文（见声明文件） |
+| `lib/*/libarchive.so` | libarchive 3.7.4 的 JNI 封装（进程内解压资源包） | **BSD-2-Clause**（附 zlib 静态链接） | 附版权声明与许可全文（见声明文件） |
 | `lib/*/libshadowhook.so` | ShadowHook 2.0.1（ByteDance），**CI 从上游源码构建，且我们改过它的源码** | MIT | 附版权声明与许可全文；改动照实写在声明文件里 |
 | `assets/fonts/mbm_20160902.ttf` | MagiReco CN Medium（Source Han 派生） | Apache-2.0 | 附许可、注明改动（§4(b)） |
 

@@ -21,7 +21,7 @@ import java.util.zip.ZipFile;
  * Android 10+ 又撞 SELinux W^X 闸（{@code app_data_file} 无 execute 权限，
  * execve 返回 EACCES），16KB 页设备还要求 ELF 段 16KB 对齐。
  *
- * <p>本方案把 libarchive 编成标准 {@code native library}（{@code libcnzip.so}，
+ * <p>本方案把 libarchive 编成标准 {@code native library}（{@code libarchive.so}，
  * 放 {@code lib/<abi>/}），经 {@link System#loadLibrary} 由 linker 加载——落点在
  * 只读的 nativeLibraryDir，完全绕开 W^X / 16KB 页。解压逻辑跑在进程内，
  * 通过 JNI 调 {@code archive_read_*} 系列 API，进度/取消由 Java 回调。
@@ -43,7 +43,7 @@ public final class CNZipTool {
 
     private CNZipTool() {}
 
-    // ── JNI 原生方法（libcnzip.so）────────────────────────────────────
+    // ── JNI 原生方法（libarchive.so）────────────────────────────────────
     /** 列出 zip 条目未压缩大小表。null = 结构不可解析。 */
     private static native long[] cnList(String zipPath);
     /** 结构校验：能读出一个条目即可解析。 */
@@ -58,10 +58,10 @@ public final class CNZipTool {
     }
 
     /**
-     * libcnzip 是否可用。二进制由 {@link System#loadLibrary} 加载（libcnzip.so
-     * 在 lib/ 下），加载失败（如 ABI 不匹配、OEM 移除）返回 false，调用方回退
-     * ZipFile 路径。与 exec 版的 probeExec 不同：JNI 加载天然没有「exec 被
-     * SELinux/16KB 页拦截」的问题，只需确认库能加载。
+     * libarchive 是否可用。二进制由 {@link System#loadLibrary} 加载
+     * （libarchive.so 在 lib/ 下），加载失败（如 ABI 不匹配、OEM 移除）返回
+     * false，调用方回退 ZipFile 路径。与 exec 版的 probeExec 不同：JNI 加载
+     * 天然没有「exec 被 SELinux/16KB 页拦截」的问题，只需确认库能加载。
      */
     public static boolean isAvailable() {
         if (initDone) return available;
@@ -69,10 +69,10 @@ public final class CNZipTool {
             if (initDone) return available;
             boolean ok = false;
             try {
-                System.loadLibrary("cnzip");
+                System.loadLibrary("archive");
                 ok = true;
             } catch (Throwable t) {
-                CNLog.w(TAG, "libcnzip 加载失败（回退 ZipFile）: " + t);
+                CNLog.w(TAG, "libarchive 加载失败（回退 ZipFile）: " + t);
                 ok = false;
             }
             available = ok;
@@ -201,7 +201,7 @@ public final class CNZipTool {
         }
         try {
             // ── 补丁 19 · 闸一（写出前）：Java 层 Zip Slip 预扫 ────────────
-            // cnExtract 跑在预编译 libcnzip.so 里，而它的源码
+            // cnExtract 跑在预编译 libarchive.so 里，而它的源码
             // （magia-native/src/archive_jni.cpp）**不在 CI 编译目标内**——
             // 源码侧的 Zip Slip / 吞错修复（补丁 01/02）在 CI 重建并替换
             // shipped 二进制之前到不了设备。设备上的即时防线由这里保证：
@@ -223,7 +223,7 @@ public final class CNZipTool {
             }
             final long zipLen = zip.length();
             final ExtractProgress p = cb;
-            // 写时炸弹闸（补丁 03）：native 闸二不可达（libcnzip 是预编译二进制、
+            // 写时炸弹闸（补丁 03）：native 闸二不可达（libarchive 是预编译二进制、
             // CI 不重建）期间的设备侧防线，判据镜像 archive_jni.cpp 的「累计写出
             // > zip 体积×200 且已过 256MB 即中止」。预检读的中央目录**声明**尺寸
             // 可以撒谎，真实写出字节数才是硬证据。返回 false 让 cnExtract 停手，

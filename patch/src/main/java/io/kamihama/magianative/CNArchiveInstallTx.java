@@ -74,9 +74,9 @@ public final class CNArchiveInstallTx {
             throw new InstallIOException("Cannot create extraction root: " + root);
         }
 
-        // 用内置 libcnzip（libarchive JNI）校验结构并解压，替代 java.util.zip.ZipFile：资源包含
+        // 用内置 libarchive（libarchive JNI）校验结构并解压，替代 java.util.zip.ZipFile：资源包含
         // 「冗余 ZIP64」，老设备 ZipFile 可能打不开（见 CNZipTool 的说明）。
-        // 这里不再逐条目续传——libcnzip 整包解压，中断则整包重解（放弃 stateFile
+        // 这里不再逐条目续传——libarchive 整包解压，中断则整包重解（放弃 stateFile
         // 的逐条目断点，换来对 ZIP64 的完整兼容）。
         // isAvailable 含 --version 真探测：exec 被 SELinux / 16KB 页拦截的
         // 设备会落到下面的 ZipFile 回退，而不是把「二进制起不来」误报成
@@ -86,12 +86,12 @@ public final class CNArchiveInstallTx {
             return;
         }
 
-        // libcnzip 不可用（异常环境）时回退旧路径。仍用 ZipFile——虽然老设备可能
+        // libarchive 不可用（异常环境）时回退旧路径。仍用 ZipFile——虽然老设备可能
         // 打不开，但总比完全不解压好（结构校验失败总比误拒好）。
         extractWithZipFile(archive, root, stateFile, cancel, progress);
     }
 
-    /** 用内置 libcnzip（libarchive JNI）整包解压（主路径）。 */
+    /** 用内置 libarchive（libarchive JNI）整包解压（主路径）。 */
     private static void extractWithBsdtar(File archive, File root,
                                           Cancel cancel, Progress progress)
             throws IOException {
@@ -123,7 +123,7 @@ public final class CNArchiveInstallTx {
         final Progress progressF = progress;   // 匿名类捕获用（显式 final，兼容老 source 级别）
         if (progress != null) progress.onProgress(0, t.count, 0L, totalF);
         CNLog.i(TAG, "extract-start(file) file=" + archive.getName()
-                + " via=libcnzip entries=" + t.count);
+                + " via=libarchive entries=" + t.count);
         // 进度节流：03 有 11408 个条目，逐条回调会刷爆 UI 线程——
         // 每 32 条目或 200ms 才上报一次，最后一次由下方满格回调补。
         final int[] lastEntries = {0};
@@ -161,15 +161,15 @@ public final class CNArchiveInstallTx {
             // 据此转 ResetRequired 清断点重下，**不会**写 marker；若错当成普通
             // 失败抛 corrupt，取消语义就又被吞回去了。
             if (cancel != null && cancel.isCancelled()) {
-                throw new CancelledException("Extraction cancelled during libcnzip extract");
+                throw new CancelledException("Extraction cancelled during libarchive extract");
             }
-            throw corrupt("libcnzip 解压失败: " + archive.getName(), null);
+            throw corrupt("libarchive 解压失败: " + archive.getName(), null);
         }
         if (progress != null) progress.onProgress(t.count, t.count, totalF, totalF);
-        CNLog.i(TAG, "extract-complete file=" + archive.getName() + " via=libcnzip");
+        CNLog.i(TAG, "extract-complete file=" + archive.getName() + " via=libarchive");
     }
 
-    /** 旧路径：ZipFile 逐条目解压（libcnzip 不可用时的回退）。 */
+    /** 旧路径：ZipFile 逐条目解压（libarchive 不可用时的回退）。 */
     private static void extractWithZipFile(File archive, File root, File stateFile,
                                            Cancel cancel, Progress progress)
             throws IOException {

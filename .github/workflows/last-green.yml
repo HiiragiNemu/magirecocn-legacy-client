@@ -114,21 +114,27 @@ jobs:
           python3 tools/proxy-test-server.py 8791 &
           python3 tools/server.py 8388608 8779 > /tmp/resume-server.log 2>&1 &
           sleep 1
+          # 宿主 JVM 上 loadLibrary("archive") 会撞系统的 /usr/lib/libarchive.so
+          # （无 CNZipTool JNI 导出）→ CNZipTool 误判可用、解压走 native 失败。
+          # 空 java.library.path 强制 loadLibrary 失败 → 走 ZipFile 回退（宿主
+          # 本来也跑不了 Android 的 libarchive.so）。见 libcnzip→libarchive 改名。
+          mkdir -p empty-libs
+          JLIB="-Djava.library.path=empty-libs"
           for t in HotUpdateTxTest SafeLinkTest WebProxyTest ConfigGuardTest \
                    LogTest BgmLoopTest ThrottleTest FlushTest ChunkHashTest \
                    ManualRedownloadTest ArchiveInstallTxTest DownloadConcurrencyTest \
                    HotUpdateRoutingTest UiAssistStateTest DebugBridgeTest \
                    PathsTest LogFormatTest DownloadModeTest DebugOverlayTest \
                    DiskSpaceTest ZipPlanTest; do
-            java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar $t
+            java $JLIB -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar $t
           done
-          java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar ProxyFetchTest 8791
+          java $JLIB -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar ProxyFetchTest 8791
           # 分片下载/断点续传套件：打真实 HTTP 服务器（含故障注入）
           RESUME_SHA=$(awk '/payload sha256/{print $3}' /tmp/resume-server.log)
-          java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar \
+          java $JLIB -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar \
             ResumeTest "http://127.0.0.1:8779/file.bin" "$RESUME_SHA" 8388608
           # 事务分块回归：85 请求并发上限、坏块不提交、非整除布局跨重启续传
-          java -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar \
+          java $JLIB -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar \
             ChunkHashIntegrationTest "http://127.0.0.1:8779/file.bin" 8388608 98690
 
       - name: 🛡 跑全部守卫

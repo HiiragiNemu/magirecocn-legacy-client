@@ -30,7 +30,7 @@
 armed 标记留在盘上）或**加载期失败**时自动换到另一组，连续 4 次死亡后放弃、回退
 自建引擎。控制面是 loopback JSON-RPC，aria2 以线程跑在调用进程内。经
 `System.loadLibrary` 由 linker 加载（落点在只读 nativeLibraryDir），**无 exec**——
-绕开 Android 10+ 的 SELinux W^X 闸与 16KB 页对齐限制（与 libcnzip 同思路）。
+绕开 Android 10+ 的 SELinux W^X 闸与 16KB 页对齐限制（与 libarchive 同思路）。
 
 > ⚠ **许可形态变化（2026-08-16）**。旧版（转发 Zackptg5 的预编译 aria2c 可执行
 > 文件）以**独立子进程**运行，曾主张「单纯聚合、不传播 GPL」。现改**进程内 JNI
@@ -94,7 +94,7 @@ MagirecoCN-Revival-Project 索取上述对应源码的完整副本，我们按 G
 
 ---
 
-## libcnzip（`lib/arm64-v8a/libcnzip.so`、`lib/armeabi-v7a/libcnzip.so`）
+## libarchive（`lib/arm64-v8a/libarchive.so`、`lib/armeabi-v7a/libarchive.so`）
 
 | | |
 |---|---|
@@ -103,7 +103,7 @@ MagirecoCN-Revival-Project 索取上述对应源码的完整副本，我们按 G
 | 许可 | **BSD 2-Clause License**（与 GPLv3 兼容，无 copyleft / 无静态链接义务） |
 | 上游源码 | <https://github.com/libarchive/libarchive>，tag `v3.7.4` |
 | 交叉编译 | 用 Android NDK r25c 交叉编译（`CMAKE_TOOLCHAIN_FILE=android.toolchain.cmake`，`ANDROID_ABI=arm64-v8a / armeabi-v7a`），libarchive 静态链入，zlib 为构建依赖，`-static-libstdc++` 去掉 libc++_shared 依赖 |
-| sha256 | `libcnzip.so`（arm64-v8a）= `a730e1800d30b7656e36cc3c23fc69d5dd19a0a7271c547f9b8b7751720e7bc7`<br>`libcnzip.so`（armeabi-v7a）= `091e82eea67cb9dfcc50649fec91c4aa1c64d20fb6a2725990ab5c7c592ad858` |
+| sha256 | `libarchive.so`（arm64-v8a）= `a730e1800d30b7656e36cc3c23fc69d5dd19a0a7271c547f9b8b7751720e7bc7`<br>`libarchive.so`（armeabi-v7a）= `091e82eea67cb9dfcc50649fec91c4aa1c64d20fb6a2725990ab5c7c592ad858` |
 
 **用途**：解压基础资源包（zip），替代 `java.util.zip.ZipFile`。资源包含「冗余
 ZIP64」结构（普通 EOCD 自洽却多挂一个 zip64 EOCD），老设备 ZipFile 可能报

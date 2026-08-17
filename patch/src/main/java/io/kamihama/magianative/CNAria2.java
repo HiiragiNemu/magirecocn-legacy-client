@@ -27,7 +27,7 @@ import org.json.JSONObject;
  * <ul>
  *   <li><b>SELinux exec 闸</b>：app targetSdk≥29 后，Android 10+ 禁止执行应用
  *       私有目录下的二进制（error=13）。共享库走 {@code System.loadLibrary}，
- *       由 linker 放置到只读 nativeLibraryDir，完全绕开 exec（与 libcnzip 同思路）；</li>
+ *       由 linker 放置到只读 nativeLibraryDir，完全绕开 exec（与 libarchive 同思路）；</li>
  *   <li><b>16KB 页设备</b>：包内可执行文件都是 4KB 对齐，在 Android 15+ 的 16KB
  *       页设备上 error=8 起不来。libaria2c.so 按 {@code -Wl,-z,max-page-size=16384}
  *       构建，4KB/16KB 通吃；</li>

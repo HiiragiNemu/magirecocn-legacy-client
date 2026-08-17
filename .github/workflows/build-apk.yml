@@ -304,7 +304,7 @@ jobs:
         run: |
           python3 tools/check-native-string-layout.py
           python3 tools/test-check-native-string-layout.py
-          # libcnzip「源码修复 ⇄ shipped 二进制」漂移守卫（补丁 19）：源码防护
+          # libarchive「源码修复 ⇄ shipped 二进制」漂移守卫（补丁 19）：源码防护
           # 缺失 FAIL；archive_jni.cpp 仍不在 CMake 编译目标则 WARN「修复未进
           # 二进制」，每构建必现，不许漂移被遗忘。
           python3 tools/check-cnzip-guards.py
@@ -657,7 +657,7 @@ jobs:
           # 否则 dlopen 只在真机启动那一刻才失败，静态自检全都发现不了
           python3 tools/check-so-deps.py "$APK"
           # F-F-07：重链/新编的 arm64 库必须满足 16KB 页对齐（Android 15+ 上
-          # 不满足直接 dlopen 失败）。libcnzip 预编译违例由脚本内排除并留痕，
+          # 不满足直接 dlopen 失败）。libarchive 预编译违例由脚本内排除并留痕，
           # 其余库（libMagiaLegacy / libaria2c）违例一票否决。
           python3 tools/check-so-alignment.py
           # 包里的 .so 与补丁类必须都是这次构建的产物。踩过两次「编译了却没进包」：

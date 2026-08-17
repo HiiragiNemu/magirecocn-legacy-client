@@ -14,7 +14,7 @@
  * 为什么是进程内 JNI（与 exec 二进制的区别）：
  *  1) SELinux exec 闸（targetSdk>=29 时 untrusted_app 不得执行 app_data_file）；
  *  2) 打包 aria2c 二进制的 16KB 页对齐问题（p_align=0x1000 在 Android 15+ 16KB
- *     设备上起不来）。共享库由 linker 加载，两个都绕开（与 libcnzip 同思路）。
+ *     设备上起不来）。共享库由 linker 加载，两个都绕开（与 libarchive 同思路）。
  *
  * 历史：最早一版 JNI（libaria2.so）把 OpenSSL 符号以 GLOBAL + JUMP_SLOT 暴露，
  * 被进程内其他 libssl/libcrypto 抢占污染而崩。本构建做彻底符号卫生（导出仅 4 个

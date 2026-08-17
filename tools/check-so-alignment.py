@@ -7,9 +7,9 @@ p_align >= 0x4000 且 p_vaddr 与 p_offset 对 p_align 同余；不满足的库�
 16KB 页内核上直接拒绝加载（dlopen 失败）。armeabi-v7a（32 位）不在此要求
 范围内（16KB 页配置只针对 64 位内核），故本脚本只查 arm64-v8a。
 
-现行 libcnzip.so（预编译）四段违例——这正是「重链时加
--Wl,-z,max-page-size=16384」的依据。本脚本钉死这条红线：重链产物必须
-通过本校验才允许入库。
+libarchive.so（libarchive 3.7.4 重建版）已按
+-Wl,-z,max-page-size=16384 重链；本脚本钉死这条红线：任何入库的
+arm64 库都必须满足对齐，违例一票否决。
 
 用法：python3 tools/check-so-alignment.py [lib/arm64-v8a]
 退出码：0 = 全部合格；1 = 存在违例。
@@ -52,36 +52,22 @@ def check_so(path):
     return errs
 
 
-# 已知违例、待重链的库：放行并留痕，不允许默默从磁盘上消失。
-# 目前只有 libcnzip.so（预编译二进制，重链时需加
-# -Wl,-z,max-page-size=16384）。它由 check-cnzip-guards.py 单独跟踪
-# 「修复未进二进制」的状态；本脚本排除它，是为了让**重链/新编**的库
-# （libMagiaLegacy / libaria2c）的违例仍能一票否决 CI。
-KNOWN_UNALIGNED = {"libcnzip.so": "预编译二进制，待重链（见 check-cnzip-guards.py）"}
-
-
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 else 'lib/arm64-v8a'
     all_errs = []
-    skipped = []
     checked = 0
     for dirpath, _dirs, files in os.walk(root):
         for name in sorted(files):
             if not name.endswith('.so'):
-                continue
-            if name in KNOWN_UNALIGNED:
-                skipped.append(name)
                 continue
             checked += 1
             all_errs.extend(check_so(os.path.join(dirpath, name)))
     for e in all_errs:
         print('✗', e)
     if all_errs:
-        print(f"\n{len(all_errs)} 处 16KB 对齐违例（{checked} 个已检查库）。"
+        print(f"\n{len(all_errs)} 处 16KB 对齐违例（{checked} 个库）。"
               "重链请加 -Wl,-z,max-page-size=16384。")
         return 1
-    for name in skipped:
-        print(f"↷ {name}：已排除（{KNOWN_UNALIGNED[name]}）")
     print(f"✓ {checked} 个 arm64 库 LOAD 段全部满足 16KB 页对齐")
     return 0
 
