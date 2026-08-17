@@ -37,13 +37,13 @@ jobs:
       - name: 📥 下载 libarchive + zlib 源码
         run: |
           set -euo pipefail
+          # zlib 的 release 资产名是 zlib-1.3.1.tar.gz（tag 是 v1.3.1，资产不带 v）
+          LA_VER="${{ github.event.inputs.libarchive_tag }}"; LA_VER="${LA_VER#v}"
+          ZL_VER="${{ github.event.inputs.zlib_tag }}"; ZL_VER="${ZL_VER#v}"
           curl -sSL -o libarchive.tar.gz \
             "https://github.com/libarchive/libarchive/archive/refs/tags/${{ github.event.inputs.libarchive_tag }}.tar.gz"
           curl -sSL -o zlib.tar.gz \
-            "https://github.com/madler/zlib/releases/download/${{ github.event.inputs.zlib_tag }}/zlib-${{ github.event.inputs.zlib_tag }}.tar.gz"
-          # libarchive tag 形如 v3.7.4 → 目录 libarchive-3.7.4
-          LA_VER="${{ github.event.inputs.libarchive_tag }}"; LA_VER="${LA_VER#v}"
-          ZL_VER="${{ github.event.inputs.zlib_tag }}"; ZL_VER="${ZL_VER#v}"
+            "https://github.com/madler/zlib/releases/download/${{ github.event.inputs.zlib_tag }}/zlib-${ZL_VER}.tar.gz"
           tar xzf libarchive.tar.gz && mv "libarchive-${LA_VER}" libarchive-src
           tar xzf zlib.tar.gz && mv "zlib-${ZL_VER}" zlib-src
           echo "LIBARCHIVE_SRC=$PWD/libarchive-src" >> "$GITHUB_ENV"
