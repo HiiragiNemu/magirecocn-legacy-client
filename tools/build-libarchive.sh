@@ -69,13 +69,17 @@ build_abi() {
         -DENABLE_PCREPOSIX=OFF -DENABLE_PCRE2POSIX=OFF -DENABLE_CNG=OFF -DENABLE_LIBGCC=OFF \
         -DPOSIX_REGEX_LIB=NONE
     run_log "$OUT/libarchive-$abi-build.log" cmake --build "cmake-$abi" --target archive_static -j"$NPROC"
-    echo "  ✓ libarchive.a"
+    # archive_static 的输出路径随 CMake 目录结构走，不固定在 build 根——find 定位。
+    local LA_STATIC
+    LA_STATIC="$(find "cmake-$abi" -name 'libarchive.a' | head -1)"
+    [ -n "$LA_STATIC" ] || { echo "✗ 找不到 libarchive.a"; exit 1; }
+    echo "  ✓ libarchive.a ($LA_STATIC)"
 
     # ── 3. JNI 包装 → libarchive.so ──
     echo "── 链接 libarchive.so ($abi)"
     "$clang" -shared -fPIC -O2 -std=c++17 \
         "$WRAPPER" \
-        "cmake-$abi/libarchive.a" "$PREFIX/lib/libz.a" \
+        "$LA_STATIC" "$PREFIX/lib/libz.a" \
         -I "cmake-$abi" -I "$SRC_LA/libarchive" -I "$PREFIX/include" \
         -Wl,--no-undefined -Wl,--build-id=sha1 -Wl,-z,relro,-z,now \
         -Wl,-z,max-page-size=16384 \
