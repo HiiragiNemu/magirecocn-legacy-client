@@ -33,25 +33,19 @@ NPROC=$(nproc)
 OUT="$(pwd)/out"
 export PATH="$TC:$PATH"
 
-run_log() { # run_log <log> <cmd...> —— 后台跑，期间每 15s 打一行心跳。
-    # 长命令（make 等）动辄几分钟，前台跑对 CI 用户是「卡死」没反馈；后台跑
-    # 每 15s 报一次进度（已运行秒数 + 日志大小），失败仍打日志尾部并退出。
+run_log() { # run_log <log> <cmd...> —— 输出实时 tee 到 stdout 并落盘。
+    # libMagiaLegacy 构建（build-apk.yml）就是直接跑 cmake、输出实时可见；
+    # 这里同样把 configure/make 的每一行 tee 出来，CI 用户能看到构建在动，
+    # 不再是「卡死无反馈」。日志文件照旧落盘（refresh_repo / 排障用）。
+    # 脚本 set -o pipefail，命令失败会进失败分支。
     local log="$1"; shift
     local label="$(basename "$log" .log)"
-    "$@" >"$log" 2>&1 &
-    local pid=$!
-    local start=$SECONDS
-    while kill -0 "$pid" 2>/dev/null; do
-        sleep 15
-        echo "  · $label 运行中 $((SECONDS-start))s（日志 $(stat -c%s "$log" 2>/dev/null || echo 0) 字节）"
-    done
-    wait "$pid" || {
+    if ! "$@" 2>&1 | tee "$log"; then
         echo "✗ $label 失败：$*"
-        echo "── 日志（$log）──"
+        echo "── 日志尾部（$log）──"
         tail -60 "$log"
         exit 1
-    }
-    echo "  ✓ $label 完成（$((SECONDS-start))s）"
+    fi
 }
 
 # autotools 交叉编译封装：env 干净、-fPIC、装到 PREFIX。
