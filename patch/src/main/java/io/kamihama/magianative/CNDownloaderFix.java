@@ -382,9 +382,15 @@ public final class CNDownloaderFix {
                         // WebView 远程调试（实证手段 F）：开 useWebviewDebug 后
                         // chrome://inspect 可连本进程看 WebView 网络面板（method/URL/WS）。
                         // 静态方法全局生效，只需在 WebView 创建前调一次。
+                        // ⚠ 必须 try/catch 隔离：部分设备上该调用会触发 WebView provider
+                        // 初始化并抛异常，裸调会中断本方法（启动链），下载浮层随之消失。
                         if (CNDebugFlags.isOn(CNDebugFlags.USE_WEBVIEW_DEBUG)) {
-                            android.webkit.WebView.setWebContentsDebuggingEnabled(true);
-                            CNLog.i(TAG, "调试开关 useWebviewDebug 生效，WebView 远程调试已开启");
+                            try {
+                                android.webkit.WebView.setWebContentsDebuggingEnabled(true);
+                                CNLog.i(TAG, "调试开关 useWebviewDebug 生效，WebView 远程调试已开启");
+                            } catch (Throwable t) {
+                                CNLog.w(TAG, "启用 WebView 远程调试失败（不影响下载流程）", t);
+                            }
                         }
 
                         File finalFlag = new File(FINAL_FLAG);
