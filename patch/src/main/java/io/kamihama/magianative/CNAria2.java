@@ -85,6 +85,17 @@ public final class CNAria2 {
     private static volatile boolean initDone;
     private static volatile boolean available;
 
+    // ── keep-alive 会话（2026-08-18）──
+    // aria2 的进程内接口不支持同一进程重复执行 reqinfo->execute()：第二次
+    // execute 会踩 OptionParser 全局单例的 use-after-free（memcmp 崩，
+    // 复现 APK 的 A1→A2→A1 序列实锤）。所以**一个进程只允许一个 aria2 会话**：
+    // 首次启动后跨下载复用，线程死了绝不重启（重启=第二次 execute=崩），
+    // 直接让位主引擎。这是 aria2 的设计用法（RPC 守护进程）。
+    private static volatile int sPort;
+    private static volatile String sSecret;
+    private static volatile boolean sServerUp;        // 本进程会话活着（线程在 + RPC 可及）
+    private static volatile boolean sSessionStarted;  // 本进程是否已起过会话（起过就不能再起）
+
     private CNAria2() {}
 
     /**
@@ -150,15 +161,6 @@ public final class CNAria2 {
             CNLog.w(TAG, "已有下载在跑（busy），拒绝并发");
             return ERR_BUSY;
         }
-        // 会话句柄（F-A-05）：aria2 线程一旦 start 成功，本方法的**每一个**
-        // 出口——早退、取消、异常——都必须给它一次 RPC 优雅关停。只靠
-        // waitStopped 干等是没用的：没有任何人让 aria2 停，线程会一直挂着
-        // 监听 RPC 端口，本进程后续每次 CNAria2Lib.start() 都拿 -1
-        // （「已有实例运行」），备用引擎就此永久报废。livePort=0 /
-        // liveSecret=null 表示「会话还没起」，shutdownAria2 会跳过 RPC、
-        // 只做一次 waitStopped 快查。
-        int livePort = 0;
-        String liveSecret = null;
         try {
             if (url == null || url.isEmpty() || outName == null) return ERR_ADD;
             if (!isAvailable()) {
@@ -169,57 +171,67 @@ public final class CNAria2 {
             int maxC = (maxConns > 0 && maxConns <= 16) ? maxConns : 8;
             File ariaDir = new File(CNPaths.filesDir(), "aria2");
 
-            int port = 16000 + (int) (Math.random() * 7000); // 16000-22999
-            // RPC 只听 127.0.0.1，但**同机的其它应用照样够得着**，挡住它们的
-            // 只有这个 token。Math.random() 不是密码学随机源，而且只有 31 位——
-            // 猜中就等于拿到一个能以本应用身份往私有目录里写文件的下载器
-            // （dir/out 都是 RPC 参数），随后正是安装器要去解压的地方。
-            String secret = "cn" + Long.toHexString(
-                    new java.security.SecureRandom().nextLong() & 0x7fffffffffffffffL);
+            // ── 会话：启动一次，跨下载复用（keep-alive，2026-08-18）──
+            // aria2 进程内接口不支持同一进程重复 execute（第二次 execute 踩
+            // OptionParser 全局单例 UAF 崩，复现 APK A1→A2→A1 实锤）。所以
+            // 会话活着就复用；死了**绝不重启**（重启=第二次 execute=崩），
+            // 直接让位主引擎。本方法因此不再在出口关停会话——线程一直挂着做
+            // RPC 守护，随进程退出一起消失，死生状由 Aria2EngineFailover 处理。
+            if (!sServerUp || !CNAria2Lib.isRunning()) {
+                if (sSessionStarted) {
+                    CNLog.w(TAG, "aria2 会话已在本进程结束，不再重启（二次 execute 会崩），回退主引擎");
+                    return ERR_INIT;
+                }
+                int port = 16000 + (int) (Math.random() * 7000); // 16000-22999
+                // RPC 只听 127.0.0.1，但**同机的其它应用照样够得着**，挡住它们的
+                // 只有这个 token。Math.random() 不是密码学随机源，而且只有 31 位——
+                // 猜中就等于拿到一个能以本应用身份往私有目录里写文件的下载器
+                // （dir/out 都是 RPC 参数），随后正是安装器要去解压的地方。
+                String secret = "cn" + Long.toHexString(
+                        new java.security.SecureRandom().nextLong() & 0x7fffffffffffffffL);
 
-            List<String> args = new ArrayList<>();
-            args.add("--enable-rpc");
-            args.add("--rpc-listen-port=" + port);
-            args.add("--rpc-listen-all=false");
-            args.add("--rpc-secret=" + secret);
-            args.add("--async-dns");
-            // Android 8+ 没有 /etc/resolv.conf，进程内 aria2 用 bionic getaddrinfo
-            // （Kimi 构建已说明不用 c-ares），DNS 由系统解析。
-            args.add("--file-allocation=none");   // 1.3GB 文件 prealloc 会坑闪存
-            args.add("--allow-overwrite=true");
-            args.add("--continue=true");          // 断点续传：目标旁有 .aria2 控制文件就续，没有就从头
-            args.add("--auto-file-renaming=false");
-            args.add("--no-conf");
-            args.add("--daemon=false");
-            args.add("--log-level=warn");
-            args.add("--log=" + new File(CNPaths.filesDir(), "aria2").getAbsolutePath()
-                    + "/aria2.log");
+                List<String> args = new ArrayList<>();
+                args.add("--enable-rpc");
+                args.add("--rpc-listen-port=" + port);
+                args.add("--rpc-listen-all=false");
+                args.add("--rpc-secret=" + secret);
+                // ⚠ 别加 --async-dns：那是 ENABLE_ASYNC_DNS 条件编译选项，本构建
+                // 无 c-ares 时未注册，传了 option_processing 直接失败（基线胶水
+                // Context(true) 因此 exit() 杀进程 = 2026-08-18「打开就闪退」根因）。
+                // DNS 由 bionic getaddrinfo 系统解析，本来也不需要它。
+                args.add("--file-allocation=none");   // 1.3GB 文件 prealloc 会坑闪存
+                args.add("--allow-overwrite=true");
+                args.add("--continue=true");          // 断点续传：目标旁有 .aria2 控制文件就续，没有就从头
+                args.add("--auto-file-renaming=false");
+                args.add("--no-conf");
+                args.add("--daemon=false");
+                args.add("--log-level=warn");
+                args.add("--log=" + new File(CNPaths.filesDir(), "aria2").getAbsolutePath()
+                        + "/aria2.log");
 
-            // 进程内 JNI 启动 aria2 线程（libaria2c.so），替代 exec 子进程：
-            // 绕开 SELinux exec 闸 + 16KB 页对齐，且符号卫生避免 OpenSSL 抢占崩溃。
-            // 立「生死状」：若 native 崩溃，armed 标记留在盘上，下次启动
-            // Aria2EngineFailover 读到就换后端（openssl ↔ gnutls）。
-            Aria2EngineFailover.arm();
-            int startRc = CNAria2Lib.start(args.toArray(new String[0]));
-            if (startRc != 0) {
-                // 出口归属：会话没起来，无需关停；finally 只走 waitStopped 快查。
-                CNLog.w(TAG, "libaria2c 启动失败 rc=" + startRc);
-                return ERR_INIT;
+                // 进程内 JNI 启动 aria2 线程（libaria2c.so），替代 exec 子进程：
+                // 绕开 SELinux exec 闸 + 16KB 页对齐，且符号卫生避免 OpenSSL 抢占崩溃。
+                // 立「生死状」：若 native 崩溃，armed 标记留在盘上，下次启动
+                // Aria2EngineFailover 读到就换后端（openssl ↔ gnutls）。
+                Aria2EngineFailover.arm();
+                int startRc = CNAria2Lib.start(args.toArray(new String[0]));
+                sSessionStarted = true;   // 起过一次就不能再起（二次 execute 会崩）
+                if (startRc != 0) {
+                    CNLog.w(TAG, "libaria2c 启动失败 rc=" + startRc);
+                    return ERR_INIT;
+                }
+                if (!waitRpc(port, secret, cancel)) {
+                    CNLog.w(TAG, "aria2c RPC 未就绪（进程可能已退出）");
+                    return ERR_INIT;
+                }
+                sPort = port;
+                sSecret = secret;
+                sServerUp = true;
+                CNLog.i(TAG, "aria2 RPC 会话就绪 port=" + port + "（keep-alive，跨下载复用）");
             }
-            // 会话自此活着：把句柄交给 finally——此后任何 return/throw 出口
-            // 都会先拿到一次 RPC shutdown，再 waitStopped 等它落地。
-            livePort = port;
-            liveSecret = secret;
-
-            if (!waitRpc(port, secret, cancel)) {
-                CNLog.w(TAG, "aria2c RPC 未就绪（进程可能已退出）");
-                // 出口归属：本路径就地关停（RPC 多半还没就绪，shutdown 发不
-                // 出去也无妨，waitStopped 兜底）；句柄清零后 finally 退化为快查。
-                shutdownAria2(port, secret);
-                livePort = 0;
-                liveSecret = null;
-                return ERR_INIT;
-            }
+            // 复用会话句柄
+            int port = sPort;
+            String secret = sSecret;
 
             // addUri 下发（dir/out/header/连接数放 per-uri 选项；CLI 只留 daemon）
             JSONObject opt = new JSONObject();
@@ -257,24 +269,24 @@ public final class CNAria2 {
                 ensureCacerts(ariaDir);
             }
             if (!cacerts.isFile() || cacerts.length() <= 0) {
-                // 出口归属：会话关停由 finally 凭 livePort/liveSecret 兜底
-                // （RPC 优雅关停），此处直接 return 即可。
                 CNLog.w(TAG, "拼不出 CA 证书桶，aria2 放弃本次下载（回退主引擎做完整 TLS 校验）");
                 return ERR_INIT;
             }
             opt.put("ca-certificate", cacerts.getAbsolutePath());
+            // 每次下载前立「生死状」：keep-alive 会话跨下载常驻，原生崩溃的
+            // 死生标记按**下载窗口**记——本次下载没把进程炸死，finally 的
+            // disarm 就清掉；炸死了标记留在盘上，下次启动换后端。
+            Aria2EngineFailover.arm();
             JSONArray uris = new JSONArray();
             uris.put(url);
 
             JSONObject addRes = rpc(port, secret, "aria2.addUri", uris, opt);
             if (addRes == null || addRes.optJSONObject("error") != null) {
-                // 出口归属：会话关停由 finally 凭 livePort/liveSecret 兜底。
                 CNLog.w(TAG, "aria2.addUri 失败: " + (addRes == null ? "无响应" : addRes.toString()));
                 return ERR_ADD;
             }
             String gid = addRes.optString("result", "");
             if (gid.isEmpty()) {
-                // 出口归属：同上，会话关停走 finally。
                 CNLog.w(TAG, "aria2.addUri 未返回 gid");
                 return ERR_ADD;
             }
@@ -290,6 +302,7 @@ public final class CNAria2 {
                 }
                 if (!CNAria2Lib.isRunning()) {
                     CNLog.w(TAG, "aria2c 进程内线程意外退出: " + outName);
+                    sServerUp = false;   // 会话死了；sSessionStarted 保持 true → 本进程不再重启
                     result = ERR_RUN;
                     break;
                 }
@@ -328,35 +341,34 @@ public final class CNAria2 {
                     result = ERR_DOWNLOAD;
                 }
             }
-            // 正常路径的出口归属：就地 RPC 优雅关停 aria2 并把句柄清零，
-            // finally 随之退化为 waitStopped 快查。历史上 finally 的兜底是
-            // shutdownAria2(0, null)——port=0 跳过 RPC，没人让 aria2 停，
-            // 线程一直挂着，下一次 download 直接撞「已有实例运行」；现在兜底
-            // 拿着活句柄，早退/异常出口同样能优雅关停。
-            shutdownAria2(port, secret);
-            livePort = 0;
-            liveSecret = null;
+            // 出口：**不关停会话**（keep-alive，2026-08-18）。会话跨下载常驻，
+            // 随进程退出一起消失；死生状由 finally 按本次下载窗口 disarm。
             return result;
         } catch (Throwable t) {
-            // 出口归属：会话关停由 finally 凭 livePort/liveSecret 兜底。
             CNLog.w(TAG, "aria2 进程内异常: " + t);
             return ERR_OTHER;
         } finally {
-            // 统一会话出口（F-A-05）：只要 aria2 线程 start 成功过
-            // （livePort > 0），无论从哪个 return/catch 出来，都在这里补一次
-            // RPC 优雅关停 + waitStopped；已在路径上就地关停过的出口把
-            // livePort 清了零，本调用退化为一次 waitStopped 快查，幂等无害。
-            shutdownAria2(livePort, liveSecret);
-            // 进程活到这里 = 后端没把进程炸死，清除 armed 标记（下轮沿用当前后端）。
-            // 若 native 崩溃（SIGSEGV/SIGABRT），finally 根本来不及跑，标记留在盘上
-            // → 下次启动 Aria2EngineFailover.pickBackend() 读到就换组。
+            // 进程活到这里 = 本次下载后端没把进程炸死，清除 armed 标记。
+            // 若 native 崩溃（SIGSEGV/SIGABRT），finally 根本来不及跑，标记留在
+            // 盘上 → 下次启动 Aria2EngineFailover.pickBackend() 读到就换组。
             Aria2EngineFailover.disarm();
+            // 会话死亡（线程意外退出）时置 sServerUp=false 已在下载循环里做过；
+            // 这里兜底再查一次（覆盖取消/早退等出口），保证本进程不会再去重启
+            // 一个已死的 aria2（重启 = 第二次 execute = 崩）。
+            if (sServerUp && !CNAria2Lib.isRunning()) {
+                sServerUp = false;
+                CNLog.w(TAG, "aria2 会话线程已退出，本次进程标记不可再用");
+            }
             inUse.set(false);
         }
     }
 
     /**
-     * 关闭进程内 aria2 线程。优先 RPC shutdown（优雅），失败则 waitStopped 兜底。
+     * 关闭进程内 aria2 会话。keep-alive（2026-08-18）之后正常下载流程**不再调用**
+     * 本方法——会话跨下载常驻、随进程退出消失。本方法保留给未来显式关停场景
+     * （app 退出前收尾 / 维护者需要主动换组），调用后进程内会话即告结束，
+     * 本进程后续 download() 会因 {@code sSessionStarted} 不再重启 aria2。
+     * 优先 RPC shutdown（优雅），失败则 waitStopped 兜底。
      * {@code port/secret} 传 0/null 时跳过 RPC（例如启动失败、从未拿到端口）。
      */
     private static void shutdownAria2(int port, String secret) {
