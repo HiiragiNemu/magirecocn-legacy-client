@@ -23,14 +23,22 @@ jobs:
       - name: 📦 检出仓库
         uses: actions/checkout@v4
 
-      - name: 📍 定位 NDK（打印版本 + 期望 WARN）
+      - name: 📍 钉死 NDK r25c（与 main 主机验证配方完全一致）
+        # runner 自带 NDK 已漂到 r26+：verify_so 的 armv7 校验读 r25c 专属
+        # stub 路径（sysroot/usr/lib/arm-linux-androideabi/21），版本不对会在
+        # 最后一刻误报；且哈希必变。setup-ndk 显式装 r25c 一劳永逸。
+        uses: android-ndk/setup-ndk@v2
+        with:
+          ndk-version: r25c
+
+      - name: 📍 复核 NDK（版本非 r25c 即 fail，杜绝静默漂移）
         run: |
           echo "NDK=${ANDROID_NDK_HOME}" >> "$GITHUB_ENV"
           NDK_VER="$(sed -n 's/^Pkg.Revision = //p' "${ANDROID_NDK_HOME}/source.properties" 2>/dev/null || echo unknown)"
           echo "NDK 实际版本: ${NDK_VER}"
           case "${NDK_VER}" in
             25.*) ;;  # 原配方取证值：r25c（clang 14.0.7）
-            *) echo "::warning::NDK ${NDK_VER} ≠ 原配方 r25c 系——能构建但产物哈希必变，入库前必须重做二进制取证与真机验证" ;;
+            *) echo "::error::NDK ${NDK_VER} ≠ r25c——verify_so 的 stub 路径依赖 r25c 布局，拒绝构建" && exit 1 ;;
           esac
 
       - name: 📥 下载 9 个源码 tarball 并 sha256 硬校验
