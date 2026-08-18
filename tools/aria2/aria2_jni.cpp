@@ -95,6 +95,7 @@ static void* logReader(void* arg) {
     if (n < 0 && errno == EINTR) continue; // 信号打断：续读，绝不提前退出
     break;                                  // EOF（0）或硬错误
   }
+  close(fd); // 读端自持自清（本线程绝不 join reader，见下方注释）
   return nullptr;
 }
 
@@ -103,21 +104,33 @@ void* aria2ThreadMain(void* opaque) {
   int rc;
   int pipefd[2] = {-1, -1};
   int saved_out = -1, saved_err = -1;
-  pthread_t reader{};
   bool forwarding = false;
-  if (pipe(pipefd) == 0 &&
-      pthread_create(&reader, nullptr, logReader,
-                     reinterpret_cast<void*>(static_cast<intptr_t>(pipefd[0]))) == 0) {
-    saved_out = dup(1);
-    saved_err = dup(2);
-    if (saved_out >= 0 && saved_err >= 0) {
-      dup2(pipefd[1], 1);
-      dup2(pipefd[1], 2);
-      close(pipefd[1]);
-      forwarding = true;
+  // fd 归属：pipefd[0]（读端）归 logReader，自持自清；pipefd[1]（写端）归本线程，
+  // 重定向就绪/放弃后即关。reader 用 pthread_detach、**绝不 join**：
+  // join 依赖「写端全关→EOF」，若进程里有其它 fd 恰好 dup 了 stdout/stderr 并
+  // 指向同一 pipe 描述，EOF 永不发生，join 永久挂死（下载引擎最怕的故障形态）。
+  // detached 后最坏是 reader 停在 read() 上，等那条 stray dup 在进程退出时关闭、
+  // pipe 写端计数归零才退——不占 CPU、不占 fd。
+  if (pipe(pipefd) == 0) {
+    pthread_t reader{};
+    if (pthread_create(&reader, nullptr, logReader,
+                       reinterpret_cast<void*>(static_cast<intptr_t>(pipefd[0]))) == 0) {
+      pthread_detach(reader);
+      saved_out = dup(1);
+      saved_err = dup(2);
+      if (saved_out >= 0 && saved_err >= 0) {
+        dup2(pipefd[1], 1);
+        dup2(pipefd[1], 2);
+        close(pipefd[1]); // 写端唯一引用只剩 fd 1/2
+        forwarding = true;
+      } else {
+        // 转发没建起来：关写端让 reader EOF 退出（读端归它自清）
+        if (saved_out >= 0) close(saved_out);
+        if (saved_err >= 0) close(saved_err);
+        close(pipefd[1]);
+      }
     } else {
-      if (saved_out >= 0) close(saved_out);
-      if (saved_err >= 0) close(saved_err);
+      // reader 没起来：两个端都归本线程，直接关
       close(pipefd[0]);
       close(pipefd[1]);
     }
@@ -152,9 +165,8 @@ void* aria2ThreadMain(void* opaque) {
     dup2(saved_err, 2);
     close(saved_out);
     close(saved_err);
-    // fd1/2 还原后 pipe 写端无引用 → reader 读到 EOF 退出
-    pthread_join(reader, nullptr);
-    close(pipefd[0]);
+    // fd1/2 还原后 pipe 写端无引用 → reader 读到 EOF 自退（已 detached，无需 join；
+    // pipefd[0] 归它自清，本线程不碰）
   }
 
   pthread_mutex_lock(&gMu);
