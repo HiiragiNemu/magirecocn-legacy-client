@@ -483,8 +483,30 @@ public final class CNWebProxy {
         private final WebViewClient orig;
         Delegating(WebViewClient o) { this.orig = o; }
 
+        // ── WebView 请求日志（无电脑实证手段）：logWebviewRequests 开关下，把
+        // shouldInterceptRequest 看到的每个请求 method+URL 记进 CNLog。去重防页面
+        // 子资源（CSS/JS/图）刷屏。看不到 WebSocket（Chromium 内部不经过这里）。──
+        private static final java.util.Set<String> sLoggedWebRequests = new java.util.HashSet<>();
+
+        private static void logWebRequest(WebResourceRequest req) {
+            try {
+                if (!CNDebugFlags.isOn(CNDebugFlags.LOG_WEBVIEW_REQUESTS)) return;
+                String url = req.getUrl().toString();
+                String key = req.getMethod() + " " + url;
+                synchronized (sLoggedWebRequests) {
+                    if (sLoggedWebRequests.size() > 2000) sLoggedWebRequests.clear();
+                    if (!sLoggedWebRequests.add(key)) return;
+                }
+                String shown = url.length() > 220 ? url.substring(0, 220) + "…" : url;
+                CNLog.i("WebReq", req.getMethod() + " " + shown);
+            } catch (Throwable t) {
+                // 日志绝不能碰断请求链
+            }
+        }
+
         @Override
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest req) {
+            logWebRequest(req);
             // 第一步永远是原对象：本地文件拦截的语义一个字节都不改
             WebResourceResponse local;
             try {

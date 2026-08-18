@@ -2210,6 +2210,7 @@ public final class CNDebugOverlay {
             { "useAria2", GROUP_B },
             { "useSingleThread", GROUP_B },
             { "useWebviewDebug", GROUP_B },
+            { "logWebviewRequests", GROUP_B },
             { "skipWebProxy", GROUP_B },
             { "noProxyEndpoint", GROUP_B },
             { "noHttp2Bump", GROUP_B },
@@ -2457,7 +2458,12 @@ public final class CNDebugOverlay {
             { "useWebviewDebug",
               "开启 WebView 远程调试：Chrome 打开 chrome://inspect 连上游戏进程，"
               + "网络面板可见每个请求的 method/URL 与 WebSocket 帧——排查「连不上/慢」"
-              + "在哪一环的实证手段。",
+              + "在哪一环的实证手段。需要电脑。",
+              ADVICE_KEEP_OFF, null },
+            { "logWebviewRequests",
+              "应用内 WebView 请求日志（method+URL，去重）：无电脑的实证手段，"
+              + "日志面板/分享包直接看前端 API 走哪个 host/base、GET 还是 POST。"
+              + "看不到 WebSocket。",
               ADVICE_KEEP_OFF, null },
             { "skipWebProxy",
               "游戏内网页本有个前台接待帮忙中转；这个开关 = 跳过前台自己直连。网页打不开时，"
