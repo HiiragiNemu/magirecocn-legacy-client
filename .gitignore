@@ -8,6 +8,14 @@ dist/
 *.dex
 *.class
 
+# 重建 workflow（build-aria2 / build-libarchive）：下载的源码、tarball 与构建产物
+out/
+*-src/
+build-*-*/
+cmake-*/
+*.tar.gz
+*.tar.xz
+
 # tools/ 下测试套件跑出来的临时工作目录（跑完即删，不入库）
 work/
 hot/

@@ -149,6 +149,12 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config core.hooksPath tools/githooks
           git add lib/ THIRD-PARTY-NOTICES.md
+          # 可复现构建时新产物可能与入库一致（同一 NDK/路径/源码），此时没有
+          # 可提交的变更——跳过提交，别让 no-op 把 CI 变红。
+          if git diff --cached --quiet; then
+            echo "✓ 无变化（产物与入库一致），跳过提交"
+            exit 0
+          fi
           git diff --cached --stat
           git commit -m "$(cat <<'EOF'
           build(native): CI 重建 aria2 双后端 .so 并刷新 sha256 pin（refresh_repo）
