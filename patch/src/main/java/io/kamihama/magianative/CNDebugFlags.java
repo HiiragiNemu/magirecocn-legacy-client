@@ -117,9 +117,8 @@ public final class CNDebugFlags {
     private static final String DEBUG_DIR = CNPaths.privDir() + "/debug";
 
     // ── skipXxx：启动链上每一步各一个（顺序即启动顺序）────────────────
-    /** `CNWebProxy.install()` 装载 WebView 拦截层代理。默认不装（网页直连），
-     *  排查网页打不开/中转问题时才开。 */
-    public static final String USE_WEB_PROXY       = "useWebProxy";
+    /** `CNWebProxy.install()` 不装 WebView 拦截层代理，一律透传直连。 */
+    public static final String SKIP_WEB_PROXY      = "skipWebProxy";
     /** `CNDownloaderFix.runInstaller()` 不跑首次安装（资源缺失时会停在浮层）。 */
     public static final String SKIP_INSTALLER      = "skipInstaller";
     /** `CNCNDownloadUI.show()` 不显示浮层，连带不下发 native 的引擎闸门标记。 */
@@ -169,7 +168,7 @@ public final class CNDebugFlags {
     public static final long SLOW_INJECT_MS = 9000L;
 
     private static final String[][] KNOWN = {
-        { USE_WEB_PROXY,        "装载 WebView 拦截层代理（默认不装，网页直连）" },
+        { SKIP_WEB_PROXY,       "不装 WebView 拦截层代理，一律透传直连" },
         { SKIP_INSTALLER,       "不跑首次安装（资源缺失时会停在浮层）" },
         { SKIP_OVERLAY,         "不显示浮层（连带不下发 native 引擎闸门标记）" },
         { SKIP_VERSION_CHECK,   "不查客户端版本，不弹强制更新框" },

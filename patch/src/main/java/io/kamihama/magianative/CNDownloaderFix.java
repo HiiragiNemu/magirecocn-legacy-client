@@ -378,11 +378,7 @@ public final class CNDownloaderFix {
                         // 本身只是起一个守护线程等 WebView，不依赖任何前置状态；
                         // 真正走不走代理由 config.json 的 proxy.web_mode 决定，
                         // 而配置由 CNMirrors.refresh 下发——两条路都会调它。
-                        // ⚠ 默认不装（2026-08-18）：WebProxy 拦截层改成调试开关
-                        // 显式开启才装载（USE_WEB_PROXY），平时网页直连。
-                        if (CNDebugFlags.isOn(CNDebugFlags.USE_WEB_PROXY)) {
-                            CNWebProxy.install();
-                        }
+                        CNWebProxy.install();
 
                         File finalFlag = new File(FINAL_FLAG);
                         // 无论资源装没装完，都先查客户端版本：最需要强更的恰恰是

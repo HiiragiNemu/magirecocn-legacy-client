@@ -2209,7 +2209,7 @@ public final class CNDebugOverlay {
             // B 下载与网络（5）
             { "useAria2", GROUP_B },
             { "useSingleThread", GROUP_B },
-            { "useWebProxy", GROUP_B },
+            { "skipWebProxy", GROUP_B },
             { "noProxyEndpoint", GROUP_B },
             { "noHttp2Bump", GROUP_B },
             // C 汉化与文本（7）
@@ -2453,9 +2453,9 @@ public final class CNDebugOverlay {
               + "那种情况下多线程怎么重试都是一样的失败。",
               ADVICE_KEEP_OFF, "下载会明显变慢，但不会失败得更多。"
               + "平时下载失败弹窗里也能选，不必特地来这里开。" },
-            { "useWebProxy",
-              "默认不装 WebView 拦截层代理（网页直连）；开着才装载代理层。网页打不开时，"
-              + "用来排查是不是中转环节的问题。",
+            { "skipWebProxy",
+              "游戏内网页本有个前台接待帮忙中转；这个开关 = 跳过前台自己直连。网页打不开时，"
+              + "用来判断是不是中转环节的问题。",
               ADVICE_KEEP_OFF, null },
             { "noProxyEndpoint",
               "同上，但管的是数据接口：让游戏自己直连服务器。一直转圈、连不上时对照排查用。",
