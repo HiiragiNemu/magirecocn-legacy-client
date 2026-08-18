@@ -1,0 +1,9 @@
+CNARIA2LIB_1.0 {
+  global:
+    JNI_OnLoad;
+    Java_io_kamihama_magianative_CNAria2Lib_nativeStart;
+    Java_io_kamihama_magianative_CNAria2Lib_nativeIsRunning;
+    Java_io_kamihama_magianative_CNAria2Lib_nativeWaitStopped;
+  local:
+    *;
+};

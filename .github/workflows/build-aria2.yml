@@ -1,0 +1,103 @@
+name: 🔧 构建 libaria2c.so（双 TLS 后端）
+
+# 重建 libaria2c_{ossl,gnutls}.so（aria2 1.37.0 进程内库，双 ABI × 双后端）。
+# 原构建是 2026-08-17 在维护机手工做的（脚本归档 aria2c-so.zip 已随机器佚失），
+# 本 workflow 按 THIRD-PARTY-NOTICES.md 的配方记录完整重建：版本全部钉死、
+# tarball 全部 sha256 硬校验（X-C3 纪律：源码与可执行构件同等级），
+# 构建后自检不过即失败（见 tools/build-aria2.sh verify_so）。
+#
+# 只产出 .so artifact，不构建 APK、不入库——重建产物哈希必变（NDK 漂移、
+# 路径嵌入等），入库前必须：① 真机验证 ② 更新 baseline.json 与
+# THIRD-PARTY-NOTICES.md 的 sha256 pin。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: 📦 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 📍 定位 NDK（打印版本 + 期望 WARN）
+        run: |
+          echo "NDK=${ANDROID_NDK_HOME}" >> "$GITHUB_ENV"
+          NDK_VER="$(sed -n 's/^Pkg.Revision = //p' "${ANDROID_NDK_HOME}/source.properties" 2>/dev/null || echo unknown)"
+          echo "NDK 实际版本: ${NDK_VER}"
+          case "${NDK_VER}" in
+            25.*) ;;  # 原配方取证值：r25c（clang 14.0.7）
+            *) echo "::warning::NDK ${NDK_VER} ≠ 原配方 r25c 系——能构建但产物哈希必变，入库前必须重做二进制取证与真机验证" ;;
+          esac
+
+      - name: 📥 下载 9 个源码 tarball 并 sha256 硬校验
+        run: |
+          set -euo pipefail
+          dl() { # dl <out> <sha256> <url>
+            curl -fsSL --retry 3 -o "$1" "$3"
+            echo "$2  $1" | sha256sum -c -
+          }
+          dl aria2.tar.gz    8e7021c6d5e8f8240c9cc19482e0c8589540836747744724d86bf8af5a21f0e8 \
+            https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0.tar.gz
+          dl openssl.tar.gz  cf3098950cb4d853ad95c0841f1f9c6d3dc102dccfcacd521d93925208b76ac8 \
+            https://www.openssl.org/source/openssl-1.1.1w.tar.gz
+          dl gmp.tar.xz      a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898 \
+            https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz
+          dl nettle.tar.gz   ccfeff981b0ca71bbd6fbcb054f407c60ffb644389a5be80d6716d5b550c6ce3 \
+            https://ftp.gnu.org/gnu/nettle/nettle-3.9.1.tar.gz
+          dl gnutls.tar.xz   f74fc5954b27d4ec6dfbb11dea987888b5b124289a3703afcada0ee520f4173e \
+            https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/gnutls-3.8.3.tar.xz
+          dl libxml2.tar.xz  60d74a257d1ccec0475e749cba2f21559e48139efba6ff28224357c7c798dfee \
+            https://download.gnome.org/sources/libxml2/2.9/libxml2-2.9.14.tar.xz
+          dl libssh2.tar.gz  3736161e41e2693324deb38c26cfdc3efe6209d634ba4258db1cecff6a5ad461 \
+            https://github.com/libssh2/libssh2/releases/download/libssh2-1.11.0/libssh2-1.11.0.tar.gz
+          dl sqlite.tar.gz   1c6719a148bc41cf0f2bbbe3926d7ce3f5ca09d878f1246fcc20767b175bb407 \
+            https://www.sqlite.org/2023/sqlite-autoconf-3440200.tar.gz
+          dl zlib.tar.gz     9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23 \
+            https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz
+
+          tar xzf aria2.tar.gz    && mv aria2-1.37.0            aria2-src
+          tar xzf openssl.tar.gz  && mv openssl-1.1.1w          openssl-src
+          tar xJf gmp.tar.xz      && mv gmp-6.3.0               gmp-src
+          tar xzf nettle.tar.gz   && mv nettle-3.9.1            nettle-src
+          tar xJf gnutls.tar.xz   && mv gnutls-3.8.3            gnutls-src
+          tar xJf libxml2.tar.xz  && mv libxml2-2.9.14          libxml2-src
+          tar xzf libssh2.tar.gz  && mv libssh2-1.11.0          libssh2-src
+          tar xzf sqlite.tar.gz   && mv sqlite-autoconf-3440200 sqlite-src
+          tar xzf zlib.tar.gz     && mv zlib-1.3.1              zlib-src
+
+          echo "ARIA2_SRC=$PWD/aria2-src"     >> "$GITHUB_ENV"
+          echo "OPENSSL_SRC=$PWD/openssl-src" >> "$GITHUB_ENV"
+          echo "GMP_SRC=$PWD/gmp-src"         >> "$GITHUB_ENV"
+          echo "NETTLE_SRC=$PWD/nettle-src"   >> "$GITHUB_ENV"
+          echo "GNUTLS_SRC=$PWD/gnutls-src"   >> "$GITHUB_ENV"
+          echo "XML2_SRC=$PWD/libxml2-src"    >> "$GITHUB_ENV"
+          echo "SQLITE_SRC=$PWD/sqlite-src"   >> "$GITHUB_ENV"
+          echo "SSH2_SRC=$PWD/libssh2-src"    >> "$GITHUB_ENV"
+          echo "ZLIB_SRC=$PWD/zlib-src"       >> "$GITHUB_ENV"
+
+      - name: 🛠 构建双 ABI × 双后端（含构建后自检）
+        run: bash tools/build-aria2.sh
+
+      - name: 🔬 与入库基线 .so 结构对拍
+        # 基线 .so 随仓库检出在 lib/ 里。SONAME/NEEDED/导出符号/LOAD 对齐
+        # 不一致即失败；size/NDK note 差异只展示（NDK 漂移属预期，入库前人工确认）。
+        run: bash tools/aria2/compare-with-baseline.sh
+
+      - name: 📋 产物 sha256 清单
+        run: |
+          cd out
+          sha256sum */libaria2c_*.so | tee SHA256SUMS.txt
+
+      - name: 🚚 上传产物（.so + 清单 + 构建日志）
+        uses: actions/upload-artifact@v4
+        with:
+          name: libaria2c-so
+          path: |
+            out/*/libaria2c_*.so
+            out/SHA256SUMS.txt
+            out/logs/
+          if-no-files-found: error
