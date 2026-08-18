@@ -405,6 +405,14 @@ public final class CNWebProxy {
                     return;
                 }
                 wv.setWebViewClient(new Delegating(orig));
+                // WS 计数接口：countWebSocket 开启时注册，供注入脚本调进日志
+                if (CNDebugFlags.isOn(CNDebugFlags.COUNT_WEBSOCKET)) {
+                    try {
+                        wv.addJavascriptInterface(new WsCount(), "CNWsCount");
+                    } catch (Throwable t) {
+                        CNLog.w(TAG, "注册 WS 计数 JS 接口失败: " + t);
+                    }
+                }
                 markHandled(wv);
                 boolean first = WRAPPED.compareAndSet(false, true);
                 CNLog.i(TAG, (first ? "已接管 WebViewClient（原对象 " : "WebView 被重建，重新接管（原对象 ")
@@ -468,6 +476,104 @@ public final class CNWebProxy {
     }
 
     // ==================================================================
+    // WebSocket 计数（零电脑实证）：注入 JS 包装 window.WebSocket
+    // ==================================================================
+
+    /**
+     * 注入到主 frame HTML {@code <head>} 之后的脚本：包一层 {@code window.WebSocket}，
+     * 每次连接（connect/open/error/close）经 {@code CNWsCount} 接口打进 CNLog。
+     * 纯 ASCII，任何 charset 都安全；CSP 挡内联脚本 / 无 {@code <head>} 时安全降级
+     * （不注入，计数不可用但不影响页面）。
+     */
+    private static final String WS_INJECT_SCRIPT =
+            "<script>(function(){\n"
+            + "  try {\n"
+            + "    var R = window.WebSocket;\n"
+            + "    if (!R) return;\n"
+            + "    function lg(s){ try { CNWsCount.log(s); } catch(e){} }\n"
+            + "    window.WebSocket = function(u, p){\n"
+            + "      lg('[WS] connect ' + u);\n"
+            + "      try {\n"
+            + "        var w = p ? new R(u, p) : new R(u);\n"
+            + "        try { w.addEventListener('open', function(){ lg('[WS] open ' + u); }); } catch(e){}\n"
+            + "        try { w.addEventListener('error', function(){ lg('[WS] error ' + u); }); } catch(e){}\n"
+            + "        try { w.addEventListener('close', function(){ lg('[WS] close ' + u); }); } catch(e){}\n"
+            + "        return w;\n"
+            + "      } catch(e) { lg('[WS] constructor-throw ' + u); throw e; }\n"
+            + "    };\n"
+            + "    try { window.WebSocket.prototype = R.prototype; } catch(e){}\n"
+            + "    try {\n"
+            + "      window.WebSocket.CONNECTING = R.CONNECTING;\n"
+            + "      window.WebSocket.OPEN = R.OPEN;\n"
+            + "      window.WebSocket.CLOSING = R.CLOSING;\n"
+            + "      window.WebSocket.CLOSED = R.CLOSED;\n"
+            + "    } catch(e){}\n"
+            + "  } catch(e){ try { CNWsCount.log('[WS] wrapper-init-fail'); } catch(e2){} }\n"
+            + "})();</script>";
+
+    /** 页面 JS 经 addJavascriptInterface 调进来的 WS 计数口（只写日志，无其它能力）。 */
+    private static final class WsCount {
+        @android.webkit.JavascriptInterface
+        public void log(String msg) {
+            try { CNLog.i("WsCount", msg); } catch (Throwable t) {}
+        }
+    }
+
+    private static boolean isHtml(WebResourceResponse r) {
+        String mime = r.getMimeType();
+        return mime != null && mime.toLowerCase(java.util.Locale.US).contains("text/html");
+    }
+
+    /** 主 frame HTML 的 {@code <head>} 之后注入脚本。字节级插入，不重编码（保任何 charset）。 */
+    private static WebResourceResponse injectWsCounter(WebResourceResponse r) {
+        try {
+            java.io.InputStream in = r.getData();
+            if (in == null) return null;
+            byte[] all = readAll(in);
+            int head = indexOfAscii(all, "<head");
+            if (head < 0) return null;                 // 无 <head> 安全降级
+            int gt = head;
+            while (gt < all.length && all[gt] != (byte) '>') gt++;
+            if (gt >= all.length) return null;
+            byte[] script = WS_INJECT_SCRIPT.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            byte[] out = new byte[all.length + script.length];
+            System.arraycopy(all, 0, out, 0, gt + 1);
+            System.arraycopy(script, 0, out, gt + 1, script.length);
+            System.arraycopy(all, gt + 1, out, gt + 1 + script.length, all.length - gt - 1);
+            String mime = r.getMimeType() != null ? r.getMimeType() : "text/html";
+            String enc = r.getEncoding() != null ? r.getEncoding() : "UTF-8";
+            return new WebResourceResponse(mime, enc, new java.io.ByteArrayInputStream(out));
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 大小写不敏感的 ASCII 子串定位（字节级）。 */
+    private static int indexOfAscii(byte[] data, String ascii) {
+        byte[] pat = ascii.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        outer:
+        for (int i = 0; i + pat.length <= data.length; i++) {
+            for (int j = 0; j < pat.length; j++) {
+                byte b = data[i + j];
+                byte lo = (b >= 'A' && b <= 'Z') ? (byte) (b + 32) : b;
+                byte plo = pat[j];
+                if (plo >= 'A' && plo <= 'Z') plo = (byte) (plo + 32);
+                if (lo != plo) continue outer;
+            }
+            return i;
+        }
+        return -1;
+    }
+
+    private static byte[] readAll(java.io.InputStream in) {
+        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+        return bos.toByteArray();
+    }
+
+    // ==================================================================
     // 包装类
     // ==================================================================
 
@@ -513,6 +619,15 @@ public final class CNWebProxy {
                 local = orig.shouldInterceptRequest(view, req);
             } catch (Throwable t) {
                 return null;      // 原对象炸了也不能把请求吃掉，交回给 WebView 直连
+            }
+            // WS 计数注入：只动主 frame 的 HTML 文档；注入失败一律回退原响应
+            if (local != null && CNDebugFlags.isOn(CNDebugFlags.COUNT_WEBSOCKET)) {
+                try {
+                    if (req.isForMainFrame() && isHtml(local)) {
+                        WebResourceResponse injected = injectWsCounter(local);
+                        if (injected != null) local = injected;
+                    }
+                } catch (Throwable t) { /* 保持原响应 */ }
             }
             if (local != null) return local;
             try {

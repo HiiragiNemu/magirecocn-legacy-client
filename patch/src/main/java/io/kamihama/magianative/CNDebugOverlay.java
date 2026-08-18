@@ -2211,6 +2211,7 @@ public final class CNDebugOverlay {
             { "useSingleThread", GROUP_B },
             { "useWebviewDebug", GROUP_B },
             { "logWebviewRequests", GROUP_B },
+            { "countWebSocket", GROUP_B },
             { "skipWebProxy", GROUP_B },
             { "noProxyEndpoint", GROUP_B },
             { "noHttp2Bump", GROUP_B },
@@ -2464,6 +2465,10 @@ public final class CNDebugOverlay {
               "应用内 WebView 请求日志（method+URL，去重）：无电脑的实证手段，"
               + "日志面板/分享包直接看前端 API 走哪个 host/base、GET 还是 POST。"
               + "看不到 WebSocket。",
+              ADVICE_KEEP_OFF, null },
+            { "countWebSocket",
+              "注入 JS 包装 window.WebSocket，把每次连接（connect/open/error/close）"
+              + "打进日志：零电脑数游戏开了多少条 WebSocket。",
               ADVICE_KEEP_OFF, null },
             { "skipWebProxy",
               "游戏内网页本有个前台接待帮忙中转；这个开关 = 跳过前台自己直连。网页打不开时，"
