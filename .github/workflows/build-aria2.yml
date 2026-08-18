@@ -96,6 +96,14 @@ jobs:
       - name: 🛠 构建双 ABI × 双后端（含构建后自检）
         run: bash tools/build-aria2.sh
 
+      - name: 📏 16K 页对齐检查（arm64 新产物）
+        # verify_so 内部也查 LOAD 对齐，但这里用仓库的 check-so-alignment.py
+        # 单独钉一道、输出独立成步骤（F-F-07 红线，16KB 页设备可加载的前提）。
+        run: |
+          python3 tools/check-so-alignment.py \
+            out/arm64-v8a/libaria2c_ossl.so \
+            out/arm64-v8a/libaria2c_gnutls.so
+
       - name: 🔬 与入库基线 .so 结构对拍
         # 基线 .so 随仓库检出在 lib/ 里。SONAME/NEEDED/导出符号/LOAD 对齐
         # 不一致即失败；size/NDK note 差异只展示（NDK 漂移属预期，入库前人工确认）。

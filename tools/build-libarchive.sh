@@ -17,14 +17,24 @@ NPROC=$(nproc)
 OUT="$(pwd)/out"
 
 # 跑命令并落日志；失败打印日志尾部并退出（否则 CI 上错误被吞进文件看不见）。
+# 长命令（cmake/make）后台跑，每 15s 打一行心跳，避免 CI 用户「卡死」没反馈。
 run_log() {
     local log="$1"; shift
-    if ! "$@" >"$log" 2>&1; then
-        echo "✗ 命令失败：$*"
+    local label="$(basename "$log" .log)"
+    "$@" >"$log" 2>&1 &
+    local pid=$!
+    local start=$SECONDS
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep 15
+        echo "  · $label 运行中 $((SECONDS-start))s（日志 $(stat -c%s "$log" 2>/dev/null || echo 0) 字节）"
+    done
+    wait "$pid" || {
+        echo "✗ $label 失败：$*"
         echo "── 日志（$log）──"
         tail -50 "$log"
         exit 1
-    fi
+    }
+    echo "  ✓ $label 完成（$((SECONDS-start))s）"
 }
 
 build_abi() {

@@ -95,6 +95,10 @@ jobs:
       - name: 🛠 构建两 ABI
         run: bash tools/build-libarchive.sh
 
+      - name: 📏 16K 页对齐检查（arm64 新产物）
+        run: |
+          python3 tools/check-so-alignment.py out/arm64-v8a/libarchive.so
+
       - name: 🚚 替换仓库 .so + 刷新 pin + 提交（refresh_repo=true 时）
         if: ${{ inputs.refresh_repo }}
         env:

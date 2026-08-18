@@ -33,14 +33,25 @@ NPROC=$(nproc)
 OUT="$(pwd)/out"
 export PATH="$TC:$PATH"
 
-run_log() {
+run_log() { # run_log <log> <cmd...> —— 后台跑，期间每 15s 打一行心跳。
+    # 长命令（make 等）动辄几分钟，前台跑对 CI 用户是「卡死」没反馈；后台跑
+    # 每 15s 报一次进度（已运行秒数 + 日志大小），失败仍打日志尾部并退出。
     local log="$1"; shift
-    if ! "$@" >"$log" 2>&1; then
-        echo "✗ 命令失败：$*"
+    local label="$(basename "$log" .log)"
+    "$@" >"$log" 2>&1 &
+    local pid=$!
+    local start=$SECONDS
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep 15
+        echo "  · $label 运行中 $((SECONDS-start))s（日志 $(stat -c%s "$log" 2>/dev/null || echo 0) 字节）"
+    done
+    wait "$pid" || {
+        echo "✗ $label 失败：$*"
         echo "── 日志（$log）──"
         tail -60 "$log"
         exit 1
-    fi
+    }
+    echo "  ✓ $label 完成（$((SECONDS-start))s）"
 }
 
 # autotools 交叉编译封装：env 干净、-fPIC、装到 PREFIX。
@@ -49,6 +60,8 @@ xconf() { # xconf <log> <builddir> <srcdir> <host> <cc> <cxx> <extra-cflags> <pr
     shift 8
     # 必须在 build 目录里跑 configure（out-of-tree）：否则 Makefile 落在 CWD，
     # 后续 make -C <builddir> 找不到。修复前 libxml2 因此 make 失败。
+    # 2>&1 | tee "$log"：configure 的探测输出实时流到 CI 日志（feedback），
+    # 同时落盘；脚本 set -o pipefail，configure 失败仍会进入失败分支。
     if ! ( cd "$builddir" && \
         env -i PATH="$PATH" HOME="${HOME:-/tmp}" \
         CC="$cc" CXX="$cxx" AR="$TC/llvm-ar" RANLIB="$TC/llvm-ranlib" \
@@ -57,7 +70,7 @@ xconf() { # xconf <log> <builddir> <srcdir> <host> <cc> <cxx> <extra-cflags> <pr
         CPPFLAGS="-I$prefix/include" LDFLAGS="-L$prefix/lib" \
         PKG_CONFIG_PATH="$prefix/lib/pkgconfig" \
         bash "$src/configure" --host="$host" --prefix="$prefix" "$@" \
-        >"$log" 2>&1 ); then
+        2>&1 | tee "$log" ); then
         echo "✗ configure 失败：$src"
         echo "── 日志（$log）──"
         tail -60 "$log"
@@ -204,7 +217,7 @@ build_group() { # build_group <abi> <host> <cc> <cxx> <xcflags> <backend: ossl|g
             --with-libxml2 --with-sqlite3 --with-libz --with-libssh2 \
             --without-jemalloc --without-tcmalloc --without-appletls \
             --without-wintls --without-libgcrypt \
-            >"$OUT/logs/aria2-$abi-$be-conf.log" 2>&1 ) \
+            2>&1 | tee "$OUT/logs/aria2-$abi-$be-conf.log" ) \
         || { echo "✗ aria2 configure 失败 ($abi/$be)"; tail -60 "$OUT/logs/aria2-$abi-$be-conf.log"; exit 1; }
     # 顶层 make：aria2 自带的 deps/wslay 要先于 src 编（configure 检测 WebSocket:yes，
 # 引用 deps/wslay/lib/libwslay.la）；只编 src 会因找不到 wslay 在 aria2c 链接处失败。
