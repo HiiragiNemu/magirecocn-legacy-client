@@ -126,29 +126,37 @@ jobs:
               cp "out/$abi/libaria2c_${be}.so" "lib/$abi/libaria2c_${be}.so"
             done
           done
-          # 2) 刷新 THIRD-PARTY-NOTICES.md 的 aria2 sha256 pin
+          # 2) 刷新 THIRD-PARTY-NOTICES.md 与 baseline.json 的 aria2 sha256 pin
           python3 - <<'PY'
-          import re
-          new = {}
+          import re, json
+          notice, paths = {}, {}
           for line in open('out/SHA256SUMS.txt'):
               h, path = line.split()
               abi, fn = path.split('/')
               be = fn[len('libaria2c_'):-len('.so')]
-              new[(abi, be)] = h
+              notice[(abi, be)] = h
+              paths['lib/%s/%s' % (abi, fn)] = h   # 与 baseline.json 的 path 一致
           p = 'THIRD-PARTY-NOTICES.md'
           s = open(p, encoding='utf-8').read()
-          for (abi, be), h in new.items():
+          for (abi, be), h in notice.items():
               pat = re.compile(r'(libaria2c_%s\.so`（%s）= )`[0-9a-f]+`' % (be, abi))
               s, n = pat.subn(r'\1`' + h + '`', s)
-              assert n == 1, 'aria2 pin %s/%s 未匹配' % (abi, be)
+              assert n == 1, 'aria2 NOTICES pin %s/%s 未匹配' % (abi, be)
           open(p, 'w', encoding='utf-8').write(s)
           print('NOTICES aria2 sha256 pin 已刷新')
+          bj = 'baseline/baseline.json'
+          bd = json.load(open(bj, encoding='utf-8'))
+          for op in bd['ops']:
+              if op.get('kind') == 'add' and op.get('path') in paths:
+                  op['post'] = paths[op['path']]
+          open(bj, 'w', encoding='utf-8').write(json.dumps(bd, ensure_ascii=False, indent=2))
+          print('baseline.json aria2 pin 已刷新')
           PY
           # 3) 提交 + 推送（core.hooksPath 走仓库钩子验证提交合规）
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config core.hooksPath tools/githooks
-          git add lib/ THIRD-PARTY-NOTICES.md
+          git add lib/ THIRD-PARTY-NOTICES.md baseline/baseline.json
           # 可复现构建时新产物可能与入库一致（同一 NDK/路径/源码），此时没有
           # 可提交的变更——跳过提交，别让 no-op 把 CI 变红。
           if git diff --cached --quiet; then
