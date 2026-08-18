@@ -59,6 +59,13 @@ on:
         description: '是否把调试悬浮窗编进包（native 总闸 MAGIA_DEBUG_OVERLAY；默认关＝发布包不带调试工具）'
         type: boolean
         default: false
+      # 提升版本闸门：勾上且构建+发布成功后，用跨仓库 Token 把
+      # 线上配置 的 legacy/config.json 的 client.version
+      # 提升到本次构建的版本号（1.0.<run_number>），玩家端即收到强更。
+      bump_version:
+        description: '构建成功（含发布）后提升 config.json 的 client.version 版本闸门'
+        type: boolean
+        default: false
   # 供 main-checks.yml 复用（push 到 main 后的复验）。APK 构建本身的
   # **手动触发**属性不变——这里只是允许另一个 workflow 以 verify_only
   # 调进来跑一遍同样的流水线。见 CONTRIBUTING.md「CI 流水线」。
@@ -846,3 +853,42 @@ jobs:
               echo "- 状态：❌ 失败"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 🆙 提升版本闸门（config.json client.version）
+        # 勾了 bump_version 且非 verify_only（构建+发布都成功走到这里）才提升：
+        # 用跨仓库 Token 把在线配置仓库的 client.version 顶到本次构建版本号。
+        if: ${{ inputs.bump_version && inputs.verify_only != true }}
+        env:
+          : ${{ secrets. }}
+        run: |
+          set -euo pipefail
+          VER="1.0.${GITHUB_RUN_NUMBER}"
+          echo "本次构建版本: ${VER}"
+          rm -rf cfg
+          git clone --depth 1 \
+            "https://x-access-token:${}@github.com/MagirecoCN-Revival-Project/线上配置.git" \
+            cfg
+          cd cfg
+          python3 - "$VER" <<'PY'
+          import json, sys
+          ver = sys.argv[1]
+          p = 'legacy/config.json'
+          d = json.load(open(p, encoding='utf-8'))
+          old = d.get('client', {}).get('version')
+          d.setdefault('client', {})['version'] = ver
+          # 与原格式一致（json.dumps indent=2 ensure_ascii=False，无尾换行）
+          open(p, 'w', encoding='utf-8').write(json.dumps(d, ensure_ascii=False, indent=2))
+          print(f'client.version: {old} -> {ver}')
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add legacy/config.json
+          if git diff --cached --quiet; then
+            echo "版本未变化，跳过提交"
+            exit 0
+          fi
+          git diff --cached --stat
+          git commit -m "chore: 提升版本闸门 client.version -> ${VER} [skip ci]"
+          # 清 checkout 注入的 extraheader（默认 token 只读），强制走跨仓库 PAT
+          git -c http.extraheader= -c http.https://github.com/.extraheader= \
+              push "https://x-access-token:${}@github.com/MagirecoCN-Revival-Project/线上配置.git" HEAD:main
