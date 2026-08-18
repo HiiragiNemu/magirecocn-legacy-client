@@ -167,7 +167,10 @@ jobs:
           Co-authored-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           EOF
           )"
-          git push "https://x-access-token:${}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main
+          # checkout 注入的 http.extraheader 带默认 token（github-actions[bot]，只读），
+          # 会覆盖 URL 里的 PAT——push 前显式清掉，强制用 （维护者 PAT）。
+          git -c http.extraheader= -c http.https://github.com/.extraheader= \
+              push "https://x-access-token:${}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main
 
       - name: 🚚 上传产物（.so + 清单 + 构建日志）
         uses: actions/upload-artifact@v4
