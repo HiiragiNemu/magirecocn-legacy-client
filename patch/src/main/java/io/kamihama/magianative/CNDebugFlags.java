@@ -163,6 +163,10 @@ public final class CNDebugFlags {
      * {@link CNDownloadMode}）。
      */
     public static final String USE_SINGLE_THREAD = "useSingleThread";
+    /** 开启 WebView 远程调试（默认关）。开=进程内 WebView 可被 chrome://inspect
+     *  连接，看网络面板（每个请求的 method/URL、WebSocket 帧），排查网络问题用。
+     *  仅影响调试：正式包不设此开关即完全无感。 */
+    public static final String USE_WEBVIEW_DEBUG  = "useWebviewDebug";
 
     /** 注入延迟的时长。比 6 秒总闸长一截，保证一定触发询问框。 */
     public static final long SLOW_INJECT_MS = 9000L;
@@ -177,6 +181,7 @@ public final class CNDebugFlags {
         { SKIP_TUTORIAL_PROMPT, "不弹「是否播放序章」询问框" },
         { SKIP_RESTART,         "装完/序章后不自动重启" },
         { SKIP_SLOW_ASK,        "网络慢时不弹询问框，退回静默 fail-open" },
+        { USE_WEBVIEW_DEBUG,    "开启 WebView 远程调试（chrome://inspect 看网络流量）" },
         { FAIL_CONFIG_FETCH,    "【注入】config.json 一律拉取失败" },
         { FAIL_VERSION_QUERY,   "【注入】版本 json 查询一律失败" },
         { SLOW_VERSION_QUERY,   "【注入】版本查询拖慢 " + SLOW_INJECT_MS + "ms（验慢网询问框）" },

@@ -379,6 +379,13 @@ public final class CNDownloaderFix {
                         // 真正走不走代理由 config.json 的 proxy.web_mode 决定，
                         // 而配置由 CNMirrors.refresh 下发——两条路都会调它。
                         CNWebProxy.install();
+                        // WebView 远程调试（实证手段 F）：开 useWebviewDebug 后
+                        // chrome://inspect 可连本进程看 WebView 网络面板（method/URL/WS）。
+                        // 静态方法全局生效，只需在 WebView 创建前调一次。
+                        if (CNDebugFlags.isOn(CNDebugFlags.USE_WEBVIEW_DEBUG)) {
+                            android.webkit.WebView.setWebContentsDebuggingEnabled(true);
+                            CNLog.i(TAG, "调试开关 useWebviewDebug 生效，WebView 远程调试已开启");
+                        }
 
                         File finalFlag = new File(FINAL_FLAG);
                         // 无论资源装没装完，都先查客户端版本：最需要强更的恰恰是
