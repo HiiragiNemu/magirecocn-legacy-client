@@ -973,8 +973,10 @@ public class CNCNDownloadUI {
         ScrollView slotScroll = new ScrollView(act);
         slotScroll.setTag(CNDownloadUiAssist.TAG_V_SCROLL);
         slotScroll.setVerticalScrollBarEnabled(true);
-        // 系统原生滚动条：淡出（默认），不套内建非淡出样式
-        slotScroll.setScrollbarFadingEnabled(true);
+        // 文件列表滚动条**常显**：这是 UI 契约（check-download-ui-contract.py 的
+        // 「文件列表有右侧纵向滚动条」），长列表要让人一眼看到还能滚。其余滚动区
+        // 走系统原生淡出，这里保留非淡出。
+        slotScroll.setScrollbarFadingEnabled(false);
         slotScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
         slotScroll.setClipToPadding(false);
         slotScroll.setPadding(0, 0, dp(act, CNDownloadUiAssist.SCROLLBAR_GUTTER_DP), 0);
