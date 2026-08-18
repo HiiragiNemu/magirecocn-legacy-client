@@ -170,6 +170,11 @@ public final class CNAria2 {
             if (outDir == null) outDir = CNPaths.filesDir();
             int maxC = (maxConns > 0 && maxConns <= 16) ? maxConns : 8;
             File ariaDir = new File(CNPaths.filesDir(), "aria2");
+            // 目录只放 cacerts.pem（下方 ensureSystemCaStore 用）；日志不落文件，
+            // 由 JNI 胶水把 aria2 控制台输出转发进 logcat。旧版本这里挂着
+            // --log=<filesDir>/aria2/aria2.log，目录没建 → 启动即在 Logger.cc
+            // 打不开文件直接退出（玩家日志实锤的「无法下载」根因）。
+            ariaDir.mkdirs();
 
             // ── 会话：启动一次，跨下载复用（keep-alive，2026-08-18）──
             // aria2 进程内接口不支持同一进程重复 execute（第二次 execute 踩
@@ -205,9 +210,10 @@ public final class CNAria2 {
                 args.add("--auto-file-renaming=false");
                 args.add("--no-conf");
                 args.add("--daemon=false");
-                args.add("--log-level=warn");
-                args.add("--log=" + new File(CNPaths.filesDir(), "aria2").getAbsolutePath()
-                        + "/aria2.log");
+                // 原则（2026-08-18）：日志不分开。aria2 不写独立日志文件——
+                // 控制台输出（--console-log-level）由 JNI 胶水转发进 logcat，
+                // 随游戏主日志一起进玩家分享包。别改回 --log=<文件>。
+                args.add("--console-log-level=warn");
 
                 // 进程内 JNI 启动 aria2 线程（libaria2c.so），替代 exec 子进程：
                 // 绕开 SELinux exec 闸 + 16KB 页对齐，且符号卫生避免 OpenSSL 抢占崩溃。

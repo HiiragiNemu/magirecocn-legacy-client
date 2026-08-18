@@ -31,8 +31,12 @@
 #include <jni.h>
 #include <pthread.h>
 #include <time.h>
+#include <unistd.h>  // pipe / dup2 / read / close
+#include <cerrno>    // EINTR：reader 被信号打断必须续读，否则 pipe 满→aria2 阻塞
+#include <cstdio>    // fflush（转发收尾把 aria2 缓冲冲进 pipe）
 
 #include <atomic>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -70,9 +74,54 @@ bool gThreadAlive = false;  // 线程已创建、尚未 join
 std::atomic<bool> gRunning{false};
 int gExitCode = -1;
 
+// —— aria2 控制台日志 → logcat（原则：日志不分开，不落独立文件）——
+// aria2 的 --console-log-level 打到 stdout/stderr；Android 原生 printf 不会
+// 自动进 logcat。把进程 fd 1/2 接到 pipe，本线程逐行 __android_log_print
+// 转发，随游戏主日志一起进玩家分享包。代价：aria2 运行期间其他线程写
+// stdout/stderr 也会被捕获（游戏 native 层基本走 __android_log_print、
+// 不经过 fd 1/2，风险可忽略）。转发只在能建起 reader 线程时才生效，失败
+// 则纯直跑 aria2、日志不可见但不影响下载。
+static void* logReader(void* arg) {
+  int fd = static_cast<int>(reinterpret_cast<intptr_t>(arg));
+  char buf[512];
+  ssize_t n;
+  for (;;) {
+    n = read(fd, buf, sizeof(buf) - 1);
+    if (n > 0) {
+      buf[n] = '\0';
+      __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "%s", buf);
+      continue;
+    }
+    if (n < 0 && errno == EINTR) continue; // 信号打断：续读，绝不提前退出
+    break;                                  // EOF（0）或硬错误
+  }
+  return nullptr;
+}
+
 void* aria2ThreadMain(void* opaque) {
   std::unique_ptr<ArgvBlock> blk(static_cast<ArgvBlock*>(opaque));
   int rc;
+  int pipefd[2] = {-1, -1};
+  int saved_out = -1, saved_err = -1;
+  pthread_t reader{};
+  bool forwarding = false;
+  if (pipe(pipefd) == 0 &&
+      pthread_create(&reader, nullptr, logReader,
+                     reinterpret_cast<void*>(static_cast<intptr_t>(pipefd[0]))) == 0) {
+    saved_out = dup(1);
+    saved_err = dup(2);
+    if (saved_out >= 0 && saved_err >= 0) {
+      dup2(pipefd[1], 1);
+      dup2(pipefd[1], 2);
+      close(pipefd[1]);
+      forwarding = true;
+    } else {
+      if (saved_out >= 0) close(saved_out);
+      if (saved_err >= 0) close(saved_err);
+      close(pipefd[0]);
+      close(pipefd[1]);
+    }
+  }
   try {
     aria2::global::initConsole(false);
     aria2::Platform platform;
@@ -93,6 +142,19 @@ void* aria2ThreadMain(void* opaque) {
   } catch (...) {
     LOGE("unknown exception in aria2 thread");
     rc = static_cast<int>(aria2::error_code::UNKNOWN_ERROR);
+  }
+
+  if (forwarding) {
+    // 先把 aria2 的 libc 缓冲清进 pipe（否则小块输出会留在缓冲里丢给原 stdout）
+    fflush(stdout);
+    fflush(stderr);
+    dup2(saved_out, 1);
+    dup2(saved_err, 2);
+    close(saved_out);
+    close(saved_err);
+    // fd1/2 还原后 pipe 写端无引用 → reader 读到 EOF 退出
+    pthread_join(reader, nullptr);
+    close(pipefd[0]);
   }
 
   pthread_mutex_lock(&gMu);

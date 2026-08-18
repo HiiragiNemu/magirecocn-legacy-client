@@ -126,7 +126,7 @@ python3 tools/baseline.py apply --out <目录>   # 只重建，不比对
 | `CNZipPlan` | **下载前算出安装峰值**。装一个包的磁盘峰值是 ZIP + 解压后（ZIP 要留到解压成功才删），而这个比例各包差得很远：`cn_base_03.zip` 1.32→2.79 GiB（**2.11x**），其余全在 1.02–1.16x。03 因此拥有 15 个包里最高的安装峰值 **4.11 GiB**，而进度条上只写着 1.3 GB——玩家按这个数去清理空间，然后在解压阶段翻车。 |
 | `CNEndpoints` | **全部对外主机名的唯一来源**。源码里只留结构（`assets.` 子域 + 主域这样的拼法），真实取值由 `tools/inject-endpoints.py` 在构建期从 Secret 注入，仓库与历史里都不出现。注入缺失时 fail-closed：放行列表不含自有域、线路表为空、热更地址拼不出来——退化成「什么都下不了」，而不是退回某个不受控的默认值。 |
 | `CNMirrors` | 线路目录：从 `config.json` 拉取线路表，失败/停滞/过慢时自动换线 |
-| `CNAria2` | **进程内 aria2 引擎**（`libaria2c_{ossl,gnutls}.so`，JNI 加载，备用或构建期选作主引擎）：**双 TLS 后端共存 + dead-man's switch**（`Aria2EngineFailover`）——默认 openssl 后端，原生崩溃或加载失败自动换 gnutls 后端，连 4 次死亡才回退主引擎。由 linker 加载共享库、**无 exec**，绕开 SELinux exec 闸与 16KB 页对齐（与 libarchive 同思路）。loopback JSON-RPC 控制，单文件同步下载、多连接 + 断点续传。构建与许可明细见 THIRD-PARTY-NOTICES.md。 |
+| `CNAria2` | **进程内 aria2 引擎**（`libaria2c_{ossl,gnutls}.so`，JNI 加载，备用或构建期选作主引擎）：**双 TLS 后端共存 + dead-man's switch**（`Aria2EngineFailover`）——默认 openssl 后端，原生崩溃或加载失败自动换 gnutls 后端，连 4 次死亡才回退主引擎。由 linker 加载共享库、**无 exec**，绕开 SELinux exec 闸与 16KB 页对齐（与 libarchive 同思路）。loopback JSON-RPC 控制，单文件同步下载、多连接 + 断点续传。**日志不落独立文件**：aria2 控制台输出由 JNI 胶水转发进 logcat，随 CNLog 一起进玩家分享包（2026-08-18 原则，别加回 `--log=`）。构建与许可明细见 THIRD-PARTY-NOTICES.md。 |
 | `CNHotUpdate` | 热更新的文件下载，与首次安装共用同一套选线与分片逻辑 |
 | `CNHotUpdateCheck` | 热更检查流程：启动时比对台词包/前端脚本包版本，必要时下载并应用。重写自原包的 `RestClient.checkAndApplyHotUpdate`——那版浮层自始至终不出现，无从判断跑没跑 |
 | `CNHotUpdateTx` | 热更包的**事务化应用**：暂存 → 备份 → 换入，出错整体回滚，崩溃后按 journal 恢复。只用于热更，安装器的大包仍直接解压 |
