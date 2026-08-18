@@ -33,6 +33,12 @@ NPROC=$(nproc)
 OUT="$(pwd)/out"
 export PATH="$TC:$PATH"
 
+# GitHub Actions 可折叠分组：::group::/::endgroup:: 在 Actions 日志生成小三角，
+# 点一下收起一大段（configure/make 的刷屏输出）。本地跑（main 主机）不打，
+# 避免日志里出现 ::group:: 噪声。
+group_start() { if [ "${GITHUB_ACTIONS:-}" = "true" ]; then echo "::group::▶ $1"; fi; }
+group_end()   { if [ "${GITHUB_ACTIONS:-}" = "true" ]; then echo "::endgroup::"; fi; }
+
 run_log() { # run_log <log> <cmd...> —— 输出实时 tee 到 stdout 并落盘。
     # libMagiaLegacy 构建（build-apk.yml）就是直接跑 cmake、输出实时可见；
     # 这里同样把 configure/make 的每一行 tee 出来，CI 用户能看到构建在动，
@@ -40,12 +46,15 @@ run_log() { # run_log <log> <cmd...> —— 输出实时 tee 到 stdout 并落�
     # 脚本 set -o pipefail，命令失败会进失败分支。
     local log="$1"; shift
     local label="$(basename "$log" .log)"
+    group_start "$label"
     if ! "$@" 2>&1 | tee "$log"; then
+        group_end
         echo "✗ $label 失败：$*"
         echo "── 日志尾部（$log）──"
         tail -60 "$log"
         exit 1
     fi
+    group_end
 }
 
 # autotools 交叉编译封装：env 干净、-fPIC、装到 PREFIX。
@@ -56,6 +65,7 @@ xconf() { # xconf <log> <builddir> <srcdir> <host> <cc> <cxx> <extra-cflags> <pr
     # 后续 make -C <builddir> 找不到。修复前 libxml2 因此 make 失败。
     # 2>&1 | tee "$log"：configure 的探测输出实时流到 CI 日志（feedback），
     # 同时落盘；脚本 set -o pipefail，configure 失败仍会进入失败分支。
+    group_start "$(basename "$log" .log)"
     if ! ( cd "$builddir" && \
         env -i PATH="$PATH" HOME="${HOME:-/tmp}" \
         CC="$cc" CXX="$cxx" AR="$TC/llvm-ar" RANLIB="$TC/llvm-ranlib" \
@@ -65,11 +75,13 @@ xconf() { # xconf <log> <builddir> <srcdir> <host> <cc> <cxx> <extra-cflags> <pr
         PKG_CONFIG_PATH="$prefix/lib/pkgconfig" \
         bash "$src/configure" --host="$host" --prefix="$prefix" "$@" \
         2>&1 | tee "$log" ); then
+        group_end
         echo "✗ configure 失败：$src"
         echo "── 日志（$log）──"
         tail -60 "$log"
         exit 1
     fi
+    group_end
 }
 xmake() { # xmake <log> <dir>
     run_log "$1" make -C "$2" -j"$NPROC"
@@ -200,6 +212,7 @@ build_group() { # build_group <abi> <host> <cc> <cxx> <xcflags> <backend: ossl|g
 
     # 与 xconf 同款：aria2 的 configure 也必须在 $BUILD 里跑（out-of-tree），
     # 否则 Makefile 落在 CWD、make -C "$BUILD/src" 找不到（修复前 ossl 组如此失败）。
+    group_start "aria2-$abi-$be-conf"
     ( cd "$BUILD" && \
         env -i PATH="$PATH" HOME="${HOME:-/tmp}" \
         CC="$cc" CXX="$cxx" AR="$TC/llvm-ar" RANLIB="$TC/llvm-ranlib" \
@@ -215,7 +228,8 @@ build_group() { # build_group <abi> <host> <cc> <cxx> <xcflags> <backend: ossl|g
             --without-jemalloc --without-tcmalloc --without-appletls \
             --without-wintls --without-libgcrypt \
             2>&1 | tee "$OUT/logs/aria2-$abi-$be-conf.log" ) \
-        || { echo "✗ aria2 configure 失败 ($abi/$be)"; tail -60 "$OUT/logs/aria2-$abi-$be-conf.log"; exit 1; }
+        || { group_end; echo "✗ aria2 configure 失败 ($abi/$be)"; tail -60 "$OUT/logs/aria2-$abi-$be-conf.log"; exit 1; }
+    group_end
     # 顶层 make：aria2 自带的 deps/wslay 要先于 src 编（configure 检测 WebSocket:yes，
 # 引用 deps/wslay/lib/libwslay.la）；只编 src 会因找不到 wslay 在 aria2c 链接处失败。
 run_log "$OUT/logs/aria2-$abi-$be-build.log" make -C "$BUILD" -j"$NPROC"

@@ -18,15 +18,23 @@ OUT="$(pwd)/out"
 
 # 跑命令并落日志；失败打印日志尾部并退出（否则 CI 上错误被吞进文件看不见）。
 # 输出实时 tee 到 stdout（同 libMagiaLegacy 构建的观感），落盘一份供排障。
+# GitHub Actions 可折叠分组（::group::/::endgroup:: 生成小三角，点一下收起）；
+# 本地跑（无 GITHUB_ACTIONS）不打，避免噪声。
+group_start() { if [ "${GITHUB_ACTIONS:-}" = "true" ]; then echo "::group::▶ $1"; fi; }
+group_end()   { if [ "${GITHUB_ACTIONS:-}" = "true" ]; then echo "::endgroup::"; fi; }
+
 run_log() {
     local log="$1"; shift
     local label="$(basename "$log" .log)"
+    group_start "$label"
     if ! "$@" 2>&1 | tee "$log"; then
+        group_end
         echo "✗ $label 失败：$*"
         echo "── 日志尾部（$log）──"
         tail -50 "$log"
         exit 1
     fi
+    group_end
 }
 
 build_abi() {
