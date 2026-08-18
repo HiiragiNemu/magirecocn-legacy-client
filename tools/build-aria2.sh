@@ -36,7 +36,7 @@ export PATH="$TC:$PATH"
 # GitHub Actions 可折叠分组：::group::/::endgroup:: 在 Actions 日志生成小三角，
 # 点一下收起一大段（configure/make 的刷屏输出）。本地跑（main 主机）不打，
 # 避免日志里出现 ::group:: 噪声。
-group_start() { if [ "${GITHUB_ACTIONS:-}" = "true" ]; then echo "::group::▶ $1"; fi; }
+group_start() { if [ "${GITHUB_ACTIONS:-}" = "true" ]; then echo "::group::$1"; fi; }
 group_end()   { if [ "${GITHUB_ACTIONS:-}" = "true" ]; then echo "::endgroup::"; fi; }
 
 run_log() { # run_log <log> <cmd...> —— 输出实时 tee 到 stdout 并落盘。

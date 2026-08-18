@@ -20,7 +20,7 @@ OUT="$(pwd)/out"
 # 输出实时 tee 到 stdout（同 libMagiaLegacy 构建的观感），落盘一份供排障。
 # GitHub Actions 可折叠分组（::group::/::endgroup:: 生成小三角，点一下收起）；
 # 本地跑（无 GITHUB_ACTIONS）不打，避免噪声。
-group_start() { if [ "${GITHUB_ACTIONS:-}" = "true" ]; then echo "::group::▶ $1"; fi; }
+group_start() { if [ "${GITHUB_ACTIONS:-}" = "true" ]; then echo "::group::$1"; fi; }
 group_end()   { if [ "${GITHUB_ACTIONS:-}" = "true" ]; then echo "::endgroup::"; fi; }
 
 run_log() {
