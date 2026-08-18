@@ -6,11 +6,18 @@ name: 🔧 构建 libaria2c.so（双 TLS 后端）
 # tarball 全部 sha256 硬校验（X-C3 纪律：源码与可执行构件同等级），
 # 构建后自检不过即失败（见 tools/build-aria2.sh verify_so）。
 #
-# 只产出 .so artifact，不构建 APK、不入库——重建产物哈希必变（NDK 漂移、
-# 路径嵌入等），入库前必须：① 真机验证 ② 更新 baseline.json 与
-# THIRD-PARTY-NOTICES.md 的 sha256 pin。
+# 默认只产出 .so artifact 不入库（重建产物哈希必变：NDK 漂移、路径嵌入等）。
+# 勾选「refresh_repo」时，构建+自检+与基线对拍全过后，直接把 4 枚 .so 替换进
+# 仓库 lib/ 并刷新 THIRD-PARTY-NOTICES.md 的 sha256 pin，提交推 main。
+# ⚠ refresh_repo 会改动仓库二进制：重建产物功能面与基线一致（对拍把关），
+# 但哈希必变，真机验证通过后再勾选。
 on:
   workflow_dispatch:
+    inputs:
+      refresh_repo:
+        description: '构建后直接替换仓库 lib/ 下的 .so 并刷新 sha256 pin 提交推 main（真机验证后再用）'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -98,6 +105,55 @@ jobs:
         run: |
           cd out
           sha256sum */libaria2c_*.so | tee SHA256SUMS.txt
+
+      - name: 🚚 替换仓库 .so + 刷新 pin + 提交（refresh_repo=true 时）
+        if: ${{ inputs.refresh_repo }}
+        env:
+          : ${{ secrets. }}
+        run: |
+          set -euo pipefail
+          # 1) 替换 4 枚 .so
+          for abi in arm64-v8a armeabi-v7a; do
+            for be in ossl gnutls; do
+              cp "out/$abi/libaria2c_${be}.so" "lib/$abi/libaria2c_${be}.so"
+            done
+          done
+          # 2) 刷新 THIRD-PARTY-NOTICES.md 的 aria2 sha256 pin
+          python3 - <<'PY'
+          import re
+          new = {}
+          for line in open('out/SHA256SUMS.txt'):
+              h, path = line.split()
+              abi, fn = path.split('/')
+              be = fn[len('libaria2c_'):-len('.so')]
+              new[(abi, be)] = h
+          p = 'THIRD-PARTY-NOTICES.md'
+          s = open(p, encoding='utf-8').read()
+          for (abi, be), h in new.items():
+              pat = re.compile(r'(libaria2c_%s\.so`（%s）= )`[0-9a-f]+`' % (be, abi))
+              s, n = pat.subn(r'\1`' + h + '`', s)
+              assert n == 1, 'aria2 pin %s/%s 未匹配' % (abi, be)
+          open(p, 'w', encoding='utf-8').write(s)
+          print('NOTICES aria2 sha256 pin 已刷新')
+          PY
+          # 3) 提交 + 推送（core.hooksPath 走仓库钩子验证提交合规）
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config core.hooksPath tools/githooks
+          git add lib/ THIRD-PARTY-NOTICES.md
+          git diff --cached --stat
+          git commit -m "$(cat <<'EOF'
+          build(native): CI 重建 aria2 双后端 .so 并刷新 sha256 pin（refresh_repo）
+
+          - 4 枚 libaria2c_{ossl,gnutls}.so（arm64-v8a/armeabi-v7a）替换为 CI 重建产物
+          - THIRD-PARTY-NOTICES.md 的 aria2 sha256 pin 同步刷新
+
+          文档: 已更新 THIRD-PARTY-NOTICES.md 的 aria2 sha256 pin
+
+          Co-authored-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          EOF
+          )"
+          git push "https://x-access-token:${}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main
 
       - name: 🚚 上传产物（.so + 清单 + 构建日志）
         uses: actions/upload-artifact@v4

@@ -5,7 +5,9 @@ name: 🔧 构建 libarchive.so
 # 安全修复（Zip Slip / 吞错 / 膨胀比闸）永远到不了设备。本 workflow 让重建
 # 可复现：手动触发，产物作为 artifact 上传，下载后替换 lib/<abi>/libarchive.so。
 #
-# 只产出 .so artifact，不构建 APK、不建 Release——与「不做自动发版」约定不冲突。
+# 默认只产出 .so artifact 不入库。勾选「refresh_repo」时，构建后直接把 2 枚
+# libarchive.so 替换进仓库 lib/ 并刷新 THIRD-PARTY-NOTICES.md 的 sha256 pin，
+# 提交推 main。⚠ 会改动仓库二进制：哈希必变，真机验证通过后再勾选。
 on:
   workflow_dispatch:
     inputs:
@@ -17,6 +19,10 @@ on:
         description: 'zlib 版本 tag'
         type: string
         default: 'v1.3.1'
+      refresh_repo:
+        description: '构建后直接替换仓库 lib/ 下的 .so 并刷新 sha256 pin 提交推 main（真机验证后再用）'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -88,6 +94,53 @@ jobs:
 
       - name: 🛠 构建两 ABI
         run: bash tools/build-libarchive.sh
+
+      - name: 🚚 替换仓库 .so + 刷新 pin + 提交（refresh_repo=true 时）
+        if: ${{ inputs.refresh_repo }}
+        env:
+          : ${{ secrets. }}
+        run: |
+          set -euo pipefail
+          # 1) 替换 2 枚 .so
+          for abi in arm64-v8a armeabi-v7a; do
+            cp "out/$abi/libarchive.so" "lib/$abi/libarchive.so"
+          done
+          # 2) 刷新 THIRD-PARTY-NOTICES.md 的 libarchive sha256 pin
+          sha256sum out/*/libarchive.so > /tmp/la-sha256.txt
+          python3 - <<'PY'
+          import re
+          new = {}
+          for line in open('/tmp/la-sha256.txt'):
+              h, path = line.split()
+              abi = path.split('/')[-2]
+              new[abi] = h
+          p = 'THIRD-PARTY-NOTICES.md'
+          s = open(p, encoding='utf-8').read()
+          for abi, h in new.items():
+              pat = re.compile(r'(libarchive\.so`（%s）= )`[0-9a-f]+`' % abi)
+              s, n = pat.subn(r'\1`' + h + '`', s)
+              assert n == 1, 'libarchive pin %s 未匹配' % abi
+          open(p, 'w', encoding='utf-8').write(s)
+          print('NOTICES libarchive sha256 pin 已刷新')
+          PY
+          # 3) 提交 + 推送（core.hooksPath 走仓库钩子验证提交合规）
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config core.hooksPath tools/githooks
+          git add lib/ THIRD-PARTY-NOTICES.md
+          git diff --cached --stat
+          git commit -m "$(cat <<'EOF'
+          build(native): CI 重建 libarchive.so 并刷新 sha256 pin（refresh_repo）
+
+          - 2 枚 libarchive.so（arm64-v8a/armeabi-v7a）替换为 CI 重建产物
+          - THIRD-PARTY-NOTICES.md 的 libarchive sha256 pin 同步刷新
+
+          文档: 已更新 THIRD-PARTY-NOTICES.md 的 libarchive sha256 pin
+
+          Co-authored-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          EOF
+          )"
+          git push "https://x-access-token:${}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main
 
       - name: 🚚 上传产物
         uses: actions/upload-artifact@v4
