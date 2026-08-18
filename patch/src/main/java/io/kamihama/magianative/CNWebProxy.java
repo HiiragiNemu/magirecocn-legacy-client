@@ -565,7 +565,7 @@ public final class CNWebProxy {
         return -1;
     }
 
-    private static byte[] readAll(java.io.InputStream in) {
+    private static byte[] readAll(java.io.InputStream in) throws java.io.IOException {
         java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
         byte[] buf = new byte[8192];
         int n;
