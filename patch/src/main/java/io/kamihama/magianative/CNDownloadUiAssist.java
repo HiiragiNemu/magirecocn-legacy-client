@@ -639,31 +639,21 @@ public final class CNDownloadUiAssist {
             // MATCH_PARENT，内容恰好等于视口，没有可滚的东西。
             boolean overflow = contentRoot != null && scalePct > 100;
             hs.setHorizontalScrollBarEnabled(overflow);
-            hs.setScrollbarFadingEnabled(false);
+            hs.setScrollbarFadingEnabled(true); // 系统原生：淡出
             if (!overflow) hs.scrollTo(0, 0);
-            hs.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
             hs.setClipToPadding(false);
             // 横条往下让：槽要比条宽，否则条压在最后一行字上。
             hs.setPadding(hs.getPaddingLeft(), hs.getPaddingTop(),
                     hs.getPaddingRight(), dp(hs, SCROLLBAR_GUTTER_DP));
-            if (Build.VERSION.SDK_INT >= 29) {
-                hs.setHorizontalScrollbarThumbDrawable(scrollThumb(hs));
-                hs.setHorizontalScrollbarTrackDrawable(scrollTrack(hs));
-            }
         }
         if (vs != null) {
             vs.setVerticalScrollBarEnabled(true);
-            vs.setScrollbarFadingEnabled(false);
-            vs.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+            vs.setScrollbarFadingEnabled(true); // 系统原生：淡出
             vs.setClipToPadding(false);
             // 竖条往右让。同一个数还被文件列表下面那行文字进度与总进度条用作右
             // 边距——它们不在这个滚动容器里，靠这个数才对得齐。
             vs.setPadding(vs.getPaddingLeft(), vs.getPaddingTop(),
                     dp(vs, SCROLLBAR_GUTTER_DP), vs.getPaddingBottom());
-            if (Build.VERSION.SDK_INT >= 29) {
-                vs.setVerticalScrollbarThumbDrawable(scrollThumb(vs));
-                vs.setVerticalScrollbarTrackDrawable(scrollTrack(vs));
-            }
         }
     }
 
@@ -732,6 +722,31 @@ public final class CNDownloadUiAssist {
                 v.setVerticalScrollbarThumbDrawable(scrollThumb(v));
                 v.setVerticalScrollbarTrackDrawable(scrollTrack(v));
             }
+        }
+    }
+
+    /**
+     * 给任意滚动视图挂<b>系统原生</b>滚动条样式：淡出（滚动时浮现、停手隐藏）、
+     * 系统默认滑块/轨道、{@code INSIDE_OVERLAY}。布局侧仍保留
+     * {@code clipToPadding(false)} 与槽边距（滚动条不压字需要，与内建版一致）。
+     *
+     * <p>2026-08-18：浮层滚动条整体换成系统原生观感；{@link #applyBuiltinScrollbar}
+     * 与其 {@link #scrollThumb}/{@link #scrollTrack} 内建实现保留不删（若将来要
+     * 切回非淡出的胶囊条，改回调用它即可）。只该在创建时调一次，别重复叠加。
+     */
+    public static void applyNativeScrollbar(ViewGroup v, boolean horizontal) {
+        if (v == null) return;
+        v.setScrollbarFadingEnabled(true);
+        v.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+        v.setClipToPadding(false);
+        if (horizontal) {
+            v.setHorizontalScrollBarEnabled(true);
+            v.setPadding(v.getPaddingLeft(), v.getPaddingTop(),
+                    v.getPaddingRight(), v.getPaddingBottom() + dp(v, SCROLLBAR_GUTTER_DP));
+        } else {
+            v.setVerticalScrollBarEnabled(true);
+            v.setPadding(v.getPaddingLeft(), v.getPaddingTop(),
+                    v.getPaddingRight() + dp(v, SCROLLBAR_GUTTER_DP), v.getPaddingBottom());
         }
     }
 
