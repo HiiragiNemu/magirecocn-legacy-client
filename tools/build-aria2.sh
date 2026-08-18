@@ -78,6 +78,9 @@ xmake() { # xmake <log> <dir>
 # ─────────────────────────── 每 ABI 构建全部静态依赖 ───────────────────────────
 build_deps() { # build_deps <abi> <host> <cc> <cxx> <openssl-target> <extra-cflags>
     local abi="$1" host="$2" cc="$3" cxx="$4" osstarget="$5" xcflags="$6"
+    # 依赖包代码质量差、警告海量（一个 configure 就几千行），编译期关警告；
+    # aria2 本体保留警告（build_group 仍用原 $xcflags）。
+    local depxc="-w $xcflags"
     local PREFIX="$OUT/deps/$abi"
     mkdir -p "$PREFIX" "$OUT/logs"
     echo "════ 依赖构建 $abi ════"
@@ -90,7 +93,7 @@ build_deps() { # build_deps <abi> <host> <cc> <cxx> <openssl-target> <extra-cfla
         -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
         -DANDROID_ABI="$abi" -DANDROID_PLATFORM=android-21 \
         -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_INSTALL_PREFIX="$PREFIX"
+        -DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_C_FLAGS=-w
     run_log "$OUT/logs/zlib-$abi-build.log" cmake --build "build-zlib-$abi" --target zlibstatic -j"$NPROC"
     mkdir -p "$PREFIX/lib" "$PREFIX/include"
     cp "$ZLIB_SRC/zlib.h" "build-zlib-$abi/zconf.h" "$PREFIX/include/"
@@ -103,14 +106,14 @@ build_deps() { # build_deps <abi> <host> <cc> <cxx> <openssl-target> <extra-cfla
     run_log "$OUT/logs/openssl-$abi-conf.log" \
         env -i PATH="$PATH" HOME="${HOME:-/tmp}" ANDROID_NDK_HOME="$NDK" \
         bash -c "cd build-openssl-$abi && ./Configure $osstarget no-shared no-tests \
-            -D__ANDROID_API__=21 -fPIC --prefix='$PREFIX'"
+            -D__ANDROID_API__=21 -fPIC -w --prefix='$PREFIX'"
     run_log "$OUT/logs/openssl-$abi-build.log" make -C "build-openssl-$abi" -j"$NPROC"
     run_log "$OUT/logs/openssl-$abi-inst.log" make -C "build-openssl-$abi" install_sw
 
     # libxml2（必须 --without-iconv：bionic 的 iconv* 是 API 28，API21 设备必炸）
     echo "── libxml2 ($abi)"
     rm -rf "build-xml2-$abi" && mkdir "build-xml2-$abi"
-    xconf "$OUT/logs/xml2-$abi-conf.log" "build-xml2-$abi" "$XML2_SRC" "$host" "$cc" "$cxx" "$xcflags" "$PREFIX" \
+    xconf "$OUT/logs/xml2-$abi-conf.log" "build-xml2-$abi" "$XML2_SRC" "$host" "$cc" "$cxx" "$depxc" "$PREFIX" \
         --enable-static --disable-shared \
         --without-python --without-lzma --without-iconv --without-ftp --without-http \
         --with-zlib="$PREFIX"
@@ -120,7 +123,7 @@ build_deps() { # build_deps <abi> <host> <cc> <cxx> <openssl-target> <extra-cfla
     # sqlite3（autoconf 包；fseeko 等由 link 测试把关，API21 stub 无则自动回退）
     echo "── sqlite3 ($abi)"
     rm -rf "build-sqlite-$abi" && mkdir "build-sqlite-$abi"
-    xconf "$OUT/logs/sqlite-$abi-conf.log" "build-sqlite-$abi" "$SQLITE_SRC" "$host" "$cc" "$cxx" "$xcflags" "$PREFIX" \
+    xconf "$OUT/logs/sqlite-$abi-conf.log" "build-sqlite-$abi" "$SQLITE_SRC" "$host" "$cc" "$cxx" "$depxc" "$PREFIX" \
         --enable-static --disable-shared
     xmake "$OUT/logs/sqlite-$abi-build.log" "build-sqlite-$abi"
     run_log "$OUT/logs/sqlite-$abi-inst.log" make -C "build-sqlite-$abi" install
@@ -128,7 +131,7 @@ build_deps() { # build_deps <abi> <host> <cc> <cxx> <openssl-target> <extra-cfla
     # libssh2（crypto=openssl；两组同此）
     echo "── libssh2 ($abi)"
     rm -rf "build-ssh2-$abi" && mkdir "build-ssh2-$abi"
-    xconf "$OUT/logs/ssh2-$abi-conf.log" "build-ssh2-$abi" "$SSH2_SRC" "$host" "$cc" "$cxx" "$xcflags" "$PREFIX" \
+    xconf "$OUT/logs/ssh2-$abi-conf.log" "build-ssh2-$abi" "$SSH2_SRC" "$host" "$cc" "$cxx" "$depxc" "$PREFIX" \
         --enable-static --disable-shared \
         --with-crypto=openssl --with-libssl-prefix="$PREFIX" --with-libz
     xmake "$OUT/logs/ssh2-$abi-build.log" "build-ssh2-$abi"
@@ -145,7 +148,7 @@ build_deps() { # build_deps <abi> <host> <cc> <cxx> <openssl-target> <extra-cfla
     #   · 纯静态 + CFLAGS 加 -DPIC：m4-ccas 把 -DPIC 转发给 m4，汇编走 PIC
     #     变体，安装归档也是 PIC（定向实验 4 个问题对象 R_ARM_ABS32 全为 0）。
     # 取后者，保持纯静态不引入 libgmp.so。
-    xconf "$OUT/logs/gmp-$abi-conf.log" "build-gmp-$abi" "$GMP_SRC" "$host" "$cc" "$cxx" "$xcflags -DPIC" "$PREFIX" \
+    xconf "$OUT/logs/gmp-$abi-conf.log" "build-gmp-$abi" "$GMP_SRC" "$host" "$cc" "$cxx" "$depxc -DPIC" "$PREFIX" \
         --enable-static --disable-shared
     xmake "$OUT/logs/gmp-$abi-build.log" "build-gmp-$abi"
     run_log "$OUT/logs/gmp-$abi-inst.log" make -C "build-gmp-$abi" install
@@ -156,7 +159,7 @@ build_deps() { # build_deps <abi> <host> <cc> <cxx> <openssl-target> <extra-cfla
     # 会 SIGILL；TLS 加解密不是 CDN 下载瓶颈，换确定性。arm64 全系 NEON 保留。
     local nettle_asm=()
     if [ "$abi" = "armeabi-v7a" ]; then nettle_asm=(--disable-assembler); fi
-    xconf "$OUT/logs/nettle-$abi-conf.log" "build-nettle-$abi" "$NETTLE_SRC" "$host" "$cc" "$cxx" "$xcflags" "$PREFIX" \
+    xconf "$OUT/logs/nettle-$abi-conf.log" "build-nettle-$abi" "$NETTLE_SRC" "$host" "$cc" "$cxx" "$depxc" "$PREFIX" \
         --enable-static --disable-shared --disable-documentation --disable-openssl \
         "${nettle_asm[@]}"
     xmake "$OUT/logs/nettle-$abi-build.log" "build-nettle-$abi"
@@ -164,7 +167,7 @@ build_deps() { # build_deps <abi> <host> <cc> <cxx> <openssl-target> <extra-cfla
 
     echo "── gnutls ($abi)"
     rm -rf "build-gnutls-$abi" && mkdir "build-gnutls-$abi"
-    xconf "$OUT/logs/gnutls-$abi-conf.log" "build-gnutls-$abi" "$GNUTLS_SRC" "$host" "$cc" "$cxx" "$xcflags" "$PREFIX" \
+    xconf "$OUT/logs/gnutls-$abi-conf.log" "build-gnutls-$abi" "$GNUTLS_SRC" "$host" "$cc" "$cxx" "$depxc" "$PREFIX" \
         --enable-static --disable-shared \
         --with-included-libtasn1 --with-included-unistring \
         --without-p11-kit --without-idn --without-zlib --without-brotli --without-zstd \
