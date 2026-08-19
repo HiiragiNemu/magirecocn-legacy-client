@@ -83,6 +83,16 @@ on:
         description: '是否编译调试悬浮窗（native MAGIA_DEBUG_OVERLAY）'
         type: boolean
         default: false
+    # verify-only 调用只声明构建确实需要的四个只读输入。
+    secrets:
+      BASELINE_APK_URL:
+        required: true
+      OVERLAY_URL:
+        required: true
+      CLIENT_ROOT_DOMAIN:
+        required: true
+      CLIENT_PAGES_HOSTS:
+        required: true
 
 permissions:
   contents: read

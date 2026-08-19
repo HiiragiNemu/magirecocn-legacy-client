@@ -19,7 +19,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: write   # 并发预警要在提交下留言
+  contents: read
 
 jobs:
   # ── 复验：完整构建流水线（不发布）─────────────────────────────────
@@ -27,15 +27,17 @@ jobs:
     uses: ./.github/workflows/build-apk.yml
     with:
       verify_only: true
-    # ⚠ 可重用 workflow（workflow_call）**默认不继承 secrets**，必须显式给。
-    # 2026-08-14 踩过：把基线地址等值从硬编码搬进 secrets 之后，直接触发
-    # build-apk 是好的，但从这里调进去全是空——现象是「脚本读不到环境变量」，
-    # 而环境变量其实设了，只是值为空串。少这一行就是这个结果。
-    secrets: inherit
+    secrets:
+      BASELINE_APK_URL: ${{ secrets.BASELINE_APK_URL }}
+      OVERLAY_URL: ${{ secrets.OVERLAY_URL }}
+      CLIENT_ROOT_DOMAIN: ${{ secrets.CLIENT_ROOT_DOMAIN }}
+      CLIENT_PAGES_HOSTS: ${{ secrets.CLIENT_PAGES_HOSTS }}
 
   # ── 并发预警：24h 内同文件的他人改动 ─────────────────────────────
   collision-warning:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # 只有这一项需要写提交评论
     steps:
       - name: 📦 检出（全量历史）
         uses: actions/checkout@v4
@@ -117,15 +119,14 @@ jobs:
           set -euo pipefail
           FILES=$(git diff --name-only "$BEFORE" "$AFTER" || echo "")
           TIER=1
-          # baseline/ 顶掉了原先的 smali/ 与 smali_classes2/：工程树不在仓库里之后，
-          # 那两条路径永远匹配不到，这一级判定等于哑火。改动 patchset 与改 smali
-          # 是同一件事——它决定重建出来的树长什么样。
-          CORE="^(magia-native/|baseline/|patch/src/main/java/io/kamihama/magianative/(CNWebProxy|CNDownloaderFix|CNHotUpdate|CNSafeLink)\.java)"
+          CORE="^patch/src/main/java/io/kamihama/magianative/(CNWebProxy|CNDownloaderFix|CNHotUpdate|CNSafeLink)\.java"
           UI="^(patch/src/main/java/|config\.json)"
           while IFS= read -r f; do
             [ -z "$f" ] && continue
             case "$f" in
-              *.md|docs/*|.github/*|tools/*) ;;                    # 文档/脚本/配置 → 1 级
+              .github/workflows/*|.github/actions/*|tools/*|magia-native/*|baseline/*|lib/*|patch/src/main/java/*|res/xml/network_security_config.xml)
+                   TIER=3 ;;
+              *.md|docs/*.md|docs-site/*.md) ;;                     # 纯 Markdown → 1 级
               *) if echo "$f" | grep -qE "$CORE"; then TIER=3
                  elif echo "$f" | grep -qE "$UI" && [ "$TIER" -lt 2 ]; then TIER=2; fi ;;
             esac
