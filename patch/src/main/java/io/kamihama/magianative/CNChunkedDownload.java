@@ -819,6 +819,12 @@ public final class CNChunkedDownload {
                 ctx.lastMoveNs.set(now);
                 if (ctx.sink != null) ctx.sink.onProgress(totalNow, ctx.total);
                 if (now - lastSave >= META_SAVE_INTERVAL_NS) {
+                    // F-057：meta 声称「这些字节 done」之前，先把数据同步落盘——
+                    // 否则掉电重排可能 meta 存活而页缓存丢失，resume 从更靠后的
+                    // offset 继续，跳过未落盘区间。每 2s 一次 fsync，代价可控。
+                    try { raf.getFD().sync(); } catch (IOException e) {
+                        throw new IOException("分段数据同步失败: " + index, e);
+                    }
                     saveByteMeta(ctx.meta, ctx.total, ctx.starts.length, ctx.segmentSize,
                             ctx.etag, ctx.url, ctx.done);
                     lastSave = now;
@@ -830,6 +836,12 @@ public final class CNChunkedDownload {
             raf.getFD().sync();
         } finally {
             if (ctx.open.get()) {
+                // F-057：finally 里的断点保存同样先同步数据（取消/失败路径要把
+                // 已写字节做成持久化检查点）。raf 可能因早退为 null——null 说明
+                // 还没写过任何字节，无数据可丢，跳过同步即可。
+                if (raf != null) {
+                    try { raf.getFD().sync(); } catch (Throwable ignore) {}
+                }
                 saveByteMeta(ctx.meta, ctx.total, ctx.starts.length, ctx.segmentSize,
                         ctx.etag, ctx.url, ctx.done);
             }
