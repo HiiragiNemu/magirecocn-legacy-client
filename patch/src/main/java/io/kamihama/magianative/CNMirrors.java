@@ -118,6 +118,7 @@ public final class CNMirrors {
     private static final int MAX_JSON_BYTES     = 256 * 1024;
 
     // ---- 可被线路列表覆盖的全局参数（含默认值） ----
+    private static volatile int  cfgMaxDownloads     = 4;   // settings.max_downloads
     private static volatile int  cfgChunks            = 4;
     private static volatile long cfgMinChunkBytes     = 8L * 1024 * 1024;
     private static volatile int  cfgSwitchAfterFail   = 1;
@@ -156,6 +157,13 @@ public final class CNMirrors {
     public static int  baselineFromS()    { return cfgBaselineFromS; }
     public static int  baselineToS()      { return cfgBaselineToS; }
     public static int  throttleGraceS()   { return cfgThrottleGraceS; }
+
+    /**
+     * 安装器/下载池并发数（settings.max_downloads，默认 4）。
+     * F-013：校验内联在下载任务里，池子需容纳「下载 + 校验 + 解压」的混合负载，
+     * 云端可调大（如 6-8）避免校验占满全部线程拖慢剩余包的下载。
+     */
+    public static int maxDownloads() { return cfgMaxDownloads; }
 
     public static int  chunks()          { return cfgChunks; }
     public static long minChunkBytes()   { return cfgMinChunkBytes; }
@@ -916,6 +924,7 @@ public final class CNMirrors {
         JSONObject st = root.optJSONObject("settings");
         if (st != null) {
             cfgChunks          = clampInt(st.optInt("chunks",             cfgChunks),          1, 16);
+            cfgMaxDownloads    = clampInt(st.optInt("max_downloads",      cfgMaxDownloads),   4, 16);
             cfgMinChunkBytes   = Math.max(1L << 20,
                                  st.optLong("min_chunk_bytes",            cfgMinChunkBytes));
             cfgSwitchAfterFail = clampInt(st.optInt("switch_after_failures", cfgSwitchAfterFail), 1, 10);

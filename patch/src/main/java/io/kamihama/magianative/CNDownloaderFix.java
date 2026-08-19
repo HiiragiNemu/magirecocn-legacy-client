@@ -717,7 +717,7 @@ public final class CNDownloaderFix {
     }
 
     private static void runInstallerInner() {
-        CNLog.i(TAG, "installer=v2 max_downloads=" + MAX_DOWNLOADS);
+        CNLog.i(TAG, "installer=v2 max_downloads=" + CNMirrors.maxDownloads());
         try {
             // Activity 可能还没就绪（hook 在引擎切场景时就触发了）。原先只取一次，
             // 取不到就完全不显示浮层——屏幕上便直接露出引擎自带的下载场景。
@@ -806,7 +806,7 @@ public final class CNDownloaderFix {
         while (true) {
             // 每轮重建：上一轮的闸门已经放行完了，重试这一轮要重新等一次。
             prereqGate = new CountDownLatch(PREREQ_SLOTS.length);
-            ExecutorService pool = Executors.newFixedThreadPool(MAX_DOWNLOADS);
+            ExecutorService pool = Executors.newFixedThreadPool(CNMirrors.maxDownloads());
             List<Future<Boolean>> futures = new ArrayList<Future<Boolean>>(ARCHIVE_COUNT);
             for (int i = 0; i < ARCHIVE_COUNT; i++) {
                 futures.add(pool.submit(new ArchiveTask(i)));
@@ -949,7 +949,7 @@ public final class CNDownloaderFix {
      */
     private static void probeAllSizes() {
         CNCNDownloadUI.updateSimple("准备中", "正在获取文件大小…", 0);
-        ExecutorService pool = Executors.newFixedThreadPool(MAX_DOWNLOADS);
+        ExecutorService pool = Executors.newFixedThreadPool(CNMirrors.maxDownloads());
         List<Future<Boolean>> fs = new ArrayList<Future<Boolean>>(ARCHIVE_COUNT);
         for (int i = 0; i < ARCHIVE_COUNT; i++) {
             fs.add(pool.submit(new SizeProbeTask(i)));
@@ -1563,15 +1563,12 @@ public final class CNDownloaderFix {
                 }
                 if (rv == CNAria2.OK && archive.isFile() && archive.length() > 0
                         && isAria2ArchiveUsable(archive, name)) {
-                    // ⚠ aria2 模式下**不叠加**额外的内容校验（维护者决定，2026-08-13）：
-                    // 不套基础包 manifest 的块指纹，也不做热更两包的 version json
-                    // size/MD5 比对。判据是 ZIP 自带的完整性——没下全的包结构就不合法，
-                    // 逐条目的 size/CRC 也会在解压时把它拦下来，压根打不开。
-                    //
-                    // 说清楚这条**换来了什么、放弃了什么**：拦得住「没下全 / 传坏了」，
-                    // 拦不住「下全了但是旧的」——CDN 上一份结构完好的过期副本能一路
-                    // 通过。今天 cn_scenario_update.zip 正是这种（尺寸一样、内容是上
-                    // 一版）。这条路上它只能靠随后的热更新轮按版本号发现并补下。
+                    // aria2 完工的内容校验（F-013，2026-08-19 覆盖 2026-08-13 的
+                    // 「不叠加校验」决定）：基础包套 manifest 块指纹逐块校验（见下方
+                    // verifyStaticArchiveIdentity 调用），热更两包走 version json 的
+                    // size/MD5（verifyHotIdentity）。ZIP 自带完整性（没下全结构不合法、
+                    // 逐条目 size/CRC）仍兜底，但不再作为**唯一**判据——结构完好但
+                    // 陈旧/被替换的包此前能一路通过，如今被拦。
                     //
                     // 解压走全仓唯一那套事务：它给的是空间预检与断点续解压，
                     // 那不是「内容校验」，去掉只会让 03 那类大包白解压半天再翻车。
@@ -1581,6 +1578,11 @@ public final class CNDownloaderFix {
                     // 这道闸（主路径在 fetchArchive 之后、extract 之前），线上
                     // force_aria2=true 时热更包可能抢跑。包已下好不用重下：交回
                     // 主引擎轮次，它按「完整包复用」接手，先过闸再解压。
+                    //
+                    // F-013：aria2 完工此前只靠 ZIP 自带完整性（下全/传坏拦得住，
+                    // 下全但陈旧的拦不住）。补分块身份校验（基础包），覆盖
+                    // 2026-08-13「不叠加校验」的旧决定——陈旧/被替换包不再能装。
+                    verifyStaticArchiveIdentity(name, archive);
                     if (!awaitPrereqInstalled(index, name)) {
                         CNLog.w(TAG, "aria2 已下载但前置包未就绪，交主引擎轮次安装: " + name);
                         return A2_MAIN;
@@ -1779,6 +1781,9 @@ public final class CNDownloaderFix {
                 deleteQuietly(archive);
                 deleteQuietly(new File(archive.getPath() + ".aria2.url"));
             } else {
+                // F-013：复用路径此前只做结构校验，内容错误/陈旧/被替换的包
+                // 会一路进解压。补分块身份校验（基础包）。
+                verifyStaticArchiveIdentity(name, archive);
                 verifyHotIdentity(name, archive, usesChunkManifest(name) ? null
                         : CNHotUpdateCheck.metaForSlot(index));
                 long len = archive.length();
@@ -1869,6 +1874,8 @@ public final class CNDownloaderFix {
                     + " → 单线程续传");
         }
         DownloadMetadata single = downloadOnce(url, archive, index, direct, restartToken);
+        // F-013：单线程路径此前只做长度/结构校验，补分块身份校验（基础包）。
+        verifyStaticArchiveIdentity(name, archive);
         verifyHotIdentity(name, archive, hotMeta);
         return single;
     }
@@ -1995,6 +2002,35 @@ public final class CNDownloaderFix {
         deleteQuietly(CNChunkedDownload.metaFileFor(archive));
         throw new HotIdentityMismatch("热更包身份校验失败 file=" + name
                 + " version=" + meta.version + " 原因=" + err);
+    }
+
+    /**
+     * F-013：静态基础包的内容身份认证必须独立于传输引擎。复用/单线程/aria2 三条
+     * 路径此前只做长度/结构/条目校验，结构合法但内容错误、陈旧或被替换的 ZIP 仍可
+     * 安装。统一在 promotion 前逐块验证（同一份 ChunkManifest）。热更两包走
+     * version JSON 的 size+MD5（verifyHotIdentity），不在此列。
+     *
+     * <p>调度说明：本方法在下载任务的线程里同步跑（池子已由 settings.max_downloads
+     * 放大，校验与其余包的下载/热更在池内并发），复用包的重哈希与其它包下载重叠。
+     */
+    private static void verifyStaticArchiveIdentity(String name, File archive)
+            throws IOException {
+        if (!usesChunkManifest(name)) return;   // 热更两包走 version JSON
+        if (archive == null || !archive.isFile()) return;
+        CNChunkedDownload.ChunkHashes hashes = ChunkManifest.forFile(name);
+        if (hashes == null || hashes.count == 0) {
+            throw new IOException("分块清单获取失败，拒绝未认证基础包: " + name);
+        }
+        try {
+            if (!CNArchiveValidate.verifyChunks(archive, hashes)) {
+                throw new IOException("基础包分块身份校验失败: " + name);
+            }
+        } catch (IOException e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new IOException("基础包分块身份校验异常: " + name, t);
+        }
+        CNLog.i(TAG, "基础包分块身份校验通过 file=" + name);
     }
 
     /** 把分片下载的进度接到既有的 UI/看门狗上。 */
