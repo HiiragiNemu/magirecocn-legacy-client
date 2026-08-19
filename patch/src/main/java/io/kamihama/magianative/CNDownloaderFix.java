@@ -855,11 +855,19 @@ public final class CNDownloaderFix {
 
             // 等重试信号。绝不返回——一返回引擎就会显示原生下载界面。
             synchronized (RETRY_LOCK) {
+                // F-055：进等待前清掉中断标志。前置的任何异常路径（尺寸探测、
+                // 等待 future、早退 catch）都可能留下中断位；带着它进 wait() 会
+                // 立即再抛 InterruptedException，配合下方「不 re-interrupt」的
+                // catch 才能真的阻塞。
+                CNDownloadRestart.clearInterrupt();
                 while (!retryRequested) {
                     try {
                         RETRY_LOCK.wait();
                     } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
+                        // 被打断也继续等玩家重试（退回原生下载界面是本路径最不想
+                        // 发生的事）。wait() 抛出时已经清了中断位——这里**不能**
+                        // 再 interrupt()，否则下一轮 wait() 又立即抛，CPU 空转 +
+                        // 日志刷屏（旧实现的热自旋，F-055）。
                         CNLog.w(TAG, "等待重试时被中断，继续等待以避免退回原生界面");
                     }
                 }
