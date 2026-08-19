@@ -525,35 +525,84 @@ public final class CNWebProxy {
         return mime != null && mime.toLowerCase(java.util.Locale.US).contains("text/html");
     }
 
-    /** 主 frame HTML 的 {@code <head>} 之后注入脚本。字节级插入，不重编码（保任何 charset）。 */
+    /** WS 计数只观察主 HTML；超大页面不注入（避免为调试把巨页读进堆做注入）。 */
+    private static final int WS_HTML_MAX_BYTES = 2 * 1024 * 1024;
+
+    /**
+     * 主 frame HTML 的 {@code <head>} 之后注入脚本。字节级插入，不重编码（保任何
+     * charset）。
+     *
+     * <p>F-014：消费流后**一律重建**响应——绝不让调用方用回已读到 EOF 的原
+     * 响应（那会拿到空页面）。重建用五参构造器保留 statusCode/reasonPhrase/
+     * headers（三参构造器会丢 CSP/缓存/CORS/Set-Cookie）。{@code <head>} 只匹配
+     * 后随空白或 {@code >} 的真实 head 标签，不误匹配 {@code <header>}。页面超过
+     * {@link #WS_HTML_MAX_BYTES} 时跳过注入（重建原字节），不把巨页读进堆做注入。
+     */
     private static WebResourceResponse injectWsCounter(WebResourceResponse r) {
+        byte[] all = null;
         try {
             java.io.InputStream in = r.getData();
-            if (in == null) return null;
-            byte[] all = readAll(in);
-            int head = indexOfAscii(all, "<head");
-            if (head < 0) return null;                 // 无 <head> 安全降级
+            if (in == null) return rebuildResponse(r, new byte[0]);
+            all = readAll(in);
+        } catch (Throwable t) {
+            return rebuildResponse(r, all == null ? new byte[0] : all);
+        }
+        // 超限：跳过注入，重建原字节（页面 > 2MB 不可能是正常游戏 UI）
+        if (all.length > WS_HTML_MAX_BYTES) return rebuildResponse(r, all);
+        int head = indexOfHtmlHead(all);
+        if (head >= 0) {
             int gt = head;
             while (gt < all.length && all[gt] != (byte) '>') gt++;
-            if (gt >= all.length) return null;
-            byte[] script = WS_INJECT_SCRIPT.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-            byte[] out = new byte[all.length + script.length];
-            System.arraycopy(all, 0, out, 0, gt + 1);
-            System.arraycopy(script, 0, out, gt + 1, script.length);
-            System.arraycopy(all, gt + 1, out, gt + 1 + script.length, all.length - gt - 1);
-            String mime = r.getMimeType() != null ? r.getMimeType() : "text/html";
-            String enc = r.getEncoding() != null ? r.getEncoding() : "UTF-8";
-            return new WebResourceResponse(mime, enc, new java.io.ByteArrayInputStream(out));
-        } catch (Throwable t) {
-            return null;
+            if (gt < all.length) {
+                byte[] script = WS_INJECT_SCRIPT.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+                byte[] out = new byte[all.length + script.length];
+                System.arraycopy(all, 0, out, 0, gt + 1);
+                System.arraycopy(script, 0, out, gt + 1, script.length);
+                System.arraycopy(all, gt + 1, out, gt + 1 + script.length, all.length - gt - 1);
+                return rebuildResponse(r, out);
+            }
         }
+        return rebuildResponse(r, all);   // 无 <head> / 畸形：重建原字节
+    }
+
+    /** 重建响应，保留原 statusCode/reasonPhrase/headers（F-014）。状态未知时回退三参。 */
+    private static WebResourceResponse rebuildResponse(WebResourceResponse orig, byte[] data) {
+        String mime = orig.getMimeType() != null ? orig.getMimeType() : "text/html";
+        String enc = orig.getEncoding() != null ? orig.getEncoding() : "UTF-8";
+        java.io.ByteArrayInputStream bin = new java.io.ByteArrayInputStream(data);
+        int status = orig.getStatusCode();
+        if (status > 0) {
+            return new WebResourceResponse(mime, enc, status, orig.getReasonPhrase(),
+                    orig.getResponseHeaders(), bin);
+        }
+        return new WebResourceResponse(mime, enc, bin);
+    }
+
+    /** 只匹配后随空白或 {@code >} 的真实 {@code <head>，不匹配 {@code <header}（F-014）。 */
+    private static int indexOfHtmlHead(byte[] data) {
+        int i = indexOfAscii(data, "<head");
+        while (i >= 0) {
+            int next = i + 5;                 // 跳过 "<head"
+            if (next < data.length) {
+                byte b = data[next];
+                if (b == (byte) '>' || b == (byte) ' ' || b == (byte) '\t'
+                        || b == (byte) '\n' || b == (byte) '\r') return i;
+            }
+            i = indexOfAsciiFrom(data, "<head", i + 1);
+        }
+        return -1;
     }
 
     /** 大小写不敏感的 ASCII 子串定位（字节级）。 */
     private static int indexOfAscii(byte[] data, String ascii) {
+        return indexOfAsciiFrom(data, ascii, 0);
+    }
+
+    /** 从 {@code from} 起的大小写不敏感 ASCII 子串定位（字节级）。 */
+    private static int indexOfAsciiFrom(byte[] data, String ascii, int from) {
         byte[] pat = ascii.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
         outer:
-        for (int i = 0; i + pat.length <= data.length; i++) {
+        for (int i = from; i + pat.length <= data.length; i++) {
             for (int j = 0; j < pat.length; j++) {
                 byte b = data[i + j];
                 byte lo = (b >= 'A' && b <= 'Z') ? (byte) (b + 32) : b;
