@@ -6,6 +6,7 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.Proxy;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
@@ -416,8 +417,12 @@ public final class CNAria2 {
             req.put("params", arr);
             byte[] body = req.toString().getBytes("UTF-8");
 
+            // 本地控制通道绝不服从系统 ProxySelector。否则全局抓包/HTTP 代理可
+            // 截获 rpc-secret、并令 127.0.0.1 RPC 不可达（F-049）。
             HttpURLConnection c = (HttpURLConnection)
-                    new URL("http://127.0.0.1:" + port + "/jsonrpc").openConnection();
+                    new URL("http://127.0.0.1:" + port + "/jsonrpc")
+                            .openConnection(Proxy.NO_PROXY);
+            c.setInstanceFollowRedirects(false);
             c.setRequestMethod("POST");
             c.setConnectTimeout(3000);
             c.setReadTimeout(3000);
