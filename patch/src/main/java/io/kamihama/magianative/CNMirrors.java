@@ -1015,9 +1015,11 @@ public final class CNMirrors {
             }
             return ok;
         }
+        // F-046：defaultList 已在端点未注入时刻意返回空表——这里不得重新发明
+        // 一个 base 为空的「默认线路」（会拼出相对文件名进 new URL）。空表由
+        // 调用方（pick）fail-closed，绝不给一个不可用的空 base 线路。
         List<Mirror> any = new ArrayList<Mirror>(all.size());
         for (Mirror m : all) if (m.enabled) any.add(m);
-        if (any.isEmpty()) any.add(new Mirror("默认线路", DEFAULT_BASE, 0, 0, true));
         return any;
     }
 
@@ -1027,6 +1029,11 @@ public final class CNMirrors {
      */
     public static Mirror pick(int attempt) {
         List<Mirror> ok = healthy();
+        if (ok.isEmpty()) {
+            // F-046：无可用线路 = 构建期端点未注入的 fail-closed 态。抛异常让
+            // 上层走「无法下载」而非拼出空 base 的无效 URL 静默失败。
+            throw new IllegalStateException("没有可用下载线路（构建期端点可能未注入）");
+        }
         int idx = (attempt - 1) % ok.size();
         if (idx < 0) idx = 0;
         return ok.get(idx);
