@@ -129,6 +129,15 @@ public class ZipPlanTest {
         CNZipPlan.extractedBytes(big, big.dataLen());
         check("[5a] 单次读取不超过尾部窗口 + 中央目录", big.maxSpan <= 66 * 1024L + 512 * 1024L);
 
+        // ── [6] F-056：注释里的伪 EOCD 签名不能被当真 ─────────────────
+        // 真 EOCD 的 comment 恰好填到文件尾；注释内容里若再出现 0x06054b50
+        // 签名（位置比真 EOCD 更靠后），旧的「取最后一个签名」会命中它，读到的
+        // cdSize/cdOff 越界成 -1 → 误报「不知道」。新实现要求
+        // pos+22+commentLen == EOF，伪签名不满足就被跳过，仍算得出真实大小。
+        byte[] z6 = zip(3, 100, false, "PKfake");
+        check("F-056 注释里的伪 EOCD 被跳过，仍算得出真实大小",
+                CNZipPlan.extractedBytes(new Mem(z6), z6.length) == 300L);
+
         System.out.println("通过 " + pass + " / 失败 " + fail);
         if (fail > 0) System.exit(1);
     }

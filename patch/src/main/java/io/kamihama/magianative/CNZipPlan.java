@@ -60,16 +60,18 @@ public final class CNZipPlan {
             byte[] tail = src.get(total - tailLen, total - 1);
             if (tail == null || tail.length < 22) return UNKNOWN;
 
-            int e = lastIndexOf(tail, SIG_EOCD);
-            if (e < 0 || e + 22 > tail.length) return UNKNOWN;
+            int e = findEocd(tail);
+            if (e < 0) return UNKNOWN;
             long cdSize = u32(tail, e + 12);
             long cdOff = u32(tail, e + 16);
 
             // Zip64：EOCD 里放不下的字段写成全 1，真值在 Zip64 EOCD 记录里。
             // 03 带着一份 Zip64 记录（15 个包里唯一），虽然它的值其实都放得下。
+            // F-056：真 Zip64 记录在 EOCD 的 locator（20 字节）之前——记录末 + 20
+            // 必须 ≤ EOCD 位置；伪签名（在注释/数据里）不满足这个相对布局。
             if (cdSize == 0xFFFFFFFFL || cdOff == 0xFFFFFFFFL) {
                 int z = lastIndexOf(tail, SIG_ZIP64_EOCD);
-                if (z < 0 || z + 56 > tail.length) return UNKNOWN;
+                if (z < 0 || z + 56 > tail.length || z + 76 > e) return UNKNOWN;
                 cdSize = u64(tail, z + 40);
                 cdOff = u64(tail, z + 48);
             }
@@ -101,6 +103,10 @@ public final class CNZipPlan {
                 if (z < 0) return UNKNOWN;
                 uSize = z;
             }
+            // F-056：sum 累加可能溢出 long（合法 Zip64 声明值可以很大）。规划器只是
+            // 提前量，不是关卡——溢出让总和绕回负数/小值会让它给出荒谬的空间结论，
+            // 宁可返回 UNKNOWN 放行（解压前还有精确检查兜底）。
+            if (uSize > Long.MAX_VALUE - sum) return UNKNOWN;
             sum += uSize;
             seen++;
             i += 46 + nLen + eLen + cLen;
@@ -139,6 +145,24 @@ public final class CNZipPlan {
     private static int lastIndexOf(byte[] b, byte[] sig) {
         for (int i = b.length - sig.length; i >= 0; i--) {
             if (startsWith(b, i, sig)) return i;
+        }
+        return -1;
+    }
+
+    /**
+     * 找「comment 恰好填到文件尾」的 EOCD。F-056：真 EOCD 是文件**最后**的结构，
+     * 它的 comment 一定延伸到 EOF（{@code i + 22 + commentLen == 缓冲区长度}，
+     * tail 就是文件末尾 min(TAIL_BYTES, total) 字节）。注释/数据里的伪签名要么
+     * 注释长度对不上 EOF，要么压根不是结构化的 EOCD——从后往前扫，只认满足等式
+     * 的。找不着返回 -1。
+     */
+    private static int findEocd(byte[] tail) {
+        for (int i = tail.length - SIG_EOCD.length; i >= 0; i--) {
+            if (!startsWith(tail, i, SIG_EOCD)) continue;
+            if (i + 22 > tail.length) continue;
+            int commentLen = u16(tail, i + 20);
+            if (commentLen < 0) continue;
+            if (i + 22 + commentLen == tail.length) return i;
         }
         return -1;
     }
