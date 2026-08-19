@@ -355,10 +355,18 @@ public final class CNAria2 {
             CNLog.w(TAG, "aria2 进程内异常: " + t);
             return ERR_OTHER;
         } finally {
-            // 进程活到这里 = 本次下载后端没把进程炸死，清除 armed 标记。
-            // 若 native 崩溃（SIGSEGV/SIGABRT），finally 根本来不及跑，标记留在
-            // 盘上 → 下次启动 Aria2EngineFailover.pickBackend() 读到就换组。
-            Aria2EngineFailover.disarm();
+            // F-007：只有确认会话仍存活（线程在 + RPC 曾可达）才清 armed 标记。
+            // keep-alive 下 native 线程常驻；启动后 RPC 未就绪、任务早退、线程刚
+            // 死亡或会话空闲期崩溃时，无条件 disarm 会把「未确认安全」记成干净
+            // 窗口。线程已死 → 保留标记，下次启动 pickBackend() 读到就换后端。
+            // 若 native 崩溃（SIGSEGV/SIGABRT），finally 根本来不及跑，标记自然
+            // 留在盘上——与这里的条件是同一套语义。
+            if (CNAria2Lib.isRunning() && sServerUp) {
+                Aria2EngineFailover.disarm();
+            } else {
+                CNLog.w(TAG, "aria2 会话未确认健康（isRunning=" + CNAria2Lib.isRunning()
+                        + " serverUp=" + sServerUp + "），保留 armed 标记");
+            }
             // 会话死亡（线程意外退出）时置 sServerUp=false 已在下载循环里做过；
             // 这里兜底再查一次（覆盖取消/早退等出口），保证本进程不会再去重启
             // 一个已死的 aria2（重启 = 第二次 execute = 崩）。
