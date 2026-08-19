@@ -23,7 +23,8 @@
          </activity>
 +        <activity android:excludeFromRecents="true" android:exported="false" android:launchMode="singleTask" android:name="io.kamihama.magianative.CNRestartActivity" android:noHistory="true" android:process=":cnrestart" android:screenOrientation="userLandscape" android:taskAffinity="io.kamihama.totentanz.cnrestart" android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
 +        <activity android:excludeFromRecents="true" android:exported="false" android:launchMode="singleTask" android:name="io.kamihama.magianative.CNOfflineImportActivity" android:noHistory="true" android:screenOrientation="userLandscape" android:taskAffinity="io.kamihama.totentanz.offlineimport" android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
-         <service android:exported="true" android:name="jp.f4samurai.pnote.util.MyFcmListenerService">
+-        <service android:exported="true" android:name="jp.f4samurai.pnote.util.MyFcmListenerService">
++        <service android:exported="false" android:name="jp.f4samurai.pnote.util.MyFcmListenerService">
              <intent-filter>
                  <action android:name="com.google.firebase.MESSAGING_EVENT"/>
 @@ -129,6 +132,7 @@
