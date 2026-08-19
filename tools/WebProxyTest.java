@@ -193,6 +193,16 @@ public class WebProxyTest {
            "https://y.example/p/dorothy.magi-reco.com/a");
         eq("白名单外的主机，换哪条线都不改",
            CNWebProxy.rewriteWith("https://evil.example/a", "https://x.example/s/"), null);
+        // F-029：userinfo（URL 内嵌凭据）一律拒收，不得代理
+        eq("userinfo 凭据 URL 拒收",
+           CNWebProxy.rewriteWith("https://token@dorothy.magi-reco.com/a", "https://x.example/s/"), null);
+        // query/fragment 是游戏前端的合法用法（cache-buster），保留代理
+        eq("query 保留",
+           CNWebProxy.rewriteWith("https://dorothy.magi-reco.com/a?ver=1", "https://x.example/s/"),
+           "https://x.example/s/dorothy.magi-reco.com/a?ver=1");
+        eq("fragment 保留",
+           CNWebProxy.rewriteWith("https://dorothy.magi-reco.com/a#frag", "https://x.example/s/"),
+           "https://x.example/s/dorothy.magi-reco.com/a#frag");
 
         System.out.println("\n通过 " + pass + " 项，失败 " + fail + " 项");
         if (fail > 0) System.exit(1);

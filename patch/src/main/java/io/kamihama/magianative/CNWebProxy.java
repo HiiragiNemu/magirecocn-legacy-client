@@ -12,6 +12,7 @@ import android.webkit.WebViewClient;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.net.HttpURLConnection;
+import java.net.URI;
 import java.net.URL;
 import java.util.HashMap;
 import java.util.List;
@@ -804,34 +805,46 @@ public final class CNWebProxy {
         String[] d = domains;
         if (url == null || b == null || d == null) return null;
         if (b.isEmpty() || b.charAt(b.length() - 1) != '/') return null;
-        if (!url.regionMatches(true, 0, "https://", 0, 8)) return null;
 
-        int hostStart = 8;
-        int sep = -1;
-        for (int i = hostStart; i < url.length(); i++) {
-            char ch = url.charAt(i);
-            if (ch == '/' || ch == '?' || ch == '#') { sep = i; break; }
+        // F-029：不再手工切 authority。URI 解析器负责区分 host/userinfo/port，
+        // 避免 https://token@allowed.example/ 被后缀检查当成普通允许主机。
+        URI parsed;
+        try {
+            parsed = new URI(url);
+        } catch (Throwable t) {
+            return null;
         }
-        String host = (sep < 0) ? url.substring(hostStart) : url.substring(hostStart, sep);
-        String rest = (sep < 0) ? "" : url.substring(sep);
-        if (host.isEmpty()) return null;
+        if (!"https".equalsIgnoreCase(parsed.getScheme())) return null;
 
-        String hostMatch = stripPort(host);
+        // 只拒 userinfo（URL 内嵌凭据，是真实泄露向量）：旧的手工切法把
+        // "token@host" 整个当 host，后缀匹配照样命中，代理会带着凭据把请求
+        // 发给网关。query/fragment **保留**：游戏前端用 query 做缓存破坏符
+        // （base.css?88f1...），拦下会让 web_mode=on 的静态代理失去作用。
+        if (parsed.getRawUserInfo() != null) return null;
+
+        String host = parsed.getHost();
+        String authority = parsed.getRawAuthority();
+        if (host == null || host.isEmpty()
+                || authority == null || authority.isEmpty()) return null;
+
+        String hostMatch = host.toLowerCase(Locale.US);
+        while (hostMatch.endsWith(".")) {
+            hostMatch = hostMatch.substring(0, hostMatch.length() - 1);
+        }
         if (hostMatch.isEmpty()) return null;
         if (isSelfHost(hostMatch)) return null;
         if (!hostMatches(hostMatch, d)) return null;
 
-        return b + host + (rest.isEmpty() ? "/" : rest);
-    }
-
-    private static String stripPort(String host) {
-        int pc = host.lastIndexOf(':');
-        if (pc < 0) return host;
-        for (int i = pc + 1; i < host.length(); i++) {
-            char ch = host.charAt(i);
-            if (ch < '0' || ch > '9') return host;   // 不是端口（IPv6 之类），原样用
+        // 保留 query/fragment：拼接时用 URI 规范化后的路径 + 原 query/fragment。
+        // 空路径无 tail 时补 "/"（与旧行为一致）；有 tail 时直接接 tail 不插斜杠。
+        String path = parsed.getRawPath();
+        String tail = "";
+        if (parsed.getRawQuery() != null) tail = "?" + parsed.getRawQuery();
+        if (parsed.getRawFragment() != null) tail += "#" + parsed.getRawFragment();
+        if (path == null || path.isEmpty()) {
+            return b + authority + (tail.isEmpty() ? "/" : tail);
         }
-        return host.substring(0, pc);
+        return b + authority + path + tail;
     }
 
     private static boolean isSelfHost(String host) {
