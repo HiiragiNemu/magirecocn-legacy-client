@@ -33,6 +33,11 @@ public final class CNOfflineImportActivity extends Activity {
     /** 待导入的文件名（如 cn_base_03.zip），Activity 启动前设置。 */
     private static volatile String pendingName;
 
+    // F-065：requestReserved 是「请求预留 → picker → 后台导入 → 最终结果」全程的
+    // 唯一所有者标志。pendingName 只承载文件名（选完即清，防 Activity 重建重弹），
+    // 不再兼作占用判据；占用判据统一看 requestReserved || isImporting()。
+    private static volatile boolean requestReserved;
+
     /** 导入结果回调：success=是否校验通过，name=文件名，err=失败原因（成功时 null）。 */
     public interface Callback {
         void onResult(boolean success, String name, String err);
@@ -80,12 +85,21 @@ public final class CNOfflineImportActivity extends Activity {
         }
         final Uri uri = data.getData();
         final Activity self = this;
-        // 用完即清。留着的话，下一次这个 Activity 因配置变化等原因重建时，
-        // onCreate 会拿这个陈旧的名字再弹一次文件选择器。同锁释放（F-037）。
+        // 用完即清 pendingName。留着的话，下一次这个 Activity 因配置变化等原因
+        // 重建时，onCreate 会拿这个陈旧的名字再弹一次文件选择器（F-037 同锁释放）。
+        // 注意：这里只清 pendingName、**不清 requestReserved**——后台导入还没完成，
+        // 交接窗口必须继续保持占用，否则第二次点击会启动第二个 picker（F-065）。
         synchronized (REQUEST_LOCK) { pendingName = null; }
         // 拷贝 + 校验是 IO 操作，丢到后台线程，避免阻塞 UI。
         // 用静态嵌套类 + 构造参数，避免匿名类带 this$0 触发 d8 陷阱（铁律 4）。
-        new Thread(new ImportTask(self, uri, name), "cnv-offline-import").start();
+        try {
+            new Thread(new ImportTask(self, uri, name), "cnv-offline-import").start();
+        } catch (Throwable t) {
+            // F-065：线程启动失败（资源耗尽等）必须走同一释放路径，否则
+            // reservation/callback 遗留，本进程永久拒绝后续导入。
+            CNLog.e(TAG, "启动导入任务失败: " + t, t);
+            notifyResult(false, name, "无法启动导入任务");
+        }
     }
 
     /** 后台导入任务：拷贝 + 分块校验 + 通知结果。静态嵌套类，无 this$0。 */
@@ -150,11 +164,25 @@ public final class CNOfflineImportActivity extends Activity {
         } catch (Throwable ignore) {}
     }
 
+    /** 取消/失败/完成共用的最终释放：抓取旧回调并清空全部 reservation 状态。 */
+    private static void releaseReservation() {
+        synchronized (REQUEST_LOCK) {
+            callback = null;
+            pendingName = null;
+            requestReserved = false;
+        }
+    }
+
     private static void notifyResult(final boolean ok, final String name, final String err) {
         final Callback cb;
         synchronized (REQUEST_LOCK) {
+            // F-065：一次性释放——cancel/picker 失败/导入完成都要清 pendingName 和
+            // requestReserved。旧实现只清 callback，cancel 后 pendingName 残留让
+            // requestImport 永久拒绝后续导入。
             cb = callback;
             callback = null;
+            pendingName = null;
+            requestReserved = false;
         }
         if (cb == null) return;
         try {
@@ -171,7 +199,9 @@ public final class CNOfflineImportActivity extends Activity {
         // 点击/并发调用可同时通过。pendingName != null 表示已有一个请求在等用户
         // 选文件，拒绝后来的（否则后一次会覆盖前一次的 pendingName/callback）。
         synchronized (REQUEST_LOCK) {
-            if (pendingName != null || CNOfflineImport.isImporting()) {
+            // F-065：占用判据只看 requestReserved（全程）|| isImporting，不依赖
+            // pendingName 的双重含义。
+            if (requestReserved || CNOfflineImport.isImporting()) {
                 CNLog.w(TAG, "拒绝重复导入（已有请求/导入在进行）: " + name);
                 if (cb != null) {
                     try {
@@ -184,6 +214,7 @@ public final class CNOfflineImportActivity extends Activity {
                 }
                 return false;
             }
+            requestReserved = true;
             pendingName = name;
             callback = cb;
         }
@@ -193,10 +224,8 @@ public final class CNOfflineImportActivity extends Activity {
             return true;
         } catch (Throwable t) {
             CNLog.e(TAG, "启动导入 Activity 失败: " + t, t);
-            synchronized (REQUEST_LOCK) {
-                pendingName = null;
-                callback = null;
-            }
+            // F-065：走同一释放路径，不残留 reservation。
+            releaseReservation();
             return false;
         }
     }
