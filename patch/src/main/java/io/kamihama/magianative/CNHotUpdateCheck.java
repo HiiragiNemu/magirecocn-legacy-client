@@ -167,18 +167,27 @@ public final class CNHotUpdateCheck {
     private static volatile boolean running = false;
     /** 非 null 表示「本次检查跑完后按这个文案重启」。由教程胶囊设置。 */
     private static volatile String pendingRestartMsg = null;
+    /** F-036：running 与 pendingRestartMsg 的同一同步边界。 */
+    private static final Object RESTART_GATE = new Object();
+    // F-036：running 与 pendingRestartMsg 的同一同步边界。旧实现「先查 running
+    // 再写消息」与收尾线程「running=false 后读消息」竞态——请求线程可读到 true、
+    // 收尾线程读到旧 null 并结束、请求线程随后写入消息，再也没有消费者。
 
     /** 检查是否正在进行。跑到一半重启会打断下载或解压。 */
-    static boolean isRunning() { return running; }
+    static boolean isRunning() {
+        synchronized (RESTART_GATE) { return running; }
+    }
 
     /**
-     * 请求「等本次检查跑完再重启」。教程胶囊在检查进行中被点时走这条路，
-     * 而不是当场重启。检查已经收工的话返回 false，调用方自己重启。
+     * 请求「等本次检查跑完再重启」。返回 true 时收尾线程**必定**能观察到该消息
+     * （同锁互斥）；检查已收工则返回 false，由调用方自己重启。
      */
     static boolean requestRestartWhenDone(String toastText) {
-        if (!running) return false;
-        pendingRestartMsg = toastText;
-        return true;
+        synchronized (RESTART_GATE) {
+            if (!running) return false;
+            if (pendingRestartMsg == null) pendingRestartMsg = toastText;
+            return true;
+        }
     }
 
     private CNHotUpdateCheck() {}
@@ -252,11 +261,14 @@ public final class CNHotUpdateCheck {
                     try {
                         runInner();
                     } catch (Throwable th) {
-                        running = false;
+                        String msg;
+                        synchronized (RESTART_GATE) {
+                            running = false;
+                            msg = pendingRestartMsg;
+                            pendingRestartMsg = null;
+                        }
                         CNLog.e(TAG, "热更检查异常终止（fail-open 进入游戏）: " + th, th);
                         try { CNCNDownloadUI.hide(); } catch (Throwable ignore) {}
-                        String msg = pendingRestartMsg;
-                        pendingRestartMsg = null;
                         if (msg != null) {
                             try { CNDownloaderFix.noticeAndRestart(msg); }
                             catch (Throwable ignore) {}
@@ -314,7 +326,7 @@ public final class CNHotUpdateCheck {
         boolean askedHotFallback = false;
         // 任何包处理失败都记下——末尾的「已是最新」不能谎报
         boolean anyFailure = false;
-        running = true;
+        synchronized (RESTART_GATE) { running = true; }
         try {
             CNCNDownloadUI.updateSimple("检查热更新", "正在查询台词与前端脚本的版本…", 0);
             // 版本号并行查：串行时首条线路的慢/挂会在两个包上各吃一轮超时
@@ -582,14 +594,19 @@ public final class CNHotUpdateCheck {
         awaitExplicitStayRelease();
         // running 要在浮层收掉之前清掉：之后再点胶囊（浮层还在的最后一刻）
         // 应当走「自己重启」那条路，而不是挂在一个马上就结束的检查上。
-        running = false;
+        // F-036：running=false 与消息读取同锁原子，确保请求线程要么在锁内写入
+        // 消息（本收尾必读到）、要么看到 false 自己重启，不留「没人消费」的窗口。
+        String msg;
+        synchronized (RESTART_GATE) {
+            running = false;
+            msg = pendingRestartMsg;
+            pendingRestartMsg = null;
+        }
         CNCNDownloadUI.hide();
 
         // 检查本身不重启——热更是启动早期跑的，引擎此时还没读到台词/脚本，
         // 原地替换即可生效，原实现也是这么做的。唯一的例外是玩家在检查进行中
         // 点了教程胶囊：那次重启不能打断下载/解压，于是接力到这里来做。
-        String msg = pendingRestartMsg;
-        pendingRestartMsg = null;
         if (msg != null) {
             CNLog.i(TAG, "检查已收工，执行教程胶囊请求的重启");
             CNDownloaderFix.noticeAndRestart(msg);
