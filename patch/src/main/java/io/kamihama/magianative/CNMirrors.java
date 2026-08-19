@@ -627,6 +627,13 @@ public final class CNMirrors {
                 + b.name + "=" + (speed[1] / 1024) + "KB/s");
         // 平手或 a 更快都维持原顺序；只有 b 明确更快才换
         if (speed[1] > 0 && speed[1] > speed[0]) {
+            // F-033：只有 mirrors 仍是本线程测速时捕获的那份（引用未变）才写回。
+            // 测速期间有新 refresh 发布了新线路表 → 放弃（旧列表可能启用了已被
+            // 删除/禁用/紧急撤销的镜像）。
+            if (mirrors != cur) {
+                CNLog.w(TAG, "竞速期间线路表已刷新，放弃旧测速结果（防陈旧镜像覆盖新配置）");
+                return;
+            }
             List<Mirror> reordered = new ArrayList<Mirror>(cur.size());
             reordered.add(b);
             for (Mirror m : cur) if (m != b) reordered.add(m);
