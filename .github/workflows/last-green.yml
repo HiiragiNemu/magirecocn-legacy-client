@@ -37,15 +37,13 @@ jobs:
       - name: 📦 检出仓库
         uses: actions/checkout@v4
         with:
-          # 用维护者 PAT 而不是默认 ：移动 last-green tag 是
-          # force push，会被 ruleset「refs/tags/*」（禁强推）拦下——
-          # github-actions[bot] 不能绕过 ruleset，PAT 在 bypass 列表。
-          token: ${{ secrets. }}
+          # F-020：祖先校验需要全量历史（fetch-depth: 0）。
           # X-C3：不把 PAT 写进 .git/config（http.extraheader）。默认开启时，
           # 后续每个 step 里跑的任何代码（下载脚本、被污染的依赖）都能随手
           # 提走这个能绕过 ruleset 的写权限 PAT。关闭后，push 那步用
           # git -c 显式注入，凭证只存在于那一条命令的进程里。
           persist-credentials: false
+          fetch-depth: 0
 
       - name: ☕ 设置 JDK 17
         uses: actions/setup-java@v4
@@ -163,6 +161,28 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --force origin main:refs/remotes/origin/main
+          git fetch --force origin "refs/tags/last-green:refs/tags/last-green" 2>/dev/null || true
+
+          # F-020：last-green 只能向前移动。候选必须是 origin/main 祖先；
+          # 旧 tag 必须已是候选的祖先。旧 run 乱序完成想回退 → 拒绝；
+          # 历史分叉 → 失败。
+          git merge-base --is-ancestor "${GITHUB_SHA}" origin/main \
+            || { echo "::error::${GITHUB_SHA} 已不是 origin/main 的祖先"; exit 1; }
+
+          OLD_DIRECT=""
+          if git rev-parse -q --verify refs/tags/last-green >/dev/null; then
+            OLD_DIRECT=$(git rev-parse refs/tags/last-green)
+            OLD_COMMIT=$(git rev-parse 'refs/tags/last-green^{}')
+            if ! git merge-base --is-ancestor "$OLD_COMMIT" "${GITHUB_SHA}"; then
+              if git merge-base --is-ancestor "${GITHUB_SHA}" "$OLD_COMMIT"; then
+                echo "last-green 已在更新的提交 $OLD_COMMIT；旧 run 不回退 tag"
+                exit 0
+              fi
+              echo "::error::last-green 与候选提交历史分叉，拒绝强推"
+              exit 1
+            fi
+          fi
           git tag -f last-green "${GITHUB_SHA}"
           # X-C3：checkout 已 persist-credentials: false，凭证不落盘；
           # 这里用 git -c 把 PAT 只注入这一条 push 命令的进程（会被
@@ -171,8 +191,17 @@ jobs:
           # 用的正是 basic base64(x-access-token:PAT)）；Bearer 头直接返回
           # HTTP 400，last-green tag 会永远推不动。base64 输出经 GITHUB_ENV
           # 之外的内联命令替换，不留盘。
-          git -c "http.https://github.com/.extraheader=Authorization: basic $(printf 'x-access-token:%s' "${GH_PAT}" | base64 | tr -d '\n')" \
-            push -f origin refs/tags/last-green
+          # force-with-lease 而非无脑 -f：远端 tag 已被别的 run 推进时，
+          # lease（期望旧值 = OLD_DIRECT）对不上，push 失败，防并发回退。
+          AUTH="Authorization: basic $(printf 'x-access-token:%s' "${GH_PAT}" | base64 | tr -d '\n')"
+          if [ -n "$OLD_DIRECT" ]; then
+            git -c "http.https://github.com/.extraheader=$AUTH" \
+              push --force-with-lease="refs/tags/last-green:$OLD_DIRECT" \
+              origin refs/tags/last-green
+          else
+            git -c "http.https://github.com/.extraheader=$AUTH" \
+              push origin refs/tags/last-green
+          fi
           echo "last-green → ${GITHUB_SHA}"
 
       - name: 🔴 红灯标记（回归失败时）

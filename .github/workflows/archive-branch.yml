@@ -55,36 +55,22 @@ jobs:
           git fetch origin "refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" 2>/dev/null \
             || { echo "::error::分支 origin/$BRANCH 不存在"; exit 1; }
           TIP=$(git rev-parse "origin/$BRANCH")
-          TAG="archive/$BRANCH"
+          # F-020：每次运行用新且不可复用的 immutable tag。旧逻辑复用
+          # archive/$BRANCH 固定 tag，且校验条件是「远端≠TIP 且 本地≠TIP」——
+          # 远端 tag 在 fetch 后被移动/删除时，本地 tag 兜底仍放行删分支。
+          # 现在 tag 创建与分支删除在同一个 server-side atomic push 里完成，
+          # 任何一步失败（含分支被推进导致 lease 失败）都不删除分支。
+          TAG="archive/$BRANCH-${TIP:0:12}-${GITHUB_RUN_ID}"
           echo "分支尖端: $TIP"
           echo "归档 tag: $TAG"
-
-          git fetch origin "refs/tags/$TAG:refs/tags/$TAG" 2>/dev/null || true
-          if git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
-            EXISTING=$(git rev-parse "refs/tags/$TAG^{}")
-            if [ "$EXISTING" = "$TIP" ]; then
-              echo "tag 已存在且正指该尖端，跳过打 tag"
-            else
-              echo "::error::tag $TAG 已存在但指向 $EXISTING —— archive tag 不可变，"
-              echo "::error::请换个归档名（如 archive/$BRANCH-2）或人工核对后再来。"
-              exit 1
-            fi
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag "$TAG" "$TIP"
-            git push origin "refs/tags/$TAG"
-          fi
-
-          # 🔴 顺序的关键：先确认远端 tag 确实指向尖端，才许删分支
-          REMOTE_TAG=$(git ls-remote origin "refs/tags/$TAG" | cut -f1)
-          if [ "$REMOTE_TAG" != "$TIP" ] && \
-             [ "$(git rev-parse "$TAG^{}")" != "$TIP" ]; then
-            echo "::error::远端 tag 校验失败（远端=$REMOTE_TAG，期望=$TIP），不删分支"
-            exit 1
-          fi
-
-          git push origin --delete "$BRANCH"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG" "$TIP"
+          git push --atomic \
+            --force-with-lease="refs/heads/$BRANCH:$TIP" \
+            origin \
+            "refs/tags/$TAG:refs/tags/$TAG" \
+            ":refs/heads/$BRANCH"
 
           {
             echo "## 🗄️ 分支已归档"
