@@ -29,16 +29,18 @@ import os
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(REPO, 'magia-native', 'src', 'archive_jni.cpp')
+SRC = os.path.join(REPO, 'magia-native', 'src', 'archive_core.cpp')
 
 # 源码侧必须存在的防护特征（补丁 01/02/03 引入）。只列**补丁特有的**符号：
 # archive_entry_filetype 在修复前的源码里就有（它不是 01 引入的判据），
 # 列为特征会让「该串被误删」也检测不到——特征必须对补丁唯一才敏感。
 SOURCE_FEATURES = [
-    ('is_safe_entry_name', 'Zip Slip 条目名校验（补丁 01）'),
-    ('ioError', '读写错误中止（补丁 02）'),
-    ('ARCHIVE_EOF', '循环退出 EOF 校验（补丁 02）'),
-    ('maxWriteBytes', '膨胀比总量闸（补丁 03）'),
+    ('O_NOFOLLOW', '逐级 openat 禁跟随符号链接（F-001）'),
+    ('AT_SYMLINK_NOFOLLOW', 'fstatat 无跟随判定（F-001）'),
+    ('renameat', '临时文件+renameat 原子替换（F-002）'),
+    ('fsync', '写盘同步（F-002）'),
+    ('central-dir', '严格中央目录边界校验（F-005）'),
+    ('archive_entry_filetype', '拒绝特殊条目/目录替换文件（F-003）'),
 ]
 
 
@@ -58,7 +60,7 @@ def main():
     # 探测 shipped 二进制是否含构建标记（archive_jni.cpp 里 __attribute__((used))
     # 的 kBuildMarker，编进 .rodata、剥不去）。标记在 = 补丁 01/02/03 的修复
     # 确实进了二进制；不在 = 源码修了但二进制是旧的（漂移）。
-    marker = 'libarchive-cn-jni-3.7.4-fix-20260817'
+    marker = 'libarchive-cn-jni-hardened-20260819'
     # R3-04：逐 ABI 各自判定，绝不能「任一命中即算过」——只替换了一个
     # ABI 的单边漂移（另一枚还是旧二进制）会被整体放行。
     abi_status = {}   # abi -> True(含标记) / False(不含) / None(缺文件或读失败)

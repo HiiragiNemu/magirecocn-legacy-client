@@ -10,7 +10,11 @@ set -euo pipefail
 NDK="${NDK:?请设置 NDK}"
 SRC_LA="${LIBARCHIVE_SRC:?请设置 LIBARCHIVE_SRC}"
 SRC_ZL="${ZLIB_SRC:?请设置 ZLIB_SRC}"
+# hardened cnzip（F-001~005）：JNI 封装 + 安全解压核心两个翻译单元。
+# archive_core.cpp 与 archive_jni.cpp 必须在同一编译单元族里链接（核心是
+# cnzip 命名空间的纯 C++，wrapper 做 JNI 适配）。
 WRAPPER="$(cd "$(dirname "$0")/.." && pwd)/magia-native/src/archive_jni.cpp"
+CORE="$(cd "$(dirname "$0")/.." && pwd)/magia-native/src/archive_core.cpp"
 TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
 NPROC=$(nproc)
 # 绝对路径：zlib 构建会 cd 进临时目录，相对 out/ 会在那里重定向出错。
@@ -88,7 +92,7 @@ build_abi() {
     # ── 3. JNI 包装 → libarchive.so ──
     echo "── 链接 libarchive.so ($abi)"
     "$clang" -shared -fPIC -O2 -std=c++17 \
-        "$WRAPPER" \
+        "$WRAPPER" "$CORE" \
         "$LA_STATIC" "$PREFIX/lib/libz.a" \
         -I "cmake-$abi" -I "$SRC_LA/libarchive" -I "$PREFIX/include" \
         -Wl,--no-undefined -Wl,--build-id=sha1 -Wl,-z,relro,-z,now \
