@@ -81,12 +81,15 @@ public final class CNVersionCheck {
      *             弹出强制更新框」时不执行——那条路模态等玩家抉择。
      */
     public static void start(Runnable cont) {
-        afterPass = cont;
+        // F-031：先原子取得唯一启动权，再把 continuation 绑定给赢家。旧实现
+        // 先 afterPass = cont 再 CAS——后到的重复调用会覆盖首个调用者的
+        // continuation，proceed() 执行的是最后一次写入的动作而非赢得门的动作。
         try {
             if (!STARTED.compareAndSet(false, true)) {
                 CNLog.i(TAG, "版本检查已经在跑，忽略重复调用");
                 return;
             }
+            afterPass = cont;
             if (CNDebugFlags.isOn(CNDebugFlags.SKIP_VERSION_CHECK)) {
                 CNLog.i(TAG, "调试开关 skipVersionCheck 生效，直接接力");
                 proceed();
