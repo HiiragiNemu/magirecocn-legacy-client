@@ -196,7 +196,7 @@
       "group": "补丁",
       "why": "精简为桩：startCNDownload → CNDownloaderFix.runInstaller，并去掉 getUnsafeOkHttpClient（信任一切证书的 OkHttp）。498 行只剩 147 行，其中我们自己写的占绝大多数，存整份比存一份删 400 行的 diff 更诚实",
       "pre": "f2d78425de7f8cd3078047dea7d221d6f0f0a2f0329fc9d9e467cc0167c7c2a9",
-      "post": "e14e29d6dd63691b3f4f6fc7824bf0efeebc5b8f316a0c9728f7e6e6d3480299"
+      "post": "b61a00ed0ee3f9a18abfa0e190a232fcbbb6f098675e33ac3ddd39ddd07ca28d"
     },
     {
       "kind": "replace",
