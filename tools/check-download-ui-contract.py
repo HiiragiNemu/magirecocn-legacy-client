@@ -530,6 +530,27 @@ checks = {
     "槽宽必须宽过滚动条本身":
         int(re.search(r"SCROLLBAR_GUTTER_DP = (\d+)", assist).group(1))
         > int(re.search(r"d\.setSize\(dp\(v, (\d+)\)", body(assist, "private static GradientDrawable scrollTrack(View v)")).group(1)),
+    # 上面那条不变量**只在 OUTSIDE 下成立**。INSIDE_OVERLAY 的竖条绘制区是
+    # [宽-paddingRight-条宽, 宽-paddingRight]，右边缘正好压在内容区右边缘上：
+    # 条恒定盖住内容最右侧一条宽，调槽宽只是把条和内容一起搬，重叠量一分不变。
+    # 先前反复调 SCROLLBAR_GUTTER_DP 都治不好压字，根因就是这个。
+    "滚动条一律画在内容区外侧":
+        "SCROLLBARS_INSIDE" not in code(assist)
+        and code(assist).count("SCROLLBARS_OUTSIDE") >= 4,
+    # 而「条宽 = scrollTrack 的 3dp」这个前提，只有真把自定义 track 挂上去才成立。
+    # 不挂的话 ScrollBarDrawable.getSize() 返回 0，Android 回退到设备的 scrollBarSize
+    # （常见 10dp 上下）——比槽还宽，于是即便 OUTSIDE 也会溢出槽重新碰到字。
+    # 2026-08-18 那次「换回系统原生」压字反而更重，就是这两件事叠在一起。
+    "主内容两个容器必须挂上内建 track/thumb":
+        all(t in body(assist, "private static void styleScrollbars()") for t in (
+            "hs.setHorizontalScrollbarThumbDrawable(scrollThumb(hs))",
+            "hs.setHorizontalScrollbarTrackDrawable(scrollTrack(hs))",
+            "vs.setVerticalScrollbarThumbDrawable(scrollThumb(vs))",
+            "vs.setVerticalScrollbarTrackDrawable(scrollTrack(vs))")),
+    # 主内容那两个容器只能用 OVERLAY：INSET 会让 Android 按条宽再自动内缩一份
+    # padding，内容右边界跟着缩，「右端对齐三处同源」当场破掉。
+    "主内容容器用 OVERLAY 而非 INSET":
+        "SCROLLBARS_OUTSIDE_INSET" not in body(assist, "private static void styleScrollbars()"),
     # 3. 热更新检查完就跳走，玩家来不及看清结果（尤其失败时）。停留窗口拉长；
     #    上限 PLAYER_WINDOW_MAX_MS 不动，手动「停留」按钮仍是唯一的无限期通道。
     #    判据用下限而非钉死具体值：4 秒曾太短（看不清/够不着按钮）、9 秒又太长

@@ -88,9 +88,17 @@ public final class CNDownloadUiAssist {
     /**
      * 滚动条留出的槽宽（dp）：竖条往右让、横条往下让，都让这么多。
      *
-     * <p><b>必须大于滚动条本身的粗细</b>（见 {@link #scrollThumb}）。槽比条还窄的话
-     * 条就压在字上——这条不变量由 {@code tools/check-download-ui-contract.py} 钉着。
-     * 现在是 7dp 槽配 4dp 条，留 3dp 净空。
+     * <p><b>只有配 {@code SCROLLBARS_OUTSIDE_*} 才有意义。</b>在 Android 默认的
+     * {@code INSIDE_OVERLAY} 下，竖条的绘制区是
+     * {@code [宽 - paddingRight - 条宽, 宽 - paddingRight]}——右边缘正好压在**内容区的
+     * 右边缘**上，于是条永远盖住内容最右侧那条宽。这时把槽调大只是把条和内容一起
+     * 往左搬，重叠量一分不变：这就是先前反复调这个数都治不好压字的原因。
+     * 换成 {@code OUTSIDE} 后 padding 不再参与计算，条落到 {@code [宽 - 条宽, 宽]}，
+     * 也就是槽里，内容到 {@code 宽 - 槽宽} 为止——两者从此不相交。
+     *
+     * <p>其次它必须大于滚动条本身的粗细（由 {@link #scrollTrack} 决定），否则条会从
+     * 槽里溢出来重新碰到字。现在是 7dp 槽配 3dp 条，留 4dp 净空。这两条不变量都由
+     * {@code tools/check-download-ui-contract.py} 钉着。
      *
      * <p>这个数<b>不是只给滚动条用的</b>：文件列表（{@code slotScroll}）靠右 padding
      * 让出槽位，而它下面那行文字进度与总进度条不在同一个滚动容器里，得用同一个数
@@ -639,21 +647,34 @@ public final class CNDownloadUiAssist {
             // MATCH_PARENT，内容恰好等于视口，没有可滚的东西。
             boolean overflow = contentRoot != null && scalePct > 100;
             hs.setHorizontalScrollBarEnabled(overflow);
-            hs.setScrollbarFadingEnabled(true); // 系统原生：淡出
+            hs.setScrollbarFadingEnabled(false);
             if (!overflow) hs.scrollTo(0, 0);
+            // 条画到内容区**外面**去，见 SCROLLBAR_GUTTER_DP 的说明。
+            hs.setScrollBarStyle(View.SCROLLBARS_OUTSIDE_OVERLAY);
             hs.setClipToPadding(false);
-            // 横条往下让：槽要比条宽，否则条压在最后一行字上。
+            // 横条往下让：槽把内容底边抬起来，条落在槽里。
             hs.setPadding(hs.getPaddingLeft(), hs.getPaddingTop(),
                     hs.getPaddingRight(), dp(hs, SCROLLBAR_GUTTER_DP));
+            if (Build.VERSION.SDK_INT >= 29) {
+                hs.setHorizontalScrollbarThumbDrawable(scrollThumb(hs));
+                hs.setHorizontalScrollbarTrackDrawable(scrollTrack(hs));
+            }
         }
         if (vs != null) {
             vs.setVerticalScrollBarEnabled(true);
-            vs.setScrollbarFadingEnabled(true); // 系统原生：淡出
+            vs.setScrollbarFadingEnabled(false);
+            vs.setScrollBarStyle(View.SCROLLBARS_OUTSIDE_OVERLAY);
             vs.setClipToPadding(false);
             // 竖条往右让。同一个数还被文件列表下面那行文字进度与总进度条用作右
-            // 边距——它们不在这个滚动容器里，靠这个数才对得齐。
+            // 边距——它们不在这个滚动容器里，靠这个数才对得齐。用 OVERLAY 而不是
+            // INSET 正是为了这条：INSET 会让 Android 再自动吃掉一个条宽的 padding，
+            // 内容右边界缩进去，那三处就重新错开了。
             vs.setPadding(vs.getPaddingLeft(), vs.getPaddingTop(),
                     dp(vs, SCROLLBAR_GUTTER_DP), vs.getPaddingBottom());
+            if (Build.VERSION.SDK_INT >= 29) {
+                vs.setVerticalScrollbarThumbDrawable(scrollThumb(vs));
+                vs.setVerticalScrollbarTrackDrawable(scrollTrack(vs));
+            }
         }
     }
 
@@ -693,9 +714,13 @@ public final class CNDownloadUiAssist {
 
     /**
      * 给任意滚动视图挂<b>浮层内建</b>滚动条样式，让浮层里所有滚动条外观统一：
-     * 非淡出（一直可见）、{@code INSIDE_OVERLAY}、自定义 track/thumb（API29+），
+     * 非淡出（一直可见）、{@code OUTSIDE_OVERLAY}、自定义 track/thumb（API29+），
      * 并在现有 padding 上叠出槽边距（竖向加右侧、横向加底部）——只该在创建时
      * 调一次，别重复叠加。
+     *
+     * <p>{@code OUTSIDE} 是不压字的关键，理由见 {@link #SCROLLBAR_GUTTER_DP}。
+     * 用 {@code OVERLAY} 而不是 {@code INSET}：条宽这边是我们自己定的（3dp，见
+     * {@link #scrollTrack}），槽已经比它宽，不需要再让 Android 自动吃一份 padding。
      *
      * <p>除 {@code styleScrollbars()} 处理的 hScroll/vScroll（主内容 + 文件列表）
      * 之外的滚动区（日志面板、离线列表、贡献者、顶部胶囊、开关行、消息框）都走
@@ -704,7 +729,7 @@ public final class CNDownloadUiAssist {
     public static void applyBuiltinScrollbar(ViewGroup v, boolean horizontal) {
         if (v == null) return;
         v.setScrollbarFadingEnabled(false);
-        v.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+        v.setScrollBarStyle(View.SCROLLBARS_OUTSIDE_OVERLAY);
         v.setClipToPadding(false);
         if (horizontal) {
             v.setHorizontalScrollBarEnabled(true);
@@ -727,17 +752,27 @@ public final class CNDownloadUiAssist {
 
     /**
      * 给任意滚动视图挂<b>系统原生</b>滚动条样式：淡出（滚动时浮现、停手隐藏）、
-     * 系统默认滑块/轨道、{@code INSIDE_OVERLAY}。布局侧仍保留
-     * {@code clipToPadding(false)} 与槽边距（滚动条不压字需要，与内建版一致）。
+     * 系统默认滑块/轨道、{@code OUTSIDE_INSET}。
      *
-     * <p>2026-08-18：浮层滚动条整体换成系统原生观感；{@link #applyBuiltinScrollbar}
-     * 与其 {@link #scrollThumb}/{@link #scrollTrack} 内建实现保留不删（若将来要
-     * 切回非淡出的胶囊条，改回调用它即可）。只该在创建时调一次，别重复叠加。
+     * <p><b>当前没有调用点</b>——浮层已整体切回内建样式（{@link #applyBuiltinScrollbar}）。
+     * 保留它是为了随时能换回系统观感，所以它必须自己就是对的，不能留成一改回来
+     * 就重现压字的地雷。
+     *
+     * <p>用 {@code INSET} 而不是内建版那个 {@code OVERLAY}，是因为原生条的宽度
+     * <b>由设备决定</b>（没挂自定义 track 时 {@code ScrollBarDrawable.getSize()} 返回 0，
+     * Android 回退到系统 {@code scrollBarSize}，常见 10dp 上下）。那个宽度可能超过
+     * 我们的槽宽，{@code OVERLAY} 下就会从槽里溢出来重新碰到字；{@code INSET} 让
+     * Android 按**实际条宽**再自动内缩一份 padding，无论设备给多宽都压不到。
+     * 代价是内容区会因此再窄一点，所以主内容那两个容器不能用它（右端对齐三处
+     * 同源会被破坏），只适合这种独立滚动区。
+     *
+     * <p>2026-08-18 曾把浮层整体换成原生观感，压字没好——原因是那次只换了观感，
+     * 样式仍是 {@code INSIDE_OVERLAY}，而原生条比内建条更宽，反而压得更多。
      */
     public static void applyNativeScrollbar(ViewGroup v, boolean horizontal) {
         if (v == null) return;
         v.setScrollbarFadingEnabled(true);
-        v.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+        v.setScrollBarStyle(View.SCROLLBARS_OUTSIDE_INSET);
         v.setClipToPadding(false);
         if (horizontal) {
             v.setHorizontalScrollBarEnabled(true);
