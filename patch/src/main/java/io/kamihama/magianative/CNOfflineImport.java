@@ -136,7 +136,7 @@ public final class CNOfflineImport {
         File tmp = new File(dir, fileName + ".importing");
         long total = sizeOf(ctx, uri);
         try (InputStream src = ctx.getContentResolver().openInputStream(uri);
-             OutputStream dst = new FileOutputStream(tmp)) {
+             FileOutputStream dst = new FileOutputStream(tmp)) {
             if (src == null) throw new java.io.IOException("无法打开所选文件");
             byte[] buf = new byte[1 << 16];
             long done = 0L;
@@ -151,6 +151,9 @@ public final class CNOfflineImport {
                 }
             }
             if (progress != null) progress.onProgress(done, total, false);
+            // F-026：内容落盘后再进入替换，掉电/被杀不会留下「写了一半的完整文件」。
+            dst.flush();
+            dst.getFD().sync();
         } catch (Throwable t) {
             // 拷贝失败必须把半截文件带走，否则它就是下一个「永远没人删」。
             deleteQuietly(tmp);
@@ -176,17 +179,55 @@ public final class CNOfflineImport {
             return null;
         }
 
-        // 校验通过：改名就位
-        if (target.exists() && !target.delete() && target.exists()) {
-            CNLog.w(TAG, "无法替换旧离线包: " + target);
-        }
-        if (!tmp.renameTo(target)) {
-            CNLog.w(TAG, "离线包改名失败: " + tmp);
-            deleteQuietly(tmp);
+        // F-026：校验通过后以 Linux rename(2) 原子替换。绝不先删旧目标——
+        // 旧代码「先 delete 再 rename」在两步之间被杀，目标与临时文件都消失，
+        // 旧离线包（最后一次可用状态）就此丢失。Os.rename 同一目录要么完整
+        // 替换，要么保持旧目标不变。
+        if (!commitImportedFile(tmp, target, dir)) {
             return null;
         }
         CNLog.i(TAG, "离线包导入成功: " + fileName + " (" + target.length() + " 字节)");
         return target;
+    }
+
+    /**
+     * 以 Linux rename(2) 原子替换已验证离线包，并同步父目录。
+     *
+     * @return true = 新文件已落盘且目录项已同步；false = 替换失败（旧目标保持
+     *         不变）或目录同步失败（本次保守不报成功，新文件留待下次重新校验）
+     */
+    private static boolean commitImportedFile(File tmp, File target, File dir) {
+        try {
+            android.system.Os.rename(tmp.getAbsolutePath(), target.getAbsolutePath());
+            try {
+                syncDirectory(dir);
+            } catch (Throwable t) {
+                // rename 已发生，无法安全「撤回」为旧文件；但目录项未确认落盘时
+                // 绝不能向上层报告导入成功。调用方保守失败，新目标留作下次重验。
+                CNLog.w(TAG, "离线包已原子替换，但父目录同步失败；本次不报告成功: " + t);
+                return false;
+            }
+            return target.isFile() && target.length() > 0;
+        } catch (Throwable t) {
+            CNLog.w(TAG, "离线包原子替换失败，旧目标保持不变: " + t);
+            return false;
+        }
+    }
+
+    /** rename 后同步父目录项，缩小掉电后目录项回退的窗口。 */
+    private static void syncDirectory(File dir) throws Exception {
+        java.io.FileDescriptor fd = null;
+        try {
+            // O_RDONLY 打开目录 + fsync 是标准目录项同步惯用法；精简 android.jar
+            // 只暴露 O_RDONLY，不依赖 O_DIRECTORY（API 21 上对目录 fsync 也有效）。
+            fd = android.system.Os.open(dir.getAbsolutePath(),
+                    android.system.OsConstants.O_RDONLY, 0);
+            android.system.Os.fsync(fd);
+        } finally {
+            if (fd != null) {
+                try { android.system.Os.close(fd); } catch (Throwable ignore) {}
+            }
+        }
     }
 
     /** {@link CNArchiveValidate#verifyChunks} 的带进度版本。 */
