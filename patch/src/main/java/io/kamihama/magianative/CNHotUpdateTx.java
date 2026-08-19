@@ -171,7 +171,13 @@ public final class CNHotUpdateTx {
         // 上一轮留下的残骸先按恢复流程处理掉，别把它的 backup 当成本轮的
         if (tx.exists()) {
             CNLog.w(TAG, "[" + tag + "] 发现上一轮未收尾的事务，先恢复");
-            recoverOne(root, tx);
+            // F-034：恢复失败（回滚/清理没能彻底清除）时，旧 journal/backup 是
+            // 唯一恢复材料。绝不能把新事务的 stage/backup/journal 写进未恢复的
+            // 旧命名空间，否则上一轮的恢复材料被当场销毁、且新事务建立在
+            // 语义不明的半恢复状态上——fail-closed，拒绝开始。
+            if (!recoverOne(root, tx) || tx.exists()) {
+                throw new IOException("上一轮事务未能完全恢复，拒绝开始新事务: " + tx);
+            }
         }
         if (!tx.mkdirs() && !tx.isDirectory()) {
             throw new IOException("建不出事务目录: " + tx);
@@ -619,23 +625,31 @@ public final class CNHotUpdateTx {
         }
     }
 
-    /** 处理单个残留事务目录：有 COMMITTED 向前滚，否则向后滚。 */
-    private static void recoverOne(File root, File tx) {
+    /**
+     * 处理单个残留事务目录：有 COMMITTED 向前滚，否则向后滚。
+     *
+     * @return true = 事务目录已被彻底清除（可安全复用 tx 名字开始新事务）；
+     *         false = 清理失败，调用方必须 fail-closed（F-034）。
+     */
+    private static boolean recoverOne(File root, File tx) {
         String tag = tx.getName();
         if (new File(tx, COMMITTED).isFile()) {
             // 内容已经完整换入，只是没来得及清理。版本号可能没写上——
             // 那只会导致下次重下重应用同样的内容，幂等，无害。
             CNLog.i(TAG, "[" + tag + "] 事务已提交完成，清理工作区");
-            deleteTree(tx);
-            return;
+            boolean clean = deleteTree(tx);
+            if (!clean) CNLog.e(TAG, "[" + tag + "] 已提交事务目录清理失败: " + tx);
+            return clean;
         }
         CNLog.w(TAG, "[" + tag + "] 事务未提交完成，回滚");
         if (rollback(root, tx, new File(tx, JOURNAL))) {
-            deleteTree(tx);
-            CNLog.i(TAG, "[" + tag + "] 已回滚");
-        } else {
-            CNLog.e(TAG, "[" + tag + "] 回滚未能完成，工作区保留: " + tx);
+            boolean clean = deleteTree(tx);
+            if (clean) CNLog.i(TAG, "[" + tag + "] 已回滚");
+            else CNLog.e(TAG, "[" + tag + "] 回滚后工作区清理失败: " + tx);
+            return clean;
         }
+        CNLog.e(TAG, "[" + tag + "] 回滚未能完成，工作区保留: " + tx);
+        return false;
     }
 
     /**
