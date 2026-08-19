@@ -86,6 +86,8 @@ public final class CNDownloaderFix {
      * 需要原样保留、静默退出，等他腾完空间点重试续传。
      */
     private static final int A2_NOSPACE   = -2;
+    /** F-025：取消后旧 aria2 任务未确认停止，目标路径被占用——该包本轮失败、不重下。 */
+    private static final int A2_STUCK     = -3;
     /**
      * aria2 单文件最多尝试次数。与主引擎的 {@link #MAX_ATTEMPTS} 对齐，好让
      * {@code CNMirrors.pick(attempt)} 有机会把线路表轮一遍——线路只有轮得完，
@@ -1160,6 +1162,14 @@ public final class CNDownloaderFix {
                 // ENOSPC 时最不该删的就是半截产物。
                 return false;
             }
+            if (a2 == A2_STUCK) {
+                // F-025：取消后旧 aria2 任务未确认停止，目标路径被占用。
+                // fail-closed：不清产物、不重下同路径（主引擎重下会与旧任务
+                // 并发写）。该包本轮失败，等玩家重试；重启进程后常驻会话消失。
+                markFailed(index);
+                CNLog.w(TAG, "aria2 旧任务未确认停止（A2_STUCK），保留产物待重试: " + name);
+                return false;
+            }
             // a2 == A2_MAIN → 回退主引擎重试
         }
         // 不能删「已完整下载」的包：进程若在 03 下到 100% 之后、大 zip 还在
@@ -1526,6 +1536,14 @@ public final class CNDownloaderFix {
                     // 并行本来就是批量主力，aria2 只服务抢到 slot 的那一个。
                     CNLog.i(TAG, "aria2 busy，让位主引擎 file=" + name);
                     return A2_MAIN;
+                }
+                if (rv == CNAria2.ERR_IN_USE) {
+                    // F-025：取消后旧 GID 未能确认进入终态，目标路径可能仍被旧
+                    // 任务写。fail-closed：绝不清产物/控制文件、绝不在同路径重下
+                    // （主引擎重下会与旧任务并发写）。该包本轮失败，保留产物等
+                    // 玩家重试——重启进程后常驻 aria2 线程消失，路径才可复用。
+                    CNLog.e(TAG, "aria2 取消后旧任务未确认停止（ERR_IN_USE），目标文件被占用 file=" + name);
+                    return A2_STUCK;
                 }
                 if (rv == CNAria2.CANCELLED || Thread.currentThread().isInterrupted()) {
                     // 玩家取消 / 线程中断（F-A-06），不是线路失败：**不**

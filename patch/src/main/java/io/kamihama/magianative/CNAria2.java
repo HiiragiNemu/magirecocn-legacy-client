@@ -71,6 +71,8 @@ public final class CNAria2 {
     public static final int ERR_OTHER    = -3;
     /** 已有下载在跑（串行化冲突）。 */
     public static final int ERR_BUSY     = -4;
+    /** F-025：取消后旧 GID 未能确认进入终态，目标路径可能仍被写——inUse 保持占用。 */
+    public static final int ERR_IN_USE   = -5;
 
     private static final String TAG = "CNAria2";
 
@@ -162,6 +164,9 @@ public final class CNAria2 {
             CNLog.w(TAG, "已有下载在跑（busy），拒绝并发");
             return ERR_BUSY;
         }
+        // F-025：方法级持有下载结果，finally 据此决定是否释放 inUse
+        // （ERR_IN_USE 时不释放）。必须在 try 外声明。
+        int result = ERR_RUN;
         try {
             if (url == null || url.isEmpty() || outName == null) return ERR_ADD;
             if (!isAvailable()) {
@@ -305,7 +310,6 @@ public final class CNAria2 {
             }
 
             File target = new File(outDir, outName);
-            int result = ERR_RUN;
             // F-023：轮询必须有界——RPC 半失效时 while(true) 会永远占住 inUse 与
             // 安装器工作线程。连续 RPC 失败（null/无 result）超过阈值按失败退出；
             // 已知总长但进度停滞超过阈值也按失败退出。
@@ -316,10 +320,19 @@ public final class CNAria2 {
             final long stallLimitMs = 60_000L;
             while (true) {
                 if (cancel != null && cancel.isCancelled()) {
-                    rpc(port, secret, "aria2.remove", gid); // best-effort
-                    // 出口归属：任务已 remove，会话关停由 finally 兜底（RPC 优雅关停）。
                     CNLog.w(TAG, "aria2 下载被取消: " + outName);
-                    return CANCELLED;
+                    // F-025：取消不能只发一次 best-effort remove 就释放 inUse——
+                    // 旧 GID 可能仍持 fd 写同一产物，调用方立刻清理+重下会并发写。
+                    // 先等任务进入终态；确认不了则 ERR_IN_USE，inUse 保持占用，
+                    // 调用方按「路径被占用」fail-closed（不清产物、不重下同路径）。
+                    if (quiesceGid(port, secret, gid)) {
+                        result = CANCELLED;
+                    } else {
+                        CNLog.e(TAG, "aria2 取消后旧 GID 未进入终态，拒绝释放 inUse（fail-closed）: "
+                                + outName);
+                        result = ERR_IN_USE;
+                    }
+                    break;
                 }
                 if (!CNAria2Lib.isRunning()) {
                     CNLog.w(TAG, "aria2c 进程内线程意外退出: " + outName);
@@ -413,7 +426,13 @@ public final class CNAria2 {
                 sServerUp = false;
                 CNLog.w(TAG, "aria2 会话线程已退出，本次进程标记不可再用");
             }
-            inUse.set(false);
+            // F-025：ERR_IN_USE 时 inUse 保持占用（旧 GID 未确认停写），调用方
+            // 收到该码 fail-closed——不清目标/控制文件、不在同路径重下。
+            if (result != ERR_IN_USE) {
+                inUse.set(false);
+            } else {
+                CNLog.w(TAG, "aria2 未确认停止，inUse 保持占用（调用方按路径被占用处理）");
+            }
         }
     }
 
@@ -425,6 +444,38 @@ public final class CNAria2 {
      * 优先 RPC shutdown（优雅），失败则 waitStopped 兜底。
      * {@code port/secret} 传 0/null 时跳过 RPC（例如启动失败、从未拿到端口）。
      */
+    /**
+     * F-025：取消后等待 aria2 任务进入终态（removed/error/complete）或线程退出。
+     * 先 aria2.remove，有界轮询 tellStatus；不收敛 escalate 到 aria2.forceRemove
+     * 再轮询。返回 true 才允许释放 inUse——旧 GID 不再写目标路径。
+     */
+    private static boolean quiesceGid(int port, String secret, String gid) {
+        final int maxPolls = 12;                 // 12 × 250ms ≈ 3s 每轮
+        final String[] cmds = { "aria2.remove", "aria2.forceRemove" };
+        for (String cmd : cmds) {
+            try { rpc(port, secret, cmd, gid); } catch (Throwable ignore) {}
+            for (int i = 0; i < maxPolls; i++) {
+                if (!CNAria2Lib.isRunning()) return true;   // 线程退出 = 必然停写
+                JSONObject res = null;
+                try { res = rpc(port, secret, "aria2.tellStatus", gid); }
+                catch (Throwable ignore) {}
+                if (res != null) {
+                    if (res.optJSONObject("error") != null) return true;
+                    JSONObject st = res.optJSONObject("result");
+                    String status = st != null ? st.optString("status", "") : "";
+                    if ("removed".equals(status) || "error".equals(status)
+                            || "complete".equals(status)) return true;
+                }
+                try { Thread.sleep(250); }
+                catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+        }
+        return false;
+    }
+
     /**
      * 关闭进程内 aria2 会话并确认线程停止。
      *
