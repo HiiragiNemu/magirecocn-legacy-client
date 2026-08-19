@@ -35,10 +35,14 @@ jobs:
         # stub 路径（sysroot/usr/lib/arm-linux-androideabi/21），版本不对会在
         # 最后一刻误报；且哈希必变。android/ndk action 的 tag 已被修剪到 r26+，
         # 直接 dl.google.com 下载 r25c 压缩包钉死版本。
+        env:
+          NDK_SHA256: ${{ vars.NDK_R25C_SHA256 }}
         run: |
           set -euo pipefail
+          : "${NDK_SHA256:?缺少仓库变量 NDK_R25C_SHA256；拒绝解压未钉摘要的 NDK}"
           curl -fsSL --retry 3 -o ndk.zip \
             https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          echo "${NDK_SHA256}  ndk.zip" | sha256sum -c -
           unzip -q ndk.zip
           NDK_VER="$(sed -n 's/^Pkg.Revision = //p' android-ndk-r25c/source.properties)"
           echo "NDK 实际版本: ${NDK_VER}"
