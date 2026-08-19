@@ -492,15 +492,17 @@ public final class CNWebProxy {
             + "    var R = window.WebSocket;\n"
             + "    if (!R) return;\n"
             + "    function lg(s){ try { CNWsCount.log(s); } catch(e){} }\n"
+            + "    function rd(u){ try { var x=new URL(u, document.baseURI); return x.protocol+'//'+x.host+x.pathname; } catch(e){ return '[unparseable]'; } }\n"
             + "    window.WebSocket = function(u, p){\n"
-            + "      lg('[WS] connect ' + u);\n"
+            + "      var shown = rd(u);\n"
+            + "      lg('[WS] connect ' + shown);\n"
             + "      try {\n"
-            + "        var w = p ? new R(u, p) : new R(u);\n"
-            + "        try { w.addEventListener('open', function(){ lg('[WS] open ' + u); }); } catch(e){}\n"
-            + "        try { w.addEventListener('error', function(){ lg('[WS] error ' + u); }); } catch(e){}\n"
-            + "        try { w.addEventListener('close', function(){ lg('[WS] close ' + u); }); } catch(e){}\n"
+            + "        var w = arguments.length > 1 ? new R(u, p) : new R(u);\n"
+            + "        try { w.addEventListener('open', function(){ lg('[WS] open ' + shown); }); } catch(e){}\n"
+            + "        try { w.addEventListener('error', function(){ lg('[WS] error ' + shown); }); } catch(e){}\n"
+            + "        try { w.addEventListener('close', function(){ lg('[WS] close ' + shown); }); } catch(e){}\n"
             + "        return w;\n"
-            + "      } catch(e) { lg('[WS] constructor-throw ' + u); throw e; }\n"
+            + "      } catch(e) { lg('[WS] constructor-throw ' + shown); throw e; }\n"
             + "    };\n"
             + "    try { window.WebSocket.prototype = R.prototype; } catch(e){}\n"
             + "    try {\n"
@@ -514,9 +516,34 @@ public final class CNWebProxy {
 
     /** 页面 JS 经 addJavascriptInterface 调进来的 WS 计数口（只写日志，无其它能力）。 */
     private static final class WsCount {
+        // F-015：桥输入剥控制字符 + 限长 + 限速——页面可伪造或洪泛日志。
+        private static final int  MAX_MSG          = 240;
+        private static final int  MAX_PER_WINDOW   = 80;
+        private static final long WINDOW_MS        = 10_000L;
+        private static long windowStart;
+        private static int  windowCount;
+
         @android.webkit.JavascriptInterface
         public void log(String msg) {
-            try { CNLog.i("WsCount", msg); } catch (Throwable t) {}
+            try {
+                if (msg == null) return;
+                StringBuilder sb = new StringBuilder(msg.length());
+                for (int i = 0; i < msg.length() && sb.length() < MAX_MSG; i++) {
+                    char c = msg.charAt(i);
+                    if (c < 0x20 && c != '\t') continue;   // 剥 CR/LF/控制字符
+                    sb.append(c);
+                }
+                String clean = sb.toString();
+                long now = System.currentTimeMillis();
+                synchronized (WsCount.class) {
+                    if (now - windowStart >= WINDOW_MS || now < windowStart) {
+                        windowStart = now;
+                        windowCount = 0;
+                    }
+                    if (++windowCount > MAX_PER_WINDOW) return;   // 限速丢
+                }
+                CNLog.i("WsCount", clean);
+            } catch (Throwable t) {}
         }
     }
 
