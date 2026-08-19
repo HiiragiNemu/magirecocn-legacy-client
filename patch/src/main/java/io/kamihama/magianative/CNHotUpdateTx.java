@@ -673,6 +673,14 @@ public final class CNHotUpdateTx {
                 if (tab <= 0) continue;
                 boolean existed = line.charAt(0) == '1';
                 String rel = line.substring(tab + 1);
+                // F-044：journal 条目路径必须通过校验——损坏/旧版 Zip Slip/基础包/
+                // 调试环境可能留下伪造 journal，`../` 或绝对路径可让恢复流程移动/
+                // 覆盖/删除事务根之外的应用数据。非法条目跳过并记失败（不静默忽略）。
+                if (!isSafeManifestEntry(rel)) {
+                    CNLog.e(TAG, "journal 条目非法，拒绝处理（防事务根外覆盖/删除）: " + rel);
+                    clean = false;
+                    continue;
+                }
                 File live = new File(root, rel);
                 File bak  = new File(backup, rel);
                 try {
