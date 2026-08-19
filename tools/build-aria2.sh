@@ -230,6 +230,10 @@ build_group() { # build_group <abi> <host> <cc> <cxx> <xcflags> <backend: ossl|g
     # 否则 Makefile 落在 CWD、make -C "$BUILD/src" 找不到（修复前 ossl 组如此失败）。
     # F-024：ANDROID_LOG_SINK 激活 console.cc 的 AndroidLogFile 分支（见
     # patches/0001-console-android-log-sink.patch），控制台直进 logcat。
+    # aria2 的 LDFLAGS 带 -llog：顶层 make 会顺带链出 aria2c 二进制，而
+    # libaria2.a 里 sink 引 __android_log_*（liblog），不加这一步 ld 就报
+    # undefined symbol。该二进制不发货，只为让 make 全目标链过；最终 .so
+    # 的链接另有显式 -llog（见 build_group 末尾），此处不影响 .so 的 NEEDED。
     group_start "aria2-$abi-$be-conf"
     ( cd "$BUILD" && \
         env -i PATH="$PATH" HOME="${HOME:-/tmp}" \
@@ -237,7 +241,7 @@ build_group() { # build_group <abi> <host> <cc> <cxx> <xcflags> <backend: ossl|g
         STRIP="$TC/llvm-strip" LD="$TC/ld.lld" \
         CFLAGS="-O2 -fPIC -DANDROID_LOG_SINK $xcflags" \
         CXXFLAGS="-O2 -fPIC -DANDROID_LOG_SINK $xcflags" \
-        CPPFLAGS="-I$PREFIX/include" LDFLAGS="-L$PREFIX/lib" \
+        CPPFLAGS="-I$PREFIX/include" LDFLAGS="-L$PREFIX/lib -llog" \
         PKG_CONFIG="$pcwrap" PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig" \
         bash "$ARIA2_SRC/configure" --host="$host" --prefix="$PREFIX" \
             --enable-static --disable-shared \
