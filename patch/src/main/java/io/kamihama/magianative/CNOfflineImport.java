@@ -7,6 +7,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 离线包注入：把玩家手动选择的官方 zip 拷到私有离线区，用 16MB 分块清单
@@ -45,10 +46,10 @@ public final class CNOfflineImport {
     }
 
     /** 全局互斥：同一时刻只允许一个导入在进行，防并发写同一 {@code .importing}。 */
-    private static volatile boolean importing;
+    private static final AtomicBoolean importing = new AtomicBoolean(false);
 
     /** 是否有导入正在进行（供 UI 禁用重复入口）。 */
-    public static boolean isImporting() { return importing; }
+    public static boolean isImporting() { return importing.get(); }
 
     private CNOfflineImport() {}
 
@@ -101,15 +102,15 @@ public final class CNOfflineImport {
             CNLog.w(TAG, "热更包不支持离线导入: " + fileName);
             return null;
         }
-        if (importing) {
+        // CAS：检查与占用原子完成，volatile 版「先查再赋值」会被两个线程同时穿过。
+        if (!importing.compareAndSet(false, true)) {
             CNLog.w(TAG, "已有导入在进行，拒绝重复导入: " + fileName);
             return null;
         }
-        importing = true;
         try {
             return importZipLocked(ctx, uri, fileName, progress);
         } finally {
-            importing = false;
+            importing.set(false);
         }
     }
 
