@@ -136,9 +136,14 @@ public final class CNVersionCheck {
         // 库必然已加载（第一版就踩了这个时序坑：版本读取永远失败，fail-open
         // 把检查整个吞了，表现为「云端版本更高也不弹窗」）。
         Activity act = awaitUsableActivity();
+        boolean overlayReady = false;
         if (act != null) {
-            showOverlay(act);
-            CNCNDownloadUI.updateSimple("检查客户端版本", "正在检查客户端版本…", 0);
+            overlayReady = showOverlay(act);
+            if (overlayReady) {
+                CNCNDownloadUI.updateSimple("检查客户端版本", "正在检查客户端版本…", 0);
+            } else {
+                CNLog.w(TAG, "Activity 存活但浮层未能挂载；若需要强更，本次将 fail-open");
+            }
         } else {
             CNLog.w(TAG, "等不到可用的 Activity，本次版本检查将无浮层运行");
         }
@@ -189,12 +194,16 @@ public final class CNVersionCheck {
         // 云端明确更高：强制更新。弹窗模态挂在浮层上，不接后续流程——玩家要么去
         // 更新，要么退出游戏；下次启动还会再查再拦。
         CNLog.w(TAG, "云端版本更高（" + local + " → " + cloud + "），弹强制更新框");
-        if (act != null) {
+        if (act != null && overlayReady) {
             CNCNDownloadUI.updateSimple("客户端更新", "发现新版本 v" + cloud + "，需要更新客户端", 0);
             CNCNDownloadUI.showVersionUpdateDialog(act, local, cloud, apkUrl, note);
         } else {
-            // 没有界面可挂时至少别静默吞掉：日志里已经有完整信息。
-            CNLog.e(TAG, "无浮层可弹强制更新框（云端 " + cloud + "，地址 " + apkUrl + "）");
+            // F-064：强更的唯一阻断依据是「玩家确实看得到更新模态」。无 Activity 或
+            // 浮层创建失败时继续吞掉 continuation，会形成既没对话框也不启动后续流程
+            // 的黑屏死路。与本类所有不确定失败一致，保守放行。
+            CNLog.e(TAG, "无可见浮层可弹强制更新框（云端 " + cloud + "，地址 " + apkUrl
+                    + "），本次 fail-open 接力后续流程");
+            proceed();
         }
     }
 
@@ -318,11 +327,13 @@ public final class CNVersionCheck {
             }
             sleep(ACTIVITY_WAIT_STEP_MS);
         }
-        return last;
+        // F-064：`last` 从未通过 decorView 判据，不能冒充 usable——返回它会让调用方
+        // 误以为可以硬阻断强更，最终 UI 不存在且 continuation 被吞掉。超时返回 null。
+        return null;
     }
 
-    /** 建浮层，建不成就重试几轮（与热更检查同一手法）。 */
-    private static void showOverlay(Activity act) {
+    /** 建浮层，建不成就重试几轮；只有真实根视图存在才报告成功（F-064）。 */
+    private static boolean showOverlay(Activity act) {
         for (int i = 0; i < 3; i++) {
             try {
                 CNCNDownloadUI.show(act);
@@ -330,9 +341,10 @@ public final class CNVersionCheck {
             } catch (Throwable t) {
                 CNLog.w(TAG, "show() 第 " + (i + 1) + " 次失败：" + t);
             }
-            if (CNCNDownloadUI.isShowing) return;
+            if (CNCNDownloadUI.isShowing && CNCNDownloadUI.overlayView != null) return true;
             sleep(400L);
         }
+        return false;
     }
 
     private static void sleep(long ms) {
