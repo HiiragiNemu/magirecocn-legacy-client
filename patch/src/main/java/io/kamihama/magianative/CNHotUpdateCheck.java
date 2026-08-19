@@ -557,8 +557,19 @@ public final class CNHotUpdateCheck {
                     deleteQuietly(tmp);
                     continue;
                 }
+                // F-067：内容事务成功不等于版本状态已持久化。先确认同步 commit
+                // 成功，再删唯一的已验证下载包、再把本项标为完整成功。
+                if (!saveLocalVersion(pkg.versionKey, meta.version)) {
+                    applied = true;     // 活动树已经是新内容，不能谎称完全没应用
+                    anyFailure = true;  // 但控制状态分裂，整体只能叫部分失败
+                    markHotFailed(pkg.slot);
+                    CNLog.e(TAG, "[" + pkg.label + "] 内容已应用，但版本号未能落盘；"
+                            + "保留已验证下载包，下一次启动重试状态修复");
+                    CNCNDownloadUI.updateSimple("热更新状态未保存",
+                            pkg.label + "：内容已应用，但版本记录失败；已保留更新包", 0);
+                    continue;
+                }
                 deleteQuietly(tmp);
-                saveLocalVersion(pkg.versionKey, meta.version);
                 CNLog.i(TAG, "[" + pkg.label + "] 更新完成，版本号记为 " + meta.version);
                 applied = true;
             }
@@ -661,7 +672,19 @@ public final class CNHotUpdateCheck {
             synchronized (CNDownloaderFix.extractCommitLock()) {
                 CNHotUpdateTx.apply(tmp, new File(FILES_DIR), pkg.txTag);
             }
-            saveLocalVersion(pkg.versionKey, meta.version);
+            if (!saveLocalVersion(pkg.versionKey, meta.version)) {
+                // F-067：内容已经事务提交，不能回滚成「什么都没发生」；但也绝不能
+                // 写成功 marker、标绿或删除 tmp。保留包和错误状态供下一次修复。
+                if (CNCNDownloadUI.fileStatus != null
+                        && slot >= 0 && slot < CNCNDownloadUI.fileStatus.length) {
+                    CNCNDownloadUI.fileStatus[slot] = CNCNDownloadUI.ST_ERROR;
+                }
+                CNCNDownloadUI.setDownloadSpeed(slot, 0.0f);
+                CNCNDownloadUI.throttledUpdate();
+                CNLog.e(TAG, "手动热更新内容已应用，但版本号未落盘 slot=" + slot
+                        + "；保留已验证下载包，不报告成功");
+                return false;
+            }
             CNDownloaderFix.commitManualMarker(slot, meta.size, "hot-v" + meta.version);
             deleteQuietly(tmp);
             CNCNDownloadUI.markFileDone(slot);
@@ -915,16 +938,23 @@ public final class CNHotUpdateCheck {
         }
     }
 
-    private static void saveLocalVersion(String key, int value) {
+    /** 同步持久化版本号；只有 commit 明确成功才返回 true（F-067）。 */
+    private static boolean saveLocalVersion(String key, int value) {
         try {
             SharedPreferences p = prefs();
             if (p == null) {
                 CNLog.e(TAG, "拿不到 Context，版本号 " + key + "=" + value + " 没能落盘");
-                return;
+                return false;
             }
-            p.edit().putInt(key, value).commit();   // commit 而非 apply：紧接着可能就重启了
+            boolean ok = p.edit().putInt(key, value).commit();
+            if (!ok) {
+                CNLog.e(TAG, "SharedPreferences.commit 返回 false，版本号 "
+                        + key + "=" + value + " 未确认落盘");
+            }
+            return ok;   // commit 而非 apply：紧接着可能就重启了
         } catch (Throwable t) {
             CNLog.e(TAG, "写本地版本号失败（" + key + "）", t);
+            return false;
         }
     }
 
