@@ -1104,7 +1104,7 @@
       "path": "lib/armeabi-v7a/libaria2c_ossl.so",
       "group": "第三方",
       "why": "aria2 进程内引擎库·OpenSSL 后端（1.37.0，OpenSSL 1.1.1w 静态链入，armeabi-v7a）",
-      "post": "67abc99a64e37e3dcc349e53c034297c2945415f91f847d734ce951a47e5ae6e",
+      "post": "6bc1c7ee37ddc9bc234711176f2a689db9e03d48678f9ede953a072247418d56",
       "from": "repo"
     },
     {
@@ -1112,7 +1112,7 @@
       "path": "lib/arm64-v8a/libaria2c_ossl.so",
       "group": "第三方",
       "why": "aria2 进程内引擎库·OpenSSL 后端（1.37.0，OpenSSL 1.1.1w 静态链入，arm64-v8a）",
-      "post": "e9053a7059aae419b981e63ffda533fb38951f6cb777777c4f4114bc8617bf62",
+      "post": "e4047d89be1bd289ae55e5a3fd65c5fe561d0e947b09d0dfa8aca49a9d50e189",
       "from": "repo"
     },
     {
@@ -1120,7 +1120,7 @@
       "path": "lib/armeabi-v7a/libaria2c_gnutls.so",
       "group": "第三方",
       "why": "aria2 进程内引擎库·GnuTLS 后端（1.37.0，GnuTLS 3.8.3 静态链入，armeabi-v7a）",
-      "post": "f3ed07d99049cc346ec30001dd071e754e476afd8a16c4bf0a6da1bac05654d7",
+      "post": "ec4c3e404bcfa2bbb36c971609c9e4c27dd99a4a2224627d59fe80662996aa41",
       "from": "repo"
     },
     {
@@ -1128,7 +1128,7 @@
       "path": "lib/arm64-v8a/libaria2c_gnutls.so",
       "group": "第三方",
       "why": "aria2 进程内引擎库·GnuTLS 后端（1.37.0，GnuTLS 3.8.3 静态链入，arm64-v8a）",
-      "post": "ee9fcf8e89cdd501fd221f528d8e48bbed99c6591b614de97009140275984876",
+      "post": "95457b62411b9d736f70463b296c0e64e28350c40c2fa294c1c3c6adcc7db96a",
       "from": "repo"
     }
   ]
