@@ -930,14 +930,16 @@ public final class CNMirrors {
             cfgSwitchAfterFail = clampInt(st.optInt("switch_after_failures", cfgSwitchAfterFail), 1, 10);
             cfgStallSeconds    = clampInt(st.optInt("stall_seconds",      cfgStallSeconds),    5, 300);
             cfgMinSpeedKbps    = clampInt(st.optInt("min_speed_kbps",     cfgMinSpeedKbps),    0, 1000000);
-            cfgCooldownMs      = Math.max(1000L, st.optLong("cooldown_ms", cfgCooldownMs));
+            cfgCooldownMs      = clampLong(st.optLong("cooldown_ms", cfgCooldownMs),
+                                           1000L, 24L * 3600 * 1000);   // 上限 24h（F-039）
             cfgThrottleRatioPct = clampInt(st.optInt("throttle_ratio_pct",   cfgThrottleRatioPct), 10, 100);
             cfgBaselineFromS    = clampInt(st.optInt("baseline_from_s",      cfgBaselineFromS),     1, 600);
             cfgBaselineToS      = clampInt(st.optInt("baseline_to_s",        cfgBaselineToS),       2, 1200);
             if (cfgBaselineToS <= cfgBaselineFromS) cfgBaselineToS = cfgBaselineFromS + 10;
             cfgThrottleGraceS   = clampInt(st.optInt("throttle_grace_s",     cfgThrottleGraceS),    1, 600);
             cfgSwitchGainPct    = clampInt(st.optInt("switch_gain_pct",      cfgSwitchGainPct),   100, 1000);
-            cfgThrottleDemoteMs = Math.max(1000L, st.optLong("throttle_demote_ms", cfgThrottleDemoteMs));
+            cfgThrottleDemoteMs = clampLong(st.optLong("throttle_demote_ms", cfgThrottleDemoteMs),
+                                            1000L, 24L * 3600 * 1000);  // 上限 24h（F-039）
             cfgChunksAcrossMirrors = st.optBoolean("chunks_across_mirrors", cfgChunksAcrossMirrors);
             cfgForceAria2 = st.optBoolean("force_aria2", cfgForceAria2);
             cfgForceSingleThread =
@@ -987,6 +989,17 @@ public final class CNMirrors {
 
     private static int clampInt(int v, int lo, int hi) {
         return v < lo ? lo : (v > hi ? hi : v);
+    }
+
+    private static long clampLong(long v, long lo, long hi) {
+        return v < lo ? lo : (v > hi ? hi : v);
+    }
+
+    /** 饱和构造 nanoTime 截止值——远端 duration 绝不能乘法/加法回绕（F-039）。 */
+    private static long deadlineAfterMs(long nowNs, long ms) {
+        long delta = ms > Long.MAX_VALUE / 1_000_000L
+                ? Long.MAX_VALUE : ms * 1_000_000L;
+        return nowNs > Long.MAX_VALUE - delta ? Long.MAX_VALUE : nowNs + delta;
     }
 
     /**
@@ -1044,7 +1057,7 @@ public final class CNMirrors {
         if (m == null) return;
         int f = m.failures.incrementAndGet();
         if (f >= cfgSwitchAfterFail) {
-            m.cooldownUntilNs = System.nanoTime() + cfgCooldownMs * 1_000_000L;
+            m.cooldownUntilNs = deadlineAfterMs(System.nanoTime(), cfgCooldownMs);
             m.failures.set(0);
             CNLog.w(TAG, "线路进入冷却 mirror=" + m.name + " reason=" + reason
                     + " cooldown_ms=" + cfgCooldownMs);
@@ -1075,7 +1088,7 @@ public final class CNMirrors {
     /** 判定为限速：降低其优先级一段时间，但不禁用（它仍然可用，只是不优先）。 */
     public static void reportThrottled(Mirror m) {
         if (m == null) return;
-        m.demoteUntilNs = System.nanoTime() + cfgThrottleDemoteMs * 1_000_000L;
+        m.demoteUntilNs = deadlineAfterMs(System.nanoTime(), cfgThrottleDemoteMs);
         CNLog.w(TAG, "线路疑似被限速，降级 " + cfgThrottleDemoteMs + "ms: " + m.name);
     }
 
