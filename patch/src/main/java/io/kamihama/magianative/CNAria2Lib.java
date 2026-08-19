@@ -38,7 +38,8 @@ public final class CNAria2Lib {
         Backend(String libName) { this.libName = libName; }
     }
 
-    private static Backend sLoaded;
+    // F-008：start/isRunning/waitStopped 在锁外读它，必须 volatile 保证发布可见性。
+    private static volatile Backend sLoaded;
 
     private CNAria2Lib() {}
 
