@@ -97,17 +97,22 @@ public final class CNLogBundle {
                             Locale.US).format(new Date())).append('\n');
                 head.append("日志目录：").append(logDirPath).append('\n');
                 head.append("本次启动：第 ").append(CNLog.launchSeq()).append(" 次\n");
-                head.append("共 ").append(logs.size()).append(" 份日志（新→旧）\n\n");
-                os.write(head.toString().getBytes("UTF-8"));
+                byte[] headBytes = head.toString().getBytes("UTF-8");
+                os.write(headBytes);
 
-                long total = 0L;
+                // F-047：header 计入总量；每份日志只写剩余预算，绝不超过 MAX_TOTAL_BYTES。
+                // 旧实现 total 从 0 起且 copyBounded 恒传 MAX_FILE_BYTES——累计略低于
+                // 上限时下一份仍可再写 2MiB，最终文件超声明上限。
+                long total = headBytes.length;
                 for (File f : logs) {
                     byte[] sep = ("\n\n──────── " + f.getName()
                             + " ────────\n").getBytes("UTF-8");
                     if (total + sep.length > MAX_TOTAL_BYTES) break;
                     os.write(sep);
                     total += sep.length;
-                    long got = copyBounded(f, os, MAX_FILE_BYTES);
+                    long budget = MAX_TOTAL_BYTES - total;
+                    if (budget <= 0) break;
+                    long got = copyBounded(f, os, Math.min(MAX_FILE_BYTES, budget));
                     total += got;
                     if (total >= MAX_TOTAL_BYTES) break;
                 }
