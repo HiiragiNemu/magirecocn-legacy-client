@@ -176,6 +176,16 @@ public final class CNVersionCheck {
             return;
         }
 
+        // F-040：强更必须指向可下载的合法地址。apk_url 空/非 https/不在允许列表
+        // 时是服务端误配置——强更会让所有客户端永久停在更新框且拿不到包，安装器/
+        // 热更/游戏入口都接不上。校验不过放行进游戏（fail-open），日志告警。
+        String urlErr = CNSafeLink.reject(apkUrl);
+        if (urlErr != null) {
+            CNLog.e(TAG, "云端 client.apk_url 不合法（" + urlErr + "），本次不强制更新，放行进游戏");
+            proceed();
+            return;
+        }
+
         // 云端明确更高：强制更新。弹窗模态挂在浮层上，不接后续流程——玩家要么去
         // 更新，要么退出游戏；下次启动还会再查再拦。
         CNLog.w(TAG, "云端版本更高（" + local + " → " + cloud + "），弹强制更新框");
