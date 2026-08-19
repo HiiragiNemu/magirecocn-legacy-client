@@ -128,7 +128,7 @@ public final class Aria2EngineFailover {
                 CNLog.w(TAG, "创建标记目录失败: " + dir);
                 return;
             }
-            OutputStream out = new FileOutputStream(tmp());
+            FileOutputStream out = new FileOutputStream(tmp());
             try {
                 StringBuilder sb = new StringBuilder(64);
                 sb.append("backend=").append(backend.name()).append('\n');
@@ -136,16 +136,17 @@ public final class Aria2EngineFailover {
                 sb.append("deaths=").append(deaths).append('\n');
                 sb.append("gen=").append(CNUserAgent.clientVersion()).append('\n');
                 out.write(sb.toString().getBytes(Charset.forName("UTF-8")));
+                out.flush();
+                out.getFD().sync();
             } finally {
                 try { out.close(); } catch (Throwable ignore) {}
             }
-            // rename 同目录原子替换；极端情况失败则删旧再试一次
+            // 同目录 rename 成功时由文件系统原子替换。失败时绝不能先删旧标记：
+            // 旧的 armed/deaths 即便稍旧，也比“没有任何状态”更可信。
             File m = marker();
             if (!tmp().renameTo(m)) {
-                if (m.exists()) m.delete();
-                if (!tmp().renameTo(m)) {
-                    CNLog.w(TAG, "写入 failover 标记失败（rename）");
-                }
+                CNLog.w(TAG, "写入 failover 标记失败（rename）；保留旧标记: " + m);
+                try { tmp().delete(); } catch (Throwable ignore) {}
             }
         } catch (Throwable t) {
             CNLog.w(TAG, "写 failover 标记失败: " + t);
