@@ -81,7 +81,7 @@
       "group": "清单",
       "why": "加 android:networkSecurityConfig、去掉埋点 SDK 的组件声明",
       "pre": "13155189927d01bc64277487a6335bb03492c701aec5d9936c2c7202f5db1c49",
-      "post": "da157da9b1bb288881fc8eb8a76a58ce50c8eb2b783a81315468474daa09c2ef",
+      "post": "fd408e40d532b4661df512b7ac6aa9804b7d64d688f4d40a96763b7273181389",
       "no_final_newline": true
     },
     {
