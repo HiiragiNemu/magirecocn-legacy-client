@@ -306,6 +306,14 @@ public final class CNAria2 {
 
             File target = new File(outDir, outName);
             int result = ERR_RUN;
+            // F-023：轮询必须有界——RPC 半失效时 while(true) 会永远占住 inUse 与
+            // 安装器工作线程。连续 RPC 失败（null/无 result）超过阈值按失败退出；
+            // 已知总长但进度停滞超过阈值也按失败退出。
+            int rpcFailures = 0;
+            final int maxRpcFailures = 10;
+            long lastProgressBytes = -1L;
+            long lastProgressAt = System.currentTimeMillis();
+            final long stallLimitMs = 60_000L;
             while (true) {
                 if (cancel != null && cancel.isCancelled()) {
                     rpc(port, secret, "aria2.remove", gid); // best-effort
@@ -321,9 +329,15 @@ public final class CNAria2 {
                 }
                 JSONObject res = rpc(port, secret, "aria2.tellStatus", gid);
                 if (res == null) {
+                    if (++rpcFailures > maxRpcFailures) {
+                        CNLog.w(TAG, "aria2.tellStatus 连续 " + maxRpcFailures + " 次无响应，按失败处理");
+                        result = ERR_DOWNLOAD;
+                        break;
+                    }
                     sleep(500);
                     continue;
                 }
+                rpcFailures = 0;
                 JSONObject err = res.optJSONObject("error");
                 if (err != null) {
                     CNLog.w(TAG, "aria2.tellStatus 报错: " + err.optString("message"));
@@ -332,12 +346,31 @@ public final class CNAria2 {
                 }
                 JSONObject st = res.optJSONObject("result");
                 if (st == null) {
+                    if (++rpcFailures > maxRpcFailures) {
+                        CNLog.w(TAG, "aria2.tellStatus 连续 " + maxRpcFailures + " 次无 result，按失败处理");
+                        result = ERR_DOWNLOAD;
+                        break;
+                    }
                     sleep(500);
                     continue;
                 }
+                rpcFailures = 0;
                 long done = optLong(st, "completedLength");
                 long total = optLong(st, "totalLength");
                 if (progress != null) progress.onProgress(done, total > 0 ? total : 0);
+                // F-023 停滞检测：已知总长但 completedLength 长时间不增长 → 卡死
+                long now = System.currentTimeMillis();
+                if (done == lastProgressBytes) {
+                    if (total > 0 && now - lastProgressAt > stallLimitMs) {
+                        CNLog.w(TAG, "aria2 进度停滞 " + (stallLimitMs / 1000) + "s（done=" + done
+                                + " total=" + total + "），按失败处理");
+                        result = ERR_DOWNLOAD;
+                        break;
+                    }
+                } else {
+                    lastProgressBytes = done;
+                    lastProgressAt = now;
+                }
                 String status = st.optString("status", "");
                 if ("complete".equals(status)) { result = OK; break; }
                 if ("error".equals(status))    { result = ERR_DOWNLOAD; break; }
