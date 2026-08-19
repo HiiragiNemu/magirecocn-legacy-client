@@ -80,25 +80,32 @@ jobs:
           : ${{ secrets. }}
           : ${{ secrets. }}
           TARGET_REPO: ${{ secrets.TARGET_REPO }}
+          # 字符串输入只能经 env 传入；绝不直接插值进 run 脚本。
+          KEEP_RUNS: ${{ inputs.keep_runs }}
         run: |
           set -euo pipefail
+          if [[ ! "${KEEP_RUNS}" =~ ^[0-9]{1,4}$ ]] \
+              || (( KEEP_RUNS < 1 || KEEP_RUNS > 1000 )); then
+            echo "::error::keep_runs 必须是 1..1000 的十进制整数，实得：${KEEP_RUNS}"
+            exit 1
+          fi
           # ⚠ 这里必须用 if/fi，不能写成 `[ cond ] && ARGS=...`：条件为假时那一整句
           # 返回 1，在 set -e 下会直接把这一步杀掉——而「没勾任何开关」恰恰是最
           # 常见的一次运行（dry-run 看看）。
-          ARGS=""
-          if [ "${{ inputs.apply }}"     = "true" ]; then ARGS="$ARGS --apply";     fi
-          if [ "${{ inputs.artifacts }}" = "true" ]; then ARGS="$ARGS --artifacts"; fi
-          if [ "${{ inputs.caches }}"    = "true" ]; then ARGS="$ARGS --caches";    fi
-          if [ "${{ inputs.runs }}"      = "true" ]; then ARGS="$ARGS --runs";      fi
-          ARGS="$ARGS --keep-runs ${{ inputs.keep_runs }}"
+          ARGS=()
+          if [ "${{ inputs.apply }}"     = "true" ]; then ARGS+=(--apply);     fi
+          if [ "${{ inputs.artifacts }}" = "true" ]; then ARGS+=(--artifacts); fi
+          if [ "${{ inputs.caches }}"    = "true" ]; then ARGS+=(--caches);    fi
+          if [ "${{ inputs.runs }}"      = "true" ]; then ARGS+=(--runs);      fi
+          ARGS+=(--keep-runs "$KEEP_RUNS")
           # Release 资产：勾了才带上，且把那道二次确认一并给足——真正的闸门是
           # 这个勾选框本身，脚本里那道是给「本地手滑」用的。
           if [ "${{ inputs.release_assets }}" = "true" ]; then
-            ARGS="$ARGS --release-assets --yes-delete-release-assets"
+            ARGS+=(--release-assets --yes-delete-release-assets)
           fi
-          echo "参数：$ARGS"
+          printf '参数：'; printf ' %q' "${ARGS[@]}"; echo
           python3 tools/test-purge-artifacts.py     # 先自测：删除工具真跑那次才出错最糟
-          python3 tools/purge-artifacts.py $ARGS
+          python3 tools/purge-artifacts.py "${ARGS[@]}"
 
       - name: 📋 没真删时提醒一句
         if: ${{ !inputs.apply }}
