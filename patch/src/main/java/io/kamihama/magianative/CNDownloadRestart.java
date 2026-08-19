@@ -33,6 +33,14 @@ final class CNDownloadRestart {
         return valid(index) ? GENERATION.get(index) : 0;
     }
 
+    /**
+     * 把当前线程登记为 {@code index} 的「活动下载/解压线程」。
+     *
+     * <p>F-054 契约：对走 {@code ARCHIVE_LOCKS} 的路径，必须在**拿到锁之后**、
+     * 做实际工作之前调用——ACTIVE[index] 恒为持锁者，等在锁外的第二个线程不会
+     * 覆盖它，{@link #request(int)} 打断的才是真正持有文件/网络连接的线程。
+     * 配合 {@link #unregister(int)}（finally 里，释放锁后）即可。
+     */
     static void register(int index) {
         if (valid(index)) ACTIVE.set(index, Thread.currentThread());
     }

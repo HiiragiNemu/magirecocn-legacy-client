@@ -1051,9 +1051,11 @@ public final class CNDownloaderFix {
         private final int index;
         ArchiveTask(int index) { this.index = index; }
         @Override public Boolean call() {
-            CNDownloadRestart.register(index);
             try {
                 synchronized (ARCHIVE_LOCKS[index]) {
+                    // F-054：锁内才登记——ACTIVE[index] 恒为「持锁做实际工作」的线程；
+                    // 等在锁外的第二个线程不会覆盖它，request() 打断的才不是白等的那个。
+                    CNDownloadRestart.register(index);
                     return Boolean.valueOf(installArchive(index));
                 }
             } finally {
@@ -2829,9 +2831,10 @@ public final class CNDownloaderFix {
         if (isHotSlot(index)) {
             return CNHotUpdateCheck.redownloadPackage(index);
         }
-        CNDownloadRestart.register(index);
         try {
             synchronized (ARCHIVE_LOCKS[index]) {
+            // F-054：锁内才登记（理由同 ArchiveTask）；等锁线程不覆盖 ACTIVE。
+            CNDownloadRestart.register(index);
             if (!FORCE_REDOWNLOAD.compareAndSet(index, 0, 1)) {
                 CNLog.w(TAG, "同一文件已有强制重下载任务 index=" + index);
                 return false;
@@ -2949,9 +2952,10 @@ public final class CNDownloaderFix {
         // 会读这个原因码；用默认 requestActiveRestart 会把刚导入的包删掉。
         boolean signalled = requestActiveRestartKeepOffline(index);
         if (signalled) CNLog.i(TAG, "已中止 " + name + " 在传的下载，改用离线包");
-        CNDownloadRestart.register(index);
         try {
             synchronized (ARCHIVE_LOCKS[index]) {
+                // F-054：锁内才登记（理由同 ArchiveTask）；等锁线程不覆盖 ACTIVE。
+                CNDownloadRestart.register(index);
                 if (!CNOfflineImport.hasOffline(name)) {
                     CNLog.w(TAG, "等锁期间离线包已消失: " + name);
                     return false;
