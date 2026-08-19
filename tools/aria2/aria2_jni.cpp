@@ -182,13 +182,6 @@ jint nativeStart(JNIEnv* env, jclass, jobjectArray args) {
   if (args == nullptr || env->GetArrayLength(args) == 0) {
     return -3;
   }
-  pthread_mutex_lock(&gMu);
-  if (gRunning.load() || gThreadAlive) {
-    pthread_mutex_unlock(&gMu);
-    return -1; // 已有实例（运行中或退出未 join）
-  }
-  pthread_mutex_unlock(&gMu);
-
   auto blk = std::make_unique<ArgvBlock>();
   const jsize n = env->GetArrayLength(args);
   blk->storage.reserve(n + 1);
@@ -211,25 +204,45 @@ jint nativeStart(JNIEnv* env, jclass, jobjectArray args) {
   // 原构建 UND 含 pthread_attr_setdetachstate/pthread_attr_setstacksize。
   // aria2 事件循环+TLS 栈深度有限，显式 1MB 栈防老设备默认栈缩水。
   pthread_attr_t attr;
+  bool attrInitialized = false;
   pthread_t th;
   int prc = pthread_attr_init(&attr);
-  if (prc == 0) prc = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
-  if (prc == 0) prc = pthread_attr_setstacksize(&attr, 1024 * 1024);
-  if (prc == 0) prc = pthread_create(&th, &attr, aria2ThreadMain, blk.get());
-  pthread_attr_destroy(&attr);
+  if (prc == 0) {
+    attrInitialized = true;
+    prc = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+  }
+  if (prc == 0) {
+    prc = pthread_attr_setstacksize(&attr, 1024 * 1024);
+  }
+
+  // 检查、创建和状态发布必须是一个临界区：
+  // 1) 两个并发 nativeStart 不能同时穿过“当前没有实例”的检查；
+  // 2) 工作线程即使立即退出，也会在末尾等待 gMu，直到这里先把
+  //    gThread/gThreadAlive/gRunning/gExitCode 全部发布完，不能再把父线程随后
+  //    写入的 true/-1 覆盖到真实退出状态上。
+  pthread_mutex_lock(&gMu);
+  if (gRunning.load() || gThreadAlive) {
+    pthread_mutex_unlock(&gMu);
+    if (attrInitialized) pthread_attr_destroy(&attr);
+    return -1; // 已有实例（运行中或退出未 join）
+  }
+  if (prc == 0) {
+    prc = pthread_create(&th, &attr, aria2ThreadMain, blk.get());
+  }
+  if (prc == 0) {
+    gThread = th;
+    gThreadAlive = true;
+    gRunning.store(true);
+    gExitCode = -1;
+    blk.release(); // 状态发布后，所有权才正式移交工作线程
+  }
+  pthread_mutex_unlock(&gMu);
+  if (attrInitialized) pthread_attr_destroy(&attr);
   if (prc != 0) {
     LOGE("pthread_create failed: %d", prc);
     return -2;
   }
-  blk.release(); // 所有权移交工作线程
   LOGI("aria2 thread start, argc=%d", (int)n); // 与原胶水同款日志串
-
-  pthread_mutex_lock(&gMu);
-  gThread = th;
-  gThreadAlive = true;
-  gRunning.store(true);
-  gExitCode = -1;
-  pthread_mutex_unlock(&gMu);
   LOGI("aria2 thread started (%s)", kBuildMarker);
   return 0;
 }
