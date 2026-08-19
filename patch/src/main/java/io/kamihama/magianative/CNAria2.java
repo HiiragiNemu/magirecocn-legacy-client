@@ -294,14 +294,14 @@ public final class CNAria2 {
             // 所以拿不到 CA 桶时返回 ERR_INIT：调用方会回退主引擎，那条路用
             // OkHttp 做完整 TLS 验证，功能一点不少。宁可不用备用引擎，
             // 也不能用一条不认证的。
-            File cacerts = new File(ariaDir, "cacerts.pem");
-            if (!cacerts.isFile() || cacerts.length() <= 0) {
-                ensureCacerts(ariaDir);
-            }
-            if (!cacerts.isFile() || cacerts.length() <= 0) {
+            // F-063：ensureCacerts 会校验已有 bundle 是否可解析（isValidCaBundle），
+            // 陈旧/截断残片（F-050 前非原子写遗留）会被重建，不再凭「存在且长度
+            // >0」永久冒充完整桶。这里直接以它的返回值为准。
+            if (!ensureCacerts(ariaDir)) {
                 CNLog.w(TAG, "拼不出 CA 证书桶，aria2 放弃本次下载（回退主引擎做完整 TLS 校验）");
                 return ERR_INIT;
             }
+            File cacerts = new File(ariaDir, "cacerts.pem");
             opt.put("ca-certificate", cacerts.getAbsolutePath());
             // 每次下载前立「生死状」：keep-alive 会话跨下载常驻，原生崩溃的
             // 死生标记按**下载窗口**记——本次下载没把进程炸死，finally 的
@@ -624,10 +624,14 @@ public final class CNAria2 {
     // CA 证书
     // ==================================================================
 
-    /** 缺了才拼；拼出来的空文件当没拼出来。 */
+    /**
+     * 缺了、空了或不可解析就重建。F-063：旧的「isFile && length>0」会把
+     * F-050 之前的非原子写遗留的截断残片永久当完整桶——改用 isValidCaBundle
+     * 校验可解析，陈旧残片会被重建。
+     */
     private static boolean ensureCacerts(File dir) {
         File pem = new File(dir, "cacerts.pem");
-        if (pem.isFile() && pem.length() > 0) return true;
+        if (isValidCaBundle(pem)) return true;
         return extractCacerts(dir);
     }
 
