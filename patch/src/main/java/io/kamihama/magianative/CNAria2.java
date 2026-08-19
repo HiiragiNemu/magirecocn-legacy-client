@@ -167,6 +167,11 @@ public final class CNAria2 {
         // F-025：方法级持有下载结果，finally 据此决定是否释放 inUse
         // （ERR_IN_USE 时不释放）。必须在 try 外声明。
         int result = ERR_RUN;
+        // F-062：addUri 成功后的任何异常/半失效出口都必须知道自己是否仍
+        // 拥有一个可能在写目标文件的 GID。只有观察到终态或 quiesce 成功
+        // 才能让 finally 释放 inUse。
+        int ownedPort = 0; String ownedSecret = null; String ownedGid = null;
+        boolean ownedGidTerminal = false;
         try {
             if (url == null || url.isEmpty() || outName == null) return ERR_ADD;
             if (!isAvailable()) {
@@ -255,6 +260,8 @@ public final class CNAria2 {
             // 复用会话句柄
             int port = sPort;
             String secret = sSecret;
+            ownedPort = port;
+            ownedSecret = secret;
 
             // addUri 下发（dir/out/header/连接数放 per-uri 选项；CLI 只留 daemon）
             JSONObject opt = new JSONObject();
@@ -313,6 +320,7 @@ public final class CNAria2 {
                 CNLog.w(TAG, "aria2.addUri 未返回 gid");
                 return ERR_ADD;
             }
+            ownedGid = gid;
 
             File target = new File(outDir, outName);
             // F-023：轮询必须有界——RPC 半失效时 while(true) 会永远占住 inUse 与
@@ -332,6 +340,7 @@ public final class CNAria2 {
                     // 调用方按「路径被占用」fail-closed（不清产物、不重下同路径）。
                     if (quiesceGid(port, secret, gid)) {
                         result = CANCELLED;
+                        ownedGidTerminal = true;
                     } else {
                         CNLog.e(TAG, "aria2 取消后旧 GID 未进入终态，拒绝释放 inUse（fail-closed）: "
                                 + outName);
@@ -342,6 +351,7 @@ public final class CNAria2 {
                 if (!CNAria2Lib.isRunning()) {
                     CNLog.w(TAG, "aria2c 进程内线程意外退出: " + outName);
                     sServerUp = false;   // 会话死了；sSessionStarted 保持 true → 本进程不再重启
+                    ownedGidTerminal = true;
                     result = ERR_RUN;
                     break;
                 }
@@ -349,30 +359,34 @@ public final class CNAria2 {
                 if (res == null) {
                     if (++rpcFailures > maxRpcFailures) {
                         CNLog.w(TAG, "aria2.tellStatus 连续 " + maxRpcFailures + " 次无响应，按失败处理");
-                        result = ERR_DOWNLOAD;
+                        result = failureAfterQuiesce(port, secret, gid, ERR_DOWNLOAD);
+                        if (result != ERR_IN_USE) ownedGidTerminal = true;
                         break;
                     }
                     sleep(500);
                     continue;
                 }
-                rpcFailures = 0;
                 JSONObject err = res.optJSONObject("error");
                 if (err != null) {
                     CNLog.w(TAG, "aria2.tellStatus 报错: " + err.optString("message"));
-                    result = ERR_DOWNLOAD;
+                    result = failureAfterQuiesce(port, secret, gid, ERR_DOWNLOAD);
+                    if (result != ERR_IN_USE) ownedGidTerminal = true;
                     break;
                 }
                 JSONObject st = res.optJSONObject("result");
                 if (st == null) {
+                    // F-062：不能在确认 result 前清零。旧代码每次先置 0 再 ++，
+                    // 连续“有 envelope、无 result”永远只会得到 1。
                     if (++rpcFailures > maxRpcFailures) {
                         CNLog.w(TAG, "aria2.tellStatus 连续 " + maxRpcFailures + " 次无 result，按失败处理");
-                        result = ERR_DOWNLOAD;
+                        result = failureAfterQuiesce(port, secret, gid, ERR_DOWNLOAD);
+                        if (result != ERR_IN_USE) ownedGidTerminal = true;
                         break;
                     }
                     sleep(500);
                     continue;
                 }
-                rpcFailures = 0;
+                rpcFailures = 0;   // 只有可用 result 才证明本轮 RPC 健康
                 long done = optLong(st, "completedLength");
                 long total = optLong(st, "totalLength");
                 if (progress != null) progress.onProgress(done, total > 0 ? total : 0);
@@ -382,7 +396,8 @@ public final class CNAria2 {
                     if (total > 0 && now - lastProgressAt > stallLimitMs) {
                         CNLog.w(TAG, "aria2 进度停滞 " + (stallLimitMs / 1000) + "s（done=" + done
                                 + " total=" + total + "），按失败处理");
-                        result = ERR_DOWNLOAD;
+                        result = failureAfterQuiesce(port, secret, gid, ERR_DOWNLOAD);
+                        if (result != ERR_IN_USE) ownedGidTerminal = true;
                         break;
                     }
                 } else {
@@ -390,9 +405,15 @@ public final class CNAria2 {
                     lastProgressAt = now;
                 }
                 String status = st.optString("status", "");
-                if ("complete".equals(status)) { result = OK; break; }
-                if ("error".equals(status))    { result = ERR_DOWNLOAD; break; }
-                if ("removed".equals(status))  { result = ERR_DOWNLOAD; break; }
+                if ("complete".equals(status)) {
+                    ownedGidTerminal = true; result = OK; break;
+                }
+                if ("error".equals(status)) {
+                    ownedGidTerminal = true; result = ERR_DOWNLOAD; break;
+                }
+                if ("removed".equals(status)) {
+                    ownedGidTerminal = true; result = ERR_DOWNLOAD; break;
+                }
                 sleep(500);
             }
 
@@ -410,7 +431,17 @@ public final class CNAria2 {
             return result;
         } catch (Throwable t) {
             CNLog.w(TAG, "aria2 进程内异常: " + t);
-            return ERR_OTHER;
+            // F-062：progress 回调、JSON 处理等异常同样可能发生在 active GID
+            // 仍写文件时。catch 不能绕开单写者收尾。
+            if (ownedGid != null && !ownedGidTerminal && CNAria2Lib.isRunning()) {
+                result = failureAfterQuiesce(ownedPort, ownedSecret, ownedGid, ERR_OTHER);
+                if (result == ERR_IN_USE) {
+                    CNLog.e(TAG, "aria2 异常出口未能确认 GID 停止，保持 inUse");
+                    return result;
+                }
+            }
+            result = ERR_OTHER;
+            return result;
         } finally {
             // F-007：只有确认会话仍存活（线程在 + RPC 曾可达）才清 armed 标记。
             // keep-alive 下 native 线程常驻；启动后 RPC 未就绪、任务早退、线程刚
@@ -441,6 +472,14 @@ public final class CNAria2 {
         }
     }
 
+    /** 非终态失败统一收口：确认停写才返回普通错误，否则保持单写者门。 */
+    private static int failureAfterQuiesce(int port, String secret, String gid,
+                                           int ordinaryError) {
+        if (gid != null && quiesceGid(port, secret, gid)) return ordinaryError;
+        CNLog.e(TAG, "aria2 GID 未确认终止，错误码升级为 ERR_IN_USE: " + gid);
+        return ERR_IN_USE;
+    }
+
     /**
      * 关闭进程内 aria2 会话。keep-alive（2026-08-18）之后正常下载流程**不再调用**
      * 本方法——会话跨下载常驻、随进程退出消失。本方法保留给未来显式关停场景
@@ -465,8 +504,14 @@ public final class CNAria2 {
                 try { res = rpc(port, secret, "aria2.tellStatus", gid); }
                 catch (Throwable ignore) {}
                 if (res != null) {
-                    if (res.optJSONObject("error") != null) return true;
-                    JSONObject st = res.optJSONObject("result");
+                    JSONObject rpcError = res.optJSONObject("error");
+                    // F-062：任意 RPC error 只说明本次查询失败，不证明 writer 已停。
+                    // 继续有界轮询/升级 forceRemove；只有线程退出或显式终态才放行。
+                    if (rpcError != null) {
+                        CNLog.w(TAG, "quiesce tellStatus RPC error: "
+                                + rpcError.optString("message"));
+                    }
+                    JSONObject st = rpcError == null ? res.optJSONObject("result") : null;
                     String status = st != null ? st.optString("status", "") : "";
                     if ("removed".equals(status) || "error".equals(status)
                             || "complete".equals(status)) return true;
