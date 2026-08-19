@@ -351,6 +351,23 @@ public final class CNChunkedDownload {
             throw new IOException("分块下载未完成: verified=" + countSet(verified)
                     + "/" + hashes.count + " bytes=" + committed.get() + "/" + probe.total);
         }
+        // F-027：resume 恢复的 verified 位只能证明「用的是哪份清单」，不能证明
+        // .cpart 中对应字节自上次验证后未变（存储损坏/错误恢复/调试工具/另一路径
+        // 误写）。resume 被接受时对组装好的文件做一次全量分块重验——兜住 resume
+        // 块的内容漂移。全新下载（无 resume）各块已按清单校验，不额外重读。
+        if (accepted) {
+            try {
+                if (!CNArchiveValidate.verifyChunks(target, hashes)) {
+                    throw new IOException("分块身份校验失败（resume 后全量重验）: "
+                            + target.getName());
+                }
+            } catch (IOException e) {
+                throw e;
+            } catch (Throwable t) {
+                throw new IOException("分块身份校验异常: " + target.getName(), t);
+            }
+            CNLog.i(TAG, "resume 后全量分块重验通过 file=" + target.getName());
+        }
         finish(part, meta, target, verifyZip, sink, probe.total);
         CNLog.i(TAG, "事务分块下载完成 file=" + target.getName()
                 + " bytes=" + probe.total + " blocks=" + hashes.count);
