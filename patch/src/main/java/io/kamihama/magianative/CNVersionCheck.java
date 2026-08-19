@@ -237,11 +237,14 @@ public final class CNVersionCheck {
     private static int compareSegment(String x, String y) {
         boolean nx = x.matches("\\d+"), ny = y.matches("\\d+");
         if (nx && ny) {
-            // 段不可能长到溢出 long；真溢出就退成字符串比较
-            try {
-                long d = Long.parseLong(x) - Long.parseLong(y);
-                return d < 0 ? -1 : (d > 0 ? 1 : 0);
-            } catch (NumberFormatException ignore) {}
+            // F-045：纯数字段按数值比较，任意长度不回退字典序。超 long 段此前
+            // 捕获异常后直接字典序——"9…9" 会被误判大于 "1…0…0"。剥前导零后
+            // 长度即数值大小；等长时字典序即数值序。
+            String ax = x.replaceFirst("^0+", "");
+            String ay = y.replaceFirst("^0+", "");
+            if (ax.length() != ay.length()) return ax.length() < ay.length() ? -1 : 1;
+            int c = ax.compareTo(ay);
+            return c < 0 ? -1 : (c > 0 ? 1 : 0);
         }
         return x.compareTo(y);
     }
