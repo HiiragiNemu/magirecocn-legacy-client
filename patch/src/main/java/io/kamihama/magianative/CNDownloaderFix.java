@@ -596,7 +596,12 @@ public final class CNDownloaderFix {
         int max = Math.max(i, MIN_SNAA_VERSION);
         String payload = "{\"version\":" + max + "}";
         CNLog.i(TAG, "snaa-request native_version=" + i + " sent_version=" + max);
+        // F-061：两条网络路径（proxy / direct）的响应都必须过 isSnaaResponseCurrent。
+        // 旧实现只验 proxy 响应，direct 重试成功但 stale 时照样 `return direct`——
+        // 「已拒绝的过期 body」最终仍会拼成活动端点，破坏最小版本/线程协商。
+        // 任何一条路径都没拿到可用响应就 fail-closed 返回空串，绝不让 stale body 上桌。
         String viaProxy = null;
+        IOException proxyFail = null;
         try {
             viaProxy = postJson(snaaUrl(), payload, false);
             CNLog.i(TAG, "snaa-response direct=false body=" + viaProxy);
@@ -604,21 +609,25 @@ public final class CNDownloaderFix {
                 return viaProxy;
             }
             CNLog.w(TAG, "SNAA response is stale/incompatible; retrying direct");
-            String direct = postJson(snaaUrl(), payload, true);
-            CNLog.i(TAG, "snaa-response direct=true body=" + direct);
-            return direct;
         } catch (IOException first) {
+            proxyFail = first;
             CNLog.w(TAG, "SNAA via configured network failed; retrying direct", first);
-            try {
-                String direct = postJson(snaaUrl(), payload, true);
-                CNLog.i(TAG, "snaa-response direct=true body=" + direct);
-                return direct;
-            } catch (IOException second) {
-                second.addSuppressed(first);
-                CNLog.e(TAG, "SNAA discovery failed", second);
-                return viaProxy == null ? "" : viaProxy;
-            }
         }
+        String direct = null;
+        try {
+            direct = postJson(snaaUrl(), payload, true);
+            CNLog.i(TAG, "snaa-response direct=true body=" + direct);
+            if (isSnaaResponseCurrent(direct, max)) {
+                return direct;
+            }
+            CNLog.w(TAG, "SNAA direct response also stale/incompatible");
+        } catch (IOException second) {
+            if (proxyFail != null) second.addSuppressed(proxyFail);
+            CNLog.e(TAG, "SNAA discovery failed", second);
+        }
+        // 与上方方法契约一致：失败返回空串（native 侧按空端点处理），而不是把
+        // 已判 stale/incompatible 的 body 返回去。
+        return "";
     }
 
     private static boolean isSnaaResponseCurrent(String body, int minVersion) {
