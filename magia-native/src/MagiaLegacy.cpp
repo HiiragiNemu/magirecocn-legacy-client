@@ -192,6 +192,11 @@ static std::string resolvePrivDir() {
         if (n > 0) {
             buf[n] = 0;
             std::string s(buf);
+            // F-038：次级进程名是 <package>:<suffix>（如 io.kamihama.totentanz:
+            // cnrestart），应用数据目录仍以基础 package 命名。与 Java CNPaths
+            // 同一规则——后缀不得拼进 /data/user/<id>/... 路径。
+            const size_t colon = s.find(':');
+            if (colon != std::string::npos) s.resize(colon);
             if (!s.empty() && s.find('/') == std::string::npos) pkg = s;
         }
     }

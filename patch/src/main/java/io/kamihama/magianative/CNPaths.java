@@ -167,6 +167,13 @@ public final class CNPaths {
                 in.close();
             }
         } catch (Throwable ignore) {}
+        // F-038：/proc/self/cmdline 在次级进程（如 :cnrestart）中是
+        // <package>:<suffix>，应用数据目录仍以基础包名命名。后缀不得拼进
+        // /data/user/<id>/... 路径。
+        if (pkg != null) {
+            int colon = pkg.indexOf(':');
+            if (colon >= 0) pkg = pkg.substring(0, colon);
+        }
         if (pkg == null || pkg.isEmpty() || pkg.indexOf('/') >= 0) {
             pkg = "io.kamihama.totentanz";
         }
