@@ -1,6 +1,7 @@
 package io.kamihama.magianative;
 
 import android.app.Activity;
+import android.os.Build;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -16,19 +17,19 @@ import java.util.Map;
  * trampoline、计费代理与重启 trampoline 时，调用方可能拿到隐藏/旧实例，把 UI
  * 挂进死视图树，或从错误 task 发起重启与文件选择。
  *
- * <p>这里把选择逻辑移进 Java（可测、可读），{@code RestClient.smali} 只留一行
- * 委托。选法：
+ * <p>这里把选择逻辑移进 Java（可读可测），{@code RestClient.smali} 只留一行委托。
+ * 选法：
  * <ol>
- *   <li>遍历 {@code mActivities} 的全部记录（{@code ArrayMap} 实现
- *       {@link Map}，按值迭代即可），优先选 {@code paused/stopped/hideForNow}
- *       全为 {@code false}、且 {@code activity} 未 {@code isFinishing()/
- *       isDestroyed()} 的记录——这才是「最可能在当前任务栈顶层」的实例；</li>
- *   <li>没有符合条件的就退回第一条记录（与原实现一致，保证调用方总有兜底）；</li>
- *   <li>反射任何一步失败返回 {@code null}（与原实现一致）。</li>
+ *   <li>遍历 {@code mActivities} 的全部记录（{@code ArrayMap} 实现 {@link Map}，
+ *       按值迭代即可），只把<b>还活着</b>的 Activity（未 {@code isFinishing()/
+ *       isDestroyed()}，见 {@link #live(Activity)}）当候选；</li>
+ *   <li>在前台判定里，{@code paused/stopped} 必须<b>明确读到 {@code false}</b>
+ *       才算可交互——反射失败返回 {@code null}，绝不拿 {@code false} 冒充（把可能
+ *       的后台实例当 live）；{@code hideForNow} 只在显式 {@code true} 时排除
+ *       （部分版本没有该辅助字段）；</li>
+ *   <li>没有任何可交互记录时退回<b>第一个存活</b>的 Activity，不退回最早插入的
+ *       死对象；完全没有存活候选返回 {@code null}（与原实现反射失败一致）。</li>
  * </ol>
- *
- * <p>故意不用 {@link android.util.ArrayMap} 的编译期类型：它是隐藏路径反射拿到的
- * 对象，直接用 {@code java.util.Map} 接口迭代即可，避免对具体实现的编译期依赖。
  */
 public final class CNRestClientActivity {
     private static final String TAG = "MagiaClientJNI"; // 与原 smali 的 tag 一致
@@ -48,15 +49,20 @@ public final class CNRestClientActivity {
             Map<?, ?> activities = (Map<?, ?>) raw;
             if (activities.isEmpty()) return null;
 
+            // F-053 follow-up：fallback 只取「活的」Activity——没有任何前台候选时
+            // 退回第一个存活实例，而不是最早插入的（可能已 finishing/destroyed）对象。
             Activity fallback = null;
             for (Object record : activities.values()) {
                 if (record == null) continue;
                 Activity act = extractActivity(record);
-                if (act == null) continue;
+                if (!live(act)) continue;
                 if (fallback == null) fallback = act;
-                if (!recordBool(record, "paused") && !recordBool(record, "stopped")
-                        && !recordBool(record, "hideForNow")
-                        && !act.isFinishing() && !act.isDestroyed()) {
+                // 生命周期字段必须明确读到 false 才叫前台；反射失败返回 null，
+                // 不拿 false 冒充（残余二）。hideForNow 只在显式 true 时排除。
+                Boolean paused = recordBool(record, "paused");
+                Boolean stopped = recordBool(record, "stopped");
+                if (Boolean.FALSE.equals(paused) && Boolean.FALSE.equals(stopped)
+                        && !Boolean.TRUE.equals(recordBool(record, "hideForNow"))) {
                     return act;
                 }
             }
@@ -67,7 +73,7 @@ public final class CNRestClientActivity {
         }
     }
 
-    /** 从 ActivityClientRecord 反射取 {@code activity} 字段，非 Activity 返回 null。 */
+    /** 从 ActivityClientRecord 反射取 {@code activity} 字段。 */
     private static Activity extractActivity(Object record) {
         try {
             Field f = record.getClass().getDeclaredField("activity");
@@ -79,14 +85,20 @@ public final class CNRestClientActivity {
         }
     }
 
-    /** 反射读 record 的 boolean 字段；读不到按 false 处理（保守，不误杀可交互实例）。 */
-    private static boolean recordBool(Object record, String name) {
+    /** 读 ActivityClientRecord 的布尔字段；读不到返回 null，不伪造生命周期状态。 */
+    private static Boolean recordBool(Object record, String name) {
         try {
             Field f = record.getClass().getDeclaredField(name);
             f.setAccessible(true);
-            return Boolean.TRUE.equals(f.get(record));
+            return Boolean.valueOf(f.getBoolean(record));
         } catch (Throwable t) {
-            return false;
+            return null;
         }
+    }
+
+    /** 只把「还活着」的 Activity 当候选：未 finishing，且（API 17+）未 destroyed。 */
+    private static boolean live(Activity act) {
+        if (act == null || act.isFinishing()) return false;
+        return Build.VERSION.SDK_INT < 17 || !act.isDestroyed();
     }
 }
