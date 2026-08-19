@@ -86,6 +86,22 @@ xconf() { # xconf <log> <builddir> <srcdir> <host> <cc> <cxx> <extra-cflags> <pr
 xmake() { # xmake <log> <dir>
     run_log "$1" make -C "$2" -j"$NPROC"
 }
+apply_aria2_patch() { # 幂等应用 aria2 源码补丁（0001：控制台日志 → Android log sink）
+    # F-024：进程内库不再 dup2 宿主 fd 1/2，由源码层把 Console 的输出对象换成
+    # AndroidLogFile（直进 logcat）。补丁只动 src/console.cc，非 git 目录也照用
+    # git apply（--check/--reverse --check 判定已应用与否，幂等）。
+    local patch="$GLUE_DIR/patches/0001-console-android-log-sink.patch"
+    if ( cd "$ARIA2_SRC" && git apply --check "$patch" 2>/dev/null ); then
+        ( cd "$ARIA2_SRC" && git apply "$patch" )
+        echo "✓ aria2 补丁已应用：$(basename "$patch")"
+    elif ( cd "$ARIA2_SRC" && git apply --reverse --check "$patch" 2>/dev/null ); then
+        echo "✓ aria2 补丁已应用（重复运行，跳过）"
+    else
+        echo "✗ aria2 补丁无法应用：$patch"
+        echo "  源码必须是无改动 aria2-1.37.0；对不上就先还原源码再看"
+        exit 1
+    fi
+}
 
 # ─────────────────────────── 每 ABI 构建全部静态依赖 ───────────────────────────
 build_deps() { # build_deps <abi> <host> <cc> <cxx> <openssl-target> <extra-cflags>
@@ -212,12 +228,15 @@ build_group() { # build_group <abi> <host> <cc> <cxx> <xcflags> <backend: ossl|g
 
     # 与 xconf 同款：aria2 的 configure 也必须在 $BUILD 里跑（out-of-tree），
     # 否则 Makefile 落在 CWD、make -C "$BUILD/src" 找不到（修复前 ossl 组如此失败）。
+    # F-024：ANDROID_LOG_SINK 激活 console.cc 的 AndroidLogFile 分支（见
+    # patches/0001-console-android-log-sink.patch），控制台直进 logcat。
     group_start "aria2-$abi-$be-conf"
     ( cd "$BUILD" && \
         env -i PATH="$PATH" HOME="${HOME:-/tmp}" \
         CC="$cc" CXX="$cxx" AR="$TC/llvm-ar" RANLIB="$TC/llvm-ranlib" \
         STRIP="$TC/llvm-strip" LD="$TC/ld.lld" \
-        CFLAGS="-O2 -fPIC $xcflags" CXXFLAGS="-O2 -fPIC $xcflags" \
+        CFLAGS="-O2 -fPIC -DANDROID_LOG_SINK $xcflags" \
+        CXXFLAGS="-O2 -fPIC -DANDROID_LOG_SINK $xcflags" \
         CPPFLAGS="-I$PREFIX/include" LDFLAGS="-L$PREFIX/lib" \
         PKG_CONFIG="$pcwrap" PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig" \
         bash "$ARIA2_SRC/configure" --host="$host" --prefix="$PREFIX" \
@@ -363,6 +382,14 @@ verify_so() { # verify_so <so路径> <abi>
                -e iconv -e iconv_open -e iconv_close || true)"
         [ -z "$hit" ] || { echo "✗ $base 强引用高 API 符号（黑名单命中）:"; echo "$hit"; exit 1; }
     fi
+
+    # 7) Android log sink 必须编译进来（F-024）。sink 的 emit() 走
+    #    __android_log_write；基线（fd 转发时代）UND 只有 __android_log_print。
+    #    缺它 = console.cc 没编进 ANDROID_LOG_SINK 分支，修复白做。
+    local sink_ok
+    sink_ok="$("$NM" -D -u "$so" | awk '{print $NF}' | sed 's/@.*//' | grep -x __android_log_write || true)"
+    [ -n "$sink_ok" ] || { echo "✗ $base 缺 Android log sink（UND 无 __android_log_write）"; exit 1; }
+
     echo "  ✓ $base 自检全绿"
 }
 
@@ -383,6 +410,9 @@ build_abi() { # build_abi <abi> <host> <openssl-target>
     verify_so "$OUT/$abi/libaria2c_ossl.so" "$abi"
     verify_so "$OUT/$abi/libaria2c_gnutls.so" "$abi"
 }
+
+# 先补 aria2 源码（控制台日志 sink，F-024）再进构建；幂等，重复跑不重复打。
+apply_aria2_patch
 
 build_abi arm64-v8a   aarch64-linux-android   android-arm64
 build_abi armeabi-v7a arm-linux-androideabi   android-arm

@@ -1,0 +1,141 @@
+--- a/src/console.cc
++++ b/src/console.cc
+@@ -39,6 +39,14 @@
+ #else // !__MINGW32__
+ #  include "BufferedFile.h"
+ #endif // !__MINGW32__
++#ifdef ANDROID_LOG_SINK
++// 进程内库不重定向宿主 fd：aria2 控制台输出直进 logcat（F-024）。
++// 需要的头都在这块里带上（sink 实现见下方 AndroidLogFile）。
++#  include <android/log.h>
++#  include <cstring>
++#  include <cstdio>
++#  include <time.h> // timespec / clock_gettime / CLOCK_REALTIME（与 JNI 胶水同款）
++#endif // ANDROID_LOG_SINK
+ 
+ namespace aria2 {
+ 
+@@ -50,12 +58,115 @@
+ Console consoleCoutBackup;
+ }; // namespace
+ 
++#ifdef ANDROID_LOG_SINK
++namespace {
++
++// ── Android log sink：aria2 控制台输出直进 logcat ─────────────────────
++// 旧实现把进程 fd 1/2 dup2 到 pipe 再转发，keep-alive 会话长驻时重定向
++// 覆盖整个 App 生命周期，其它线程写 stdout/stderr 全被吸走（F-024）。
++// 这里走 aria2 自己的 OutputFile 抽象接一个 __android_log_* 后端：不碰
++// 任何 fd，只换掉 Console 用的输出对象。
++// 限额（--console-log-level=info + --summary-interval 实时进度下，这些
++// 是防呆上限而不是常态）：
++//   单条 ≤ kLogLineCap 字节；\r 当换行（进度帧逐帧成行）；控制字符剥离；
++//   1 秒窗口最多 kRateLimit 条，超出丢弃并累计计数。
++constexpr size_t kLogLineCap = 512;
++constexpr int kRateLimit = 300;
++// 与 JNI 胶水层（aria2_jni.cpp 的 LOG_TAG）同 tag，日志按 tag 聚一组。
++constexpr const char* kAndroidLogTag = "CNAria2Lib";
++
++class AndroidLogFile : public OutputFile {
++public:
++  AndroidLogFile() : count_(0), window_(-1), dropped_(0) {}
++
++  size_t write(const char* str) override
++  {
++    if (str != nullptr) emit(str);
++    return str == nullptr ? 0 : strlen(str);
++  }
++
++  int flush() override { return 0; } // 每次写即发，无需缓冲
++
++  int vprintf(const char* format, va_list va) override
++  {
++    char buf[kLogLineCap];
++    int n = vsnprintf(buf, sizeof(buf), format, va);
++    if (n > 0) emit(buf); // vsnprintf 截断时按实写内容发
++    return n;
++  }
++
++  bool supportsColor() override { return false; } // 关掉 aria2 的 ANSI 颜色
++
++private:
++  // 剥控制字符：\r 当换行（进度帧逐帧成行）；其余 <0x20 丢弃；
++  // UTF-8 高位字节（≥0x80）放行，中文日志不乱码。
++  static size_t sanitize(char* dst, size_t cap, const char* src, size_t n)
++  {
++    size_t o = 0;
++    for (size_t i = 0; i < n && o + 1 < cap; ++i) {
++      unsigned char c = static_cast<unsigned char>(src[i]);
++      if (c == '\n' || c == '\r') {
++        dst[o++] = '\n';
++      } else if (c < 0x20) {
++        continue;
++      } else {
++        dst[o++] = static_cast<char>(c);
++      }
++    }
++    dst[o] = '\0';
++    return o;
++  }
++
++  bool rateOk()
++  {
++    timespec ts{};
++    clock_gettime(CLOCK_REALTIME, &ts);
++    long sec = static_cast<long>(ts.tv_sec);
++    if (sec != window_) {
++      window_ = sec;
++      count_ = 0;
++    }
++    return ++count_ <= kRateLimit;
++  }
++
++  void emit(const char* line)
++  {
++    if (!rateOk()) {
++      if (++dropped_ == 1 || dropped_ % 1000 == 0) {
++        __android_log_print(ANDROID_LOG_WARN, kAndroidLogTag,
++                            "[aria2 sink] dropped %d log lines (rate)",
++                            dropped_);
++      }
++      return;
++    }
++    size_t n = strlen(line);
++    while (n > 0 && (line[n-1] == '\n' || line[n-1] == '\r')) --n;
++    if (n == 0) return;
++    char buf[kLogLineCap];
++    if (sanitize(buf, sizeof(buf), line, n) == 0) return;
++    __android_log_write(ANDROID_LOG_INFO, kAndroidLogTag, buf);
++  }
++
++  int count_;
++  long window_;
++  int dropped_;
++};
++
++} // namespace
++#endif // ANDROID_LOG_SINK
++
+ void initConsole(bool suppress)
+ {
+   if (suppress) {
+     consoleCout = consoleCerr = std::make_shared<NullOutputFile>();
+   }
+   else {
++#ifdef ANDROID_LOG_SINK
++    // Android 构建：控制台直接进 logcat，进程 fd 1/2 保持原身份。
++    // 任何线程写 stdout/stderr 都不会被 aria2 会话捕获。
++    consoleCout = std::make_shared<AndroidLogFile>();
++    consoleCerr = std::make_shared<AndroidLogFile>();
++#else  // !ANDROID_LOG_SINK
+ #ifdef __MINGW32__
+     consoleCout = std::make_shared<WinConsoleFile>(STD_OUTPUT_HANDLE);
+     consoleCerr = std::make_shared<WinConsoleFile>(STD_ERROR_HANDLE);
+@@ -63,6 +174,7 @@
+     consoleCout = std::make_shared<BufferedFile>(stdout);
+     consoleCerr = std::make_shared<BufferedFile>(stderr);
+ #endif // !__MINGW32__
++#endif // !ANDROID_LOG_SINK
+   }
+ }
+ 

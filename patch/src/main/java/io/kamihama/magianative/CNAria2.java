@@ -177,9 +177,10 @@ public final class CNAria2 {
             int maxC = (maxConns > 0 && maxConns <= 16) ? maxConns : 8;
             File ariaDir = new File(CNPaths.filesDir(), "aria2");
             // 目录只放 cacerts.pem（下方 ensureSystemCaStore 用）；日志不落文件，
-            // 由 JNI 胶水把 aria2 控制台输出转发进 logcat。旧版本这里挂着
-            // --log=<filesDir>/aria2/aria2.log，目录没建 → 启动即在 Logger.cc
-            // 打不开文件直接退出（玩家日志实锤的「无法下载」根因）。
+            // 由 native 源码层 AndroidLogFile sink 把 aria2 控制台输出直进 logcat
+            // （tools/aria2/patches/0001-console-android-log-sink.patch）。旧版本
+            // 这里挂着 --log=<filesDir>/aria2/aria2.log，目录没建 → 启动即在
+            // Logger.cc 打不开文件直接退出（玩家日志实锤的「无法下载」根因）。
             ariaDir.mkdirs();
 
             // ── 会话：启动一次，跨下载复用（keep-alive，2026-08-18）──
@@ -217,9 +218,13 @@ public final class CNAria2 {
                 args.add("--no-conf");
                 args.add("--daemon=false");
                 // 原则（2026-08-18）：日志不分开。aria2 不写独立日志文件——
-                // 控制台输出（--console-log-level）由 JNI 胶水转发进 logcat，
-                // 随游戏主日志一起进玩家分享包。别改回 --log=<文件>。
-                args.add("--console-log-level=warn");
+                // 控制台输出经 native AndroidLogFile sink 直进 logcat，随游戏
+                // 主日志一起进玩家分享包。别改回 --log=<文件>。
+                // info 级 + 每 1 秒一条下载摘要：玩家实时看到进度。F-024 把
+                // keep-alive 长驻的进程级 fd 重定向换成了源码层 sink，info 级 +
+                // summary 的日志量也远低于旧 pipe 转发，不会刷爆 logcat。
+                args.add("--console-log-level=info");
+                args.add("--summary-interval=1");
 
                 // 进程内 JNI 启动 aria2 线程（libaria2c.so），替代 exec 子进程：
                 // 绕开 SELinux exec 闸 + 16KB 页对齐，且符号卫生避免 OpenSSL 抢占崩溃。

@@ -63,6 +63,12 @@ libssh2 的 SFTP 原语，非 TLS 路径）。静态链接 LGPL 库进 GPLv3 工
 LGPL 第 4(d) 条要求的「可重链对象/源码」与本项目对 aria2 的对应源码义务
 （下方）合并履行——对应源码含全部静态链入组件与构建脚本，书面要约三年有效。
 
+**本地补丁**（F-024）：`tools/aria2/patches/0001-console-android-log-sink.patch`
+把 aria2 控制台输出对象换成 Android log sink（直进 logcat，不再重定向宿主进程
+fd 1/2）。改动仅限 `src/console.cc`，由编译期 `-DANDROID_LOG_SINK` 宏激活；
+构建脚本 `tools/build-aria2.sh` 幂等应用并自检 sink 已编入。对应源码义务里，
+这份补丁随本仓库交付。
+
 ### 🔴 对应源码（GPL 第 3 条 / v3 第 6 条的义务）
 
 **分发二进制就要让接收者拿得到对应源码。** 这里的「对应源码」包含 aria2 本体、
