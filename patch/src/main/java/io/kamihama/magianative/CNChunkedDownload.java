@@ -353,11 +353,14 @@ public final class CNChunkedDownload {
         }
         // F-027：resume 恢复的 verified 位只能证明「用的是哪份清单」，不能证明
         // .cpart 中对应字节自上次验证后未变（存储损坏/错误恢复/调试工具/另一路径
-        // 误写）。resume 被接受时对组装好的文件做一次全量分块重验——兜住 resume
-        // 块的内容漂移。全新下载（无 resume）各块已按清单校验，不额外重读。
+        // 误写）。resume 被接受时对 .cpart 做一次全量分块重验——兜住 resume 块的
+        // 内容漂移。全新下载（无 resume）各块已按清单校验，不额外重读。
+        // ⚠ 重验对象是 .cpart（此刻所有块都已提交进它、拼装已完成）；target 要到
+        //   finish() 才由 .cpart 落成，此刻验 target 只会命中「文件不存在」而误报
+        //   （2026-08-19 修：resume 恢复路径因此恒红，test [2] 的恢复场景实锤）。
         if (accepted) {
             try {
-                if (!CNArchiveValidate.verifyChunks(target, hashes)) {
+                if (!CNArchiveValidate.verifyChunks(part, hashes)) {
                     throw new IOException("分块身份校验失败（resume 后全量重验）: "
                             + target.getName());
                 }
