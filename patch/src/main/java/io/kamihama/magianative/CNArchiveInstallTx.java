@@ -16,6 +16,7 @@ import java.io.Writer;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Enumeration;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
@@ -207,9 +208,27 @@ public final class CNArchiveInstallTx {
             String fingerprint = fingerprint(archive, entries);
             State prior = readState(stateFile);
             int next = 0;
+            String rootCanonical = root.getCanonicalPath();
+            String prefix = rootCanonical + File.separator;
             if (prior != null && fingerprint.equals(prior.fingerprint)
                     && prior.next >= 0 && prior.next <= entries.size()) {
                 next = prior.next;
+                // F-058：state 里的 next 只证明「上次推进到了这里」，不证明前 next
+                // 个输出现在还在/尺寸还对——掉电可能「state 已持久化而目录项丢了」。
+                // 续解前从 0 复核到 next-1：缺文件或尺寸不符就回退到那个条目重解
+                // （CRC 复核要整读，存在性 + 尺寸已能拦住目录项丢失/半截这类重排）。
+                for (int i = 0; i < next; i++) {
+                    ZipEntry e = entries.get(i);
+                    if (e.isDirectory()) continue;
+                    File out = safeTarget(root, rootCanonical, prefix, e.getName());
+                    long expected = e.getSize();
+                    if (!out.isFile() || out.length() != expected) {
+                        CNLog.w(TAG, "extract-resume-rollback file=" + archive.getName()
+                                + " entry=" + i + " (" + e.getName() + ") 缺失或尺寸不符，从此重解");
+                        next = i;
+                        break;
+                    }
+                }
                 CNLog.i(TAG, "extract-resume-accept file=" + archive.getName()
                         + " entries=" + next + "/" + entries.size());
             } else {
@@ -230,8 +249,11 @@ public final class CNArchiveInstallTx {
             int sinceCheckpoint = 0;
             long bytesSinceCheckpoint = 0L;
             long lastCheckpointNs = System.nanoTime();
-            String rootCanonical = root.getCanonicalPath();
-            String prefix = rootCanonical + File.separator;
+            // F-058：本 checkpoint 窗口里写过文件的输出目录；推进 state 前先 sync
+            // 目录项——否则 rename 已落地、state 也写了，但目录项还只在页缓存里，
+            // 掉电重排会「state 说 done、文件没了」。每个目录每窗口一次 fsync，
+            // 摊到整包解压是可控成本。
+            java.util.LinkedHashSet<File> dirtyDirs = new java.util.LinkedHashSet<File>();
 
             for (int i = next; i < entries.size(); i++) {
                 if (cancel != null && cancel.isCancelled()) {
@@ -246,6 +268,8 @@ public final class CNArchiveInstallTx {
                     }
                 } else {
                     writeEntry(zip, entry, out, cancel, archive.length());
+                    File parent = out.getParentFile();
+                    if (parent != null) dirtyDirs.add(parent);
                     if (entry.getSize() > 0) {
                         doneBytes += entry.getSize();
                         bytesSinceCheckpoint += entry.getSize();
@@ -259,6 +283,8 @@ public final class CNArchiveInstallTx {
                         || bytesSinceCheckpoint >= CHECKPOINT_BYTES
                         || now - lastCheckpointNs >= CHECKPOINT_NS;
                 if (checkpoint) {
+                    for (File d : dirtyDirs) syncDir(d);
+                    dirtyDirs.clear();
                     saveState(stateFile, fingerprint, i + 1);
                     sinceCheckpoint = 0;
                     bytesSinceCheckpoint = 0L;
