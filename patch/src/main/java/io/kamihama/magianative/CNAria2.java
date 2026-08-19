@@ -513,9 +513,12 @@ public final class CNAria2 {
             FileOutputStream fos = new FileOutputStream(tmp);
             boolean any = false;
             try {
+                // F-052：只拼系统信任锚。network_security_config.xml 已明确只信任
+                // system CA（用户 CA 是 device-admin 级中间人入口）；aria2 路径若
+                // 再拼入用户 CA 就绕过了这套收紧，并可影响 WebView 本地优先执行的
+                // 前端脚本。与系统策略保持一致：用户 CA 绝不进下载信任域。
                 any = appendCerts(fos, new File("/system/etc/security/cacerts"));
                 any = appendCerts(fos, new File("/apex/com.android.conscrypt/cacerts")) || any;
-                any = appendCerts(fos, new File("/data/misc/user/" + CNPaths.userId() + "/cacerts-added")) || any;
                 fos.flush();
                 fos.getFD().sync();
             } finally {
