@@ -11,6 +11,8 @@ import java.io.File;
 public final class CNRestart {
     private static final String TAG = "MagiaCNRestart";
     static final String READY_FILE = "cn_restart_trampoline_ready.flag";
+    /** F-035：本次重启尝试的 nonce，经 Intent 传给跳板，跳板写回 flag 内容做验证。 */
+    static final String EXTRA_NONCE = "cn_restart_nonce";
     private static final long READY_TIMEOUT_MS = 2500L;
     private static final long READY_POLL_MS = 40L;
 
@@ -66,11 +68,15 @@ public final class CNRestart {
                 new java.util.concurrent.CountDownLatch(1);
         final java.util.concurrent.atomic.AtomicBoolean launchOk =
                 new java.util.concurrent.atomic.AtomicBoolean(false);
+        // F-035：随机 nonce 绑定本次尝试——残留/root 属主/上一轮存活跳板的陈旧
+        // flag 不能骗过旧进程自杀（陈旧文件没有本轮的 nonce）。
+        final long nonce = new java.security.SecureRandom().nextLong();
         try {
             act.runOnUiThread(new Runnable() {
                 @Override public void run() {
                     try {
                         Intent i = new Intent(act, CNRestartActivity.class);
+                        i.putExtra(EXTRA_NONCE, nonce);
                         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
                                 | Intent.FLAG_ACTIVITY_CLEAR_TOP
                                 | Intent.FLAG_ACTIVITY_NO_ANIMATION);
@@ -96,7 +102,9 @@ public final class CNRestart {
 
         long deadline = android.os.SystemClock.uptimeMillis() + READY_TIMEOUT_MS;
         while (android.os.SystemClock.uptimeMillis() < deadline) {
-            if (ready.isFile()) {
+            // F-035：必须验证 flag 内容含本轮的 nonce——陈旧文件（残留/root 属主/
+            // 上一轮存活跳板）不含它，不得据以自杀。
+            if (ready.isFile() && readyContainsNonce(ready, nonce)) {
                 CNLog.i(TAG, "restart trampoline foreground handshake confirmed; killing old pid="
                         + Process.myPid());
                 try { CNLog.flushNow(); } catch (Throwable ignore) {}
@@ -109,5 +117,23 @@ public final class CNRestart {
         CNLog.e(TAG, "restart trampoline did not reach onResume within " + READY_TIMEOUT_MS
                 + "ms; old process kept alive");
         return false;
+    }
+
+    /** F-035：flag 内容必须含本次尝试的 nonce 才算跳板真就绪。 */
+    private static boolean readyContainsNonce(File ready, long nonce) {
+        try {
+            byte[] buf = new byte[128];
+            java.io.FileInputStream in = new java.io.FileInputStream(ready);
+            try {
+                int n = in.read(buf);
+                if (n <= 0) return false;
+                String s = new String(buf, 0, n, "UTF-8");
+                return s.contains("nonce=" + nonce);
+            } finally {
+                try { in.close(); } catch (Throwable ignore) {}
+            }
+        } catch (Throwable t) {
+            return false;
+        }
     }
 }

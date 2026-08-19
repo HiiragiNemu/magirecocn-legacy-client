@@ -61,8 +61,12 @@ public final class CNRestartActivity extends Activity {
         File f = new File(getFilesDir(), CNRestart.READY_FILE);
         FileOutputStream out = null;
         try {
+            // F-035：写回本次重启尝试的 nonce（经 Intent 传入），旧进程验证 flag
+            // 内容才自杀——陈旧/root 属主/上一轮存活的 flag 不含它。
+            long nonce = getIntent().getLongExtra(CNRestart.EXTRA_NONCE, -1L);
             out = new FileOutputStream(f, false);
-            out.write(("pid=" + android.os.Process.myPid() + "\n").getBytes("UTF-8"));
+            out.write(("nonce=" + nonce + "\npid=" + android.os.Process.myPid() + "\n")
+                    .getBytes("UTF-8"));
             out.flush();
             out.getFD().sync();
             CNLog.i(TAG, "trampoline ready flag committed: " + f.getAbsolutePath());
