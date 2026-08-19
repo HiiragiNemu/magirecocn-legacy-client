@@ -478,8 +478,10 @@ jobs:
 
       - name: 🎵 转换 BGM：HCA → OGG（vgmstream + ffmpeg）
         env:
-          # R4-04：FFmpeg 钉不可变 autobuild，从仓库 Variable 读取官方 digest
+          # R4-04：FFmpeg 钉不可变 autobuild，从仓库 Variable 读取官方 digest。
+          # vgmstream 可选校验（WARN 不阻断），从仓库 Variable 读取官方 digest。
           FFMPEG_SHA256: ${{ vars.FFMPEG_SHA256 }}
+          VGMS_SHA256: ${{ vars.VGMS_SHA256 }}
         run: |
           set -euo pipefail
           # assets 里的 BGM 是 CRI HCA 且 ciphType=56（加密），Android 放不了。
@@ -494,6 +496,15 @@ jobs:
           # 内置密钥库不删减、非关键路径；curl -f 已拒绝 HTTP 错误页。
           curl -fsSL -o .cache/audio/vgms.tar.gz \
             "https://github.com/vgmstream/vgmstream-releases/releases/download/nightly/vgmstream-linux-cli.tar.gz"
+          # vgmstream 可选 pin（WARN 不阻断）：配了 VGMS_SHA256 就校验（官方
+          # Release digest），不符/未配都只告警——音频非关键路径，不该卡构建。
+          if [ -n "${VGMS_SHA256:-}" ]; then
+            if ! echo "${VGMS_SHA256}  .cache/audio/vgms.tar.gz" | sha256sum -c - >/dev/null 2>&1; then
+              echo "::warning::vgmstream 哈希不符（可能上游已更新），请核对该 Variable"
+            fi
+          else
+            echo "::warning::vgmstream 未钉哈希（配置仓库 Variable VGMS_SHA256 可启用校验）"
+          fi
           mkdir -p .cache/audio/vgms
           tar xzf .cache/audio/vgms.tar.gz -C .cache/audio/vgms
           VGMS="$(find .cache/audio/vgms -name vgmstream-cli -type f | head -1)"
