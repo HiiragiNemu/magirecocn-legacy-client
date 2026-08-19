@@ -42,9 +42,9 @@ run_log() {
 }
 
 build_abi() {
-    local abi="$1" clang="$2"
+    local abi="$1" clangxx="$2"
     local PREFIX="$OUT/$abi"
-    echo "════ 构建 $abi ($clang) ════"
+    echo "════ 构建 $abi ($clangxx) ════"
     mkdir -p "$PREFIX" "$OUT"
 
     # ── 1. zlib 静态（CMake + NDK toolchain：zlib 的 autotools configure 对
@@ -91,18 +91,43 @@ build_abi() {
 
     # ── 3. JNI 包装 → libarchive.so ──
     echo "── 链接 libarchive.so ($abi)"
-    "$clang" -shared -fPIC -O2 -std=c++17 \
+    # 驱动必须是 clang++ 而不是 clang：这两个源文件是 C++。C 驱动配
+    # -std=c++17 编得动，但**链接时不带 C++ 运行时**，于是报出一整片
+    # basic_string::find / operator new / __cxa_* / __gxx_personality_v0
+    # 未定义。旧版 archive_jni.cpp 几乎不用 C++ 运行时，所以同一个脚本
+    # 一直没暴露；archive_core.cpp 引入 std::string/vector/异常之后才炸。
+    #
+    # -static-libstdc++ 同样不能省：入库的 .so 只依赖 libc/libdl，包里
+    # 没有 libc++_shared.so。少了它产物会带上动态依赖，设备上 dlopen 失败
+    # → CNZipTool.isAvailable() 恒 false → 静默退回 Java 路径。代价是
+    # 体积增大（libc++ 静态部分是固定开销），换的是不引入新的随包文件。
+    "$clangxx" -shared -fPIC -O2 -std=c++17 -static-libstdc++ \
         "$WRAPPER" "$CORE" \
         "$LA_STATIC" "$PREFIX/lib/libz.a" \
         -I "cmake-$abi" -I "$SRC_LA/libarchive" -I "$PREFIX/include" \
         -Wl,--no-undefined -Wl,--build-id=sha1 -Wl,-z,relro,-z,now \
         -Wl,-z,max-page-size=16384 \
         -o "$PREFIX/libarchive.so"
-    echo "  ✓ $PREFIX/libarchive.so ($(stat -c%s "$PREFIX/libarchive.so") bytes)"
+    # 上面那两条约束各有一个失败模式，都不会在构建期自己冒出来，所以当场验：
+    #   · 带上 libc++_shared 依赖 → 设备 dlopen 失败，静默退回 Java 路径
+    #   · 少了 JNI 入口          → 库能装上但一个方法都调不到
+    if readelf -d "$PREFIX/libarchive.so" | grep -q 'libc++_shared'; then
+        echo "✗ 产物带上了 libc++_shared.so 依赖——包里没有这个库，设备上会 dlopen 失败"
+        readelf -d "$PREFIX/libarchive.so" | grep NEEDED
+        exit 1
+    fi
+    for sym in Java_io_kamihama_magianative_CNZipTool_cnList \
+               Java_io_kamihama_magianative_CNZipTool_cnIsValid \
+               Java_io_kamihama_magianative_CNZipTool_cnExtract; do
+        nm -D --defined-only "$PREFIX/libarchive.so" | grep -q " $sym\$" || {
+            echo "✗ 产物缺少导出符号 $sym"; exit 1; }
+    done
+    echo "  ✓ $PREFIX/libarchive.so ($(stat -c%s "$PREFIX/libarchive.so") bytes，"\
+         "无 libc++_shared 依赖，3 个 JNI 入口齐全)"
 }
 
-build_abi arm64-v8a   "$TC/aarch64-linux-android21-clang"
-build_abi armeabi-v7a "$TC/armv7a-linux-androideabi21-clang"
+build_abi arm64-v8a   "$TC/aarch64-linux-android21-clang++"
+build_abi armeabi-v7a "$TC/armv7a-linux-androideabi21-clang++"
 
 echo "════ 完成：两 ABI libarchive.so ════"
 ls -la "$OUT"/*/libarchive.so
