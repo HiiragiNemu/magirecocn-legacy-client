@@ -275,9 +275,26 @@ public final class CNHotUpdate {
             boolean append;
             long total;
             if (offset > 0 && code == 206) {
-                append = true;
+                // F-068：206 必须严格解析 Content-Range——证明正文确实从 offset 开始、
+                // end 是文件尾、总长与 version JSON 一致。只信 206 + Content-Length
+                // 会让中间设备/错误响应把任意字节序列当作续传正文（CNChunkedDownload
+                // 的分段路径早已这么做）。畸形/不符立即失败，不写一个字节。
+                long[] r = parseContentRange(c.getHeaderField("Content-Range"));
                 long len = parseLong(c.getHeaderField("Content-Length"), -1L);
-                total = len >= 0 ? offset + len : -1L;
+                if (r == null || r[0] != offset) {
+                    throw new IOException("续传 Content-Range 缺失或起点不符: "
+                            + c.getHeaderField("Content-Range") + " != " + offset);
+                }
+                if (r[1] >= 0 && r[2] >= 0 && r[1] != r[2] - 1L) {
+                    throw new IOException("续传 Content-Range 未到文件尾（open-ended 请求应 end=total-1）: "
+                            + c.getHeaderField("Content-Range"));
+                }
+                if (len >= 0 && r[1] >= 0 && len != r[1] - r[0] + 1L) {
+                    throw new IOException("续传 Content-Length 与 Content-Range 不符: "
+                            + len + " != " + (r[1] - r[0] + 1L));
+                }
+                append = true;
+                total = r[2] >= 0 ? r[2] : (len >= 0 ? offset + len : -1L);
             } else if (code == 200) {
                 append = false;
                 offset = 0L;
@@ -445,6 +462,23 @@ public final class CNHotUpdate {
         } catch (NumberFormatException e) {
             return dflt;
         }
+    }
+
+    /**
+     * 解析 {@code Content-Range}：返回 {@code [start, end, total]}，total 为
+     * {@code *} 时记 -1；不是 {@code bytes start-end/total} 的完整形式返回 null。
+     * F-068：单连接续传只信 206 + Content-Length，会被中间设备/错误响应喂任意
+     * 字节序列——必须证明正文确实从请求 offset 开始。
+     */
+    private static long[] parseContentRange(String cr) {
+        if (cr == null) return null;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+                "bytes (\\d+)-(\\d+)/(\\d+|\\*)").matcher(cr.trim());
+        if (!m.matches()) return null;
+        long start = Long.parseLong(m.group(1));
+        long end = Long.parseLong(m.group(2));
+        long total = "*".equals(m.group(3)) ? -1L : Long.parseLong(m.group(3));
+        return new long[]{start, end, total};
     }
 
     private static void deleteQuietly(File f) {
