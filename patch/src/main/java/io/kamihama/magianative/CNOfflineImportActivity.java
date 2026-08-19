@@ -43,6 +43,9 @@ public final class CNOfflineImportActivity extends Activity {
 
     /** 结果回调。 */
     private static volatile Callback callback;
+    // F-037：pendingName/callback 的同一同步边界。isImporting 要等文件选完才置位，
+    // 请求阶段的「检查+预留」不加锁会被两次快速点击同时穿过、互相覆盖。
+    private static final Object REQUEST_LOCK = new Object();
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -78,8 +81,8 @@ public final class CNOfflineImportActivity extends Activity {
         final Uri uri = data.getData();
         final Activity self = this;
         // 用完即清。留着的话，下一次这个 Activity 因配置变化等原因重建时，
-        // onCreate 会拿这个陈旧的名字再弹一次文件选择器。
-        pendingName = null;
+        // onCreate 会拿这个陈旧的名字再弹一次文件选择器。同锁释放（F-037）。
+        synchronized (REQUEST_LOCK) { pendingName = null; }
         // 拷贝 + 校验是 IO 操作，丢到后台线程，避免阻塞 UI。
         // 用静态嵌套类 + 构造参数，避免匿名类带 this$0 触发 d8 陷阱（铁律 4）。
         new Thread(new ImportTask(self, uri, name), "cnv-offline-import").start();
@@ -148,8 +151,11 @@ public final class CNOfflineImportActivity extends Activity {
     }
 
     private static void notifyResult(final boolean ok, final String name, final String err) {
-        final Callback cb = callback;
-        callback = null;
+        final Callback cb;
+        synchronized (REQUEST_LOCK) {
+            cb = callback;
+            callback = null;
+        }
         if (cb == null) return;
         try {
             new Handler(Looper.getMainLooper()).post(new Runnable() {
@@ -161,32 +167,36 @@ public final class CNOfflineImportActivity extends Activity {
     /** 请求导入某文件。返回 true 表示已启动选择器。 */
     public static boolean requestImport(Activity act, String name, Callback cb) {
         if (act == null || name == null) return false;
-        // 重入保护：已有导入在进行时拒绝新请求。玩家很可能在「界面没动静」时
-        // 又点了一次——两个导入会并发写同一个 .importing 临时文件、互相覆盖，
-        // 且结果回调会串线。宁可明确告诉玩家「上一个还没完」，也别让两个打架。
-        if (CNOfflineImport.isImporting()) {
-            CNLog.w(TAG, "拒绝重复导入（已有导入在进行）: " + name);
-            if (cb != null) {
-                try {
-                    new Handler(Looper.getMainLooper()).post(new Runnable() {
-                        @Override public void run() {
-                            cb.onResult(false, name, "已有导入正在进行，请等它完成");
-                        }
-                    });
-                } catch (Throwable ignore) {}
+        // F-037：请求阶段的重入保护——isImporting 要等文件选完才置位，两次快速
+        // 点击/并发调用可同时通过。pendingName != null 表示已有一个请求在等用户
+        // 选文件，拒绝后来的（否则后一次会覆盖前一次的 pendingName/callback）。
+        synchronized (REQUEST_LOCK) {
+            if (pendingName != null || CNOfflineImport.isImporting()) {
+                CNLog.w(TAG, "拒绝重复导入（已有请求/导入在进行）: " + name);
+                if (cb != null) {
+                    try {
+                        new Handler(Looper.getMainLooper()).post(new Runnable() {
+                            @Override public void run() {
+                                cb.onResult(false, name, "已有导入正在进行，请等它完成");
+                            }
+                        });
+                    } catch (Throwable ignore) {}
+                }
+                return false;
             }
-            return false;
+            pendingName = name;
+            callback = cb;
         }
-        pendingName = name;
-        callback = cb;
         try {
             Intent it = new Intent(act, CNOfflineImportActivity.class);
             act.startActivity(it);
             return true;
         } catch (Throwable t) {
             CNLog.e(TAG, "启动导入 Activity 失败: " + t, t);
-            pendingName = null;
-            callback = null;
+            synchronized (REQUEST_LOCK) {
+                pendingName = null;
+                callback = null;
+            }
             return false;
         }
     }
