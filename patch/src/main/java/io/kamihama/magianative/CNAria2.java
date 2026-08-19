@@ -229,6 +229,12 @@ public final class CNAria2 {
                 }
                 if (!waitRpc(port, secret, cancel)) {
                     CNLog.w(TAG, "aria2c RPC 未就绪（进程可能已退出）");
+                    // F-048：waitRpc 失败时 native 线程可能仍存活，而 sPort/sSecret
+                    // 尚未发布——线程变成 Java 侧再也无法寻址/回收的孤儿会话。
+                    // 必须先确认关停再返回；确认不了则标记不可回收、后续 fail-closed。
+                    if (!shutdownAria2(port, secret)) {
+                        CNLog.e(TAG, "aria2 会话未能确认停止，标记为不可回收（sSessionStarted=true 防重启）");
+                    }
                     return ERR_INIT;
                 }
                 sPort = port;
@@ -386,15 +392,23 @@ public final class CNAria2 {
      * 优先 RPC shutdown（优雅），失败则 waitStopped 兜底。
      * {@code port/secret} 传 0/null 时跳过 RPC（例如启动失败、从未拿到端口）。
      */
-    private static void shutdownAria2(int port, String secret) {
+    /**
+     * 关闭进程内 aria2 会话并确认线程停止。
+     *
+     * @return true = 线程已确认退出；false = 超时/异常，线程可能仍存活
+     */
+    private static boolean shutdownAria2(int port, String secret) {
         try {
             if (port > 0 && secret != null) {
                 rpc(port, secret, "aria2.shutdown");   // best-effort
             }
         } catch (Throwable ignore) {}
         try {
-            CNAria2Lib.waitStopped(3000L);
-        } catch (Throwable ignore) {}
+            int rc = CNAria2Lib.waitStopped(3000L);
+            return rc != -2 && !CNAria2Lib.isRunning();
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     // ==================================================================
