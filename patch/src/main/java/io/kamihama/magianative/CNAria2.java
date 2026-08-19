@@ -504,22 +504,53 @@ public final class CNAria2 {
      */
     private static boolean extractCacerts(File dir) {
         File pem = new File(dir, "cacerts.pem");
+        File tmp = new File(dir, "cacerts.pem.tmp");
+        deleteQuietly(tmp);
         try {
-            FileOutputStream fos = new FileOutputStream(pem);
+            // F-050：绝不直写最终路径——进程被杀会留下非零截断残片，而
+            // ensureCacerts() 只认「isFile && length>0」会把残片永久当完整包。
+            // 写唯一临时文件 → flush+fsync → 校验可解析 → 同目录 rename 原子发布。
+            FileOutputStream fos = new FileOutputStream(tmp);
             boolean any = false;
             try {
                 any = appendCerts(fos, new File("/system/etc/security/cacerts"));
                 any = appendCerts(fos, new File("/apex/com.android.conscrypt/cacerts")) || any;
-                any = appendCerts(fos, new File("/data/misc/user/0/cacerts-added")) || any;
+                any = appendCerts(fos, new File("/data/misc/user/" + CNPaths.userId() + "/cacerts-added")) || any;
+                fos.flush();
+                fos.getFD().sync();
             } finally {
                 close(fos);
             }
-            if (any && pem.length() > 0) return true;
-            deleteQuietly(pem);
-            return false;
+            if (!any || !isValidCaBundle(tmp)) {
+                deleteQuietly(tmp);
+                return false;
+            }
+            if (!tmp.renameTo(pem)) {          // Android 内部存储同目录 rename(2) 原子替换
+                deleteQuietly(tmp);
+                return false;
+            }
+            CNArchiveInstallTx.syncDir(dir);
+            return true;
         } catch (Throwable t) {
-            deleteQuietly(pem);
+            deleteQuietly(tmp);
             return false;
+        }
+    }
+
+    /** 校验 PEM 至少含一个可解析的 X.509 证书——只凭「长度>0」会收下截断残片。 */
+    private static boolean isValidCaBundle(File pem) {
+        if (pem == null || !pem.isFile() || pem.length() <= 0) return false;
+        InputStream in = null;
+        try {
+            in = new java.io.FileInputStream(pem);
+            java.util.Collection<? extends java.security.cert.Certificate> certs =
+                    java.security.cert.CertificateFactory.getInstance("X.509")
+                            .generateCertificates(in);
+            return certs != null && !certs.isEmpty();
+        } catch (Throwable t) {
+            return false;
+        } finally {
+            close(in);
         }
     }
 
