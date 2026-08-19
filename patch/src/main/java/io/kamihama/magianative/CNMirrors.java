@@ -926,8 +926,20 @@ public final class CNMirrors {
             } catch (Throwable t) {
                 CNLog.w(TAG, "拦截层代理配置下发失败（保持透传直连）: " + t);
             }
+        } else {
+            // F-030：proxy 段缺失 = 本次配置明确不代理。此前成功下发的
+            // proxyBase / CNWebProxy 线路 / native g_proxyBase 必须清掉，否则
+            // 旧代理继续生效，违反「只认本次 config、无缓存」的明确契约。
+            proxyBase = null;
+            try { nativeSetProxyConfig("", new String[0]); } catch (Throwable ignore) {}
+            try { CNWebProxy.configure(null, null, "off"); } catch (Throwable ignore) {}
+            CNLog.i(TAG, "config.json 未含 proxy 段，本次启动直连（已清旧代理状态）");
         }
 
+        // F-030：settings 缺省值必须是文档声明的客户端默认，而非「当前字段值」。
+        // 服务端先下发 true 再删字段时，若 fallback 取 cfgX 会粘住旧值。解析前
+        // 重置全部 cfg* 到默认，再逐字段覆盖——删了字段就回到默认。
+        resetSettings();
         JSONObject st = root.optJSONObject("settings");
         if (st != null) {
             cfgChunks          = clampInt(st.optInt("chunks",             cfgChunks),          1, 16);
@@ -992,6 +1004,32 @@ public final class CNMirrors {
             }
             list.set(j + 1, cur);
         }
+    }
+
+    /**
+     * F-030：把全部 settings 驱动的 cfg* 重置为文档声明的客户端默认值。
+     * parse() 每次解析 config 前调用——缺省值必须是默认而非「上一次的当前值」，
+     * 服务端删字段时客户端回默认，不粘住旧值。
+     */
+    private static void resetSettings() {
+        cfgMaxDownloads     = 4;
+        cfgChunks           = 4;
+        cfgMinChunkBytes    = 8L * 1024 * 1024;
+        cfgSwitchAfterFail  = 1;
+        cfgStallSeconds     = 25;
+        cfgMinSpeedKbps     = 32;
+        cfgCooldownMs       = 60_000L;
+        cfgChunksAcrossMirrors = false;
+        cfgForceAria2       = false;
+        cfgForceSingleThread = false;
+        cfgOfflineUrl       = "";
+        cfgMirrorRace       = true;
+        cfgThrottleRatioPct = 60;
+        cfgBaselineFromS    = 10;
+        cfgBaselineToS      = 30;
+        cfgThrottleGraceS   = 15;
+        cfgSwitchGainPct    = 125;
+        cfgThrottleDemoteMs = 120_000L;
     }
 
     private static int clampInt(int v, int lo, int hi) {
