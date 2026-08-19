@@ -95,6 +95,9 @@ public final class CNDownloaderFix {
      */
     private static final int A2_MAX_ATTEMPTS = 4;
     private static final int    MAX_DOWNLOADS = 4;
+    // F-060：SNAA 响应体上限（几 KB 的小 JSON）。配置错误/WAF 无限流/被攻破端点
+    // 能靠它挡住启动链上的 OOM，超限 fail-closed。
+    private static final int    MAX_SNAA_BODY_BYTES = 64 * 1024;
     private static final int    MIN_SNAA_VERSION = 128;
     private static final String NO_RESTART_FLAG = FILE_ROOT + "/madomagi/magica/.cn_installer/r128-downloader-v1/no_restart";
     private static final int    READ_TIMEOUT_MS = 30000;
@@ -2381,7 +2384,15 @@ public final class CNDownloaderFix {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             byte[] buf = new byte[8192];
             int n;
+            long total = 0L;
+            // F-060：SNAA 响应必须是几 KB 的小 JSON。配置错误/WAF 无限流/被攻破
+            // 的合法端点/代理故障都能让这里无限扩容内存——设 64 KiB 上限，
+            // 超限按失败处理（fail-closed），挡住启动链上的 OOM。
             while ((n = in.read(buf)) >= 0) {
+                total += n;
+                if (total > MAX_SNAA_BODY_BYTES) {
+                    throw new IOException("SNAA response too large (" + total + " bytes)");
+                }
                 bos.write(buf, 0, n);
             }
             return new String(bos.toByteArray(), StandardCharsets.UTF_8);
