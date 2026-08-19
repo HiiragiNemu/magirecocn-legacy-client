@@ -478,8 +478,7 @@ jobs:
 
       - name: 🎵 转换 BGM：HCA → OGG（vgmstream + ffmpeg）
         env:
-          # R4-04：可选 pin，从仓库 Variables 读取（未配置则为空字符串）
-          VGMS_SHA256: ${{ vars.VGMS_SHA256 }}
+          # R4-04：FFmpeg 钉不可变 autobuild，从仓库 Variable 读取官方 digest
           FFMPEG_SHA256: ${{ vars.FFMPEG_SHA256 }}
         run: |
           set -euo pipefail
@@ -487,25 +486,25 @@ jobs:
           # vgmstream 自带 CRI 游戏的密钥库，能直接解；再用 ffmpeg 转 OGG。
           mkdir -p .cache/audio
 
-          # R4-04：这两个工具是浮动下载（nightly / latest 标签可重指），且随后
-          # chmod +x 直接执行——威胁模型与钉死构件同级（供应链投毒即 CI RCE）。
-          # 缓解：curl 加 -f 拒绝 HTTP 错误页；可选 pin——在仓库 Variables 配置
-          # VGMS_SHA256 / FFMPEG_SHA256（vars.* 经 env 传入，见下）后硬校验，
-          # 未配置只 WARN 不阻断（音频非关键路径，但告警必须显眼）。
-          # vgmstream：官网的下载链接指向 vgmstream-releases 的 nightly 资产
-          : "${VGMS_SHA256:?缺少仓库变量 VGMS_SHA256；拒绝执行未钉摘要的 vgmstream}"
-          : "${FFMPEG_SHA256:?缺少仓库变量 FFMPEG_SHA256；拒绝执行未钉摘要的 FFmpeg}"
+          # R4-04：FFmpeg 是浮动下载（latest 标签可重指）且随后 chmod +x 直接
+          # 执行——供应链投毒即 CI RCE。缓解：curl -f 拒绝 HTTP 错误页；FFmpeg
+          # 钉**不可变 autobuild**（URL 带时间戳 tag + GitHub Release API 的官方
+          # assets[].digest），摘要缺失/不符即硬失败。
+          # vgmstream **不钉**（维护者决定 2026-08-19）：只做 HCA 音频解密转换、
+          # 内置密钥库不删减、非关键路径；curl -f 已拒绝 HTTP 错误页。
           curl -fsSL -o .cache/audio/vgms.tar.gz \
             "https://github.com/vgmstream/vgmstream-releases/releases/download/nightly/vgmstream-linux-cli.tar.gz"
-          echo "${VGMS_SHA256}  .cache/audio/vgms.tar.gz" | sha256sum -c -
           mkdir -p .cache/audio/vgms
           tar xzf .cache/audio/vgms.tar.gz -C .cache/audio/vgms
           VGMS="$(find .cache/audio/vgms -name vgmstream-cli -type f | head -1)"
           chmod +x "${VGMS}"
 
-          # ffmpeg：不走 apt（源不稳），直接拉 BtbN 的静态构建（含 libvorbis）
+          # ffmpeg：不走 apt（源不稳），直接拉 BtbN 的静态构建（含 libvorbis）。
+          # 钉不可变 autobuild-2026-08-18-15-03 的 ffmpeg-N-126207-g21bbd98e7b，
+          # 官方 digest = FFMPEG_SHA256 仓库 Variable。
+          : "${FFMPEG_SHA256:?缺少仓库变量 FFMPEG_SHA256；拒绝执行未钉摘要的 FFmpeg}"
           curl -fsSL -o .cache/audio/ff.tar.xz \
-            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-18-15-03/ffmpeg-N-126207-g21bbd98e7b-linux64-gpl.tar.xz"
           echo "${FFMPEG_SHA256}  .cache/audio/ff.tar.xz" | sha256sum -c -
           mkdir -p .cache/audio/ff
           tar xJf .cache/audio/ff.tar.xz -C .cache/audio/ff
