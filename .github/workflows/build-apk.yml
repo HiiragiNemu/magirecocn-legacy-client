@@ -293,6 +293,22 @@ jobs:
           python3 tools/baseline.py apply --out "${TREE}"
           echo "重建树：$(find "${TREE}" -type f | wc -l) 个文件"
 
+      # F-043：正式包（debug_overlay=false）不声明 SYSTEM_ALERT_WINDOW——
+      # 调试悬浮窗只在该开关的构建里编译进 native，release 白挂一个强力覆盖层
+      # 权限只会扩大未来配置失误的影响面、并让用户无法从 manifest 区分正式/调试
+      # 包。debug_overlay=true 的构建保留（浮层靠它）。
+      - name: 🚫 正式包剔除悬浮窗权限（F-043）
+        if: ${{ inputs.debug_overlay != true }}
+        run: |
+          set -euo pipefail
+          MANIFEST="${TREE}/AndroidManifest.xml"
+          sed -i '/android.permission.SYSTEM_ALERT_WINDOW/d' "$MANIFEST"
+          if grep -q 'SYSTEM_ALERT_WINDOW' "$MANIFEST"; then
+            echo "::error::正式包仍含 SYSTEM_ALERT_WINDOW，剔除失败"
+            exit 1
+          fi
+          echo "已剔除悬浮窗权限（release 构建，debug_overlay=false）"
+
       - name: 🗑 剔除死库：libbacktrace-native / libcrashpad_handler
         run: |
           set -euo pipefail
