@@ -452,15 +452,19 @@ public final class CNChunkedDownload {
                 }
                 if (ctx.abort.get() || !ctx.open.get()) throw new IOException("已中断");
                 synchronized (ctx.commitLock) {
-                    if (ctx.abort.get() || !ctx.open.get()) throw new IOException("已中断");
-                    if (ctx.verified.get(block) == 0) {
-                        commitTempBlock(temp, ctx.part, start, end - start + 1L);
-                        ctx.verified.set(block, 1);
-                        long now = ctx.committed.addAndGet(end - start + 1L);
-                        saveHashMeta(ctx.meta, ctx.total, ctx.hashes.chunkSize,
-                                ctx.hashes.count, ctx.manifestId, ctx.etag,
-                                ctx.primaryUrl, ctx.verified);
-                        if (ctx.sink != null) ctx.sink.onProgress(now, ctx.total);
+                    synchronized (ctx.open) {
+                        // F-066：commit 写共享 .cpart，必须与 monitor 的关门同锁——
+                        // monitor 返回后不再存在仍在提交块的旧 worker。
+                        if (ctx.abort.get() || !ctx.open.get()) throw new IOException("已中断");
+                        if (ctx.verified.get(block) == 0) {
+                            commitTempBlock(temp, ctx.part, start, end - start + 1L);
+                            ctx.verified.set(block, 1);
+                            long now = ctx.committed.addAndGet(end - start + 1L);
+                            saveHashMeta(ctx.meta, ctx.total, ctx.hashes.chunkSize,
+                                    ctx.hashes.count, ctx.manifestId, ctx.etag,
+                                    ctx.primaryUrl, ctx.verified);
+                            if (ctx.sink != null) ctx.sink.onProgress(now, ctx.total);
+                        }
                     }
                 }
                 deleteQuietly(temp);
@@ -525,16 +529,25 @@ public final class CNChunkedDownload {
                 int n = in.read(buf);
                 if (n < 0) break;
                 if (n == 0) continue;
-                if (written + n > expected) {
-                    throw new IOException("Range 响应越界: " + (written + n) + " > " + expected);
+                synchronized (open) {
+                    // F-066：read 可能在 monitor 关门后返回；关门后醒来只能退出，
+                    // 不再制造临时文件。检查与写入和 monitor 的 open=false 共用同锁。
+                    if (abort.get() || !open.get()) throw new IOException("已中断");
+                    if (sink != null && sink.isCancelled()) throw new IOException("已取消");
+                    if (written + n > expected) {
+                        throw new IOException("Range 响应越界: " + (written + n) + " > " + expected);
+                    }
+                    out.write(buf, 0, n);
+                    md.update(buf, 0, n);
+                    written += n;
+                    networkBytes.addAndGet(n);
+                    lastMoveNs.set(System.nanoTime());
                 }
-                out.write(buf, 0, n);
-                md.update(buf, 0, n);
-                written += n;
-                networkBytes.addAndGet(n);
-                lastMoveNs.set(System.nanoTime());
             }
-            out.flush();
+            synchronized (open) {
+                if (abort.get() || !open.get()) throw new IOException("已中断");
+                out.flush();
+            }
             if (written != expected) {
                 throw new IOException("Range 短读: " + written + " / " + expected);
             }
@@ -803,31 +816,39 @@ public final class CNChunkedDownload {
                 int n = in.read(buf);
                 if (n < 0) break;
                 if (n == 0) continue;
-                // 无清单兼容路径：响应头已经严格回验为请求区间时，若中间设备仍在
-                // 正文尾部多发字节，只接收声明区间内的部分并在下一轮退出。绝不能
-                // 把越界正文写进相邻分段；有清单的事务块路径仍对任何越界严格拒绝。
-                if (received + n > expected) {
-                    n = (int) (expected - received);
-                    if (n <= 0) break;
-                }
-                raf.write(buf, 0, n);
-                received += n;
-                ctx.done.addAndGet(index, n);
-                long totalNow = ctx.totalDone.addAndGet(n);
-                ctx.networkBytes.addAndGet(n);
-                long now = System.nanoTime();
-                ctx.lastMoveNs.set(now);
-                if (ctx.sink != null) ctx.sink.onProgress(totalNow, ctx.total);
-                if (now - lastSave >= META_SAVE_INTERVAL_NS) {
-                    // F-057：meta 声称「这些字节 done」之前，先把数据同步落盘——
-                    // 否则掉电重排可能 meta 存活而页缓存丢失，resume 从更靠后的
-                    // offset 继续，跳过未落盘区间。每 2s 一次 fsync，代价可控。
-                    try { raf.getFD().sync(); } catch (IOException e) {
-                        throw new IOException("分段数据同步失败: " + index, e);
+                synchronized (ctx.open) {
+                    // F-066：read 可能晚于 monitor 关门返回；关门后醒来只能退出，
+                    // 不能再写共享 .cpart、推进进度或覆盖 resume meta。检查与写入
+                    // 必须和 monitor 的 open=false 共用同一锁，不能「检查通过→
+                    // monitor 关门→旧 worker 再写」。
+                    if (ctx.abort.get() || !ctx.open.get()) throw new IOException("已中断");
+                    if (ctx.sink != null && ctx.sink.isCancelled()) throw new IOException("已取消");
+                    // 无清单兼容路径：响应头已经严格回验为请求区间时，若中间设备仍在
+                    // 正文尾部多发字节，只接收声明区间内的部分并在下一轮退出。绝不能
+                    // 把越界正文写进相邻分段；有清单的事务块路径仍对任何越界严格拒绝。
+                    if (received + n > expected) {
+                        n = (int) (expected - received);
+                        if (n <= 0) break;
                     }
-                    saveByteMeta(ctx.meta, ctx.total, ctx.starts.length, ctx.segmentSize,
-                            ctx.etag, ctx.url, ctx.done);
-                    lastSave = now;
+                    raf.write(buf, 0, n);
+                    received += n;
+                    ctx.done.addAndGet(index, n);
+                    long totalNow = ctx.totalDone.addAndGet(n);
+                    ctx.networkBytes.addAndGet(n);
+                    long now = System.nanoTime();
+                    ctx.lastMoveNs.set(now);
+                    if (ctx.sink != null) ctx.sink.onProgress(totalNow, ctx.total);
+                    if (now - lastSave >= META_SAVE_INTERVAL_NS) {
+                        // F-057：meta 声称「这些字节 done」之前，先把数据同步落盘——
+                        // 否则掉电重排可能 meta 存活而页缓存丢失，resume 从更靠后的
+                        // offset 继续，跳过未落盘区间。每 2s 一次 fsync，代价可控。
+                        try { raf.getFD().sync(); } catch (IOException e) {
+                            throw new IOException("分段数据同步失败: " + index, e);
+                        }
+                        saveByteMeta(ctx.meta, ctx.total, ctx.starts.length, ctx.segmentSize,
+                                ctx.etag, ctx.url, ctx.done);
+                        lastSave = now;
+                    }
                 }
             }
             if (received != expected) {
@@ -835,15 +856,17 @@ public final class CNChunkedDownload {
             }
             raf.getFD().sync();
         } finally {
-            if (ctx.open.get()) {
-                // F-057：finally 里的断点保存同样先同步数据（取消/失败路径要把
-                // 已写字节做成持久化检查点）。raf 可能因早退为 null——null 说明
-                // 还没写过任何字节，无数据可丢，跳过同步即可。
-                if (raf != null) {
-                    try { raf.getFD().sync(); } catch (Throwable ignore) {}
+            synchronized (ctx.open) {
+                if (ctx.open.get()) {
+                    // F-057：finally 里的断点保存同样先同步数据（取消/失败路径要把
+                    // 已写字节做成持久化检查点）。raf 可能因早退为 null——null 说明
+                    // 还没写过任何字节，无数据可丢，跳过同步即可。
+                    if (raf != null) {
+                        try { raf.getFD().sync(); } catch (Throwable ignore) {}
+                    }
+                    saveByteMeta(ctx.meta, ctx.total, ctx.starts.length, ctx.segmentSize,
+                            ctx.etag, ctx.url, ctx.done);
                 }
-                saveByteMeta(ctx.meta, ctx.total, ctx.starts.length, ctx.segmentSize,
-                        ctx.etag, ctx.url, ctx.done);
             }
             closeQuietly(raf);
             closeQuietly(in);
@@ -927,11 +950,16 @@ public final class CNChunkedDownload {
             firstErr.compareAndSet(null, new IOException("已取消"));
             abort.set(true);
         } finally {
+            // F-066：先在与所有文件写入同一把锁上关门（open=false），再中断/等待
+            // worker——任何晚醒的 read 只会在 synchronized(open) 里看到已关门并退出，
+            // 不可能在 monitor 返回后再写共享 .cpart。旧顺序 await 之后才 set(false)，
+            // 5 秒内没退出的 worker 醒来后仍能写。
+            synchronized (open) {
+                open.set(false);
+            }
             pool.shutdownNow();
             try { pool.awaitTermination(5L, TimeUnit.SECONDS); }
             catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-            // 读超时后才醒来的线程必须看到封口，禁止再提交块或覆盖元数据。
-            open.set(false);
             if (sink != null) sink.onSpeed(0f);
         }
     }
