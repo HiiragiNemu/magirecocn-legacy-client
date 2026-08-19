@@ -309,6 +309,20 @@ jobs:
           fi
           echo "已剔除悬浮窗权限（release 构建，debug_overlay=false）"
 
+      # F-051：CNOfflineImportActivity 的 noHistory=true 会让系统文件选择器打开时
+      # 把它从返回栈移除、onActivityResult 永远收不到——离线导入在真机直接失效。
+      # 所有构建都去掉该属性（与 F-043 一样走 build 后处理，不动 baseline patch）。
+      - name: 🛠 移除离线导入跳板的 noHistory（F-051）
+        run: |
+          set -euo pipefail
+          MANIFEST="${TREE}/AndroidManifest.xml"
+          sed -i '/CNOfflineImportActivity/s/ android:noHistory="true"//' "$MANIFEST"
+          if grep 'CNOfflineImportActivity' "$MANIFEST" | grep -q 'noHistory="true"'; then
+            echo "::error::CNOfflineImportActivity 仍含 noHistory，移除失败"
+            exit 1
+          fi
+          echo "已移除 CNOfflineImportActivity 的 noHistory（离线导入结果回调可送达）"
+
       - name: 🗑 剔除死库：libbacktrace-native / libcrashpad_handler
         run: |
           set -euo pipefail
