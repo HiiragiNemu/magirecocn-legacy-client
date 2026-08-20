@@ -1,6 +1,5 @@
 package io.kamihama.magianative;
 
-import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
 /**
@@ -14,24 +13,40 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 final class CNDownloadRestart {
     private static final String TAG = "CNDownloadRestart";
     private static final int COUNT = 15;
-    private static final AtomicIntegerArray GENERATION = new AtomicIntegerArray(COUNT);
+
+    /**
+     * generation 与 reason 必须作为一个不可变状态原子发布（F-087）。
+     *
+     * <p>旧实现分别写 KEEP_OFFLINE[index] 与 GENERATION[index]。两个不同原因的请求
+     * 并发时可以让 generation 来自请求 A、reason 来自请求 B，消费侧无法把状态
+     * 线性化到任何一次真实请求。AtomicReferenceArray 上的 CAS 是每槽位唯一发布点：
+     * 谁赢得 CAS，谁的 generation/reason 就一起成为该槽位的最新请求。</p>
+     */
+    private static final AtomicReferenceArray<RequestState> REQUESTS =
+            new AtomicReferenceArray<RequestState>(COUNT);
     private static final AtomicReferenceArray<Thread> ACTIVE =
             new AtomicReferenceArray<Thread>(COUNT);
-    /**
-     * 与 GENERATION 平行的「本次重启请保留同名离线候选」标志（object-storage-01/02）。
-     *
-     * <p>manual-restart 分支有两个触发源，清理语义相反：紫色「重下」
-     * （CNManualRedownload）要删掉离线候选—— FORCE_REDOWNLOAD 之外的最后
-     * 一道「不许捡离线包」保障；installOfflineNow（离线即时安装）必须保留
-     * ——它就是奔着这个包来的，删了等锁后必然报「离线包已消失」、导入
-     * 作废且白下一遍。请求时覆盖写（含复位 false），消费时只读，无残留。
-     */
-    private static final AtomicIntegerArray KEEP_OFFLINE = new AtomicIntegerArray(COUNT);
+
+    static {
+        for (int i = 0; i < COUNT; i++) {
+            REQUESTS.set(i, new RequestState(0, false));
+        }
+    }
+
+    private static final class RequestState {
+        final int generation;
+        final boolean keepOffline;
+
+        RequestState(int generation, boolean keepOffline) {
+            this.generation = generation;
+            this.keepOffline = keepOffline;
+        }
+    }
 
     private CNDownloadRestart() {}
 
     static int generation(int index) {
-        return valid(index) ? GENERATION.get(index) : 0;
+        return valid(index) ? REQUESTS.get(index).generation : 0;
     }
 
     /**
@@ -40,7 +55,7 @@ final class CNDownloadRestart {
      * <p>F-054 契约：对走 {@code ARCHIVE_LOCKS} 的路径，必须在**拿到锁之后**、
      * 做实际工作之前调用——ACTIVE[index] 恒为持锁者，等在锁外的第二个线程不会
      * 覆盖它，{@link #request(int)} 打断的才是真正持有文件/网络连接的线程。
-     * 配合 {@link #unregister(int)}（finally 里，释放锁后）即可。
+     * 配合 {@link #unregister(int)}（同一临界区的 finally 里）即可。</p>
      */
     static void register(int index) {
         if (valid(index)) ACTIVE.set(index, Thread.currentThread());
@@ -57,7 +72,7 @@ final class CNDownloadRestart {
      *
      * <p>只有 CAS 成功（确认自己确实是登记在案的 owner）才清中断位。中断是重启
      * 请求<b>特意</b>打上的，清掉它是 owner 的职责；非 owner 顺手清掉，等于把
-     * 上层的取消语义抹了。
+     * 上层的取消语义抹了。</p>
      */
     static void unregister(int index) {
         if (!valid(index)) return;
@@ -73,22 +88,13 @@ final class CNDownloadRestart {
     }
 
     static boolean request(int index) {
-        if (!valid(index)) return false;
-        KEEP_OFFLINE.set(index, 0);   // 默认「重下」语义：不保留离线候选
-        GENERATION.incrementAndGet(index);
-        Thread t = ACTIVE.get(index);
-        if (t != null) {
-            t.interrupt();
-            return true;
-        }
-        return false;
+        return request(index, false);
     }
 
     /** installOfflineNow 专用变体：中止在传下载，但保留同名离线候选。 */
     static boolean request(int index, boolean keepOffline) {
         if (!valid(index)) return false;
-        KEEP_OFFLINE.set(index, keepOffline ? 1 : 0);
-        GENERATION.incrementAndGet(index);
+        publish(index, keepOffline);
         Thread t = ACTIVE.get(index);
         if (t != null) {
             t.interrupt();
@@ -97,13 +103,19 @@ final class CNDownloadRestart {
         return false;
     }
 
-    /** 当前登记的重启请求是否要求保留离线候选（消费侧只读）。 */
+    /**
+     * 当前最新重启请求是否要求保留同名离线候选。
+     *
+     * <p>返回值与 {@link #generation(int)} 来自同一个不可变 RequestState。并发请求按
+     * CAS 顺序线性化，后一个请求完整覆盖前一个请求的 generation/reason，而不是只
+     * 覆盖其中一个字段。</p>
+     */
     static boolean keepOfflineRequested(int index) {
-        return valid(index) && KEEP_OFFLINE.get(index) != 0;
+        return valid(index) && REQUESTS.get(index).keepOffline;
     }
 
     static boolean changed(int index, int token) {
-        return valid(index) && GENERATION.get(index) != token;
+        return valid(index) && REQUESTS.get(index).generation != token;
     }
 
     static boolean cancelled(int index, int token) {
@@ -111,6 +123,27 @@ final class CNDownloadRestart {
     }
 
     static void clearInterrupt() {
+        Thread.interrupted();
+    }
+
+    private static RequestState publish(int index, boolean keepOffline) {
+        while (true) {
+            RequestState old = REQUESTS.get(index);
+            RequestState next = new RequestState(old.generation + 1, keepOffline);
+            if (REQUESTS.compareAndSet(index, old, next)) return next;
+        }
+    }
+
+    // ---- JVM 合同测试入口 ----
+    static int publishForTest(int index, boolean keepOffline) {
+        if (!valid(index)) return 0;
+        return publish(index, keepOffline).generation;
+    }
+
+    static void resetForTest(int index) {
+        if (!valid(index)) return;
+        ACTIVE.set(index, null);
+        REQUESTS.set(index, new RequestState(0, false));
         Thread.interrupted();
     }
 
