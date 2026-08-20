@@ -74,17 +74,55 @@ public final class CNDiskSpace {
         return false;
     }
 
-    /** 目标目录所在分区的可用字节；取不到返回 -1（此时一律放行，不猜）。 */
+    /**
+     * 目标目录所在分区的可用字节；<b>取不到</b>返回 -1（此时一律放行，不猜）。
+     *
+     * <h3>F-078：0 不是「取不到」</h3>
+     *
+     * 原先写的是 {@code return free > 0 ? free : -1L;}，把「真的一个字节都不剩」
+     * 折叠进了「测量失败」这个哨兵，而 {@link #require} 对 -1 的定义是<b>放行</b>。
+     * 结果最确定的一种「装不下」——磁盘已经彻底满了——反而是唯一一种预检不生效的
+     * 情况：下载照跑，直到写 {@code .part} / {@code .cpart} / 解压临时文件 / marker
+     * 时才收到 ENOSPC，白烧网络与重试窗口，玩家还看到「当前可用未知」。
+     *
+     * <p>{@code File.getUsableSpace()} 没有独立错误码，它对不存在的路径返回 0——
+     * 所以「测不出来」只能由<b>目录有效性</b>和<b>异常分支</b>去承担，不能借 0 表示。
+     * 先确认目录确实存在，之后 0 就只可能是真的 0。
+     */
     public static long usableBytes(File target) {
         try {
             File dir = target == null ? null
                     : (target.isDirectory() ? target : target.getParentFile());
-            if (dir == null) return -1L;
+            if (dir == null || !dir.exists()) return -1L;
             long free = dir.getUsableSpace();
-            return free > 0 ? free : -1L;
+            return free >= 0L ? free : -1L;
         } catch (Throwable t) {
             return -1L;
         }
+    }
+
+    /**
+     * 饱和加法（F-077）：结果夹在 {@code [0, Long.MAX_VALUE]}，永不回绕。
+     *
+     * <p>空间预算的每一个操作数都来自<b>外部</b>——远端 Content-Length、ZIP 中央
+     * 目录声明的解压后大小、以及它们的累加。有符号加法一旦回绕成负数，
+     * {@code free >= want} 对任何非负 {@code free} 都成立，一个本该 fail-closed
+     * 的损坏元数据状态就变成了<b>无条件放行</b>。
+     *
+     * <p>这不是在假设真有 8 EiB 的文件；防御点是「不拿溢出后的值做控制流」。
+     * 负操作数（未知/无意义）按 0 计，不当成「巨大的可用空间」。
+     */
+    public static long saturatedAdd(long a, long b) {
+        if (a <= 0L) return Math.max(0L, b);
+        if (b <= 0L) return Math.max(0L, a);
+        return a > Long.MAX_VALUE - b ? Long.MAX_VALUE : a + b;
+    }
+
+    /** 饱和减法（F-077）：结果夹在 {@code [0, Long.MAX_VALUE]}，不出现负容量。 */
+    public static long saturatedSub(long a, long b) {
+        if (a <= 0L) return 0L;
+        if (b <= 0L) return a;
+        return a < b ? 0L : a - b;
     }
 
     /**
@@ -98,7 +136,9 @@ public final class CNDiskSpace {
         if (needBytes <= 0) return;
         long free = usableBytes(target);
         if (free < 0) return;
-        long want = needBytes + SAFETY_BYTES;
+        // F-077：饱和相加。needBytes 接近 Long.MAX_VALUE 时，裸加法会回绕成负数，
+        // 于是下一行的 free >= want 恒成立——预检从「拦住」变成「一律放行」。
+        long want = saturatedAdd(needBytes, SAFETY_BYTES);
         if (free >= want) return;
         String msg = shortfall(what, needBytes, free);
         CNLog.w(TAG, msg);
@@ -107,11 +147,11 @@ public final class CNDiskSpace {
 
     /** 给玩家看的话：说清还差多少，而不是「失败了，请重试」。 */
     public static String shortfall(String what, long needBytes, long freeBytes) {
-        long want = needBytes + SAFETY_BYTES;
-        long lack = want - freeBytes;
+        long want = saturatedAdd(needBytes, SAFETY_BYTES);
+        long lack = saturatedSub(want, freeBytes);
         return "存储空间不足：" + (what == null ? "本次安装" : what)
                 + " 还需要约 " + human(want) + "，当前可用 " + human(freeBytes)
-                + "，还差 " + human(lack < 0 ? 0 : lack);
+                + "，还差 " + human(lack);
     }
 
     /** 1 位小数的 KB/MB/GB。只用来说人话，不参与任何判定。 */

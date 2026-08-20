@@ -21,6 +21,7 @@ hud = Path("patch/src/main/java/io/kamihama/magianative/CNDebugHud.java").read_t
 aria2 = Path("patch/src/main/java/io/kamihama/magianative/CNAria2.java").read_text(encoding="utf-8")
 bgm = Path("patch/src/main/java/io/kamihama/magianative/CNBgm.java").read_text(encoding="utf-8")
 atomic = Path("patch/src/main/java/io/kamihama/magianative/CNAtomicReplace.java").read_text(encoding="utf-8")
+disk = Path("patch/src/main/java/io/kamihama/magianative/CNDiskSpace.java").read_text(encoding="utf-8")
 bgm_gen = Path("tools/convert-bgm.py").read_text(encoding="utf-8")
 # AndroidManifest.xml 本身不在仓库里了（2026-08-14 起原包派生文件由 baseline/
 # 的 patchset 重建）。这里改读**补丁**，判据也随之变准：我们能负责的是「我们的
@@ -258,17 +259,19 @@ checks = {
         and "reportNoSpace" in downloader,
     # 预检要在**知道大小的那一刻**做，不能等写满：探针刚给出长度、以及解压前
     # 由 zip 目录累加出 totalBytes 的那两处。
+    # F-076/F-081 之后两处的写法都变了：峰值不再扣断点长度，解压剩余量走饱和相减。
+    # 判据仍是同一条——两条路都必须在开跑前问一次「装不装得下」。
     "下载与解压都先看装不装得下":
-        "long peak = probe.total - partBytes(archive);" in downloader
+        "long peak = probe.total;" in downloader
         and "CNDiskSpace.require(archive, peak, name)" in downloader
-        and "CNDiskSpace.require(root, totalBytes - doneBytes" in extract_tx,
+        and "CNDiskSpace.require(root, CNDiskSpace.saturatedSub(totalBytes, doneBytes)" in extract_tx,
     # 安装峰值是 ZIP + 解压后（ZIP 要留到解压成功才删），而这个比例各包差得很远：
     # cn_base_03.zip 1.32→2.79 GiB（2.11x），其余全在 1.02–1.16x。03 因此拥有 15 个包里
     # 最高的安装峰值 4.11 GiB，而进度条上只写着 1.3 GB。只按下载量预检等于把那 2.79 GiB
     # 瞒着玩家——他按 1.3 GB 去清理，然后在解压阶段翻车。
     "预检按安装峰值而不是下载量":
         "CNZipPlan.extractedBytes" in downloader
-        and "peak += extract" in downloader,
+        and "peak = CNDiskSpace.saturatedAdd(peak, extract)" in downloader,
     # 算不出来必须是「不知道」，不能当 0：当成小数字等于把玩家放进去再翻车。
     "解压后大小算不出时按未知放行":
         "UNKNOWN" in zipplan and "return UNKNOWN;" in zipplan
@@ -356,13 +359,15 @@ checks = {
     "解压实现只此一套":
         "extractChecked" not in downloader
         and "CNDownloaderFix.extractChecked" not in hot_tx,
+    # 三个判据在 F-081 之后都改成了「余量比较 / 除法比较」，不再做会回绕的加法与
+    # 乘法（copied + n、writtenThisRun + n、archiveBytes * 200）。两道防护本身没变。
     "膨胀比两道防护都在（声明侧 + 边写边看）":
         "totalBytes / archive.length() > EXTRACT_MAX_RATIO" in extract_tx
-        and "copied + n > declared" in extract_tx
-        and "writtenThisRun + n > archiveBytes * EXTRACT_MAX_RATIO" in extract_tx,
+        and "n > declared - copied" in extract_tx
+        and "afterWrite / archiveBytes > EXTRACT_MAX_RATIO" in extract_tx,
     # 判据必须在 write 之前：写完再拒等于「炸弹已经落地，事后宣布它不该落地」。
     "膨胀比判据在写出去之前":
-        before(extract_tx, "copied + n > declared", "output.write(buf, 0, n);"),
+        before(extract_tx, "n > declared - copied", "output.write(buf, 0, n);"),
     # 离线包是玩家从网盘下了一两个 G 再手动导入的。原先任何 Throwable 都删它并
     # 回退网络下载——磁盘满也删。删完接着走网络，只会以同样的方式再失败一次，而他
     # 得从头再下一遍。只有 ZipException（包真坏）才该删。
@@ -684,6 +689,39 @@ checks = {
     "A2_STUCK 没被并进 A2_MAIN":
         "A2_STUCK" in code(downloader) and "A2_MAIN || " not in code(downloader)
         and "|| a2 == A2_STUCK" not in code(downloader),
+    # ---- F-077 / F-078 磁盘预算 ----
+    # 预算的每个操作数都来自外部（远端 Content-Length、ZIP 中央目录声明）。裸加法
+    # 回绕成负数后 `free >= want` 恒真，本该 fail-closed 的状态变成无条件放行。
+    "空间预算一律走饱和运算":
+        "saturatedAdd" in code(disk) and "saturatedSub" in code(disk)
+        and "needBytes + SAFETY_BYTES" not in code(disk)
+        and "saturatedAdd(needBytes, SAFETY_BYTES)"
+            in body(disk, "public static void require(File target, long needBytes, String what)"),
+    # 0 曾被折进 -1 这个「测不出来」的哨兵，而 require() 对 -1 的定义是放行——
+    # 最确定的一种「装不下」反而是唯一一种预检不生效的情况。
+    "真实 0 字节不再被当成测不出来":
+        "free > 0 ? free : -1L" not in code(disk)
+        and "free >= 0L ? free : -1L" in code(disk)
+        and "!dir.exists()" in body(disk, "public static long usableBytes(File target)"),
+    # ---- F-076 峰值预算不扣预分配长度 ----
+    # .cpart 开跑前就被 setLength(total) 预分配成完整逻辑长度，一块没下也会报出整包
+    # 大小；两套布局的残片相加甚至能让剩余量变成负数，而 require() 对 <= 0 放行。
+    "峰值预算不再扣断点长度":
+        "partBytes(" not in code(downloader)
+        and "long peak = probe.total;" in code(downloader)
+        and "CNDiskSpace.saturatedAdd(peak, extract)" in code(downloader),
+    # ---- F-081 回退解压的尺寸运算 ----
+    # 累加本身留着，但必须先做余量比较再加——判据钉的是「检查在加法之前」。
+    "回退解压的尺寸累加与膨胀比不溢出":
+        before(code(extract_tx), "Long.MAX_VALUE - totalBytes",
+               "totalBytes += entry.getSize()")
+        and "archiveBytes * EXTRACT_MAX_RATIO" not in code(extract_tx)
+        and "afterWrite / archiveBytes > EXTRACT_MAX_RATIO" in code(extract_tx)
+        and "CNDiskSpace.saturatedSub(totalBytes, doneBytes)" in code(extract_tx),
+    # minSdk 21：Math.addExact 是 API 24 才有的，跑在老设备上直接 NoSuchMethodError。
+    "溢出检查没用 API 24 的 Math.*Exact":
+        "Math.addExact" not in code(extract_tx)
+        and "Math.multiplyExact" not in code(extract_tx),
     # ---- F-079 记录安全的相对路径 ----
     # journal 与 manifest 是逐行记录：控制字符能把一条记录拆成多行（恢复流程照着
     # journal 走，伪记录指向哪儿它就动哪儿），. 段与空段则制造字符串别名——同一个

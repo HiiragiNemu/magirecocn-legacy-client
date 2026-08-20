@@ -1897,13 +1897,31 @@ public final class CNDownloaderFix {
                     // 只按下载量预检，等于把这 2.79 GiB 瞒着玩家（见 CNZipPlan）。
                     long extract = CNZipPlan.extractedBytes(
                             new HttpRanges(url, direct), probe.total);
-                    long peak = probe.total - partBytes(archive);
+                    // F-076：这里原先是 probe.total - partBytes(archive)，而
+                    // partBytes 把 .part 与 .cpart 的 length() 相加当成「已经下好的
+                    // 字节」。两条都不成立：
+                    //   · .cpart 在开跑前就被 setLength(total) 预分配成**完整逻辑
+                    //     长度**，一块都没下的 .cpart 也会立刻报出整包大小，于是
+                    //     剩余下载量被算成 0；
+                    //   · 一轮下载只会走一种布局，两份残片同时存在时相加甚至能让
+                    //     剩余量变成负数，而 require() 对 <= 0 按设计放行——本该在
+                    //     开跑前拦下的「装不下」被推迟到下载末段才 ENOSPC。
+                    // 现在保守地按整包算。代价说清楚：设备上若真有一份身份有效、
+                    // 已写入的断点，它占的物理空间已经体现在 usableSpace 里，这里
+                    // 再要一份整包空间等于重复计一次，可能把一个其实续得完的下载
+                    // 提前拒掉。取这个方向是因为两种错法的代价不对称——保守拒绝
+                    // 立刻可见且能靠腾空间解决，错误放行则烧掉几个 GB 带宽后才炸。
+                    // 要精确扣除，预算必须复用 downloader 自己那套断点身份判据
+                    // （manifest fingerprint / URL / ETag / 布局），而不是另写一份。
+                    long peak = probe.total;
                     if (extract != CNZipPlan.UNKNOWN) {
-                        peak += extract;
+                        // F-077：饱和相加。extract 来自 ZIP 中央目录声明，是外部
+                        // 输入；裸加法回绕成负数会让 require() 无条件放行。
+                        peak = CNDiskSpace.saturatedAdd(peak, extract);
                         CNLog.i(TAG, "安装峰值预估 file=" + name
                                 + " zip=" + CNDiskSpace.human(probe.total)
                                 + " 解压后=" + CNDiskSpace.human(extract)
-                                + " 峰值=" + CNDiskSpace.human(probe.total + extract));
+                                + " 峰值=" + CNDiskSpace.human(peak));
                     }
                     CNDiskSpace.require(archive, peak, name);
                     CNLog.i(TAG, "chunked-download file=" + name + " mirror=" + mirror.name
@@ -2004,18 +2022,6 @@ public final class CNDownloaderFix {
                 if (lease != null) lease.close();
             }
         }
-    }
-
-    /** 已落盘的断点字节数（两条下载路径的残片文件名不同，都算上）。 */
-    private static long partBytes(File archive) {
-        long n = 0L;
-        try {
-            File a = new File(archive.getPath() + ".part");
-            if (a.isFile()) n += a.length();
-            File b = CNChunkedDownload.partFileFor(archive);
-            if (b.isFile()) n += b.length();
-        } catch (Throwable ignore) {}
-        return n;
     }
 
     /**

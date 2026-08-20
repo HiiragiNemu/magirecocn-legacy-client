@@ -191,11 +191,23 @@ public final class CNArchiveInstallTx {
         try {
             ArrayList<ZipEntry> entries = new ArrayList<ZipEntry>();
             Enumeration<? extends ZipEntry> enumeration = zip.entries();
+            // F-081：中央目录声明的 getSize() 是**外部输入**。裸累加一旦回绕成
+            // 负数或小正数，下面那道膨胀比闸（totalBytes / archive.length()）和
+            // 磁盘预检就都会被绕过——一个损坏/恶意的包反而比正常包更容易过关。
+            // 溢出直接整包拒收：解压还没开始，失败方向是安全的。
             long totalBytes = 0L;
             while (enumeration.hasMoreElements()) {
                 ZipEntry entry = enumeration.nextElement();
                 entries.add(entry);
-                if (!entry.isDirectory() && entry.getSize() > 0) totalBytes += entry.getSize();
+                if (!entry.isDirectory() && entry.getSize() > 0) {
+                    // 不用 Math.addExact：那是 API 24 才有的，minSdk 21 上会
+                    // NoSuchMethodError（CLAUDE.md 技术约束）。先验余量比较等价。
+                    if (entry.getSize() > Long.MAX_VALUE - totalBytes) {
+                        throw new ZipException("中央目录声明的解压后总量溢出 64 位: "
+                                + entry.getName());
+                    }
+                    totalBytes += entry.getSize();
+                }
             }
             if (entries.isEmpty()) throw new ZipException("Archive contains no entries: " + archive);
             // 第一道：按中央目录**声明**的未压缩总量看比例，一个字节都还没写就能拒。
@@ -236,12 +248,20 @@ public final class CNArchiveInstallTx {
                 clearState(stateFile);
             }
 
+            // F-081：doneBytes 同样来自声明尺寸。它只用于「还差多少」，所以这里
+            // 用饱和累加而不是拒收——已解出来的部分溢出并不能说明包有问题，而
+            // totalBytes 那一关已经把真正离谱的包挡住了。
             long doneBytes = 0L;
             for (int i = 0; i < next; i++) {
                 ZipEntry e = entries.get(i);
-                if (!e.isDirectory() && e.getSize() > 0) doneBytes += e.getSize();
+                if (!e.isDirectory() && e.getSize() > 0) {
+                    doneBytes = CNDiskSpace.saturatedAdd(doneBytes, e.getSize());
+                }
             }
-            CNDiskSpace.require(root, totalBytes - doneBytes, archive.getName() + " 解压");
+            // 饱和相减：doneBytes > totalBytes（声明前后不一致）时旧写法会得到负数，
+            // 而 require() 对 <= 0 按设计放行——预检静默失效。
+            CNDiskSpace.require(root, CNDiskSpace.saturatedSub(totalBytes, doneBytes),
+                    archive.getName() + " 解压");
             if (progress != null) progress.onProgress(next, entries.size(), doneBytes, totalBytes);
             CNLog.i(TAG, "extract-start file=" + archive.getName() + " entries="
                     + entries.size() + " resume=" + next);
@@ -405,15 +425,22 @@ public final class CNArchiveInstallTx {
                 // ① 单条目不许超过它自己声明的长度。中央目录说多少就只收多少，
                 //    谎报的那部分一个字节都不落盘。
                 long declared = entry.getSize();
-                if (declared >= 0 && copied + n > declared) {
+                // F-081：写成「余量比较」而不是 copied + n——后者在 copied 接近
+                // Long.MAX_VALUE 时回绕成负数，比较反而通过。
+                if (declared >= 0 && n > declared - copied) {
                     throw new ZipException("Entry longer than declared: " + entry.getName()
                             + " declared=" + declared + " atLeast=" + (copied + n));
                 }
                 // ② 整包累计仍要看比例：即使每条都「诚实」，条目数量本身也能堆出
                 //    一个炸弹。判据与门槛沿用并入前的那份实现。
+                // F-081：两处溢出。writtenThisRun + n 同上改成余量比较；
+                // archiveBytes * EXTRACT_MAX_RATIO 在 archiveBytes >
+                // Long.MAX_VALUE / 200 时回绕，闸门会朝任意方向失灵——改成除法
+                // 形式比较，两边都不做乘法。
+                long afterWrite = CNDiskSpace.saturatedAdd(writtenThisRun, n);
                 if (archiveBytes > 0
-                        && writtenThisRun + n > EXTRACT_MIN_BYTES_BEFORE_RATIO
-                        && writtenThisRun + n > archiveBytes * EXTRACT_MAX_RATIO) {
+                        && afterWrite > EXTRACT_MIN_BYTES_BEFORE_RATIO
+                        && afterWrite / archiveBytes > EXTRACT_MAX_RATIO) {
                     throw new ZipException("解压膨胀比超限（已写 " + writtenThisRun
                             + "B，归档 " + archiveBytes + "B，上限 "
                             + EXTRACT_MAX_RATIO + "x）：" + entry.getName());
@@ -424,8 +451,8 @@ public final class CNArchiveInstallTx {
                     throw new InstallIOException("Cannot write extraction temp: " + temp, e);
                 }
                 crc.update(buf, 0, n);
-                copied += n;
-                writtenThisRun += n;
+                copied = CNDiskSpace.saturatedAdd(copied, n);
+                writtenThisRun = afterWrite;
             }
             try {
                 output.flush();

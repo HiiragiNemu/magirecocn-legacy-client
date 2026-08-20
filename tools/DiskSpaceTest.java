@@ -113,6 +113,47 @@ public class DiskSpaceTest {
                 s.contains("cn_base_03.zip") && s.contains("还需要")
                         && s.contains("当前可用") && s.contains("还差"));
 
+        // ── [6] F-077：预算加法不许回绕 ────────────────────────────
+        // 回绕成负数的 want 会让 `free >= want` 对任何非负 free 都成立——
+        // 一个本该 fail-closed 的损坏元数据状态就变成了无条件放行。
+        check("[6a] 普通相加不变", CNDiskSpace.saturatedAdd(1024L, 2048L) == 3072L);
+        check("[6b] 溢出饱和到 MAX",
+                CNDiskSpace.saturatedAdd(Long.MAX_VALUE - 10L, 100L) == Long.MAX_VALUE);
+        check("[6c] MAX + MAX 仍是 MAX",
+                CNDiskSpace.saturatedAdd(Long.MAX_VALUE, Long.MAX_VALUE) == Long.MAX_VALUE);
+        // 负数是「未知/无意义」，不能被当成一大块可用空间。
+        check("[6d] 负操作数按 0 计", CNDiskSpace.saturatedAdd(-5L, 100L) == 100L
+                && CNDiskSpace.saturatedAdd(100L, -5L) == 100L
+                && CNDiskSpace.saturatedAdd(-5L, -7L) == 0L);
+        check("[6e] 减法不出负容量", CNDiskSpace.saturatedSub(10L, 99L) == 0L
+                && CNDiskSpace.saturatedSub(99L, 10L) == 89L
+                && CNDiskSpace.saturatedSub(-1L, 1L) == 0L);
+        // needBytes 贴着上限时，want 必须仍是 MAX 而不是一个负数。
+        boolean overflowStillThrows = false;
+        try {
+            CNDiskSpace.require(tmp, Long.MAX_VALUE - CNDiskSpace.SAFETY_BYTES + 1L, "回绕");
+        } catch (CNDiskSpace.NotEnoughSpace e) {
+            overflowStillThrows = e.needBytes > 0;
+        }
+        check("[6f] 加法回绕点上仍然拦得住", overflowStillThrows);
+        check("[6g] 短缺说明里不出现负容量",
+                !CNDiskSpace.shortfall("x", Long.MAX_VALUE, 0L).contains("-"));
+
+        // ── [7] F-078：0 不是「测不出来」 ──────────────────────────
+        // 旧写法 `free > 0 ? free : -1` 把「真的一个字节都不剩」折进了「测量失败」
+        // 这个哨兵，而 require() 对 -1 的定义是放行——最确定的一种「装不下」，
+        // 反而成了唯一一种预检不生效的情况。
+        File realDir = File.createTempFile("cnv-space-dir", "");
+        check("[7a] 存在的目录测得出非负数",
+                realDir.delete() && realDir.mkdirs()
+                        && CNDiskSpace.usableBytes(realDir) >= 0L);
+        realDir.delete();
+        check("[7b] 不存在的路径仍报「测不出来」",
+                CNDiskSpace.usableBytes(new File("/proc/definitely/not/here/x.bin")) < 0L);
+        check("[7c] null 仍报「测不出来」", CNDiskSpace.usableBytes(null) < 0L);
+        // 0 要说成「0 B」，不能说成「未知」——看到「未知」的玩家不会去清空间。
+        check("[7d] 0 说成 0 B 而不是未知", "0 B".equals(CNDiskSpace.human(0L)));
+
         System.out.println("通过 " + pass + " / 失败 " + fail);
         if (fail > 0) System.exit(1);
     }
