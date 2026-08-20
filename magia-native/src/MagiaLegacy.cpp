@@ -96,6 +96,7 @@
 #include <sys/stat.h>
 #include <pthread.h>
 #include <dlfcn.h>
+#include <stdlib.h>   // strtol（安装完成标记的正文解析）
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -459,7 +460,95 @@ static bool fileExists(const std::string& p) {
     struct stat st;
     return ::stat(p.c_str(), &st) == 0;
 }
-static bool resourcesReady() { return fileExists(FLAG_PATH); }
+
+// ─── 安装完成判据（F-074） ───────────────────────────────
+//
+// 原先这里是 `return fileExists(FLAG_PATH);` ——**只问文件在不在**。于是一个
+// 0 字节、或写到一半掉电的标记，与一份完整标记完全等价。而这个布尔值直接控制
+// 八处引擎控制流：跳不跳过原版下载场景、要不要叫起 Java 安装器、下载回调静默组
+// 与放行组的极性。Java 侧已经改成按正文判（CNDownloaderFix.parseFinalFlag），
+// native 若还停在存在性上，两边就不是同一个状态机——Java 认为「没装完、去装」，
+// native 却认为「装好了」，把引擎放进一棵缺资源的树里。
+//
+// ⚠ 下面三个常量与解析规则**必须**与 Java 侧 CNDownloaderFix 的
+//   FINAL_FLAG_BODY / FINAL_FLAG_MAX_BYTES / parseFinalFlag 逐条一致。
+//   tools/check-download-ui-contract.py 把两边钉在一起，改一边会红。
+//
+// 分工：**Java 修，native 只读**。坏标记的自愈（查 13 个基础包 marker、齐全就
+// 原子补写）留在 Java 侧一处——那需要 RESOURCE_BASE_URL 的逐字符串比对，复刻到
+// native 就是第二份会漂的实现。native 读到不合格的标记只报「没装好」，方向是
+// 安全的：引擎放行原版下载场景（我们的浮层盖在上面），安装器随之被叫起。
+static const size_t FINAL_FLAG_MAX_BYTES = 16384;
+static const long   FINAL_FLAG_ARCHIVES  = 15;
+
+// 纯函数：正文里必须同时出现 schema=<正整数> 与 archives=15。
+// schema 只要求「解析得出且 >= 1」——将来格式升级时，新版写下的标记不该被这一版
+// 判成损坏；archives 必须严格相等，它就是「这张标记为几个包背书」。
+static bool parseFinalFlag(const std::string& body) {
+    if (body.empty()) return false;
+    bool schemaOk = false, archivesOk = false;
+    size_t pos = 0;
+    while (pos <= body.size()) {
+        size_t nl = body.find('\n', pos);
+        std::string line = body.substr(pos, nl == std::string::npos
+                                            ? std::string::npos : nl - pos);
+        pos = (nl == std::string::npos) ? body.size() + 1 : nl + 1;
+        size_t eq = line.find('=');
+        if (eq == std::string::npos || eq == 0) continue;
+        std::string key = line.substr(0, eq);
+        std::string val = line.substr(eq + 1);
+        // 两侧空白（含 \r，Java 那边 trim 掉的东西）
+        const char* ws = " \t\r\f\v";
+        size_t a = key.find_first_not_of(ws), b = key.find_last_not_of(ws);
+        key = (a == std::string::npos) ? std::string() : key.substr(a, b - a + 1);
+        a = val.find_first_not_of(ws); b = val.find_last_not_of(ws);
+        val = (a == std::string::npos) ? std::string() : val.substr(a, b - a + 1);
+        if (key != "schema" && key != "archives") continue;
+        // 只认纯十进制整数，与 Java 的 Integer.parseInt 同口径
+        if (val.empty()) return false;
+        size_t i = (val[0] == '+' || val[0] == '-') ? 1 : 0;
+        if (i >= val.size()) return false;
+        for (size_t j = i; j < val.size(); j++) {
+            if (val[j] < '0' || val[j] > '9') return false;
+        }
+        long n = ::strtol(val.c_str(), nullptr, 10);
+        if (key == "schema") {
+            if (n < 1) return false;
+            schemaOk = true;
+        } else {
+            if (n != FINAL_FLAG_ARCHIVES) return false;
+            archivesOk = true;
+        }
+    }
+    return schemaOk && archivesOk;
+}
+
+static bool finalFlagWellFormed() {
+    struct stat st;
+    if (::stat(FLAG_PATH.c_str(), &st) != 0) return false;
+    if (!S_ISREG(st.st_mode)) return false;
+    if (st.st_size <= 0 || (size_t)st.st_size > FINAL_FLAG_MAX_BYTES) return false;
+    FILE* f = ::fopen(FLAG_PATH.c_str(), "rb");
+    if (!f) return false;
+    std::string body;
+    body.resize((size_t)st.st_size);
+    size_t got = ::fread(&body[0], 1, body.size(), f);
+    ::fclose(f);
+    body.resize(got);
+    return parseFinalFlag(body);
+}
+
+// 一旦判定为「已装好」就缓存住：本进程内标记不会再变回不合格（重下单个包不删
+// 它，「全部重下」走的是重启）。判 false 时不缓存——安装器正在跑，装完这一刻
+// 起后续调用必须立刻看到 true。
+static std::atomic<bool> g_resourcesReadyCache{false};
+
+static bool resourcesReady() {
+    if (g_resourcesReadyCache.load(std::memory_order_relaxed)) return true;
+    if (!finalFlagWellFormed()) return false;
+    g_resourcesReadyCache.store(true, std::memory_order_relaxed);
+    return true;
+}
 
 static JNIEnv* attachEnv(bool& attached) {
     attached = false;

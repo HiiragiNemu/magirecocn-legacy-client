@@ -153,6 +153,10 @@ jobs:
           # 下载页新增合同：任意 ZIP 独立重下、动态热更身份、全局并发预算、
           # 真实横纵滚动、窄屏弹窗与当前 PID 日志必须同时成立。
           python3 tools/check-download-ui-contract.py
+          # 安装完成判据的 Java / native 跨语言等价（F-074）。抠出两边的
+          # parseFinalFlag 各编一个 harness 跑同一张向量表——不依赖 NDK、
+          # 不依赖 android.jar，几秒出结果。
+          python3 tools/check-final-flag-parity.py
 
       - name: 🟢 移动 last-green tag
         env:

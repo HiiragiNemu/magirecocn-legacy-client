@@ -23,6 +23,7 @@ bgm = Path("patch/src/main/java/io/kamihama/magianative/CNBgm.java").read_text(e
 atomic = Path("patch/src/main/java/io/kamihama/magianative/CNAtomicReplace.java").read_text(encoding="utf-8")
 disk = Path("patch/src/main/java/io/kamihama/magianative/CNDiskSpace.java").read_text(encoding="utf-8")
 restart = Path("patch/src/main/java/io/kamihama/magianative/CNDownloadRestart.java").read_text(encoding="utf-8")
+native = Path("magia-native/src/MagiaLegacy.cpp").read_text(encoding="utf-8")
 bgm_gen = Path("tools/convert-bgm.py").read_text(encoding="utf-8")
 # AndroidManifest.xml 本身不在仓库里了（2026-08-14 起原包派生文件由 baseline/
 # 的 patchset 重建）。这里改读**补丁**，判据也随之变准：我们能负责的是「我们的
@@ -798,6 +799,24 @@ checks = {
         and "recordPathProblem(rel)"
             in body(hot_tx, "private static void writeManifest(File root, String tag, List<String> rels)")
         and "writeSynced(f," not in code(hot_tx),
+    # ---- F-074 剩余：Java 与 native 必须是同一个状态机 ----
+    # native 的 resourcesReady() 直接控制八处引擎控制流（跳不跳过原版下载场景、
+    # 叫不叫 Java 安装器、下载回调静默组与放行组的极性）。它原先只问「文件在不在」，
+    # 而 Java 已经改成按正文判——两边不是同一个判据时，会出现「Java 认为没装完正在
+    # 装、native 认为装好了」，把引擎放进一棵缺资源的树，且谁都不报错。
+    "native 的完成判据按正文而不是存在性":
+        # 过 code()：上面那段注释里原样引用了旧写法，拿整份文本判会让注释替代码顶罪。
+        "return fileExists(FLAG_PATH);" not in code(native)
+        and "static bool parseFinalFlag(const std::string& body)" in code(native)
+        and "finalFlagWellFormed()" in body(native, "static bool resourcesReady()"),
+    # 自愈只能有一份：它要做 RESOURCE_BASE_URL 的逐字符串比对，复刻到 native
+    # 就是第二份会漂的实现。native 读到不合格只报「没装好」，方向安全。
+    "标记自愈只留在 Java 一侧":
+        "allBaseMarkersValid" not in native and "marker" not in body(native, "static bool resourcesReady()"),
+    # 两边的解析结论由 tools/check-final-flag-parity.py 逐向量比对；这里只钉住
+    # 「那个检查还在 CI 里跑」——判据被悄悄摘掉比判据错更难发现。
+    "跨语言等价检查仍挂在 CI 上":
+        "check-final-flag-parity.py" in Path(".github/workflows/last-green.yml").read_text(encoding="utf-8"),
     # ---- F-084 owner 交接 ----
     # register→工作→unregister 必须是同一段 archive-lock 临界区。unregister 落在锁外
     # 会留出「锁已放掉、ACTIVE 还指着旧 worker」的窗口：请求线程打断一个已经收工的
