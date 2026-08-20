@@ -107,9 +107,12 @@ CROSS_JNI_PATHS = [
         (J + "CNDebugFlags.java",     "DEBUG_DIR"),
         (N,                           "DEBUG_DIR"),
     ]),
+    # F-074：CNHotUpdateCheck 原本自己拼一份 FILES_DIR + "madomagi/..."，这里
+    # 逐字比对着它。现在热更检查改调 CNDownloaderFix.isBaseInstallationComplete()，
+    # Java 侧只剩一处声明——不是「把这一条删掉」，是那一处不存在了：能分叉的
+    # 地方从三处减成两处，不变量只会更强。native 侧的 FLAG_PATH 仍然要对上。
     ("安装完成标记", [
         (J + "CNDownloaderFix.java",  "FINAL_FLAG"),
-        (J + "CNHotUpdateCheck.java", "FINAL_FLAG"),   # 这个是 FILES_DIR + "..." 拼的
         (N,                           "FLAG_PATH"),
     ]),
     ("强制序章标记", [

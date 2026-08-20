@@ -646,6 +646,23 @@ checks = {
     # 清残留必须用 sweep：只删旧的那一个名字，新格式候选会在下载目录里越攒越多。
     "清候选残留走 sweep 而不是删单个名字":
         all("CNAtomicReplace.sweep(" in code(s) for s in (downloader, hot, extract_tx)),
+    # ---- F-074 安装完成判据 ----
+    # 判据曾是 new File(FINAL_FLAG).isFile()：一个 0 字节或写到一半的标记与完整标记
+    # 完全等价，而判成「已装」是终局——玩家进游戏缺资源，标记在案永不自愈。
+    "安装完成判据不看 flag 在不在":
+        "FINAL_FLAG).isFile()" not in code(downloader)
+        and "FINAL_FLAG).isFile()" not in code(hot_check)
+        and "isBaseInstallationComplete()" in code(hot_check),
+    # 反方向的代价是重下几个 GB，所以坏标记必须先尝试自愈（13 个基础包 marker 齐全
+    # 就地补写），而不是直接判「没装过」。
+    "坏标记先按基础包 marker 自愈":
+        "allBaseMarkersValid()" in body(downloader, "static boolean isBaseInstallationComplete()")
+        and "writeAtomic(flag, FINAL_FLAG_BODY)"
+            in body(downloader, "static boolean isBaseInstallationComplete()"),
+    # 标记正文与校验必须同源，否则改 ARCHIVE_COUNT 时必然漏掉一处。
+    "标记正文由 ARCHIVE_COUNT 生成且不再写死":
+        'FINAL_FLAG_BODY = "schema=2\\narchives=" + ARCHIVE_COUNT' in downloader
+        and '"schema=2\\narchives=15\\n"' not in code(downloader),
 }
 
 failed = [name for name, ok in checks.items() if not ok]

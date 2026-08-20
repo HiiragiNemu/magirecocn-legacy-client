@@ -398,14 +398,15 @@ public final class CNDownloaderFix {
                             }
                         }
 
-                        File finalFlag = new File(FINAL_FLAG);
                         // 无论资源装没装完，都先查客户端版本：最需要强更的恰恰是
                         // 装不上资源的玩家（下载器本身有 bug 的那批）——只在安装
                         // 完成后才查的话，他们永远收不到「去下修复包」的提示。
                         // 版本检查每条放行路径都会且只会执行一次接力动作。
-                        boolean installed = finalFlag.isFile();
+                        // F-074：判据不再是「flag 文件在不在」，见
+                        // isBaseInstallationComplete() 的注释。
+                        boolean installed = isBaseInstallationComplete();
                         if (installed) {
-                            CNLog.i(TAG, "triggerInstaller: flag 已存在，无需安装，版本检查后接力热更");
+                            CNLog.i(TAG, "triggerInstaller: 资源已装齐，无需安装，版本检查后接力热更");
                             // 热更新页仍展示 15 个槽位，因此先按 marker 还原真实安装状态：
                             // 已装好的 13 个基础包必须是 100% / 完成，而不是 0% / 等待中。
                             syncInstalledUiState();
@@ -759,10 +760,14 @@ public final class CNDownloaderFix {
             CNLog.e(TAG, "Unable to show installer UI", th);
         }
 
-        File finalFlag = new File(FINAL_FLAG);
-        if (finalFlag.isFile()) {
-            CNLog.i(TAG, "Final flag already exists; installer skipped");
+        // F-074：同上，判据是「资源装齐了没」而不是「flag 文件在不在」。
+        if (isBaseInstallationComplete()) {
+            CNLog.i(TAG, "资源已装齐，跳过安装器");
             CNCNDownloadUI.hide();
+            // 这条早退路径什么都没做，哨兵必须放回去：否则同一进程里后续任何
+            // 一次合法的安装触发（如玩家用「全部重下」清掉状态后）都会被
+            // 「安装器已在运行中」挡掉，而实际上一次也没跑过。
+            installerStarted.set(false);
             return;
         }
 
@@ -881,7 +886,7 @@ public final class CNDownloaderFix {
         stopSpeedWatchdog();   // 正常收尾：所有文件已通过校验
 
         try {
-            writeAtomic(finalFlag, "schema=2\narchives=15\n");
+            writeAtomic(new File(FINAL_FLAG), FINAL_FLAG_BODY);
             CNCNDownloadUI.updateSimple("安装完成", "所有资源已验证并提交完成标记", 100);
             CNLog.i(TAG, "All archives installed; final flag committed atomically");
 
@@ -2869,11 +2874,118 @@ public final class CNDownloaderFix {
     static boolean commitFinalFlagIfComplete() throws IOException {
         if (!allBaseMarkersValid()) return false;
         File flag = new File(FINAL_FLAG);
-        if (!flag.isFile()) {
-            writeAtomic(flag, "schema=2\narchives=15\n");
+        if (!finalFlagWellFormed(flag)) {
+            writeAtomic(flag, FINAL_FLAG_BODY);
             CNLog.i(TAG, "手动任务已补齐全部 marker，提交总完成标记");
         }
         return true;
+    }
+
+    /**
+     * 总完成标记的正文。校验与补写共用同一个真值——分成两处写过一次
+     * {@code archives=15} 的字面量，改 {@link #ARCHIVE_COUNT} 时必然漏掉一处。
+     */
+    private static final String FINAL_FLAG_BODY = "schema=2\narchives=" + ARCHIVE_COUNT + "\n";
+
+    /** 标记正文只有两行；比这大的一律不认，免得把任意文件读进内存。 */
+    private static final long FINAL_FLAG_MAX_BYTES = 16384L;
+
+    /**
+     * 「基础资源是不是真的装完了」——启动路径上的唯一判据（F-074）。
+     *
+     * <h4>原来错在哪</h4>
+     *
+     * 三处启动判据都只问 {@code new File(FINAL_FLAG).isFile()}：<b>文件在不在</b>。
+     * 于是一个 0 字节、或写到一半掉电的标记，与一个真正完整的标记完全等价。
+     * 而这个判断是终局的——判成「已装」就直接进游戏，玩家看到的是缺资源的
+     * 花屏/闪退，且标记在案，<b>永远不会自愈</b>。F-073 修掉了并发截断这个来源，
+     * 但历史构建留下的、以及掉电产生的坏标记还在，判据本身也得收紧。
+     *
+     * <h4>为什么不顺手连 13 个标记一起查</h4>
+     *
+     * 因为反方向的代价是不对称的：判成「没装」意味着<b>重下几个 GB</b>。标记齐全
+     * 与否受 {@code RESOURCE_BASE_URL} 逐字符串比对左右（见该常量的注释），把它
+     * 放进每次启动的判据，等于给「哪天有人顺手动了那个常量」配上一次全员重下。
+     * 所以：<b>标记正文本身可信就直接放行</b>，一次文件读，代价固定。
+     *
+     * <h4>坏标记不等于没装过</h4>
+     *
+     * 只有在标记不可信时才去查 13 个基础包的 marker。都在的话说明资源确实装好了，
+     * 缺的只是那一张纸——<b>就地补写一份合规的</b>，这是自愈，不是重来。补写失败
+     * 才保守按「未安装」处理。
+     */
+    static boolean isBaseInstallationComplete() {
+        File flag = new File(FINAL_FLAG);
+        if (finalFlagWellFormed(flag)) return true;
+        if (!flag.exists()) return false;
+        CNLog.w(TAG, "总完成标记存在但内容不可信，改查 13 个基础包 marker: " + flag);
+        if (!allBaseMarkersValid()) {
+            CNLog.w(TAG, "基础包 marker 不齐，按未安装处理");
+            return false;
+        }
+        try {
+            writeAtomic(flag, FINAL_FLAG_BODY);
+            CNLog.i(TAG, "基础包 marker 齐全，已就地补写总完成标记");
+            return true;
+        } catch (Throwable t) {
+            CNLog.w(TAG, "补写总完成标记失败，本次按未安装处理: " + t);
+            return false;
+        }
+    }
+
+    /** 标记文件本身可不可信：是常规文件、长度有界、正文能解析出预期字段。 */
+    private static boolean finalFlagWellFormed(File flag) {
+        if (flag == null || !flag.isFile()) return false;
+        long len = flag.length();
+        if (len <= 0L || len > FINAL_FLAG_MAX_BYTES) return false;
+        try {
+            return parseFinalFlag(readSmallUtf8(flag));
+        } catch (IOException e) {
+            CNLog.w(TAG, "总完成标记读取失败: " + flag + " : " + e);
+            return false;
+        }
+    }
+
+    /**
+     * {@link #finalFlagWellFormed} 的纯函数部分：正文里必须同时出现
+     * {@code schema=<正整数>} 与 {@code archives=}{@link #ARCHIVE_COUNT}。
+     *
+     * <p>{@code schema} 只要求「解析得出且 ≥ 1」而不是等于 2：将来标记格式升级时，
+     * 新版写下的标记不该被这一版判成损坏（这一版认不认得新字段是另一回事）。
+     * {@code archives} 反过来必须严格相等——它就是「这张标记为几个包背书」。
+     *
+     * <p>public 只为让 {@code InstallCompleteTest} 直接钉住它：判据本身不碰文件、
+     * 不碰 Android，抽成纯函数就能在宿主 JVM 上把「半截内容」逐条试过去。
+     */
+    public static boolean parseFinalFlag(String body) {
+        if (body == null || body.length() == 0) return false;
+        boolean schemaOk = false;
+        boolean archivesOk = false;
+        String[] lines = body.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i].trim();
+            int eq = line.indexOf('=');
+            if (eq <= 0) continue;
+            String key = line.substring(0, eq).trim();
+            String value = line.substring(eq + 1).trim();
+            if ("schema".equals(key)) {
+                int n = parseIntOr(value, -1);
+                if (n < 1) return false;
+                schemaOk = true;
+            } else if ("archives".equals(key)) {
+                if (parseIntOr(value, -1) != ARCHIVE_COUNT) return false;
+                archivesOk = true;
+            }
+        }
+        return schemaOk && archivesOk;
+    }
+
+    private static int parseIntOr(String s, int fallback) {
+        try {
+            return Integer.parseInt(s);
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     private static boolean allBaseMarkersValid() {

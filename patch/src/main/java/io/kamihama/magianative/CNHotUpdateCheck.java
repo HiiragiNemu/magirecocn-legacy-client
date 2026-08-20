@@ -62,7 +62,8 @@ public final class CNHotUpdateCheck {
     private static final String TAG = "MagiaCNHotUpdate";
 
     private static final String FILES_DIR  = CNPaths.filesDir() + "/";
-    private static final String FINAL_FLAG = FILES_DIR + "madomagi/magica/cn_base_done.flag";
+    // 安装完成的判据统一在 CNDownloaderFix.isBaseInstallationComplete()（F-074），
+    // 这里不再自己拼一份 cn_base_done.flag 的路径——两份路径常量迟早会分叉。
 
     /** 版本号存放的 SharedPreferences 文件名，与原实现一致，不能改。 */
     private static final String PREFS_NAME = "MagiaCN";
@@ -288,8 +289,10 @@ public final class CNHotUpdateCheck {
     // ==================================================================
 
     private static void runInner() {
-        if (!new File(FINAL_FLAG).isFile()) {
-            CNLog.i(TAG, "安装完成标记不存在，跳过热更检查（首次安装会把两个热更包一并下完）");
+        // F-074：判据与安装器共用一份——两边一旦分叉，就会出现「安装器认为没装完
+        // 所以要重下、热更认为装完了所以往上盖」这种互相拆台的状态。
+        if (!CNDownloaderFix.isBaseInstallationComplete()) {
+            CNLog.i(TAG, "基础资源未装齐，跳过热更检查（首次安装会把两个热更包一并下完）");
             return;
         }
         CNLog.i(TAG, "热更检查开始");
