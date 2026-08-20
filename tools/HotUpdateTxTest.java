@@ -405,6 +405,74 @@ public class HotUpdateTxTest {
                     "magica/js/a.js\n".equals(read(new File(root, ".cnv_manifest/js.list"))), "");
         }
 
+        // ---------------------------------------------------------------
+        System.out.println("\n[15] F-079：记录安全的路径判据");
+        {
+            // 合格的普通路径必须照常通过——判据收紧不能把正常包一起挡了。
+            String[] good = {
+                "magica/js/app.js", "a.b/c-d_1.js", "madomagi/resource/scenario/json/x.json",
+                "a", "中文目录/文件.js", "a/b/c/d/e/f.png",
+            };
+            boolean allGood = true;
+            for (String g : good) {
+                if (CNHotUpdateTx.recordPathProblem(g) != null) {
+                    allGood = false;
+                    System.out.println("    误拒: " + g + " → "
+                            + CNHotUpdateTx.recordPathProblem(g));
+                }
+            }
+            check("普通路径全部通过", allGood, "");
+
+            // 控制字符：LF/CR 能把一行拆成两条记录，TAB 能伪造 journal 的字段分隔
+            //（journal 正是「标志\t路径」这个格式）。
+            String[] bad = {
+                null, "", "/abs/x.js", "a\\b.js", "C:/x.js",
+                "a/../b.js", "a/./b.js", "./a.js", "a//b.js", "a/",
+                "a\nb.js", "a\rb.js", "a\tb.js", "a\u0000b.js", "a\u007fb.js",
+                "\u001fx.js",
+            };
+            boolean allBad = true;
+            for (String b : bad) {
+                if (CNHotUpdateTx.recordPathProblem(b) == null) {
+                    allBad = false;
+                    System.out.println("    漏放: " + CNHotUpdateTx.escapeForLog(b));
+                }
+            }
+            check("控制字符 / . 段 / 空段 / 穿越全部拒绝", allBad, "");
+
+            // 别名：同一个文件系统对象的三种写法，只有规范那一种能进记录。
+            check("a/b 与它的两个别名不会同时合法",
+                    CNHotUpdateTx.recordPathProblem("a/b") == null
+                            && CNHotUpdateTx.recordPathProblem("a/./b") != null
+                            && CNHotUpdateTx.recordPathProblem("a//b") != null, "");
+
+            // 日志转义：非法路径必然要被打进日志，而它可能正因为带 CR/LF 才非法。
+            String esc = CNHotUpdateTx.escapeForLog("a\nb\tc");
+            check("日志转义把换行/制表符挡在外面",
+                    esc.indexOf('\n') < 0 && esc.indexOf('\t') < 0
+                            && esc.contains("\\u000A") && esc.contains("\\u0009"), esc);
+        }
+
+        // ---------------------------------------------------------------
+        System.out.println("\n[16] F-079：包内非法路径在动活动树之前整包拒收");
+        {
+            File root = new File(base, "case16");
+            File v1 = zip(new File(base, "p16a.zip"), "magica/js/a.js", "V1-A");
+            CNHotUpdateTx.apply(v1, root, "js");
+
+            // 带换行的条目名：一条逻辑记录会在 journal 里被拆成两行。
+            File bad = zip(new File(base, "p16b.zip"),
+                    "magica/js/a.js",    "V2-A",
+                    "magica/js/x\ny.js", "EVIL");
+            boolean rejected = false;
+            try { CNHotUpdateTx.apply(bad, root, "js"); }
+            catch (IOException e) { rejected = true; }
+            check("带换行的条目名整包拒收", rejected, "");
+            check("活动树保持上一版内容",
+                    "V1-A".equals(read(new File(root, "magica/js/a.js"))), "");
+            check("事务工作区没有残留", !new File(root, ".cnv_tx").exists(), "");
+        }
+
         System.out.println("\n通过 " + pass + " 项，失败 " + fail + " 项");
         if (fail > 0) System.exit(1);
     }

@@ -16,6 +16,7 @@ import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipException;
@@ -406,23 +407,16 @@ public final class CNHotUpdateTx {
                 ZipEntry e = es.nextElement();
                 String name = e.getName().replace('\\', '/');
                 if (e.isDirectory() || name.endsWith("/")) continue;
-                if (name.length() == 0) {
-                    throw new ZipException("包内有空文件名");
-                }
-                if (name.startsWith("/")) {
-                    throw new ZipException("包内有绝对路径: " + name);
-                }
-                if (name.indexOf(':') >= 0) {
-                    throw new ZipException("包内路径含盘符/协议分隔符: " + name);
-                }
-                String[] segs = name.split("/", -1);
-                for (int i = 0; i < segs.length; i++) {
-                    if (segs[i].equals("..")) {
-                        throw new ZipException("包内路径试图向上穿越: " + name);
-                    }
-                    if (segs[i].length() == 0 && i != segs.length - 1) {
-                        throw new ZipException("包内路径有空目录段: " + name);
-                    }
+                // F-079：判据收敛到 recordPathProblem——这里原先自己写了一套
+                // （空名/绝对路径/冒号/..），既漏了控制字符与 . 段，又与
+                // isSafeManifestEntry 那套各说各话。同一批路径要经过包内清单、
+                // journal、manifest 三道关，三道关判据不同就等于没判。
+                // 拒收发生在**一个字节都还没写**的时候：整包不应用，游戏保持
+                // 上一版内容，失败方向是安全的。
+                String problem = recordPathProblem(name);
+                if (problem != null) {
+                    throw new ZipException("包内路径不安全（" + problem + "）: "
+                            + escapeForLog(name));
                 }
                 if (name.equals(TX_DIR) || name.startsWith(TX_DIR + "/")) {
                     throw new ZipException("热更包试图写入事务工作区: " + name);
@@ -568,7 +562,7 @@ public final class CNHotUpdateTx {
             }
             if (!allowed) continue;
             if (!isSafeManifestEntry(rel)) {
-                CNLog.w(TAG, "[" + tag + "] 清单含非法路径条目，跳过: " + rel);
+                CNLog.w(TAG, "[" + tag + "] 清单含非法路径条目，跳过: " + escapeForLog(rel));
                 continue;
             }
             File live = new File(root, rel);
@@ -577,11 +571,11 @@ public final class CNHotUpdateTx {
                 // 根外」的情况（活动树里混入符号链接时）。删除范围的最终判据
                 // 以解析后的真实路径为准。
                 if (!live.getCanonicalPath().startsWith(rootPrefix)) {
-                    CNLog.w(TAG, "[" + tag + "] 清单条目解析后落在解压根外，跳过: " + rel);
+                    CNLog.w(TAG, "[" + tag + "] 清单条目解析后落在解压根外，跳过: " + escapeForLog(rel));
                     continue;
                 }
             } catch (Throwable t) {
-                CNLog.w(TAG, "[" + tag + "] 清单条目 canonical 解析失败，跳过: " + rel, t);
+                CNLog.w(TAG, "[" + tag + "] 清单条目 canonical 解析失败，跳过: " + escapeForLog(rel), t);
                 continue;
             }
             if (live.isFile()) out.add(rel);
@@ -677,7 +671,7 @@ public final class CNHotUpdateTx {
                 // 调试环境可能留下伪造 journal，`../` 或绝对路径可让恢复流程移动/
                 // 覆盖/删除事务根之外的应用数据。非法条目跳过并记失败（不静默忽略）。
                 if (!isSafeManifestEntry(rel)) {
-                    CNLog.e(TAG, "journal 条目非法，拒绝处理（防事务根外覆盖/删除）: " + rel);
+                    CNLog.e(TAG, "journal 条目非法，拒绝处理（防事务根外覆盖/删除）: " + escapeForLog(rel));
                     clean = false;
                     continue;
                 }
@@ -720,24 +714,87 @@ public final class CNHotUpdateTx {
     // ==================================================================
 
     /**
-     * 清单条目的路径规范化校验（F-B-05），与补丁 01 native 侧
-     * {@code is_safe_entry_name} 同语：非空、不以 '/' 开头（绝对路径）、
-     * 不含反斜杠、逐段拒绝 ".."；另拒 ':'（盘符/协议分隔符，与
-     * {@link #listEntries} 对 zip 中央目录的判据一致）。
+     * 清单条目的路径校验（F-B-05）。判据本体在 {@link #recordPathProblem}——
+     * 包内清单、journal、manifest 三处共用同一份，别在这里再长出第二套。
      *
      * <p>这只是第一道字符串闸，调用方还须做 canonical 前缀复核——字符串
      * 合法不代表解析后仍在解压根内（符号链接）。
      */
     private static boolean isSafeManifestEntry(String rel) {
-        if (rel == null || rel.length() == 0) return false;
-        if (rel.charAt(0) == '/') return false;
-        if (rel.indexOf('\\') >= 0) return false;
-        if (rel.indexOf(':') >= 0) return false;
+        return recordPathProblem(rel) == null;
+    }
+
+    /**
+     * 记录安全的相对路径判据（F-079）。<b>包内清单、journal、manifest、暂存、
+     * backup、活动树全部只认这一份判据</b>——多一份就多一次漂移的机会。
+     *
+     * <p>返回 {@code null} 表示合格；否则返回一句「哪儿不合格」，供调用方拼进
+     * 异常与日志。写成「返回问题」而不是 boolean，是因为这些路径来自 ZIP 中央
+     * 目录，出问题时最需要知道的恰恰是**踩了哪一条规则**。
+     *
+     * <h3>为什么光挡 {@code ..} 和绝对路径不够</h3>
+     *
+     * 这套事务把相对路径<b>逐行</b>写进 journal 与 manifest，一行一条记录。于是：
+     *
+     * <ul>
+     *   <li><b>控制字符</b>（尤其 LF/CR）能把一条逻辑记录拆成多行。文件名里带一个
+     *       换行，journal 里就凭空多出一条伪记录——而恢复流程照着 journal 走，
+     *       伪记录指向哪儿它就动哪儿。TAB 还能伪造字段分隔（journal 正是
+     *       {@code 标志\t路径} 这个格式）。CR/LF 进日志则能伪造多行诊断。</li>
+     *   <li><b>{@code .} 段与空段</b>制造字符串别名：{@code a/b}、{@code a/./b}、
+     *       {@code a//b} 在记录层是三个字符串，在文件系统层是同一个对象。备份／
+     *       换入／回滚全部按字符串索引，同一个文件经两个别名进计划，顺序就不再
+     *       确定；孤儿差集也会因此漏删或误删。</li>
+     * </ul>
+     *
+     * <p>规则全过之后路径已经是规范形式（无空段、无 {@code .}），所以不需要再做
+     * 一次「规范化」——那一步本身正是别名的来源。
+     *
+     * <p>本判据只管<b>记录格式与字符串别名</b>。canonical 根约束与符号链接边界是
+     * 另一件事，仍由 {@code findOrphans} / {@code recover} 里的 canonical 复核负责
+     * （F-044），两者不能互相替代。
+     */
+    public static String recordPathProblem(String rel) {
+        if (rel == null || rel.length() == 0) return "空路径";
+        if (rel.charAt(0) == '/') return "绝对路径";
+        if (rel.indexOf('\\') >= 0) return "含反斜杠";
+        if (rel.indexOf(':') >= 0) return "含盘符/协议分隔符";
+        for (int i = 0; i < rel.length(); i++) {
+            char c = rel.charAt(i);
+            if (c <= 0x1f || c == 0x7f) {
+                return "含控制字符 U+" + String.format(Locale.US, "%04X", (int) c)
+                        + "（第 " + i + " 个字符）";
+            }
+        }
         String[] segs = rel.split("/", -1);
         for (int i = 0; i < segs.length; i++) {
-            if ("..".equals(segs[i])) return false;
+            if (segs[i].length() == 0) return "有空目录段";
+            if (".".equals(segs[i]))   return "有 . 段";
+            if ("..".equals(segs[i]))  return "有 .. 段";
         }
-        return true;
+        return null;
+    }
+
+    /**
+     * 把路径转成能安全写进日志的形式：控制字符换成 {@code \\uXXXX}，超长截断。
+     *
+     * <p>非法路径<b>必然</b>会被记进日志（那正是要看的东西），而它很可能正是因为
+     * 带 CR/LF 才非法——原样打出去等于让它自己往日志里写行。
+     */
+    public static String escapeForLog(String rel) {
+        if (rel == null) return "<null>";
+        int n = Math.min(rel.length(), 200);
+        StringBuilder sb = new StringBuilder(n + 16);
+        for (int i = 0; i < n; i++) {
+            char c = rel.charAt(i);
+            if (c <= 0x1f || c == 0x7f) {
+                sb.append(String.format(Locale.US, "\\u%04X", (int) c));
+            } else {
+                sb.append(c);
+            }
+        }
+        if (rel.length() > n) sb.append("…(共 ").append(rel.length()).append(" 字符)");
+        return sb.toString();
     }
 
     /** F-B-06：目录 fsync 的全仓唯一实现挪在 {@link CNArchiveInstallTx#syncDir}

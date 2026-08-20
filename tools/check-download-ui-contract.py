@@ -104,6 +104,17 @@ def hot_last(order):
     """热更两包必须是表里的最后两项——前置集合就是它们的补集。"""
     return bool(order) and set(order[-len(HOT_PACKS):]) == set(HOT_PACKS)
 
+def before(text, first, second):
+    """`first` 必须出现，且出现在 `second` 之前；缺任一项一律判否。
+
+    直接写 `text.index(a) < text.index(b)` 的话，判据被改坏时抛的是
+    ValueError——CI 确实会红，但红在一句 traceback 上，看的人得先去读守卫源码
+    才知道是哪条判据没了。守卫的报错本身也是判据的一部分。
+    """
+    i, j = text.find(first), text.find(second)
+    return i >= 0 and j >= 0 and i < j
+
+
 def followed_by(src, first, second):
     """`first` 之后紧跟着的下一行代码就是 `second`（中间的注释不算数）。"""
     lines = code_lines(src)
@@ -351,8 +362,7 @@ checks = {
         and "writtenThisRun + n > archiveBytes * EXTRACT_MAX_RATIO" in extract_tx,
     # 判据必须在 write 之前：写完再拒等于「炸弹已经落地，事后宣布它不该落地」。
     "膨胀比判据在写出去之前":
-        extract_tx.index("copied + n > declared")
-            < extract_tx.index("output.write(buf, 0, n);"),
+        before(extract_tx, "copied + n > declared", "output.write(buf, 0, n);"),
     # 离线包是玩家从网盘下了一两个 G 再手动导入的。原先任何 Throwable 都删它并
     # 回退网络下载——磁盘满也删。删完接着走网络，只会以同样的方式再失败一次，而他
     # 得从头再下一遍。只有 ZipException（包真坏）才该删。
@@ -605,9 +615,8 @@ checks = {
     # 挂载顺序也是判据的一部分：先无条件挂提示条，再去问总闸。反过来写的话
     # 「总闸问不到」这一支会顺带把提示条也吞掉，等于把缺陷原样搬了个家。
     "提示条的挂载早于并独立于总闸":
-        "CNDebugHud.mount(act);" in downloader
-        and downloader.index("CNDebugHud.mount(act);")
-            < downloader.index("Boolean gate = CNDebugBridge.overlayGate();"),
+        before(downloader, "CNDebugHud.mount(act);",
+               "Boolean gate = CNDebugBridge.overlayGate();"),
     # BGM 胶囊的曲名：编号 → 曲名。编号在 convert-bgm.py 的 TRACKS 里**显式写死**
     # （不是按文件排序推的），所以按编号绑安全；但两张表得一样长，否则加了曲子而
     # 曲名表没跟上，界面就会悄悄少报一首的名字。
@@ -675,6 +684,24 @@ checks = {
     "A2_STUCK 没被并进 A2_MAIN":
         "A2_STUCK" in code(downloader) and "A2_MAIN || " not in code(downloader)
         and "|| a2 == A2_STUCK" not in code(downloader),
+    # ---- F-079 记录安全的相对路径 ----
+    # journal 与 manifest 是逐行记录：控制字符能把一条记录拆成多行（恢复流程照着
+    # journal 走，伪记录指向哪儿它就动哪儿），. 段与空段则制造字符串别名——同一个
+    # 文件经两个别名进计划，备份/换入/回滚顺序不再确定。
+    "热更路径判据只有一份且认得控制字符":
+        "c <= 0x1f || c == 0x7f"
+            in body(hot_tx, "public static String recordPathProblem(String rel)")
+        and '".".equals(segs[i])'
+            in body(hot_tx, "public static String recordPathProblem(String rel)")
+        and '"..".equals(segs[i])'
+            in body(hot_tx, "public static String recordPathProblem(String rel)")
+        and "return recordPathProblem(rel) == null;"
+            in body(hot_tx, "private static boolean isSafeManifestEntry(String rel)")
+        and "recordPathProblem(name)" in body(hot_tx,
+                "public static List<String> listEntries(File archive)"),
+    "非法路径进日志前先转义":
+        "escapeForLog" in code(hot_tx)
+        and '"\\\\u%04X"' in hot_tx,
 }
 
 failed = [name for name, ok in checks.items() if not ok]
