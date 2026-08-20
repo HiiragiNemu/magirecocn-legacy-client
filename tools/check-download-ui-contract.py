@@ -663,6 +663,18 @@ checks = {
     "标记正文由 ARCHIVE_COUNT 生成且不再写死":
         'FINAL_FLAG_BODY = "schema=2\\narchives=" + ARCHIVE_COUNT' in downloader
         and '"schema=2\\narchives=15\\n"' not in code(downloader),
+    # ---- F-075 aria2 让位语义 ----
+    # A2_STUCK =「旧 aria2 任务没确认停下，目标路径归属不明」，与 A2_MAIN（让位，
+    # 你上）的并发契约正好相反。后置调用点漏了它，就会让主引擎在同一 archive/
+    # .part/.cpart 上开写——F-025 立的单写者约定被绕过，且坏法完全静默。
+    # 判据按「调用点数 == A2_STUCK 处理数」钉，将来再加第三个调用点也跑不掉。
+    "每个 aria2 调用点都处理 A2_STUCK":
+        code(downloader).count("tryAria2Download(")
+            == code(downloader).count("a2 == A2_STUCK") + 1   # +1 = 方法定义本身
+        and code(downloader).count("a2 == A2_STUCK") >= 2,
+    "A2_STUCK 没被并进 A2_MAIN":
+        "A2_STUCK" in code(downloader) and "A2_MAIN || " not in code(downloader)
+        and "|| a2 == A2_STUCK" not in code(downloader),
 }
 
 failed = [name for name, ok in checks.items() if not ok]

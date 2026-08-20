@@ -1406,6 +1406,20 @@ public final class CNDownloaderFix {
                         // 1.4GB 产物连同断点一起删掉，正是 ENOSPC 时最不该删的。
                         return false;
                     }
+                    if (a2 == A2_STUCK) {
+                        // F-075：这一条以前漏了，于是 A2_STUCK 被当成普通失败，
+                        // 直接落到下面的「再给主引擎一轮」——而 A2_STUCK 的含义
+                        // 恰恰是「旧 aria2 任务没能确认停下，目标路径归属不明」。
+                        // 主引擎在同一 archive/.part/.cpart 上开写，就是 F-025
+                        // 那条单写者约定被绕过：两个写者同路径，ZIP 损坏、断点与
+                        // 真实字节对不上、校验永远过不了，且没有任何报错指向病因。
+                        //
+                        // 绝不能与 A2_MAIN 合并：A2_MAIN 是「aria2 让位，你上」，
+                        // A2_STUCK 是「路径还在别人手里」——并发契约正好相反。
+                        markFailed(index);
+                        CNLog.w(TAG, "aria2 旧任务未确认停止（A2_STUCK），禁止主引擎重写: " + name);
+                        return false;
+                    }
                     // aria2 也不行 → 落到下面再给主引擎一轮
                 }
                 // DL_SINGLE 的模式切换已由弹窗完成（见 CNCNDownloadUI.Aria2Choice），
