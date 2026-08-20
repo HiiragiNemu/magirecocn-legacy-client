@@ -689,6 +689,16 @@ checks = {
     "A2_STUCK 没被并进 A2_MAIN":
         "A2_STUCK" in code(downloader) and "A2_MAIN || " not in code(downloader)
         and "|| a2 == A2_STUCK" not in code(downloader),
+    # ---- F-085 缺失总标记也走自愈 ----
+    # 「marker 齐全 + flag 损坏」自愈、「marker 齐全 + flag 缺失」却判未安装，是无理由
+    # 的不对称：flag 是 marker 集合的汇总，不是资源本体。后者会把一台装好的设备赶进
+    # 15 槽首次安装链——13 个基础包会因 marker 有效跳过，但两个热更包不是基础完成的
+    # 前置条件，首次安装循环却要求 15 个 marker 齐全，于是照样联网、照样可能卡住。
+    "总标记缺失与损坏走同一条自愈路径":
+        "if (!flag.exists()) return false;"
+            not in body(downloader, "static boolean isBaseInstallationComplete()")
+        and "boolean missing = !flag.exists();"
+            in body(downloader, "static boolean isBaseInstallationComplete()"),
     # ---- F-072 空线路表的受控出口 ----
     # pick() 在没有健康线路时 fail-closed 抛异常（F-046，别改回去造空 base 的伪线路）。
     # 问题在调用方：异常落在受控 try 之外就会冲出下载状态机，同一种故障在三个入口

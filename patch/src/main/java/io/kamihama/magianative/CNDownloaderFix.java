@@ -2952,15 +2952,26 @@ public final class CNDownloaderFix {
     static boolean isBaseInstallationComplete() {
         File flag = new File(FINAL_FLAG);
         if (finalFlagWellFormed(flag)) return true;
-        if (!flag.exists()) return false;
-        CNLog.w(TAG, "总完成标记存在但内容不可信，改查 13 个基础包 marker: " + flag);
+        // F-085：「缺失」与「存在但损坏」是同一件事，不能给相反的结论。总标记是
+        // 13 个基础包 marker 的**汇总**，不是资源本体；既然 marker 齐全足以修好一份
+        // 损坏的标记，也就足以补回一份缺失的标记。原先在这里 `if (!flag.exists())
+        // return false;`，于是「marker 全在、只是标记被清理脚本/备份还原/旧版本写
+        // 失败弄没了」的设备被判成没装过，白跑一遍 15 槽首次安装链：13 个基础包会
+        // 因 marker 有效而跳过，但两个热更包不是基础完成的前置条件、首次安装循环
+        // 却要求 15 个 marker 齐全，于是照样联网、照样可能卡在失败弹窗上。
+        boolean missing = !flag.exists();
+        CNLog.w(TAG, (missing ? "总完成标记缺失" : "总完成标记存在但内容不可信")
+                + "，改查 13 个基础包 marker: " + flag);
         if (!allBaseMarkersValid()) {
             CNLog.w(TAG, "基础包 marker 不齐，按未安装处理");
             return false;
         }
         try {
             writeAtomic(flag, FINAL_FLAG_BODY);
-            CNLog.i(TAG, "基础包 marker 齐全，已就地补写总完成标记");
+            // 原状态必须在补写**之前**记下来：补完 flag.exists() 恒为真，
+            // 事后再问只会让日志永远说「存在」，把这条自愈路径的两种入口糊成一种。
+            CNLog.i(TAG, missing ? "基础包 marker 齐全，已补回缺失的总完成标记"
+                                 : "基础包 marker 齐全，已就地修复损坏的总完成标记");
             return true;
         } catch (Throwable t) {
             CNLog.w(TAG, "补写总完成标记失败，本次按未安装处理: " + t);
