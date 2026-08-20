@@ -80,6 +80,30 @@ public final class DownloadRestartStateTest {
             if (round == 99) check("100 轮并发发布保持 generation/reason 原子一致", true);
         }
 
+        System.out.println("[owner] 未确认请求必须在注销时留下补排快照");
+        CNDownloadRestart.resetForTest(index);
+        CNDownloadRestart.register(index);
+        int normalGen = CNDownloadRestart.publishForTest(index, false);
+        CNDownloadRestart.PendingRequest normal =
+                CNDownloadRestart.unregisterForTest(index);
+        check("普通重下未确认时返回 pending", normal != null
+                && normal.generation == normalGen && !normal.keepOffline);
+
+        CNDownloadRestart.resetForTest(index);
+        CNDownloadRestart.register(index);
+        int offlineGen = CNDownloadRestart.publishForTest(index, true);
+        CNDownloadRestart.PendingRequest offline =
+                CNDownloadRestart.unregisterForTest(index);
+        check("离线接管未确认时保留 reason", offline != null
+                && offline.generation == offlineGen && offline.keepOffline);
+
+        CNDownloadRestart.resetForTest(index);
+        CNDownloadRestart.register(index);
+        CNDownloadRestart.publishForTest(index, false);
+        CNDownloadRestart.clearInterrupt();
+        check("已消费请求不会再次补排",
+                CNDownloadRestart.unregisterForTest(index) == null);
+
         check("非法槽位保持安全默认值",
                 CNDownloadRestart.publishForTest(-1, true) == 0
                 && CNDownloadRestart.generation(-1) == 0

@@ -16,6 +16,16 @@ checks = {
         "AtomicIntegerArray GENERATION" not in src,
     "不再保留分离的 KEEP_OFFLINE 数组":
         "AtomicIntegerArray KEEP_OFFLINE" not in src,
+    "request/register/unregister 共用槽位锁":
+        "Object[] SLOT_LOCKS" in src
+        and src.count("synchronized (SLOT_LOCKS[index])") >= 4,
+    "消费 restart 会推进 owner acknowledgement":
+        "owner.acknowledgedGeneration = REQUESTS.get(i).generation" in src,
+    "未消费普通重下在 owner 注销后补排":
+        "schedulePendingRestart(index, pending.generation)" in src
+        and "CNManualRedownload.request(null, index)" in src,
+    "离线接管不被普通补排覆盖":
+        "pending != null && !pending.keepOffline" in src,
     "默认 request 也走原子发布":
         "return request(index, false);" in src,
 }
