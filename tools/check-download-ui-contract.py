@@ -799,6 +799,26 @@ checks = {
         and "recordPathProblem(rel)"
             in body(hot_tx, "private static void writeManifest(File root, String tag, List<String> rels)")
         and "writeSynced(f," not in code(hot_tx),
+    # ---- F-070 addUri 结果不明时不许放开单写者门 ----
+    # rpc() 对连接/读/解析的任何异常一律返回 null。「明确被拒」（收到 JSON-RPC
+    # error envelope）与「结果不明」（无响应、或有响应无 gid）必须分开：后者的请求
+    # 体可能已经送到 loopback 上的 aria2、GID 可能已经创建，只是响应丢了，
+    # **不能证明没有 writer**。合成一个 ERR_ADD 就会释放 inUse，让主引擎去删/重建
+    # 同一个目标，而那个未知 GID 还在写。
+    "addUri 无响应与被明确拒绝分开处理":
+        "abortAmbiguousAdd(" in code(aria2)
+        and 'addRes != null && addRes.optJSONObject("error") != null' in code(aria2)
+        and code(aria2).count("abortAmbiguousAdd(port, secret,") == 2
+        and "return ERR_IN_USE;"
+            in body(aria2, "private static int abortAmbiguousAdd(int port, String secret, String why)"),
+    # 拿不到 GID 就没法 quiesceGid（那条路保护的是「已经拿到 GID 之后」），
+    # 只能关停整个会话；优雅失败要升级到 forceShutdown，最后以线程退没退为准。
+    "结果不明时关停会话并升级到 forceShutdown":
+        "shutdownAria2Escalating(" in code(aria2)
+        and 'rpc(port, secret, "aria2.forceShutdown")'
+            in body(aria2, "private static boolean shutdownAria2Escalating(int port, String secret)")
+        and "CNAria2Lib.waitStopped(3000L)"
+            in body(aria2, "private static boolean shutdownAria2Escalating(int port, String secret)"),
     # ---- F-074 剩余：Java 与 native 必须是同一个状态机 ----
     # native 的 resourcesReady() 直接控制八处引擎控制流（跳不跳过原版下载场景、
     # 叫不叫 Java 安装器、下载回调静默组与放行组的极性）。它原先只问「文件在不在」，

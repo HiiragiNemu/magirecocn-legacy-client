@@ -311,14 +311,33 @@ public final class CNAria2 {
             uris.put(url);
 
             JSONObject addRes = rpc(port, secret, "aria2.addUri", uris, opt);
-            if (addRes == null || addRes.optJSONObject("error") != null) {
-                CNLog.w(TAG, "aria2.addUri 失败: " + (addRes == null ? "无响应" : addRes.toString()));
+            // F-070：这里必须把「明确被拒」与「结果不明」分开，原先两者都返回
+            // ERR_ADD，于是 finally 顺手释放了 inUse。
+            //
+            //   · 收到 JSON-RPC error envelope：服务器已经处理并拒绝了请求，
+            //     没有 GID、没有 writer——普通失败，可以回退主引擎。
+            //   · 完全无响应（rpc() 对连接/读/解析的任何异常一律返回 null）：
+            //     请求体可能已经完整送到 loopback 上的 aria2、GID 可能已经创建，
+            //     只是响应在回到 Java 之前丢了。**这不能证明没有 writer。**
+            //
+            // 后一种情况下拿不到 GID，quiesceGid() 无从谈起（F-025/F-062 保护的是
+            // 已经拿到 GID 之后的路径），只能把整个会话关停：inUse 本来就保证同一
+            // 时刻只有一个已知下载，关停不会误杀别的合法任务。确认线程退出才放行，
+            // 否则 ERR_IN_USE 保住单写者门——否则调用方会换镜像、回退主引擎，
+            // 让主引擎去删/重建同一个目标与断点，而那个未知 GID 还在写。
+            if (addRes != null && addRes.optJSONObject("error") != null) {
+                CNLog.w(TAG, "aria2.addUri 被明确拒绝: " + addRes.toString());
                 return ERR_ADD;
+            }
+            if (addRes == null) {
+                CNLog.e(TAG, "aria2.addUri 无响应，结果不明——关停会话确认没有 writer");
+                return abortAmbiguousAdd(port, secret, "addUri 无响应");
             }
             String gid = addRes.optString("result", "");
             if (gid.isEmpty()) {
-                CNLog.w(TAG, "aria2.addUri 未返回 gid");
-                return ERR_ADD;
+                // 有响应、无 error、也没有 result：同样不能证明服务器没建任务。
+                CNLog.e(TAG, "aria2.addUri 未返回 gid，结果不明: " + addRes.toString());
+                return abortAmbiguousAdd(port, secret, "addUri 无 gid");
             }
             ownedGid = gid;
 
@@ -469,6 +488,53 @@ public final class CNAria2 {
             } else {
                 CNLog.w(TAG, "aria2 未确认停止，inUse 保持占用（调用方按路径被占用处理）");
             }
+        }
+    }
+
+    /**
+     * addUri 结果不明时的收口（F-070）：关停整个 aria2 会话，确认线程退出才放行。
+     *
+     * <p>拿不到 GID 就没法 {@code quiesceGid()}——那条路保护的是「已经拿到 GID
+     * 之后」。这里唯一能确定「没有 writer」的办法，是让整个会话停下来并确认
+     * native 线程已经退出。
+     *
+     * <p>会话关停的代价：本进程之后不会再起 aria2（{@code sSessionStarted} 恒为
+     * true，二次 execute 会崩），后续下载一律走主引擎。这是刻意的——比起「让一个
+     * 未知 GID 与主引擎并发写同一个文件」，少一个下载引擎便宜太多。
+     *
+     * @return 确认停住 → {@link #ERR_ADD}（普通失败，调用方可回退主引擎）；
+     *         没确认住 → {@link #ERR_IN_USE}（单写者门保持占用）
+     */
+    private static int abortAmbiguousAdd(int port, String secret, String why) {
+        boolean stopped = shutdownAria2Escalating(port, secret);
+        if (stopped) {
+            sServerUp = false;
+            CNLog.w(TAG, "aria2 会话已确认停止（" + why + "），本次按普通失败回退主引擎");
+            return ERR_ADD;
+        }
+        CNLog.e(TAG, "aria2 会话未能确认停止（" + why + "），保持 inUse："
+                + "目标路径可能仍被未知 GID 写入");
+        return ERR_IN_USE;
+    }
+
+    /**
+     * 优雅关停失败就升级到 {@code aria2.forceShutdown}，最后以线程是否退出为准。
+     *
+     * <p>与 {@link #shutdownAria2} 的区别只有「升级」这一步：那个方法用于显式收尾
+     * 场景，这里用于<b>结果不明</b>的场景，多试一次的代价远小于漏掉一个 writer。
+     */
+    private static boolean shutdownAria2Escalating(int port, String secret) {
+        if (shutdownAria2(port, secret)) return true;
+        try {
+            if (port > 0 && secret != null) {
+                rpc(port, secret, "aria2.forceShutdown");   // best-effort
+            }
+        } catch (Throwable ignore) {}
+        try {
+            int rc = CNAria2Lib.waitStopped(3000L);
+            return rc != -2 && !CNAria2Lib.isRunning();
+        } catch (Throwable t) {
+            return false;
         }
     }
 
