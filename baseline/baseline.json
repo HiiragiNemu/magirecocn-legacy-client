@@ -1088,7 +1088,7 @@
       "path": "lib/armeabi-v7a/libarchive.so",
       "group": "第三方",
       "why": "libarchive 3.7.4 JNI 封装（CI 重建版，含补丁 01/02/03，armeabi-v7a）",
-      "post": "692b1f876e0fb85a3cec67fe89f9ee064b2fa0d78f9210a046ae0a124ef9f4de",
+      "post": "6e7966634e70cd1cfb8d15bdc26b9e06931af2c77c78c8ffe74b6afeac297a42",
       "from": "repo"
     },
     {
@@ -1096,7 +1096,7 @@
       "path": "lib/arm64-v8a/libarchive.so",
       "group": "第三方",
       "why": "libarchive 3.7.4 JNI 封装（CI 重建版，含补丁 01/02/03，arm64-v8a）",
-      "post": "f007ac464291ae0d7679f706d006f662350a41989f2d46c7e39813cee5b7836b",
+      "post": "10b479e8715114df758eb0a6722bf52c96d2d75ffe80bb7039378bea63ee5071",
       "from": "repo"
     },
     {
