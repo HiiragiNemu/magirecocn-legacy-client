@@ -440,13 +440,20 @@ public final class CNHotUpdateCheck {
                 // 已由 syncInstalledUiState 标成「未检查」，不再冒充完成。）
                 CNCNDownloadUI.markFilePending(pkg.slot);
                 File tmp = new File(FILES_DIR, pkg.tmpName);
-                // 上一次跑到一半留下的残骸会让 download() 直接判定「目标已存在」而跳过
-                if (tmp.exists() && !tmp.delete()) {
-                    anyFailure = true;
-                    markHotFailed(pkg.slot);
-                    CNLog.w(TAG, "[" + pkg.label + "] 删不掉旧的临时包 " + tmp + "，放弃本项");
-                    continue;
-                }
+                // F-069：这里原先无条件 tmp.delete()。那条注释（「残骸会让
+                // download() 直接判定目标已存在而跳过」）在身份校验落地之前是对的，
+                // 现在不成立了：download() 拿到本轮 VerMeta 后会对已存在的目标做
+                // size + 整包 MD5 + ZIP 结构校验，不符才 cleanupDownloadArtifacts()
+                // 清掉重下——「陈旧的包被当成新的」这条路已经堵死。
+                //
+                // 而预删把 F-067 刻意保留的东西也一起删了：内容事务已经成功、只有
+                // 版本号没落盘时，那份**已经通过 size/MD5/ZIP 校验**的包被留着，
+                // 就是为了下次启动能不联网直接修复版本状态。日志说「保留更新包供
+                // 下次修复」，下次启动第一件事却是删掉它——玩家白下一整个热更包，
+                // 而运维看日志还以为复用生效了。
+                //
+                // 现在一律把 tmp 与本轮 meta 交给 download() 自己判：合格就复用，
+                // 不合格由它按同一套身份合同清理，.part/.cpart/meta 也归它管。
                 tmpFiles[i] = tmp;
                 needs[i] = true;
                 anyNeed = true;

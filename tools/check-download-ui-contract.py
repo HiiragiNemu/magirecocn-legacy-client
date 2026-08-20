@@ -819,6 +819,14 @@ checks = {
             in body(aria2, "private static boolean shutdownAria2Escalating(int port, String secret)")
         and "CNAria2Lib.waitStopped(3000L)"
             in body(aria2, "private static boolean shutdownAria2Escalating(int port, String secret)"),
+    # ---- F-069 保留包必须能被复用 ----
+    # download() 拿到本轮 VerMeta 后会对已存在的目标做 size + 整包 MD5 + ZIP 校验，
+    # 不符才清掉重下。调用方再预删一次，等于把 F-067 刻意保留的、已经验过的完整包
+    # 删掉——日志说「保留更新包供下次修复」，下次启动第一件事却是删了它。
+    "热更检查不预删已保留的完整包":
+        "删不掉旧的临时包" not in code(hot_check)
+        and "tmp.delete()" not in code(hot_check)
+        and "CNHotUpdate.download(pkg.zipUrl, tmp.getAbsolutePath()," in code(hot_check),
     # ---- F-074 剩余：Java 与 native 必须是同一个状态机 ----
     # native 的 resourcesReady() 直接控制八处引擎控制流（跳不跳过原版下载场景、
     # 叫不叫 Java 安装器、下载回调静默组与放行组的极性）。它原先只问「文件在不在」，
