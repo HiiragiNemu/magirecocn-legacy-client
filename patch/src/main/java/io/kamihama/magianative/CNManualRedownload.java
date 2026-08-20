@@ -351,8 +351,24 @@ public final class CNManualRedownload {
     /**
      * 兼容上一版“撤 marker + 撤总 flag + 重启”的遗留状态。升级后优先恢复旧 marker，
      * 所有 marker 均有效时补回总完成标记，再删除旧请求；不会继续旧事务。
+     *
+     * <h3>F-071：这段迁移必须串行</h3>
+     *
+     * 每个 {@code ManualTask} 一开始都调它，而本类<b>有意</b>允许三个不同文件并行。
+     * 它动的却是同一组全局文件（request / marker / marker.bak / 总完成标记），
+     * 原先没有任何同步。可复现的竞态：
+     *
+     * <pre>
+     *   T1、T2 同时看到「marker 缺失、backup 在」
+     *   T1 把 backup 换成 marker
+     *   T2 也进 moveFile，源已经被 T1 搬走 → 失败
+     *   收场可能是「总完成标记补回来了，但某个 marker 没了」
+     * </pre>
+     *
+     * 加锁只串行这一次性迁移，三个实际下载任务照旧并行——它们各自的 archive lock
+     * 与这里无关。
      */
-    public static void recoverCompletedRequest() {
+    public static synchronized void recoverCompletedRequest() {
         File state = stateRoot();
         File request = new File(state, REQUEST_NAME);
         if (!request.isFile()) return;
@@ -366,7 +382,9 @@ public final class CNManualRedownload {
                 else deleteQuietly(backup);
             }
             if (!finalFlag().isFile() && allMarkersValid(state)) {
-                writeAtomic(finalFlag(), "schema=2\narchives=15\n");
+                // 正文取 CNDownloaderFix 的那一份，别再拼第二遍：写歪的标记会被
+                // Java 与 native 双双判成损坏（F-074），而这里正是要修好它。
+                writeAtomic(finalFlag(), CNDownloaderFix.finalFlagBody());
                 CNLog.i(TAG, "已从旧式手动重下载遗留状态补回总完成标记");
             }
             deleteQuietly(request);
@@ -468,6 +486,19 @@ public final class CNManualRedownload {
      * 任何一步失败 dst 都保持原样。
      */
     private static void moveFile(File src, File dst) throws IOException {
+        // F-071：先确认源。并行迁移里「源没了」有两种截然不同的含义，
+        // 而它们的正确反应相反：
+        //   · 源没了、目标在 → 另一个线程已经搬完了，幂等返回，绝不能再动目标；
+        //   · 源和目标都没了 → 恢复材料真的丢了，明确失败，别装作成功。
+        // 旧写法两种都会掉进 renameTo 失败 → 复制回退 → 打开不存在的源抛异常，
+        // 日志只留下一句「恢复旧式手动重下载状态失败」。
+        if (!src.exists()) {
+            if (dst.exists()) {
+                CNLog.i(TAG, "源已被另一次恢复搬走、目标已就位，幂等跳过: " + dst);
+                return;
+            }
+            throw new IOException("源与目标都不存在，无法恢复: " + src);
+        }
         try {
             CNAtomicReplace.commit(src, dst);
             return;

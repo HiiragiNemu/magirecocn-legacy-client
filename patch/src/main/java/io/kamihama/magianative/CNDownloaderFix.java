@@ -2957,6 +2957,14 @@ public final class CNDownloaderFix {
      */
     private static final String FINAL_FLAG_BODY = "schema=2\narchives=" + ARCHIVE_COUNT + "\n";
 
+    /**
+     * 标记正文的包内读取口。{@code CNManualRedownload} 的旧状态迁移也要写这张
+     * 标记，让它自己再拼一遍 {@code "schema=2\narchives=15\n"} 就等于把
+     * FINAL_FLAG_BODY 的意义抵消掉——两处字面量，改 ARCHIVE_COUNT 时必漏一处，
+     * 而写歪的标记会被 Java 与 native 双双判成损坏。
+     */
+    static String finalFlagBody() { return FINAL_FLAG_BODY; }
+
     /** 标记正文只有两行；比这大的一律不认，免得把任意文件读进内存。 */
     private static final long FINAL_FLAG_MAX_BYTES = 16384L;
 

@@ -827,6 +827,18 @@ checks = {
         "删不掉旧的临时包" not in code(hot_check)
         and "tmp.delete()" not in code(hot_check)
         and "CNHotUpdate.download(pkg.zipUrl, tmp.getAbsolutePath()," in code(hot_check),
+    # ---- F-071 旧状态迁移必须串行 ----
+    # 三个不同文件的下载**有意**并行，但迁移动的是同一组全局文件
+    # （request / marker / marker.bak / 总完成标记）。
+    "旧状态迁移串行且换入前先确认源":
+        "public static synchronized void recoverCompletedRequest()" in code(manual)
+        and "源与目标都不存在" in manual
+        and before(code(manual), "if (!src.exists()) {", "CNAtomicReplace.commit(src, dst);"),
+    # 总完成标记的正文全仓只有一处，别再拼第二遍：写歪的标记会被 Java 与 native
+    # 双双判成损坏，而这段迁移正是要修好它。
+    "旧状态迁移用同一份标记正文":
+        "CNDownloaderFix.finalFlagBody()" in code(manual)
+        and '"schema=2\\narchives=15\\n"' not in code(manual),
     # ---- F-074 剩余：Java 与 native 必须是同一个状态机 ----
     # native 的 resourcesReady() 直接控制八处引擎控制流（跳不跳过原版下载场景、
     # 叫不叫 Java 安装器、下载回调静默组与放行组的极性）。它原先只问「文件在不在」，
