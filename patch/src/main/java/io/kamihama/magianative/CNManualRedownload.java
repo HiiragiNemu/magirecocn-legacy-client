@@ -33,8 +33,41 @@ public final class CNManualRedownload {
 
     private static final AtomicIntegerArray RUNNING = new AtomicIntegerArray(15);
     private static final AtomicInteger RUNNING_COUNT = new AtomicInteger(0);
+    /**
+     * 「有基础包被换过，进游戏前得重启一次」——<b>整个会话</b>的状态，由
+     * {@link #handleLeaveRequest} 消费，不随批次清零（F-083 明确这一点：它不是
+     * 批次状态，所以不进批次代际，也不该被任何一次批次收尾顺手清掉）。
+     */
     private static final AtomicBoolean RESTART_REQUIRED = new AtomicBoolean(false);
+    /** 本批次是否出过失败。批次开始时清零，收尾时只读，见 {@link #BATCH_LOCK}。 */
     private static final AtomicBoolean ANY_FAILURE = new AtomicBoolean(false);
+
+    /**
+     * 批次记账的唯一锁（F-083）。
+     *
+     * <h3>原子计数保不住的那件事</h3>
+     *
+     * 每个 {@code ManualTask} 的 finally 原先是
+     * {@code left = RUNNING_COUNT.decrementAndGet(); if (left == 0) finishSummary();}。
+     * 递减与「写最终摘要」之间有一段真空，新请求正好能挤进去：
+     *
+     * <pre>
+     *   旧批次最后一个任务：RUNNING_COUNT 递减到 0
+     *   新请求：看到 0 → resetOverallProgress、计数加回 1、开跑
+     *   旧任务：这才调用 finishSummary()
+     * </pre>
+     *
+     * 于是旧批次的收尾会把新批次刚设的失败位清掉、把「正在下载」覆盖成「重新下载
+     * 完成」、按不属于当前批次的结论改写停留状态。原子计数只保护那一个数值，
+     * 保不住「计数归零」与「据此写摘要」这两步之间的一致性。
+     *
+     * <p>所以把<b>批次进入</b>与<b>批次收尾</b>整段放进同一把锁，并给每个任务发一个
+     * 批次代际；代际对不上的任务只清自己的槽位，不碰全局摘要。
+     */
+    private static final Object BATCH_LOCK = new Object();
+
+    /** 批次代际。只在 {@link #BATCH_LOCK} 内读写，所以不需要是原子量。 */
+    private static int batchGeneration;
     /**
      * 并行文件池。用 ThreadPoolExecutor 而不是 newFixedThreadPool 的返回值，
      * 是为了能在单线程可靠模式下把上限调到 1（见 {@link #applyMode()}）。
@@ -94,32 +127,39 @@ public final class CNManualRedownload {
             CNCNDownloadUI.updateSimple("重新开始下载",
                     CNCNDownloadUI.FILE_NAMES[index]
                             + "：正在停止当前传输并清除该文件断点…", 0);
-            CNCNDownloadUI.toast(act, signalled
-                    ? "已停止当前传输，将从头重新下载该文件"
-                    : "已登记从头重下；当前阶段结束后立即执行");
-            return;
+            if (signalled) {
+                CNCNDownloadUI.toast(act, "已停止当前传输，将从头重新下载该文件");
+                return;
+            }
+            // F-084：没打断成功 = 此刻没有登记在案的 owner（锁正在两个 worker 之间
+            // 交接，或者 UI 的 ST_RUNNING 已经过期）。原先这里也直接 return，并且
+            // 弹「已登记从头重下」——但什么都没登记：generation 那一下自增，会被
+            // **下一个** owner 当成自己的初始值读走，永远观察不到变化。请求就此蒸发，
+            // 玩家却收到了肯定的答复。改为落到下面的排队路径：RUNNING 的 CAS 天然
+            // 去重，排出来的独立任务会自己去拿锁并执行 FORCE_REDOWNLOAD。
+            CNLog.w(TAG, "manual-restart 未命中活动 owner，改排独立重下任务 index=" + index);
         }
         if (!RUNNING.compareAndSet(index, 0, 1)) {
             CNCNDownloadUI.toast(act, "该文件已在重新下载");
             return;
         }
 
-        if (RUNNING_COUNT.get() == 0) CNCNDownloadUI.resetOverallProgress();
-        RUNNING_COUNT.incrementAndGet();
+        int gen = enterBatch();
         CNDownloadUiAssist.setStayOnPage(true);
         CNCNDownloadUI.markFilePending(index);
         refreshSummary("已加入重下载队列");
         CNDownloadUiAssist.ensureInstalled();
         try {
-            POOL.execute(new ManualTask(act, index));
+            POOL.execute(new ManualTask(act, index, gen));
         } catch (Throwable t) {
             RUNNING.set(index, 0);
-            RUNNING_COUNT.decrementAndGet();
             markFailed(index);
             ANY_FAILURE.set(true);
             CNLog.e(TAG, "无法提交手动重下载任务 index=" + index, t);
             CNCNDownloadUI.toast(act, "无法启动重新下载：" + safeMessage(t));
-            refreshSummary("任务启动失败");
+            // 提交失败也要按正确的代际结算，否则这一份计数永远挂在批次里，
+            // 后面每个任务收尾都以为「还有人在跑」，最终摘要永远不出现。
+            leaveBatch(gen, "任务启动失败");
         }
     }
 
@@ -168,7 +208,11 @@ public final class CNManualRedownload {
     private static final class ManualTask implements Runnable {
         private final Activity act;
         private final int index;
-        ManualTask(Activity act, int index) { this.act = act; this.index = index; }
+        /** 入队时的批次代际（F-083）；对不上就不写全局摘要。 */
+        private final int gen;
+        ManualTask(Activity act, int index, int gen) {
+            this.act = act; this.index = index; this.gen = gen;
+        }
 
         @Override public void run() {
             String name = CNCNDownloadUI.FILE_NAMES[index];
@@ -206,14 +250,8 @@ public final class CNManualRedownload {
                 CNCNDownloadUI.toast(act, name + " 重下载失败：" + safeMessage(t));
             } finally {
                 RUNNING.set(index, 0);
-                int left = RUNNING_COUNT.decrementAndGet();
-                if (left < 0) {
-                    RUNNING_COUNT.set(0);
-                    left = 0;
-                }
                 if (ok) CNDownloaderFix.signalExternalCompletion();
-                if (left == 0) finishSummary();
-                else refreshSummary("已有任务完成，剩余 " + left + " 个");
+                leaveBatch(gen, null);
                 CNDownloadUiAssist.ensureInstalled();
             }
         }
@@ -241,8 +279,52 @@ public final class CNManualRedownload {
         CNCNDownloadUI.throttledUpdate();
     }
 
+    /**
+     * 进入批次：计数从 0 起跳时开新一代并清掉上一代的失败位与总进度。
+     *
+     * @return 本次入队所属的批次代际，交给 {@code ManualTask} 带着。
+     */
+    private static int enterBatch() {
+        synchronized (BATCH_LOCK) {
+            if (RUNNING_COUNT.get() == 0) {
+                batchGeneration++;
+                // 失败位在**批次开始**时清，而不是在收尾时 getAndSet(false)——
+                // 后者正是让旧批次的收尾能吃掉新批次失败位的那一口。
+                ANY_FAILURE.set(false);
+                CNCNDownloadUI.resetOverallProgress();
+            }
+            RUNNING_COUNT.incrementAndGet();
+            return batchGeneration;
+        }
+    }
+
+    /**
+     * 退出批次：递减计数，并在同一把锁里决定要不要写摘要。
+     *
+     * @param gen    任务入队时拿到的代际
+     * @param detail 非 null 时用作中途摘要文案（任务启动失败那条路径用）
+     */
+    private static void leaveBatch(int gen, String detail) {
+        synchronized (BATCH_LOCK) {
+            int left = RUNNING_COUNT.decrementAndGet();
+            if (left < 0) {
+                RUNNING_COUNT.set(0);
+                left = 0;
+            }
+            if (gen != batchGeneration) {
+                // 上一代的尾巴。只把计数还回去，全局摘要归当前这一代管。
+                CNLog.w(TAG, "旧批次任务收尾 gen=" + gen
+                        + "（当前 " + batchGeneration + "），不改写全局摘要");
+                return;
+            }
+            if (left == 0) finishSummary();
+            else refreshSummary(detail != null ? detail
+                    : "已有任务完成，剩余 " + left + " 个");
+        }
+    }
+
     private static void finishSummary() {
-        boolean failed = ANY_FAILURE.getAndSet(false);
+        boolean failed = ANY_FAILURE.get();
         if (failed) {
             CNCNDownloadUI.updateSimple("部分重新下载失败",
                     "失败项可直接点红色“重试”或紫色“重下”；其他成功项已保留", 0);

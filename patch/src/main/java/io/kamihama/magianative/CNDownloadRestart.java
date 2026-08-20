@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  * again from byte zero. Other files keep running.</p>
  */
 final class CNDownloadRestart {
+    private static final String TAG = "CNDownloadRestart";
     private static final int COUNT = 15;
     private static final AtomicIntegerArray GENERATION = new AtomicIntegerArray(COUNT);
     private static final AtomicReferenceArray<Thread> ACTIVE =
@@ -45,12 +46,30 @@ final class CNDownloadRestart {
         if (valid(index)) ACTIVE.set(index, Thread.currentThread());
     }
 
+    /**
+     * 注销当前线程的 owner 身份。
+     *
+     * <p>F-084：必须在<b>同一个 archive-lock 临界区内</b>调用（与 {@link #register}
+     * 成对）。放在锁外的话会出现「锁已经放掉、ACTIVE 还指着旧 worker」的窗口：
+     * 请求线程此时 generation++ 并 interrupt 那个已经收工的线程，返回 true 告诉
+     * 玩家「已停止当前传输」，而真正接手的新 owner 一开始读到的就是<b>加过</b>的
+     * generation，永远观察不到变化——那次重下请求就此蒸发。
+     *
+     * <p>只有 CAS 成功（确认自己确实是登记在案的 owner）才清中断位。中断是重启
+     * 请求<b>特意</b>打上的，清掉它是 owner 的职责；非 owner 顺手清掉，等于把
+     * 上层的取消语义抹了。
+     */
     static void unregister(int index) {
         if (!valid(index)) return;
         Thread current = Thread.currentThread();
-        ACTIVE.compareAndSet(index, current, null);
-        // A restart deliberately interrupts the worker. Do not leak that flag into the pool.
-        Thread.interrupted();
+        if (ACTIVE.compareAndSet(index, current, null)) {
+            // A restart deliberately interrupts the worker. Do not leak that flag into the pool.
+            Thread.interrupted();
+            return;
+        }
+        // 走到这里说明 ACTIVE 已经不是自己了。不清中断位，但要说出来——正常路径
+        // 不该发生，发生了就是 register/unregister 又跑到临界区外面去了。
+        CNLog.w(TAG, "unregister 时已不是登记 owner，保留中断位 index=" + index);
     }
 
     static boolean request(int index) {

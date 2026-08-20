@@ -22,6 +22,7 @@ aria2 = Path("patch/src/main/java/io/kamihama/magianative/CNAria2.java").read_te
 bgm = Path("patch/src/main/java/io/kamihama/magianative/CNBgm.java").read_text(encoding="utf-8")
 atomic = Path("patch/src/main/java/io/kamihama/magianative/CNAtomicReplace.java").read_text(encoding="utf-8")
 disk = Path("patch/src/main/java/io/kamihama/magianative/CNDiskSpace.java").read_text(encoding="utf-8")
+restart = Path("patch/src/main/java/io/kamihama/magianative/CNDownloadRestart.java").read_text(encoding="utf-8")
 bgm_gen = Path("tools/convert-bgm.py").read_text(encoding="utf-8")
 # AndroidManifest.xml 本身不在仓库里了（2026-08-14 起原包派生文件由 baseline/
 # 的 patchset 重建）。这里改读**补丁**，判据也随之变准：我们能负责的是「我们的
@@ -114,6 +115,32 @@ def before(text, first, second):
     """
     i, j = text.find(first), text.find(second)
     return i >= 0 and j >= 0 and i < j
+
+
+def inside_archive_lock(src, needle):
+    """`needle` 的每一次出现都必须落在 `synchronized (ARCHIVE_LOCKS[index])` 里面。
+
+    按去注释后的代码行数花括号。写成「全部出现都在里面」而不是「至少有一次」：
+    F-084 的病根恰恰是三处里有三处把 unregister 放到了块外，只要漏掉一处，
+    那一处就会重新打开「锁已放掉、ACTIVE 还指着旧 worker」的窗口。
+    """
+    lines = code_lines(src)
+    inside, depth, total, ok = False, 0, 0, 0
+    for line in lines:
+        if not inside and "synchronized (ARCHIVE_LOCKS[index]) {" in line:
+            inside = True
+            depth = line.count("{") - line.count("}")
+            continue
+        if inside:
+            if needle in line:
+                total += 1
+                ok += 1
+            depth += line.count("{") - line.count("}")
+            if depth <= 0:
+                inside = False
+        elif needle in line:
+            total += 1
+    return total > 0 and ok == total
 
 
 def followed_by(src, first, second):
@@ -771,6 +798,59 @@ checks = {
         and "recordPathProblem(rel)"
             in body(hot_tx, "private static void writeManifest(File root, String tag, List<String> rels)")
         and "writeSynced(f," not in code(hot_tx),
+    # ---- F-084 owner 交接 ----
+    # register→工作→unregister 必须是同一段 archive-lock 临界区。unregister 落在锁外
+    # 会留出「锁已放掉、ACTIVE 还指着旧 worker」的窗口：请求线程打断一个已经收工的
+    # 线程并返回 true（告诉玩家「已停止当前传输」），而真正接手的新 owner 一开始读到
+    # 的就是加过的 generation，永远观察不到变化——那次重下请求就此蒸发。
+    "owner 的登记与注销在同一段临界区里":
+        code(downloader).count("CNDownloadRestart.register(index);")
+            == code(downloader).count("CNDownloadRestart.unregister(index);") == 3
+        and inside_archive_lock(downloader, "CNDownloadRestart.register(index);")
+        and inside_archive_lock(downloader, "CNDownloadRestart.unregister(index);"),
+    # 中断是重启请求特意打的，清掉它是 owner 的职责；非 owner 顺手清掉等于把上层的
+    # 取消语义抹了。
+    "非 owner 注销时不清中断位":
+        "if (ACTIVE.compareAndSet(index, current, null)) {"
+            in code(restart)
+        and "保留中断位" in restart,
+    # 打断没命中活动 owner 时不能只弹一句「已登记」就完事：generation 那一下自增会被
+    # 下一个 owner 当成初始值读走，请求蒸发，而玩家收到的是肯定的答复。
+    "打断没命中就排独立重下任务":
+        "改排独立重下任务" in manual
+        and before(code(manual), "if (signalled) {", "RUNNING.compareAndSet(index, 0, 1)"),
+    # ---- F-082 离线安装要拿到所有权 ----
+    # keepOffline 不只是「清理时别删离线包」，它同时意味着当前 worker 要让出
+    # archive lock——请求方就是那个正排在锁上的 installOfflineNow。
+    "keepOffline 让出 archive lock 而不是继续重试":
+        "A2_YIELD" in code(downloader)
+        and "yieldToOfflineInstall(" in code(downloader)
+        # 四个消费点：主引擎 ResetRequired / IOException 两处让出锁，
+        # aria2 下载期 / 解压期两处返回 A2_YIELD。少一个就漏一条链路，
+        # 所以钉死数目而不是「至少两个」。
+        and code(downloader).count("if (keepOffline) return yieldToOfflineInstall(") == 2
+        and code(downloader).count("if (keepOffline) return A2_YIELD;") == 2
+        and code(downloader).count("if (a2 == A2_YIELD) return yieldToOfflineInstall(") == 2,
+    # A2_YIELD 与 A2_MAIN 语义相反：前者让出锁本身，后者只是在同一把锁里让位主引擎。
+    "A2_YIELD 没被并进 A2_MAIN":
+        "A2_YIELD     = -4" in downloader
+        and "|| a2 == A2_YIELD" not in code(downloader),
+    # ---- F-083 批次摘要的代际 ----
+    # 原子计数只保护那一个数值，保不住「计数归零」与「据此写摘要」之间的一致性：
+    # 新请求能挤进这段真空，随后被旧批次的收尾覆盖掉失败位与文案。
+    "批次进入与收尾在同一把锁里":
+        "BATCH_LOCK" in code(manual)
+        and "batchGeneration" in code(manual)
+        and "synchronized (BATCH_LOCK)" in body(manual, "private static int enterBatch()")
+        and "synchronized (BATCH_LOCK)"
+            in body(manual, "private static void leaveBatch(int gen, String detail)")
+        and "gen != batchGeneration"
+            in body(manual, "private static void leaveBatch(int gen, String detail)"),
+    # 失败位在批次**开始**时清；收尾时 getAndSet(false) 正是让旧批次吃掉新批次失败位
+    # 的那一口。
+    "失败位在批次开始时清而不是收尾时":
+        "ANY_FAILURE.getAndSet(false)" not in code(manual)
+        and "ANY_FAILURE.set(false);" in body(manual, "private static int enterBatch()"),
     # ---- F-080 版本 json 硬上限 ----
     # 旧写法先读后判，缓冲区能越过上限一整块；到限后既不确认 EOF 也不报错，而是把
     # 截断前缀交给 JSONObject——前缀恰好构成完整对象时会被当成完整响应接受。

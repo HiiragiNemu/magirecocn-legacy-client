@@ -89,6 +89,16 @@ public final class CNDownloaderFix {
     /** F-025：取消后旧 aria2 任务未确认停止，目标路径被占用——该包本轮失败、不重下。 */
     private static final int A2_STUCK     = -3;
     /**
+     * {@link #tryAria2Download} 的返回：本轮取消带着「保留离线候选」的原因码，
+     * 说明玩家刚导入离线包、{@code installOfflineNow} 正排在 archive lock 上等着
+     * ——当前 worker 必须<b>退出并放锁</b>，而不是自己再下一遍（F-082）。
+     *
+     * <p>与 {@link #A2_MAIN} 的区别：A2_MAIN 是「aria2 让位给主引擎，还在同一把锁
+     * 里」；A2_YIELD 是「让出这把锁本身」。合成一个的话，主引擎会继续持锁网络重试，
+     * 排队的离线安装线程只能在锁外干等——玩家已经把包导进来了，界面却还在联网重试。
+     */
+    private static final int A2_YIELD     = -4;
+    /**
      * aria2 单文件最多尝试次数。与主引擎的 {@link #MAX_ATTEMPTS} 对齐，好让
      * {@code CNMirrors.pick(attempt)} 有机会把线路表轮一遍——线路只有轮得完，
      * 「换线」才叫换线。
@@ -1071,11 +1081,17 @@ public final class CNDownloaderFix {
                 synchronized (ARCHIVE_LOCKS[index]) {
                     // F-054：锁内才登记——ACTIVE[index] 恒为「持锁做实际工作」的线程；
                     // 等在锁外的第二个线程不会覆盖它，request() 打断的才不是白等的那个。
+                    // F-084：注销也必须在锁内。放锁外会留出「锁已放掉、ACTIVE 还指着
+                    // 旧 worker」的窗口，那次重下请求会打在一个已经收工的线程上并被
+                    // 报告成功，而真正接手的人根本看不到 generation 变化。
                     CNDownloadRestart.register(index);
-                    return Boolean.valueOf(installArchive(index));
+                    try {
+                        return Boolean.valueOf(installArchive(index));
+                    } finally {
+                        CNDownloadRestart.unregister(index);
+                    }
                 }
             } finally {
-                CNDownloadRestart.unregister(index);
                 // 成败都要减：见 prereqGate 的说明，只在成功时减会把热更包挂死。
                 if (isPrereqSlot(index)) prereqGate.countDown();
             }
@@ -1172,6 +1188,7 @@ public final class CNDownloaderFix {
                 && CNAria2.isAvailable()) {
             int a2 = tryAria2Download(name, archive, index, marker, canonicalUrl);
             if (a2 == A2_INSTALLED) return true;
+            if (a2 == A2_YIELD) return yieldToOfflineInstall(index, name, "aria2");
             if (a2 == A2_OFFLINE) {
                 // 玩家选改用离线包：清掉 aria2 半截产物，跳过主引擎重试，交给
                 // 玩家手动导入（导入写 marker 后，全局重试那一轮自然转正）。
@@ -1297,9 +1314,15 @@ public final class CNDownloaderFix {
                     // installOfflineNow=true），不能写死——写死 false 会把玩家
                     // 刚导入的离线包在持锁期间删掉；写死 true 会让紫色重下
                     // 被离线候选劫持（重跑 installArchive 直接装离线包）。
-                    cleanupArchiveDownloadState(index,
-                            CNDownloadRestart.keepOfflineRequested(index));
+                    boolean keepOffline = CNDownloadRestart.keepOfflineRequested(index);
+                    cleanupArchiveDownloadState(index, keepOffline);
                     CNCNDownloadUI.resetFileProgress(index);
+                    // F-082：keepOffline 不只是「清理时别删离线包」，它同时意味着
+                    // 所有权要交出去——请求方就是那个正排在 archive lock 上的
+                    // installOfflineNow。原先这里一律 attempt=0; continue，于是当前
+                    // worker 继续持锁联网重试，离线安装线程在锁外干等，玩家看到的是
+                    // 「已停止当前传输，改用离线包」之后界面又联网重试了几分钟。
+                    if (keepOffline) return yieldToOfflineInstall(index, name, "main");
                     attempt = 0;
                     continue;
                 }
@@ -1346,9 +1369,15 @@ public final class CNDownloaderFix {
                             + " attempt=" + attempt + "：清除该文件断点并从头重下");
                     CNDownloadRestart.clearInterrupt();
                     // object-storage-01：同 ResetRequired 分支——keepOffline 由请求源决定。
-                    cleanupArchiveDownloadState(index,
-                            CNDownloadRestart.keepOfflineRequested(index));
+                    boolean keepOffline = CNDownloadRestart.keepOfflineRequested(index);
+                    cleanupArchiveDownloadState(index, keepOffline);
                     CNCNDownloadUI.resetFileProgress(index);
+                    // F-082：keepOffline 不只是「清理时别删离线包」，它同时意味着
+                    // 所有权要交出去——请求方就是那个正排在 archive lock 上的
+                    // installOfflineNow。原先这里一律 attempt=0; continue，于是当前
+                    // worker 继续持锁联网重试，离线安装线程在锁外干等，玩家看到的是
+                    // 「已停止当前传输，改用离线包」之后界面又联网重试了几分钟。
+                    if (keepOffline) return yieldToOfflineInstall(index, name, "main");
                     attempt = 0;
                     continue;
                 }
@@ -1401,6 +1430,7 @@ public final class CNDownloaderFix {
                     int a2 = tryAria2Download(name, archive, index,
                                               marker, canonicalUrl);
                     if (a2 == A2_INSTALLED) return true;
+                    if (a2 == A2_YIELD) return yieldToOfflineInstall(index, name, "aria2-fallback");
                     if (a2 == A2_OFFLINE) {
                         markFailed(index);
                         return false;
@@ -1623,9 +1653,11 @@ public final class CNDownloaderFix {
                         // FORCE_REDOWNLOAD 未设，离线候选还在就会被直接装而
                         // 非真重下——「保留对重下无害」的论断不成立，离线分支
                         // 在 installArchive 开头，重跑必经过）。
-                        cleanupArchiveDownloadState(index,
-                                CNDownloadRestart.keepOfflineRequested(index));
+                        boolean keepOffline = CNDownloadRestart.keepOfflineRequested(index);
+                        cleanupArchiveDownloadState(index, keepOffline);
                         CNCNDownloadUI.resetFileProgress(index);
+                        // F-082：同主引擎——keepOffline 意味着让出 archive lock 本身。
+                        if (keepOffline) return A2_YIELD;
                         attempt = 0;
                         continue;
                     }
@@ -1736,9 +1768,11 @@ public final class CNDownloaderFix {
                                 + "：清除该文件断点并从头重下");
                         CNDownloadRestart.clearInterrupt();
                         // object-storage-01/02：同下载期分支——keepOffline 读请求源原因码。
-                        cleanupArchiveDownloadState(index,
-                                CNDownloadRestart.keepOfflineRequested(index));
+                        boolean keepOffline = CNDownloadRestart.keepOfflineRequested(index);
+                        cleanupArchiveDownloadState(index, keepOffline);
                         CNCNDownloadUI.resetFileProgress(index);
+                        // F-082：同主引擎——keepOffline 意味着让出 archive lock 本身。
+                        if (keepOffline) return A2_YIELD;
                         attempt = 0;
                         continue;
                     }
@@ -2874,24 +2908,25 @@ public final class CNDownloaderFix {
         if (isHotSlot(index)) {
             return CNHotUpdateCheck.redownloadPackage(index);
         }
-        try {
-            synchronized (ARCHIVE_LOCKS[index]) {
+        synchronized (ARCHIVE_LOCKS[index]) {
             // F-054：锁内才登记（理由同 ArchiveTask）；等锁线程不覆盖 ACTIVE。
+            // F-084：注销同样在锁内，register→工作→unregister 必须是同一段临界区。
             CNDownloadRestart.register(index);
-            if (!FORCE_REDOWNLOAD.compareAndSet(index, 0, 1)) {
-                CNLog.w(TAG, "同一文件已有强制重下载任务 index=" + index);
-                return false;
-            }
             try {
-                cleanupArchiveDownloadState(index);
-                CNCNDownloadUI.markFilePending(index);
-                return installArchive(index);
+                if (!FORCE_REDOWNLOAD.compareAndSet(index, 0, 1)) {
+                    CNLog.w(TAG, "同一文件已有强制重下载任务 index=" + index);
+                    return false;
+                }
+                try {
+                    cleanupArchiveDownloadState(index);
+                    CNCNDownloadUI.markFilePending(index);
+                    return installArchive(index);
+                } finally {
+                    FORCE_REDOWNLOAD.set(index, 0);
+                }
             } finally {
-                FORCE_REDOWNLOAD.set(index, 0);
+                CNDownloadRestart.unregister(index);
             }
-            }
-        } finally {
-            CNDownloadRestart.unregister(index);
         }
     }
 
@@ -3116,30 +3151,54 @@ public final class CNDownloaderFix {
         try {
             synchronized (ARCHIVE_LOCKS[index]) {
                 // F-054：锁内才登记（理由同 ArchiveTask）；等锁线程不覆盖 ACTIVE。
+                // F-084：注销同样在锁内，理由见 CNDownloadRestart.unregister。
                 CNDownloadRestart.register(index);
-                if (!CNOfflineImport.hasOffline(name)) {
-                    CNLog.w(TAG, "等锁期间离线包已消失: " + name);
-                    return false;
+                try {
+                    if (!CNOfflineImport.hasOffline(name)) {
+                        // F-082：网络 worker 已经为这次导入让出了锁，这里再放弃就
+                        // 没人管这一槽了。标成失败让红条与重试按钮出来，而不是让它
+                        // 永远停在「等待中」。
+                        CNLog.w(TAG, "等锁期间离线包已消失: " + name);
+                        markFailed(index);
+                        return false;
+                    }
+                    CNCNDownloadUI.markFilePending(index);
+                    cleanupArchiveDownloadState(index, true);
+                    boolean ok = installArchive(index);
+                    if (ok) {
+                        try { commitFinalFlagIfComplete(); }
+                        catch (Throwable t) { CNLog.w(TAG, "补齐总完成标记失败: " + t); }
+                        signalExternalCompletion();
+                        CNLog.i(TAG, "离线包即时安装完成: " + name);
+                    } else {
+                        CNLog.w(TAG, "离线包即时安装未成功: " + name);
+                    }
+                    return ok;
+                } finally {
+                    CNDownloadRestart.unregister(index);
                 }
-                CNCNDownloadUI.markFilePending(index);
-                cleanupArchiveDownloadState(index, true);
-                boolean ok = installArchive(index);
-                if (ok) {
-                    try { commitFinalFlagIfComplete(); }
-                    catch (Throwable t) { CNLog.w(TAG, "补齐总完成标记失败: " + t); }
-                    signalExternalCompletion();
-                    CNLog.i(TAG, "离线包即时安装完成: " + name);
-                } else {
-                    CNLog.w(TAG, "离线包即时安装未成功: " + name);
-                }
-                return ok;
             }
         } catch (Throwable t) {
             CNLog.e(TAG, "离线包即时安装异常: " + name, t);
             return false;
-        } finally {
-            CNDownloadRestart.unregister(index);
         }
+    }
+
+    /**
+     * 把 archive lock 交给已经排队的离线即时安装（F-082）。
+     *
+     * <p>清理与进度复位由调用点按原因码做完了，这里只负责<b>退出</b>：返回 false
+     * 会让 {@code installArchive} 立刻结束，synchronized 块随之释放，
+     * {@code installOfflineNow} 拿到锁后重新确认离线包仍在并安装。
+     *
+     * <p>刻意<b>不</b> markFailed：这一槽不是失败，是换了个人来装。标成 pending，
+     * 玩家看到的是「等待中」而不是一条红杠。
+     */
+    private static boolean yieldToOfflineInstall(int index, String name, String where) {
+        CNCNDownloadUI.markFilePending(index);
+        CNLog.i(TAG, "yield-to-offline file=" + name + " at=" + where
+                + "：离线包即时安装已排队，本 worker 释放 archive lock");
+        return false;
     }
 
     /**
