@@ -689,6 +689,20 @@ checks = {
     "A2_STUCK 没被并进 A2_MAIN":
         "A2_STUCK" in code(downloader) and "A2_MAIN || " not in code(downloader)
         and "|| a2 == A2_STUCK" not in code(downloader),
+    # ---- F-072 空线路表的受控出口 ----
+    # pick() 在没有健康线路时 fail-closed 抛异常（F-046，别改回去造空 base 的伪线路）。
+    # 问题在调用方：异常落在受控 try 之外就会冲出下载状态机，同一种故障在三个入口
+    # 分别表现成「worker 崩了」「Future false」「顶层异常」，槽位甚至没 markFailed。
+    "主引擎与热更的取线路都有受控出口":
+        "pickMirrorOrNull(attempt, index, name)" in code(downloader)
+        and "markFailed(index);" in body(downloader,
+                "private static CNMirrors.Mirror pickMirrorOrNull(int attempt, int index, String name)")
+        and "catch (IllegalStateException noMirror)" in code(hot),
+    # aria2 那处**不能** markFailed：它的合同是让位主引擎，而主引擎马上会撞上同一张
+    # 空表并走自己那道出口。两边都记一次，同一个空表会报两遍失败。
+    "aria2 取不到线路时让位而不是记失败":
+        "return A2_MAIN;" in code(downloader)
+        and code(downloader).count("catch (IllegalStateException noMirror)") >= 1,
     # ---- F-077 / F-078 磁盘预算 ----
     # 预算的每个操作数都来自外部（远端 Content-Length、ZIP 中央目录声明）。裸加法
     # 回绕成负数后 `free >= want` 恒真，本该 fail-closed 的状态变成无条件放行。

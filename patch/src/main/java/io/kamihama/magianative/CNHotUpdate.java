@@ -112,9 +112,20 @@ public final class CNHotUpdate {
                 return false;
             }
             final int restartToken = CNDownloadRestart.generation(index);
-            CNMirrors.Mirror mirror = CNMirrors.pick(attempt);
+            // F-072：pick() 与随后的 urlFor()/身份拼接原先都在 try 之外，空线路表
+            // 的 fail-closed 异常会越过包级失败出口——markFailed、镜像诊断、
+            // 「保留旧内容与旧版本号」这些既定合同一条都不落地。
+            CNMirrors.Mirror mirror;
+            String tryUrl;
+            try {
+                mirror = CNMirrors.pick(attempt);
+                tryUrl = withIdentity(mirror.urlFor(remoteName), expected);
+            } catch (IllegalStateException noMirror) {
+                CNLog.e(TAG, "no-mirror file=" + remoteName + " attempt=" + attempt, noMirror);
+                markFailed(index);
+                return false;
+            }
             boolean direct = true;
-            String tryUrl = withIdentity(mirror.urlFor(remoteName), expected);
             CNCNDownloadUI.setDownloadSpeed(index, 0.0f);
             try {
                 fetch(tryUrl, dest, index, direct, mirror, remoteName, expected,

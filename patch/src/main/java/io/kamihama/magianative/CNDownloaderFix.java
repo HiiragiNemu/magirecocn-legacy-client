@@ -1216,7 +1216,13 @@ public final class CNDownloaderFix {
             }
 
             final int restartToken = CNDownloadRestart.generation(index);
-            CNMirrors.Mirror mirror = CNMirrors.pick(attempt);
+            // F-072：pick() 在没有健康线路时 fail-closed 抛 IllegalStateException
+            // （F-046 有意为之，别改回去造空 base 的伪线路）。但它原先落在下面那个
+            // try 之外，异常会越过本轮全部 catch/finally 直接冲出下载状态机：
+            // ArchiveTask 以异常收场，这个槽位可能连 markFailed 都没走到——UI 上
+            // 是「失败 0 项」却卡在等待重试页，日志里也和普通下载失败长得不一样。
+            CNMirrors.Mirror mirror = pickMirrorOrNull(attempt, index, name);
+            if (mirror == null) return false;
             // 资源下载一律直连（Proxy.NO_PROXY）：系统代理会劫持 CDN 大文件传输，
             // 损坏分片拼出的 zip 导致「完工校验失败」。曾按 attempt 奇偶交替走代理，
             // 玩家开着 VPN/抓包工具时奇数尝试必被劫持（cn_base_03 连败四次的根因），
@@ -1497,7 +1503,16 @@ public final class CNDownloaderFix {
             // 成败都回报给 CNMirrors 的健康表（失败记冷却、成功清计数）。原先
             // 固定 pick(1) 且从不回报——第一条线路对这个文件不行时三次全废在同
             // 一条上，而且它有多不行，健康表一无所知，主引擎回退后照样先挑它。
-            CNMirrors.Mirror mirror = CNMirrors.pick(attempt);
+            // F-072：同上，但出口不同。这里**不** markFailed——aria2 的合同是
+            // 「让位主引擎」，而主引擎马上会撞上同一张空表并走它自己那道受控出口。
+            // 在这里先记一次失败，会让同一个空表在两条路径上各报一次。
+            CNMirrors.Mirror mirror;
+            try {
+                mirror = CNMirrors.pick(attempt);
+            } catch (IllegalStateException noMirror) {
+                CNLog.e(TAG, "no-mirror(aria2) file=" + name + " attempt=" + attempt, noMirror);
+                return A2_MAIN;
+            }
             // 本轮重发代际（F-A-06）：下载/解压期间玩家点「重下」或「改用
             // 离线包」会让它过期（CNDownloadRestart.request → generation++
             // 并 interrupt 本线程）。声明在 try 外是因为 catch 里也要凭它
@@ -3113,6 +3128,29 @@ public final class CNDownloaderFix {
             return false;
         } finally {
             CNDownloadRestart.unregister(index);
+        }
+    }
+
+    /**
+     * 取本轮线路；没有健康线路时把 fail-closed 异常转成本路径的普通失败（F-072）。
+     *
+     * <p>{@code CNMirrors.pick()} 抛 {@code IllegalStateException} 是对的——「一条
+     * 线路都没有」必须能被构建与测试一眼认出来，绝不能退回去伪造一条 base 为空的
+     * 默认线路（F-046）。要修的是调用方：这个异常得落进各自既有的失败出口，而不是
+     * 冲出下载状态机，让同一种故障在三个入口分别表现成「worker 崩了」「Future 返回
+     * false」和「顶层异常」。
+     *
+     * @return 线路；空表时返回 {@code null}，此时该槽位已经 markFailed。
+     */
+    private static CNMirrors.Mirror pickMirrorOrNull(int attempt, int index, String name) {
+        try {
+            return CNMirrors.pick(attempt);
+        } catch (IllegalStateException noMirror) {
+            // 保留原异常：空表的成因（端点没注入、远端把线路全禁了、快照为空）
+            // 全在它的栈里，那正是这条日志唯一的用处。
+            CNLog.e(TAG, "no-mirror file=" + name + " attempt=" + attempt, noMirror);
+            markFailed(index);
+            return null;
         }
     }
 
