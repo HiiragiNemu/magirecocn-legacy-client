@@ -20,6 +20,7 @@ hot_tx = Path("patch/src/main/java/io/kamihama/magianative/CNHotUpdateTx.java").
 hud = Path("patch/src/main/java/io/kamihama/magianative/CNDebugHud.java").read_text(encoding="utf-8")
 aria2 = Path("patch/src/main/java/io/kamihama/magianative/CNAria2.java").read_text(encoding="utf-8")
 bgm = Path("patch/src/main/java/io/kamihama/magianative/CNBgm.java").read_text(encoding="utf-8")
+atomic = Path("patch/src/main/java/io/kamihama/magianative/CNAtomicReplace.java").read_text(encoding="utf-8")
 bgm_gen = Path("tools/convert-bgm.py").read_text(encoding="utf-8")
 # AndroidManifest.xml 本身不在仓库里了（2026-08-14 起原包派生文件由 baseline/
 # 的 patchset 重建）。这里改读**补丁**，判据也随之变准：我们能负责的是「我们的
@@ -625,6 +626,26 @@ checks = {
         any("SYSTEM_ALERT_WINDOW" in l for l in manifest_added),
     "不主动申请全盘存储权限":
         not any("MANAGE_EXTERNAL_STORAGE" in l for l in manifest_added),
+    # ---- F-073 原子换入 ----
+    # 下载/安装四条写入链路曾各写各的 rename，六处都是同一个错误形状：候选名固定成
+    # <目标>.tmp（并发写同一目标会互相截断），换入前先 delete 目标（两步之间被杀，
+    # 目标与候选一起没了）。判据钉「这四个文件里不许再出现 renameTo」——只要有人
+    # 重新手写一份，无论写得对不对都会红，而对的写法只有一条：走 CNAtomicReplace。
+    "换入一律走 CNAtomicReplace，不自己 renameTo":
+        all("renameTo(" not in code(s) for s in (downloader, chunk, hot, manual))
+        and all("CNAtomicReplace.commit(" in code(s) for s in (chunk, hot, manual, extract_tx))
+        and "CNAtomicReplace.writeText(" in code(downloader),
+    # 助手自己必须干净：commit / rename 里出现 delete 就说明预删又长回来了。
+    "CNAtomicReplace 换入路径不预删目标":
+        "delete()" not in body(atomic, "public static void commit(File candidate, File target)")
+        and "delete()" not in body(atomic, "private static void rename(File from, File to)"),
+    # 固定候选名同样不许复辟。留一个例外：CNAtomicReplace.sweep 要认旧格式的残留，
+    # 所以助手文件本身不在检查范围里。
+    "候选文件名不再固定成 <目标>.tmp":
+        all('+ ".tmp"' not in code(s) for s in (downloader, chunk, hot, manual, extract_tx)),
+    # 清残留必须用 sweep：只删旧的那一个名字，新格式候选会在下载目录里越攒越多。
+    "清候选残留走 sweep 而不是删单个名字":
+        all("CNAtomicReplace.sweep(" in code(s) for s in (downloader, hot, extract_tx)),
 }
 
 failed = [name for name, ok in checks.items() if not ok]

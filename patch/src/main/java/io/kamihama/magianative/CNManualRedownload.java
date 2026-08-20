@@ -372,45 +372,47 @@ public final class CNManualRedownload {
         }
     }
 
+    /** F-073：候选名逐次唯一、换入不预删目标，理由见 {@link CNAtomicReplace}。 */
     private static void writeAtomic(File target, String content) throws IOException {
-        File parent = target.getParentFile();
-        if (parent != null && !parent.isDirectory() && !parent.mkdirs() && !parent.isDirectory()) {
-            throw new IOException("无法创建目录: " + parent);
-        }
-        File tmp = new File(target.getPath() + ".tmp");
-        FileOutputStream out = null;
-        try {
-            out = new FileOutputStream(tmp, false);
-            out.write(content.getBytes(StandardCharsets.UTF_8));
-            out.flush();
-            out.getFD().sync();
-            out.close();
-            out = null;
-            if (target.exists() && !target.delete()) throw new IOException("无法替换 " + target);
-            if (!tmp.renameTo(target)) throw new IOException("原子改名失败: " + target);
-        } finally {
-            if (out != null) try { out.close(); } catch (Throwable ignore) {}
-            if (tmp.exists()) deleteQuietly(tmp);
-        }
+        CNAtomicReplace.writeText(target, content);
     }
 
+    /**
+     * 同目录时走 {@code rename(2)}；跨文件系统（EXDEV）才退化成复制。
+     *
+     * <p>F-073：旧写法有两处能丢文件——「先删 dst 再 renameTo」两步之间失败，
+     * dst 就此消失；退化复制时又是直接往 dst 上写，复制中途被杀留下的是一个
+     * 长度不足却名字正确的文件。现在复制也先落到候选文件，成了再原子换入，
+     * 任何一步失败 dst 都保持原样。
+     */
     private static void moveFile(File src, File dst) throws IOException {
-        if (dst.exists() && !dst.delete() && dst.exists()) throw new IOException("无法替换 " + dst);
-        if (src.renameTo(dst)) return;
+        try {
+            CNAtomicReplace.commit(src, dst);
+            return;
+        } catch (IOException sameFsFailed) {
+            CNLog.w(TAG, "原子换入失败，退化为复制: " + sameFsFailed);
+        }
+        File cand = CNAtomicReplace.stage(dst);
         FileInputStream in = null;
         FileOutputStream out = null;
         try {
             in = new FileInputStream(src);
-            out = new FileOutputStream(dst, false);
+            out = new FileOutputStream(cand, false);
             byte[] buf = new byte[4096];
             int n;
             while ((n = in.read(buf)) >= 0) if (n > 0) out.write(buf, 0, n);
             out.flush();
             out.getFD().sync();
+            out.close();
+            out = null;
+        } catch (IOException e) {
+            CNAtomicReplace.discard(cand);
+            throw e;
         } finally {
             if (out != null) try { out.close(); } catch (Throwable ignore) {}
             if (in != null) try { in.close(); } catch (Throwable ignore) {}
         }
+        CNAtomicReplace.commit(cand, dst);
         if (!src.delete() && src.exists()) throw new IOException("无法删除旧文件 " + src);
     }
 

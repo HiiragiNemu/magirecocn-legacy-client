@@ -1120,7 +1120,7 @@ public final class CNChunkedDownload {
                                                   String etag, String url,
                                                   AtomicIntegerArray verified) {
         Writer w = null;
-        File tmp = new File(meta.getPath() + ".tmp");
+        File tmp = CNAtomicReplace.stage(meta);
         try {
             w = new OutputStreamWriter(new FileOutputStream(tmp, false), "UTF-8");
             w.write(META_HASH); w.write('\n');
@@ -1146,7 +1146,7 @@ public final class CNChunkedDownload {
                                                   long segmentSize, String etag, String url,
                                                   AtomicLongArray done) {
         Writer w = null;
-        File tmp = new File(meta.getPath() + ".tmp");
+        File tmp = CNAtomicReplace.stage(meta);
         try {
             w = new OutputStreamWriter(new FileOutputStream(tmp, false), "UTF-8");
             w.write(META_BYTE); w.write('\n');
@@ -1263,14 +1263,17 @@ public final class CNChunkedDownload {
         return s == null ? "" : s.trim();
     }
 
+    /**
+     * F-073：换入不再预删目标。先删再改名的两步之间被杀，目标与候选一起消失——
+     * 断点元数据没了顶多重下，但 {@link #promote} 走的是同一个形状，丢的就是整包。
+     * {@code rename(2)} 对同目录已存在目标本就是原子替换，那一步删除只制造窗口。
+     */
     private static void replace(File tmp, File dst) throws IOException {
-        if (dst.exists() && !dst.delete()) throw new IOException("无法替换 " + dst);
-        if (!tmp.renameTo(dst)) throw new IOException("无法重命名 " + tmp + " -> " + dst);
+        CNAtomicReplace.commit(tmp, dst);
     }
 
     private static void promote(File part, File target) throws IOException {
-        if (target.exists() && !target.delete()) throw new IOException("无法替换目标文件 " + target);
-        if (!part.renameTo(target)) throw new IOException("无法重命名 " + part + " -> " + target);
+        CNAtomicReplace.commit(part, target);
     }
 
     private static final class RangeInfo {

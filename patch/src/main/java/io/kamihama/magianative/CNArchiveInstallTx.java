@@ -63,7 +63,8 @@ public final class CNArchiveInstallTx {
 
     static void clearState(File stateFile) {
         deleteQuietly(stateFile);
-        deleteQuietly(new File(stateFile.getPath() + ".tmp"));
+        // F-073：候选名不再固定为 <目标>.tmp，清残留一律走 sweep。
+        CNAtomicReplace.sweep(stateFile);
     }
 
     public static void extract(File archive, File root, File stateFile,
@@ -544,7 +545,7 @@ public final class CNArchiveInstallTx {
     private static void saveState(File file, String fingerprint, int next)
             throws InstallIOException {
         if (file == null) return;
-        File temp = new File(file.getPath() + ".tmp");
+        File temp = CNAtomicReplace.stage(file);
         FileOutputStream raw = null;
         Writer writer = null;
         try {
@@ -557,16 +558,12 @@ public final class CNArchiveInstallTx {
             raw.getFD().sync();
             closeQuietly(writer); writer = null;
             closeQuietly(raw); raw = null;
-            if (file.exists() && !file.delete()) {
-                throw new InstallIOException("Cannot replace extraction state: " + file);
-            }
-            if (!temp.renameTo(file)) {
-                throw new InstallIOException("Cannot promote extraction state: " + file);
-            }
-            // F-B-06：rename 落地的是**目录项**，上面对 temp 的 fsync 管不到它。
-            // 断点状态丢了不致命（下次整包重解），但对干净目录的 fsync 近乎
-            // 零成本，顺手把这个掉电窗口也关上。
-            syncDir(file.getParentFile());
+            // F-073：不再「先删再改名」。两步之间被杀，断点状态就此消失——不致命
+            // （下次整包重解），但那是白烧一次几百 MB 的解压，而 rename(2) 本来就
+            // 能一步换到位。
+            // F-B-06：rename 落地的是**目录项**，上面对 temp 的 fsync 管不到它；
+            // commit() 收尾的 syncDir 把这个掉电窗口一并关上。
+            CNAtomicReplace.commit(temp, file);
         } catch (IOException e) {
             if (e instanceof InstallIOException) throw (InstallIOException) e;
             throw new InstallIOException("Cannot save extraction state: " + file, e);

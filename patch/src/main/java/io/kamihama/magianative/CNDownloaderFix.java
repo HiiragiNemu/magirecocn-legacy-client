@@ -2442,29 +2442,13 @@ public final class CNDownloaderFix {
         return new File(STATE_ROOT, name + ".done");
     }
 
+    /**
+     * F-073：候选文件名曾经固定为 {@code <目标>.tmp}，而完成标记与安装总标记的提交
+     * 路径之间没有互斥——两条安装线程同时写同一个标记会互相截断，换进去的可能是半截
+     * 文件。现在统一走 {@link CNAtomicReplace}：候选名逐次唯一，换入不预删目标。
+     */
     private static void writeAtomic(File target, String content) throws IOException {
-        File parent = target.getParentFile();
-        if (parent != null && !parent.isDirectory() && !parent.mkdirs() && !parent.isDirectory()) {
-            throw new IOException("Cannot create parent directory: " + parent);
-        }
-        File tmp = new File(target.getPath() + ".tmp");
-        FileOutputStream fos = null;
-        try {
-            fos = new FileOutputStream(tmp, false);
-            fos.write(content.getBytes(StandardCharsets.UTF_8));
-            fos.flush();
-            fos.getFD().sync();
-            closeQuietly(fos);
-            fos = null;
-            if (target.exists() && !target.delete()) {
-                throw new IOException("Cannot replace " + target);
-            }
-            if (!tmp.renameTo(target)) {
-                throw new IOException("Atomic rename failed: " + tmp + " -> " + target);
-            }
-        } finally {
-            closeQuietly(fos);
-        }
+        CNAtomicReplace.writeText(target, content);
     }
 
     private static void writeSidecar(File sidecar, String etag, long bytes) throws IOException {
@@ -2565,13 +2549,13 @@ public final class CNDownloaderFix {
         }
     }
 
+    /**
+     * F-073：不再「先删目标再改名」。两步之间被杀（安装期正是内存压力最大的时候）
+     * 会让目标与残片一起消失，把「上一次可用的整包」换成什么都没有；而
+     * {@code rename(2)} 对同目录已存在目标本就是原子替换，那一步删除纯属自找。
+     */
     private static void promotePart(File part, File target) throws IOException {
-        if (target.exists() && !target.delete()) {
-            throw new IOException("Cannot replace destination " + target);
-        }
-        if (!part.renameTo(target)) {
-            throw new IOException("Cannot rename " + part + " to " + target);
-        }
+        CNAtomicReplace.commit(part, target);
     }
 
     private static void truncate(File file) throws IOException {
@@ -3030,13 +3014,16 @@ public final class CNDownloaderFix {
         deleteQuietly(new File(archive.getPath() + ".aria2"));
         deleteQuietly(new File(archive.getPath() + ".aria2.url"));
         deleteQuietly(new File(archive.getPath() + ".part"));
-        deleteQuietly(new File(archive.getPath() + ".part.meta"));
-        deleteQuietly(new File(archive.getPath() + ".part.meta.tmp"));
+        File sidecar = new File(archive.getPath() + ".part.meta");
+        deleteQuietly(sidecar);
+        // F-073：候选名不再是固定的 <目标>.tmp，清残留必须走 sweep——只删那一个
+        // 旧名字的话，新格式的候选会在下载目录里越攒越多。
+        CNAtomicReplace.sweep(sidecar);
         File cpart = CNChunkedDownload.partFileFor(archive);
         File cmeta = CNChunkedDownload.metaFileFor(archive);
         deleteQuietly(cpart);
         deleteQuietly(cmeta);
-        deleteQuietly(new File(cmeta.getPath() + ".tmp"));
+        CNAtomicReplace.sweep(cmeta);
         CNArchiveInstallTx.clearState(
                 CNArchiveInstallTx.stateFile(new File(STATE_ROOT), name));
         File[] siblings = new File(FILE_ROOT).listFiles();

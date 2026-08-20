@@ -356,8 +356,9 @@ public final class CNHotUpdate {
             if (total > 0 && part.length() != total) {
                 throw new IOException("下载不完整: " + part.length() + " / " + total);
             }
-            if (dest.exists() && !dest.delete()) throw new IOException("无法替换目标文件 " + dest);
-            if (!part.renameTo(dest)) throw new IOException("无法重命名 " + part + " -> " + dest);
+            // F-073：不预删 dest。先删再改名，两步之间被杀就连「上一次下好的包」
+            // 一起没了；rename(2) 同目录替换本来就是原子的。
+            CNAtomicReplace.commit(part, dest);
         } finally {
             closeQuietly(out);
             closeQuietly(in);
@@ -376,13 +377,15 @@ public final class CNHotUpdate {
         if (dest == null) return;
         deleteQuietly(dest);
         deleteQuietly(new File(dest.getPath() + ".part"));
-        deleteQuietly(new File(dest.getPath() + ".part.meta"));
-        deleteQuietly(new File(dest.getPath() + ".part.meta.tmp"));
+        File sidecar = new File(dest.getPath() + ".part.meta");
+        deleteQuietly(sidecar);
+        // F-073：候选名不再固定为 <目标>.tmp，清残留一律走 sweep。
+        CNAtomicReplace.sweep(sidecar);
         File cpart = CNChunkedDownload.partFileFor(dest);
         File meta = CNChunkedDownload.metaFileFor(dest);
         deleteQuietly(cpart);
         deleteQuietly(meta);
-        deleteQuietly(new File(meta.getPath() + ".tmp"));
+        CNAtomicReplace.sweep(meta);
         File parent = cpart.getParentFile();
         File[] files = parent == null ? null : parent.listFiles();
         String prefix = cpart.getName() + ".block.";
