@@ -474,19 +474,60 @@ public final class CNHotUpdateTx {
         return new File(new File(root, MANIFEST_DIR), tag + ".list");
     }
 
-    /** 把本轮下发的完整清单写下来，供下一轮算孤儿。一行一个相对路径。 */
+    /** 清单条目数上限。热更两包线上都在千条量级，一万条已是数量级的余量。 */
+    private static final int MANIFEST_MAX_ENTRIES = 100000;
+
+    /** 清单正文字节上限。单条路径按 4 KiB 算，这个数留得比条数上限还宽。 */
+    private static final int MANIFEST_MAX_BYTES = 8 * 1024 * 1024;
+
+    /**
+     * 把本轮下发的完整清单写下来，供下一轮算孤儿。一行一个相对路径。
+     *
+     * <h3>F-073：这里曾经是全仓最后一个「直写正式文件」的状态发布器</h3>
+     *
+     * 原先走 {@code writeSynced(f, ...)}，而它是 {@code new FileOutputStream(f)}
+     * ——<b>在正式的 {@code .cnv_manifest/<tag>.list} 上原地截断再写</b>。进程被杀、
+     * 短写、I/O 异常，留下的就是一份空清单或截断清单，而且 catch 只能接住抛出来的
+     * 异常，认不出「返回成功但只写了一半」。
+     *
+     * <p>这份清单不是诊断信息，它是<b>下一轮孤儿差集的输入</b>：清单里没有、活动树
+     * 上有、且落在清理白名单前缀下的文件会被删掉。截断的直接后果是漏删；更坏的是
+     * 最后一行恰好被截成另一个仍然合法的路径——那个文件会被当成「上一版下发过、
+     * 这一版没有了」删掉，而它可能是安装包给的。
+     *
+     * <p>现在走 {@link CNAtomicReplace#writeText}：写候选、fsync、原子换入，中途死掉
+     * 时正式文件保持上一轮的内容——漏删一轮，永远比删错一个文件好。
+     *
+     * <p>发布前逐条复核 {@link #recordPathProblem}：一条带换行的路径会把一行拆成
+     * 两条记录，下一轮读回来就是两个都不存在的伪条目。listEntries 已经拦过一道，
+     * 这里再拦一次不是重复——清单是<b>跨轮</b>持久化的，它的完整性不该依赖「上一次
+     * 是谁写的、拦没拦」。
+     */
     private static void writeManifest(File root, String tag, List<String> rels) {
         try {
+            if (rels.size() > MANIFEST_MAX_ENTRIES) {
+                throw new IOException("清单条目数超限: " + rels.size());
+            }
             StringBuilder sb = new StringBuilder(rels.size() * 40);
-            for (int i = 0; i < rels.size(); i++) sb.append(rels.get(i)).append('\n');
+            for (int i = 0; i < rels.size(); i++) {
+                String rel = rels.get(i);
+                String problem = recordPathProblem(rel);
+                if (problem != null) {
+                    throw new IOException("清单条目不安全（" + problem + "）: "
+                            + escapeForLog(rel));
+                }
+                sb.append(rel).append('\n');
+            }
+            if (sb.length() > MANIFEST_MAX_BYTES) {
+                throw new IOException("清单正文超限: " + sb.length() + " 字符");
+            }
             File f = manifestFile(root, tag);
             ensureParent(f);
-            writeSynced(f, sb.toString());
-            // F-B-06：清单的目录项也要落盘。它丢了不致命（下一轮只是不清理
-            // 孤儿，失败方向偏安全），但目录 fsync 近乎免费，顺手关上窗口。
-            syncDir(f.getParentFile());
+            // writeText 内部已经 fsync 内容并 fsync 父目录（F-B-06 那条窗口）。
+            CNAtomicReplace.writeText(f, sb.toString());
         } catch (Throwable t) {
-            // 写不下来只影响下一轮的孤儿计算（会漏删），不影响这次更新的正确性
+            // 写不下来只影响下一轮的孤儿计算（会漏删），不影响这次更新的正确性。
+            // 而且现在「写不下来」意味着正式清单还是上一轮那份完整的，不是半截。
             CNLog.w(TAG, "[" + tag + "] 清单写入失败，下一轮不会清理孤儿", t);
         }
     }
@@ -864,7 +905,14 @@ public final class CNHotUpdateTx {
         }
     }
 
-    /** 写文件并 fsync。事务里只有 journal 与 COMMITTED 走这里，共两次。 */
+    /**
+     * 写文件并 fsync。事务里只有 journal 与 COMMITTED 走这里，共两次。
+     *
+     * <p>⚠ <b>它是直写：截断已有内容，没有候选文件，也没有原子换入。</b>
+     * 之所以还留着，是因为这两个目标都在<b>本轮新建的事务目录里</b>，写之前根本
+     * 不存在——没有「上一次可用状态」可丢。任何会覆盖<b>已有</b>文件的地方一律走
+     * {@link CNAtomicReplace}（F-073）：清单就是从这里搬过去的，别再搬回来。
+     */
     private static void writeSynced(File f, String content) throws IOException {
         ensureParent(f);
         FileOutputStream fos = new FileOutputStream(f);

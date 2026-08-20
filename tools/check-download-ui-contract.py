@@ -702,6 +702,13 @@ checks = {
     "非法路径进日志前先转义":
         "escapeForLog" in code(hot_tx)
         and '"\\\\u%04X"' in hot_tx,
+    # ---- F-073 剩余：清单是最后一个直写正式文件的发布器 ----
+    "上一轮清单原子发布且逐条复核":
+        "CNAtomicReplace.writeText(f, sb.toString());"
+            in body(hot_tx, "private static void writeManifest(File root, String tag, List<String> rels)")
+        and "recordPathProblem(rel)"
+            in body(hot_tx, "private static void writeManifest(File root, String tag, List<String> rels)")
+        and "writeSynced(f," not in code(hot_tx),
 }
 
 failed = [name for name, ok in checks.items() if not ok]
