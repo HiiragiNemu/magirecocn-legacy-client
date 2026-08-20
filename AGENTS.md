@@ -193,10 +193,16 @@ Fix download UI runtime log tag compilation
 
 ### 三、署名固定
 
-- 作者一律 `CyberNova2333 <295488275+CyberNova2333@users.noreply.github.com>`
-  （已写入本仓库 `git config`，正常情况下不用管）；
+- 作者按**实际执笔的人**记。**没有默认值——不确定就问那个人。**
+
+  > 这里原本写着一个「默认作者」。它被删掉了：默认值在署名这件事上只会让
+  > Agent 拿它去替一个**没有参与这次改动的人**署名，而且不报错。
+  > 署名是归属，猜错了就是把别人的名字签在他没写过的东西上。
+  > 不知道该记谁 → 问；人不在 → 停在那儿，别提交。
+
 - **实际执笔的 Agent 用 `Co-authored-by` trailer 署名**，放在信息末尾，
-  必须是完整的 `Name <email>` 形式（钩子按此格式硬拦，半截写法不算数）：
+  必须是完整的 `Name <email>` 形式（钩子按此格式硬拦，半截写法不算数）。
+  **Agent 永远不做作者**，只做 co-author：
 
 ```
 Co-authored-by: Codex <noreply@openai.com>
