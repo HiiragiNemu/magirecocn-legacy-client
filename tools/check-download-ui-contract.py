@@ -771,6 +771,16 @@ checks = {
         and "recordPathProblem(rel)"
             in body(hot_tx, "private static void writeManifest(File root, String tag, List<String> rels)")
         and "writeSynced(f," not in code(hot_tx),
+    # ---- F-080 版本 json 硬上限 ----
+    # 旧写法先读后判，缓冲区能越过上限一整块；到限后既不确认 EOF 也不报错，而是把
+    # 截断前缀交给 JSONObject——前缀恰好构成完整对象时会被当成完整响应接受。
+    "版本 json 超限在写入缓冲之前就失败":
+        "bos.size() < 65536" not in code(hot_check)
+        and "n > MAX_VERSION_JSON_BYTES - total" in code(hot_check)
+        and "MAX_VERSION_JSON_BYTES" in code(hot_check),
+    # getContentLengthLong 是 API 24 才有的（minSdk 21）。
+    "预拒长度没用 API 24 的 getContentLengthLong":
+        "getContentLengthLong" not in code(hot_check),
 }
 
 failed = [name for name, ok in checks.items() if not ok]

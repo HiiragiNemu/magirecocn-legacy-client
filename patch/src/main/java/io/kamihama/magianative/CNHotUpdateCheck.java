@@ -126,6 +126,14 @@ public final class CNHotUpdateCheck {
     // 否则等于什么都没改——总闸先到期，单条那点余量根本用不上。
     private static final int VER_CONNECT_TIMEOUT_MS = 2000;
     private static final int VER_READ_TIMEOUT_MS    = 3500;
+
+    /**
+     * 版本 json 的硬上限（F-080）。真实响应只有几十字节，64 KiB 已经是三个数量级
+     * 的余量；超过它<b>一定</b>是对面出了问题，所以判据是「明确失败」而不是
+     * 「截断了继续用」——半份 JSON 拿去解析，最好的结果也只是把「响应超限」伪装
+     * 成一个语法错误。
+     */
+    private static final int MAX_VERSION_JSON_BYTES = 65536;
     /**
      * 两份版本查询**合计**最多占用启动关键路径 6 秒，超过即取消未完成项、
      * fail-open 进入游戏。
@@ -910,13 +918,41 @@ public final class CNHotUpdateCheck {
             CNUserAgent.apply(c);
             int code = c.getResponseCode();
             if (code / 100 != 2) throw new java.io.IOException("HTTP " + code);
-            InputStream in = new BufferedInputStream(c.getInputStream(), 8192);
+            // F-080：上限要在**写进缓冲之前**判，而且超限必须报错。
+            // 原写法是 `while ((n = in.read(buf)) >= 0 && bos.size() < 65536)`，
+            // 两处都不对：
+            //   · 判 size 时这一块已经读进来了，下一轮才退出——缓冲区实际能越过
+            //     上限一整块（8 KiB）；
+            //   · 退出后既不确认 EOF、也不报「响应过大」，而是把**截断前缀**直接
+            //     交给 JSONObject。多数截断 JSON 会解析失败，但只要前缀本身正好
+            //     构成一个完整对象（后面跟着大段空白或第二段内容），客户端就会
+            //     接受一份并不完整的响应；而即使解析失败，日志也把「响应超限」
+            //     伪装成普通 JSON 语法错误，排查时根本看不出真正的原因。
+            // getContentLength()（int）而不是 getContentLengthLong()：后者是
+            // API 24 才有的，minSdk 21 上会 NoSuchMethodError。上限只有 64 KiB，
+            // int 绰绰有余；长度未知或超 int 时它返回 -1，正好落进「不预拒、
+            // 交给下面的逐块闸」。
+            int declared = c.getContentLength();
+            if (declared > MAX_VERSION_JSON_BYTES) {
+                throw new java.io.IOException("版本 json 声明长度超限: " + declared);
+            }
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            byte[] buf = new byte[8192];
-            int n;
-            // 版本 json 只有几十字节；设个上限免得对面返回一坨东西把内存吃了
-            while ((n = in.read(buf)) >= 0 && bos.size() < 65536) bos.write(buf, 0, n);
-            in.close();
+            InputStream in = new BufferedInputStream(c.getInputStream(), 8192);
+            try {
+                byte[] buf = new byte[8192];
+                int n;
+                int total = 0;
+                while ((n = in.read(buf)) >= 0) {
+                    if (n > MAX_VERSION_JSON_BYTES - total) {
+                        throw new java.io.IOException("版本 json 超过 "
+                                + MAX_VERSION_JSON_BYTES + " 字节上限");
+                    }
+                    bos.write(buf, 0, n);
+                    total += n;
+                }
+            } finally {
+                try { in.close(); } catch (Throwable ignore) {}
+            }
             JSONObject o = new JSONObject(bos.toString("UTF-8"));
             return new CNHotUpdateValidate.VerMeta(o.getInt("version"),
                              o.optLong("size", -1L),
