@@ -56,6 +56,65 @@ deadline_margin = re.search(
     r"DEADLINE_MS\s*=\s*FRONTEND_TOPPAGE_TIMEOUT_MS\s*\+\s*(\d+)L", wd
 )
 
+# ── 从 Java 源码里抠出四个常量，拿它们跑一遍状态机 ──────────────────
+#
+# 轮询那段逻辑是这个类里唯一有状态的地方，也是唯一能「编译得过、守卫全绿、
+# 上真机才发现白干」的地方：判据取错一格，要么该救的黑屏不救，要么在战斗
+# 中途把页面掀了。所以除了比对字面量，这里再按常量把几种典型时序跑一遍。
+def const(name: str) -> int:
+    m = re.search(name + r"\s*=\s*([0-9]+)L?;", wd)
+    if not m:
+        raise SystemExit("守卫读不到常量 " + name + "，先确认它还在不在")
+    return int(m.group(1))
+
+
+TICK_MS = const(r"TICK_MS")
+VISIBLE_STREAK = const(r"VISIBLE_STREAK")
+SAFE_STREAK = const(r"SAFE_STREAK")
+DEADLINE_MS = const(r"FRONTEND_TOPPAGE_TIMEOUT_MS") + int(
+    re.search(r"DEADLINE_MS\s*=\s*FRONTEND_TOPPAGE_TIMEOUT_MS\s*\+\s*(\d+)L", wd).group(1)
+)
+
+
+def simulate(visible_at):
+    """按 Tick.run() 的逻辑跑，返回 早退 / 到点不开枪 / 开枪。"""
+    streak = peak = 0
+    t = 0
+    while True:
+        t += TICK_MS
+        if visible_at(t):
+            streak += 1
+            peak = max(peak, streak)
+        else:
+            streak = 0
+        if streak >= VISIBLE_STREAK:
+            return "早退"
+        if t >= DEADLINE_MS:
+            return "到点不开枪" if peak >= SAFE_STREAK else "开枪"
+
+
+T = TICK_MS
+SCENARIOS = [
+    # 该救的：玩家报的那块黑屏，全程一次都没露面
+    ("全程不可见（0100 型黑屏）", lambda t: False, "开枪"),
+    # 该救的：武装头一个 tick 撞上「引擎建好、前端还没来得及藏」的瞬间可见。
+    # 这一条是 SAFE_STREAK 取 2 而不是 1 的全部理由。
+    ("只有 1 个 tick 瞬间可见", lambda t: t == T, "开枪"),
+    ("隔一个 tick 闪一次", lambda t: (t // T) % 2 == 0, "开枪"),
+    # 不该动的：前端稳稳起来了
+    ("10 秒后起来并一直在", lambda t: t >= 10 * 1000, "早退"),
+    ("前端在自己超时后自愈显示", lambda t: t >= DEADLINE_MS - 20 * 1000, "早退"),
+    # 不该动的：露过面之后玩家进了战斗，屏幕归引擎——这时候重载是纯破坏
+    ("露 2 个 tick 就进战斗", lambda t: t in (10 * 1000, 10 * 1000 + T), "到点不开枪"),
+]
+
+sim_failures = [
+    "%s：期望 %s，实到 %s" % (name, want, got)
+    for name, vis, want in SCENARIOS
+    for got in [simulate(vis)]
+    if got != want
+]
+
 checks = {
     "浮层撤下时武装（且只在那一处）":
         ui.count("CNBootWatchdog.arm();") == 1,
@@ -88,6 +147,14 @@ checks = {
     "WebView 只通过 CNWebProxy 的单一出口取":
         "CNWebProxy.currentWebView()" in wd
         and "WebViewHelper" not in wd,
+    "成功判据要求连续多次可见，不是单次快照":
+        "visibleStreak >= VISIBLE_STREAK" in wd and VISIBLE_STREAK >= 2,
+    "到点只在「从没稳定露过面」时才开枪":
+        "maxStreak >= SAFE_STREAK" in wd,
+    "SAFE_STREAK 取值既不退化成「见过就不救」也不退化成「到点必开枪」":
+        2 <= SAFE_STREAK <= VISIBLE_STREAK,
+    "状态机时序模拟全部符合预期":
+        not sim_failures,
     "sWebView 的反射全仓库只有一处":
         proxy.count('getDeclaredField("sWebView")') == 1
         and sum(
@@ -97,6 +164,8 @@ checks = {
 }
 
 failed = [name for name, ok in checks.items() if not ok]
+for f in sim_failures:
+    print("     时序模拟不符 " + f)
 for name, ok in checks.items():
     print(("PASS " if ok else "FAIL ") + name)
 if failed:
