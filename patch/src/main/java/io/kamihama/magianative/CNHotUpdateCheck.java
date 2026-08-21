@@ -218,6 +218,14 @@ public final class CNHotUpdateCheck {
         final String tmpName;      // 落地的临时文件名
         final String txTag;        // 事务工作区名（见 CNHotUpdateTx）
         final int    slot;         // 浮层进度槽位
+        /**
+         * 同一热更槽位「最终版本复核 → 内容提交 → 版本状态发布」的线性化锁（F-088）。
+         *
+         * <p>PACKAGES 是静态表，每个槽位只有一个 Pkg 实例，所以这把锁天然是
+         * 「每槽位一把」。<b>下载阶段绝不持有它</b>——并行下载是这条链的性能前提，
+         * 锁只覆盖最后那段不可交错的提交窗口。
+         */
+        final Object lifecycleLock = new Object();
         Pkg(String label, String versionFile, String versionKey,
             String zipFile, String tmpName, String txTag, int slot) {
             this.label = label;
@@ -547,12 +555,12 @@ public final class CNHotUpdateCheck {
                 }
                 CNCNDownloadUI.updateSimple("应用热更新",
                         "正在处理更新包（" + processedCount + "/" + needCount + "）…", 0);
+                int commitResult;
                 try {
                     // 事务化应用：先解压到暂存区，再整体换入；中途失败整体回滚，
-                    // 绝不把「一半新一半旧」的树留给引擎（见 CNHotUpdateTx）
-                    synchronized (CNDownloaderFix.extractCommitLock()) {
-                        CNHotUpdateTx.apply(tmp, new File(FILES_DIR), pkg.txTag);
-                    }
+                    // 绝不把「一半新一半旧」的树留给引擎（见 CNHotUpdateTx）。
+                    // F-088：版本复核与提交收进每槽位窗口，见 commitVerifiedPackage。
+                    commitResult = commitVerifiedPackage(pkg, tmp, meta, "startup");
                 } catch (Throwable t) {
                     // 应用失败时**不能**写新版本号，否则下次启动会以为已经更新过。
                     anyFailure = true;
@@ -575,9 +583,17 @@ public final class CNHotUpdateCheck {
                     deleteQuietly(tmp);
                     continue;
                 }
+                if (commitResult == HOT_COMMIT_STALE) {
+                    // F-088：玩家在本链下载期间手动更新到了更新的版本。活动树没被
+                    // 碰过，这个槽位已经是更新的内容——按完成显示，不是失败。
+                    deleteQuietly(tmp);
+                    CNCNDownloadUI.markFileDone(pkg.slot);
+                    CNLog.i(TAG, "[" + pkg.label + "] 已有更新版本，丢弃本次陈旧候选");
+                    continue;
+                }
                 // F-067：内容事务成功不等于版本状态已持久化。先确认同步 commit
                 // 成功，再删唯一的已验证下载包、再把本项标为完整成功。
-                if (!saveLocalVersion(pkg.versionKey, meta.version)) {
+                if (commitResult == HOT_COMMIT_STATE_FAILED) {
                     applied = true;     // 活动树已经是新内容，不能谎称完全没应用
                     anyFailure = true;  // 但控制状态分裂，整体只能叫部分失败
                     markHotFailed(pkg.slot);
@@ -687,10 +703,19 @@ public final class CNHotUpdateCheck {
             String bad = CNHotUpdateValidate.verifyZip(tmp, meta);
             if (bad != null) throw new java.io.IOException("完工校验失败: " + bad);
             CNCNDownloadUI.updateSimple("应用热更新", pkg.label + "：事务提交中…", 0);
-            synchronized (CNDownloaderFix.extractCommitLock()) {
-                CNHotUpdateTx.apply(tmp, new File(FILES_DIR), pkg.txTag);
+            // F-088：与启动 continuation 走同一个提交助手，两条链才可能互相看见。
+            int commitResult = commitVerifiedPackage(pkg, tmp, meta, "manual");
+            if (commitResult == HOT_COMMIT_STALE) {
+                // 手动链自己拿到的版本比当前值还旧（例如启动 continuation 抢先提交了
+                // 更新的版本）。活动树没动，但玩家点的这次「重下」没有产生新内容，
+                // 不能标绿——如实报失败，让玩家看得见。
+                deleteQuietly(tmp);
+                markHotFailed(slot);
+                CNLog.w(TAG, "手动热更新候选比当前版本旧，已丢弃 slot=" + slot
+                        + " candidate=" + meta.version);
+                return false;
             }
-            if (!saveLocalVersion(pkg.versionKey, meta.version)) {
+            if (commitResult == HOT_COMMIT_STATE_FAILED) {
                 // F-067：内容已经事务提交，不能回滚成「什么都没发生」；但也绝不能
                 // 写成功 marker、标绿或删除 tmp。保留包和错误状态供下一次修复。
                 if (CNCNDownloadUI.fileStatus != null
@@ -972,6 +997,64 @@ public final class CNHotUpdateCheck {
     private static SharedPreferences prefs() {
         Context ctx = appContext();
         return ctx == null ? null : ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+    }
+
+    // ── F-088：同槽位热更提交必须单调 ──────────────────────────────
+    //
+    // 故障链（外部审计确认）：启动检查取到 v2 并下载完，continuation 还没拿到资源
+    // 提交锁；玩家这时对同一槽位点了「重下」，手动链取到 v3、先提交并写下
+    // localVersion=3。旧的启动 continuation 后到，而它只靠全局 extractCommitLock()
+    // 串行化——那把锁只保证两笔事务不同时改活动树，**不保证同一槽位版本单调**。
+    // 于是 v2 覆盖回去，localVersion 被写回 2，玩家的手动更新被静默降级。
+    //
+    // 修法是把「最终复核 + 内容提交 + 版本发布」收进一个每槽位的窗口，并在窗口内
+    // 重读当前版本；候选版本更旧就只丢弃候选，绝不触碰活动树。
+    //
+    // 锁序固定为 lifecycleLock → extractCommitLock，全仓库没有反向获取的地方；
+    // 反过来拿会死锁（tools/HotUpdateMonotonicTest.java 的第 3 组把它证出来了），
+    // 加新调用点时注意。
+    private static final int HOT_COMMIT_STALE        = 0;
+    private static final int HOT_COMMIT_APPLIED      = 1;
+    private static final int HOT_COMMIT_STATE_FAILED = -1;
+
+    /**
+     * 把一个已校验的热更包提交进活动树，并发布版本号。
+     *
+     * <p>这是本文件里<b>唯一</b>调用 {@link CNHotUpdateTx#apply} 的地方。收敛成一处
+     * 是这条修复的结构保证：只要还有第二个直接 apply 的调用点，单调性就又能被绕过。
+     *
+     * @return {@link #HOT_COMMIT_APPLIED} 已提交并发布；
+     *         {@link #HOT_COMMIT_STALE} 候选比当前版本旧，已丢弃、活动树未动；
+     *         {@link #HOT_COMMIT_STATE_FAILED} 内容已应用但版本号没落盘（F-067 部分失败）
+     * @throws Exception 内容事务本身失败，由调用方按原有回滚/空间不足语义处理
+     */
+    private static int commitVerifiedPackage(Pkg pkg, File tmp,
+            CNHotUpdateValidate.VerMeta meta, String source) throws Exception {
+        synchronized (pkg.lifecycleLock) {
+            int current = readLocalVersion(pkg.versionKey);
+            if (meta.version < current) {
+                CNLog.w(TAG, "[" + pkg.label + "] 拒绝陈旧热更候选 source=" + source
+                        + " candidate=" + meta.version + " current=" + current);
+                return HOT_COMMIT_STALE;
+            }
+            synchronized (CNDownloaderFix.extractCommitLock()) {
+                // 等全局提交锁期间别的链条仍可能推进版本，进了真正的修改窗口
+                // 之后必须再读一次——只在窗口外读等于没读。
+                current = readLocalVersion(pkg.versionKey);
+                if (meta.version < current) {
+                    CNLog.w(TAG, "[" + pkg.label + "] 等待提交锁期间候选过期 source=" + source
+                            + " candidate=" + meta.version + " current=" + current);
+                    return HOT_COMMIT_STALE;
+                }
+                CNHotUpdateTx.apply(tmp, new File(FILES_DIR), pkg.txTag);
+                // F-067：内容事务成功不等于版本状态已持久化，必须同步 commit
+                // 并把失败如实上报，不能伪报完整成功。
+                if (!saveLocalVersion(pkg.versionKey, meta.version)) {
+                    return HOT_COMMIT_STATE_FAILED;
+                }
+                return HOT_COMMIT_APPLIED;
+            }
+        }
     }
 
     private static int readLocalVersion(String key) {

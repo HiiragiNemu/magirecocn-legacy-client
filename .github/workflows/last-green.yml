@@ -118,7 +118,7 @@ jobs:
           # 本来也跑不了 Android 的 libarchive.so）。见 libcnzip→libarchive 改名。
           mkdir -p empty-libs
           JLIB="-Djava.library.path=empty-libs"
-          for t in HotUpdateTxTest SafeLinkTest WebProxyTest ConfigGuardTest \
+          for t in HotUpdateTxTest HotUpdateMonotonicTest SafeLinkTest WebProxyTest ConfigGuardTest \
                    LogTest BgmLoopTest ThrottleTest FlushTest ChunkHashTest \
                    ManualRedownloadTest ArchiveInstallTxTest DownloadConcurrencyTest \
                    HotUpdateRoutingTest UiAssistStateTest DebugBridgeTest \
@@ -171,6 +171,8 @@ jobs:
           # 对目录必定 EISDIR，会让目录级持久化静默失效），实现只留一份，
           # 失败日志必须限流。
           python3 tools/check-dir-fsync-contract.py
+          # F-088：同槽位热更提交单调性（每槽位锁 + 窗口内重读 + 单一 apply 点）。
+          python3 tools/check-hotupdate-monotonic-contract.py
 
       - name: 🟢 移动 last-green tag
         env:
