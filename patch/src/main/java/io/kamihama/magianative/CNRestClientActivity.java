@@ -1,6 +1,7 @@
 package io.kamihama.magianative;
 
 import android.app.Activity;
+import android.content.Context;
 import android.os.Build;
 
 import java.lang.reflect.Field;
@@ -35,6 +36,27 @@ public final class CNRestClientActivity {
     private static final String TAG = "MagiaClientJNI"; // 与原 smali 的 tag 一致
 
     private CNRestClientActivity() {}
+
+    /**
+     * 取 Application Context（反射 {@code ActivityThread}，与原包同一手法）。
+     *
+     * <p>放在这里是因为本类已经是「反射进 {@code ActivityThread} 取进程级句柄」这一
+     * 职责的归属地——{@link #getCurrentActivity()} 反射的是同一个类的
+     * {@code mActivities}。此前这个方法在 {@code CNHotUpdateCheck} 与
+     * {@code CNTutorialPrompt} 里各有一份**逐字相同**的拷贝。
+     *
+     * @return 取不到时返回 {@code null}；调用方一律要判空（拿不到 Context 的时机是
+     *         真实存在的，比如 native 先于 Application 起来）
+     */
+    public static Context appContext() {
+        try {
+            Class<?> cls = Class.forName("android.app.ActivityThread");
+            Object thread = cls.getMethod("currentActivityThread").invoke(null);
+            return (Context) cls.getMethod("getApplication").invoke(thread);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
 
     public static Activity getCurrentActivity() {
         try {

@@ -2066,7 +2066,7 @@ public final class CNDownloaderFix {
                 if (off != want) throw new IOException("中央目录短读 " + off + "/" + want);
                 return out;
             } finally {
-                closeQuietly(in);
+                CNIo.closeQuietly(in);
                 if (c != null) try { c.disconnect(); } catch (Throwable ignore) {}
                 if (lease != null) lease.close();
             }
@@ -2355,15 +2355,15 @@ public final class CNDownloaderFix {
                         + " actual=" + partLen);
             }
 
-            closeQuietly(out); out = null;
-            closeQuietly(in);  in  = null;
+            CNIo.closeQuietly(out); out = null;
+            CNIo.closeQuietly(in);  in  = null;
 
             promotePart(part, archive);
             deleteQuietly(sidecar);
             return new DownloadMetadata(total, etag);
         } finally {
-            closeQuietly(out);
-            closeQuietly(in);
+            CNIo.closeQuietly(out);
+            CNIo.closeQuietly(in);
             c.disconnect();
             networkLease.close();
         }
@@ -2471,8 +2471,8 @@ public final class CNDownloaderFix {
             }
             return new String(bos.toByteArray(), StandardCharsets.UTF_8);
         } finally {
-            closeQuietly(out);
-            closeQuietly(in);
+            CNIo.closeQuietly(out);
+            CNIo.closeQuietly(in);
             c.disconnect();
         }
     }
@@ -2586,7 +2586,7 @@ public final class CNDownloaderFix {
             }
             return new String(bos.toByteArray(), StandardCharsets.UTF_8);
         } finally {
-            closeQuietly(in);
+            CNIo.closeQuietly(in);
         }
     }
 
@@ -2619,7 +2619,7 @@ public final class CNDownloaderFix {
         } catch (Throwable t) {
             CNLog.w(TAG, "续传身份 sidecar 写入失败，本次续传保护降级: " + tag);
         } finally {
-            closeQuietly(out);
+            CNIo.closeQuietly(out);
         }
     }
 
@@ -2639,7 +2639,7 @@ public final class CNDownloaderFix {
             fos.flush();
             fos.getFD().sync();
         } finally {
-            closeQuietly(fos);
+            CNIo.closeQuietly(fos);
         }
     }
 
@@ -2822,24 +2822,6 @@ public final class CNDownloaderFix {
     private static void deleteQuietly(File file) {
         if (file.exists() && !file.delete()) {
             CNLog.w(TAG, "Cannot delete " + file);
-        }
-    }
-
-    private static void closeQuietly(InputStream in) {
-        if (in != null) {
-            try {
-                in.close();
-            } catch (IOException e) {
-            }
-        }
-    }
-
-    private static void closeQuietly(OutputStream out) {
-        if (out != null) {
-            try {
-                out.close();
-            } catch (IOException e) {
-            }
         }
     }
 

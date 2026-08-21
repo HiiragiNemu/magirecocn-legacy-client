@@ -430,7 +430,7 @@ public final class CNHotUpdateTx {
                 out.add(name);
             }
         } finally {
-            closeQuietly(zip);
+            CNIo.closeQuietly(zip);
         }
         if (out.isEmpty()) throw new ZipException("包里没有任何文件条目: " + archive);
         return out;
@@ -550,7 +550,7 @@ public final class CNHotUpdateTx {
             CNLog.w(TAG, "[" + tag + "] 清单读取失败，本轮不清理孤儿", t);
             out.clear();
         } finally {
-            closeQuietly(r);
+            CNIo.closeQuietly(r);
         }
         return out;
     }
@@ -745,7 +745,7 @@ public final class CNHotUpdateTx {
             CNLog.e(TAG, "读 journal 失败，无法回滚: " + journal, t);
             return false;
         } finally {
-            closeQuietly(r);
+            CNIo.closeQuietly(r);
         }
         return clean;
     }
@@ -900,8 +900,8 @@ public final class CNHotUpdateTx {
             out.flush();
             fos.getFD().sync();
         } finally {
-            closeQuietly(out);
-            closeQuietly(in);
+            CNIo.closeQuietly(out);
+            CNIo.closeQuietly(in);
         }
     }
 
@@ -921,7 +921,7 @@ public final class CNHotUpdateTx {
             fos.flush();
             fos.getFD().sync();
         } finally {
-            closeQuietly(fos);
+            CNIo.closeQuietly(fos);
         }
     }
 
@@ -949,9 +949,4 @@ public final class CNHotUpdateTx {
         try { if (f != null) f.delete(); } catch (Throwable ignore) {}
     }
 
-    private static void closeQuietly(java.io.Closeable c) {
-        if (c != null) {
-            try { c.close(); } catch (Throwable ignore) {}
-        }
-    }
 }

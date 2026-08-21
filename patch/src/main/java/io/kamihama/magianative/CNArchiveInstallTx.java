@@ -464,15 +464,15 @@ public final class CNArchiveInstallTx {
             // 从写入循环里抛出来时，半截临时文件必须带走。原先只有循环**之后**
             // 那两处检查会 deleteQuietly(temp)，于是新加的即时判据一旦命中，
             // .cnv-install.tmp 就留在盘上没人管了。
-            closeQuietly(output);
-            closeQuietly(raw);
-            closeQuietly(in);
+            CNIo.closeQuietly(output);
+            CNIo.closeQuietly(raw);
+            CNIo.closeQuietly(in);
             deleteQuietly(temp);
             throw t;
         } finally {
-            closeQuietly(output);
-            closeQuietly(raw);
-            closeQuietly(in);
+            CNIo.closeQuietly(output);
+            CNIo.closeQuietly(raw);
+            CNIo.closeQuietly(in);
         }
 
         if (entry.getSize() >= 0 && copied != entry.getSize()) {
@@ -565,7 +565,7 @@ public final class CNArchiveInstallTx {
         } catch (Throwable t) {
             return null;
         } finally {
-            closeQuietly(reader);
+            CNIo.closeQuietly(reader);
         }
     }
 
@@ -583,8 +583,8 @@ public final class CNArchiveInstallTx {
             writer.write(String.valueOf(next)); writer.write('\n');
             writer.flush();
             raw.getFD().sync();
-            closeQuietly(writer); writer = null;
-            closeQuietly(raw); raw = null;
+            CNIo.closeQuietly(writer); writer = null;
+            CNIo.closeQuietly(raw); raw = null;
             // F-073：不再「先删再改名」。两步之间被杀，断点状态就此消失——不致命
             // （下次整包重解），但那是白烧一次几百 MB 的解压，而 rename(2) 本来就
             // 能一步换到位。
@@ -595,8 +595,8 @@ public final class CNArchiveInstallTx {
             if (e instanceof InstallIOException) throw (InstallIOException) e;
             throw new InstallIOException("Cannot save extraction state: " + file, e);
         } finally {
-            closeQuietly(writer);
-            closeQuietly(raw);
+            CNIo.closeQuietly(writer);
+            CNIo.closeQuietly(raw);
             deleteQuietly(temp);
         }
     }
@@ -702,8 +702,4 @@ public final class CNArchiveInstallTx {
         try { file.delete(); } catch (Throwable ignore) {}
     }
 
-    private static void closeQuietly(java.io.Closeable c) {
-        if (c == null) return;
-        try { c.close(); } catch (Throwable ignore) {}
-    }
 }

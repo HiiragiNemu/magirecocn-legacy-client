@@ -995,7 +995,7 @@ public final class CNHotUpdateCheck {
     }
 
     private static SharedPreferences prefs() {
-        Context ctx = appContext();
+        Context ctx = CNRestClientActivity.appContext();
         return ctx == null ? null : ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
     }
 
@@ -1095,15 +1095,6 @@ public final class CNHotUpdateCheck {
      * 取 Application Context。与原包同一手法（反射 {@code ActivityThread}），
      * 因为补丁类没有别的途径拿到 Context——它们不由框架实例化。
      */
-    private static Context appContext() {
-        try {
-            Class<?> cls = Class.forName("android.app.ActivityThread");
-            Object thread = cls.getMethod("currentActivityThread").invoke(null);
-            return (Context) cls.getMethod("getApplication").invoke(thread);
-        } catch (Throwable t) {
-            return null;
-        }
-    }
 
     private static void deleteQuietly(File f) {
         try { if (f != null && f.exists() && !f.delete()) {

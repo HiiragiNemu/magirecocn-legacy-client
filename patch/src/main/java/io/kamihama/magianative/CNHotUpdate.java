@@ -362,8 +362,8 @@ public final class CNHotUpdate {
             }
             out.flush();
             out.getFD().sync();
-            closeQuietly(out); out = null;
-            closeQuietly(in); in = null;
+            CNIo.closeQuietly(out); out = null;
+            CNIo.closeQuietly(in); in = null;
             if (total > 0 && part.length() != total) {
                 throw new IOException("下载不完整: " + part.length() + " / " + total);
             }
@@ -371,8 +371,8 @@ public final class CNHotUpdate {
             // 一起没了；rename(2) 同目录替换本来就是原子的。
             CNAtomicReplace.commit(part, dest);
         } finally {
-            closeQuietly(out);
-            closeQuietly(in);
+            CNIo.closeQuietly(out);
+            CNIo.closeQuietly(in);
             if (c != null) try { c.disconnect(); } catch (Throwable ignore) {}
             lease.close();
         }
@@ -501,9 +501,6 @@ public final class CNHotUpdate {
         catch (Throwable ignore) {}
     }
 
-    private static void closeQuietly(java.io.Closeable c) {
-        if (c != null) try { c.close(); } catch (Throwable ignore) {}
-    }
 
     // ---- JVM 合同测试入口 ----
     public static String hotIdentityForTest(CNHotUpdateValidate.VerMeta meta) {

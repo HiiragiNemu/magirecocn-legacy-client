@@ -251,18 +251,9 @@ public final class CNTutorialPrompt {
     }
 
     private static SharedPreferences prefs() {
-        Context ctx = appContext();
+        Context ctx = CNRestClientActivity.appContext();
         return ctx == null ? null : ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
     }
 
     /** 补丁类不由框架实例化，只能反射取 Application Context（与原包同一手法）。 */
-    private static Context appContext() {
-        try {
-            Class<?> cls = Class.forName("android.app.ActivityThread");
-            Object thread = cls.getMethod("currentActivityThread").invoke(null);
-            return (Context) cls.getMethod("getApplication").invoke(thread);
-        } catch (Throwable t) {
-            return null;
-        }
-    }
 }

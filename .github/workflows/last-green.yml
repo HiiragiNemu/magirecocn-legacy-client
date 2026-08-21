@@ -175,6 +175,9 @@ jobs:
           python3 tools/check-hotupdate-monotonic-contract.py
           # 日志热路径的线程安全：共享 SimpleDateFormat 只能在自己的监视器下用。
           python3 tools/check-log-threadsafety-contract.py
+          # 「同一件事只有一份实现」：closeQuietly / appContext 曾经各有多份，
+          # 而重复实现的危险在于它们会各自漂移、其中一份悄悄变成错的。
+          python3 tools/check-single-impl-contract.py
 
       - name: 🟢 移动 last-green tag
         env:

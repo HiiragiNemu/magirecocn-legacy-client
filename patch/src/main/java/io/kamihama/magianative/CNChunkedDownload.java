@@ -553,8 +553,8 @@ public final class CNChunkedDownload {
             }
             return hex(md.digest());
         } finally {
-            closeQuietly(out);
-            closeQuietly(in);
+            CNIo.closeQuietly(out);
+            CNIo.closeQuietly(in);
             disconnect(c);
             if (lease != null) lease.close();
         }
@@ -583,8 +583,8 @@ public final class CNChunkedDownload {
             // 元数据只有在主文件数据落稳后才会标记该块已验证。
             raf.getFD().sync();
         } finally {
-            closeQuietly(in);
-            closeQuietly(raf);
+            CNIo.closeQuietly(in);
+            CNIo.closeQuietly(raf);
         }
     }
 
@@ -868,8 +868,8 @@ public final class CNChunkedDownload {
                             ctx.etag, ctx.url, ctx.done);
                 }
             }
-            closeQuietly(raf);
-            closeQuietly(in);
+            CNIo.closeQuietly(raf);
+            CNIo.closeQuietly(in);
             disconnect(c);
             if (lease != null) lease.close();
         }
@@ -1102,7 +1102,7 @@ public final class CNChunkedDownload {
             raf = new RandomAccessFile(f, "rw");
             if (raf.length() != total) raf.setLength(total);
         } finally {
-            closeQuietly(raf);
+            CNIo.closeQuietly(raf);
         }
     }
 
@@ -1132,12 +1132,12 @@ public final class CNChunkedDownload {
                 w.write(verified.get(i) == 0 ? "0\n" : "1\n");
             }
             w.flush();
-            closeQuietly(w); w = null;
+            CNIo.closeQuietly(w); w = null;
             replace(tmp, meta);
         } catch (Throwable t) {
             CNLog.w(TAG, "保存分块断点失败: " + t);
         } finally {
-            closeQuietly(w);
+            CNIo.closeQuietly(w);
             deleteQuietly(tmp);
         }
     }
@@ -1155,12 +1155,12 @@ public final class CNChunkedDownload {
             w.write(sanitize(url)); w.write('\n');
             for (int i = 0; i < segments; i++) w.write(done.get(i) + "\n");
             w.flush();
-            closeQuietly(w); w = null;
+            CNIo.closeQuietly(w); w = null;
             replace(tmp, meta);
         } catch (Throwable t) {
             CNLog.w(TAG, "保存分段断点失败: " + t);
         } finally {
-            closeQuietly(w);
+            CNIo.closeQuietly(w);
             deleteQuietly(tmp);
         }
     }
@@ -1189,7 +1189,7 @@ public final class CNChunkedDownload {
         } catch (Throwable t) {
             return null;
         } finally {
-            closeQuietly(br);
+            CNIo.closeQuietly(br);
         }
     }
 
@@ -1217,7 +1217,7 @@ public final class CNChunkedDownload {
         } catch (Throwable t) {
             return null;
         } finally {
-            closeQuietly(br);
+            CNIo.closeQuietly(br);
         }
     }
 
@@ -1345,9 +1345,6 @@ public final class CNChunkedDownload {
         if (f != null && f.exists() && !f.delete()) CNLog.w(TAG, "无法删除 " + f);
     }
 
-    private static void closeQuietly(java.io.Closeable c) {
-        if (c != null) try { c.close(); } catch (Throwable ignore) {}
-    }
 
     private static final class DownloadThreadFactory implements ThreadFactory {
         private final AtomicInteger ids = new AtomicInteger(0);

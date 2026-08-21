@@ -68,7 +68,20 @@ public class CNCNDownloadUI {
     public static ViewGroup decorView;
     /** volatile：show()/hide() 与心跳线程跨线程读写，必须立即可见。 */
     public static volatile boolean isShowing;
-    public static long lastUpdateTime;
+    /**
+     * 上次把刷新投给主线程的时刻。
+     *
+     * <p><b>volatile 是必须的</b>：多个下载线程会并发读写它，而本仓库同时构建
+     * armeabi-v7a——32 位 VM 上非 volatile 的 {@code long} 读写不保证原子
+     * （JLS §17.7），撕裂读会拼出一个不属于任何一次写入的时间戳。实践中
+     * {@code currentTimeMillis()} 的高 32 位约 49.7 天才变一次、撕裂结果通常仍落在
+     * 合法区间，所以这更多是把规范上的洞补上，而不是在修一个正在发生的故障——
+     * 但代价只有一个关键字。
+     *
+     * <p>可见性保持 {@code public} 不动：本仓库不存放基线树（构建时从上游 Release
+     * 整包重建），所以「没有别处引用它」这句话在这里<b>无法验证到底</b>，不该顺手收窄。
+     */
+    public static volatile long lastUpdateTime;
     public static FrameLayout overlayView;
     public static ProgressBar progressBarOverall;
     /** 原始安装日志文本视图；现位于 LOG 模态面板内。show() 用它作为建好的哨兵。 */
