@@ -644,13 +644,33 @@ public class CNCNDownloadUI {
         final int         fileIdx;
         final TextView    nameView;
         final TextView    infoView;
-        final TextView    retryView;
-        final ProgressBar bar;
-        final View        divider;
-        SlotViews(int f, TextView n, TextView i, TextView r, ProgressBar b, View d) {
-            fileIdx = f; nameView = n; infoView = i; retryView = r; bar = b; divider = d;
+        /**
+         * 行右侧那颗按钮。<b>一颗按钮两个身份</b>：该文件失败时是红色「重试」，
+         * 其余时候是紫色「重下」。
+         *
+         * <p>为什么不加第二颗：顶栏的左右两组胶囊现在是配平的，而资源行本来就
+         * 挤（名字 + 按钮 + 文字进度，文字进度还得贴着进度条右端）。两个动作
+         * 互斥——失败了才谈得上「重试」，没失败才谈得上「从头重下」——共用一个
+         * 位置反而比并排两颗更准确。
+         */
+        final TextView       actionView;
+        final GradientDrawable actionBg;
+        final ProgressBar    bar;
+        final View           divider;
+        /** 当前按钮文案。renderAll 每 500ms 跑一次，靠它避免无谓的 setText。 */
+        String  actionLabel;
+        /** 「重下」两击确认的上膛截止时刻（uptimeMillis）；0 = 没上膛。 */
+        long    armedUntilMs;
+        SlotViews(int f, TextView n, TextView i, TextView r, GradientDrawable rb,
+                  ProgressBar b, View d) {
+            fileIdx = f; nameView = n; infoView = i;
+            actionView = r; actionBg = rb; bar = b; divider = d;
         }
+        boolean armed(long now) { return armedUntilMs > 0L && now <= armedUntilMs; }
     }
+
+    /** 「重下」上膛后这么久没有第二击就自己撤销。 */
+    private static final long REDOWNLOAD_ARM_MS = 3000L;
 
     private static final List<SlotViews> slotList = new ArrayList<SlotViews>();
 
@@ -1597,22 +1617,97 @@ public class CNCNDownloadUI {
         return ss;
     }
 
-    /** 「重试」按钮：把该文件交还给安装器重新下载。 */
-    private static final class RetryClick implements View.OnClickListener {
-        private final Activity act;
-        private final int      index;
-        RetryClick(Activity act, int index) { this.act = act; this.index = index; }
+    /**
+     * 资源行右侧那颗按钮的点击处理：失败时走「重试」，其余时候走「重下」。
+     *
+     * <h3>「重下」为什么要两击</h3>
+     *
+     * 它贴在文字进度旁边，而且对一个<b>已经装好</b>的包按下去意味着整包重来
+     * （03 那种是 1.4 GB）。第一击只把文案换成「确认重下」并上膛 3 秒，第二击
+     * 才真动手；3 秒内没有第二击就自己撤销。
+     *
+     * <p>没有做成弹窗：{@code isModalOpen} 已经挂了八个模态框，每加一个都要连带
+     * 改主题切换时的树迁移与 hide() 的清场（X-C8 那条教训）。两击把确认放在按钮
+     * 自己身上，一行界面都不用动。
+     */
+    private static final class SlotActionClick implements View.OnClickListener {
+        private final Activity  act;
+        private final SlotViews sv;
+        SlotActionClick(Activity act, SlotViews sv) { this.act = act; this.sv = sv; }
+
         @Override public void onClick(View v) {
             try {
-                v.setVisibility(View.GONE);
-                CNLog.i("界面", "玩家点击重试: index=" + index);
-                toast(act, "正在重新安排该文件");
-                CNManualRedownload.retry(act, index);
+                int index = sv.fileIdx;
+                int[] st = fileStatus;
+                boolean failed = st != null && index >= 0 && index < st.length
+                        && st[index] == ST_ERROR;
+                if (failed) {
+                    sv.armedUntilMs = 0L;
+                    v.setVisibility(View.GONE);   // 与原「重试」一致：点完就藏，等状态刷新
+                    CNLog.i("界面", "玩家点击重试: index=" + index);
+                    toast(act, "正在重新安排该文件");
+                    CNManualRedownload.retry(act, index);
+                    return;
+                }
+                long now = android.os.SystemClock.uptimeMillis();
+                if (!sv.armed(now)) {
+                    sv.armedUntilMs = now + REDOWNLOAD_ARM_MS;
+                    applySlotAction(sv, false, true);   // 立刻反馈，不等下一帧
+                    CNLog.i("界面", "重下已上膛 index=" + index);
+                    return;
+                }
+                sv.armedUntilMs = 0L;
+                applySlotAction(sv, false, false);
+                CNLog.i("界面", "玩家确认重下: index=" + index);
+                toast(act, "正在从头重新下载该文件");
+                CNManualRedownload.request(act, index);
             } catch (Throwable t) {
-                CNLog.e("界面", "重试请求失败: " + t, t);
+                CNLog.e("界面", "资源行按钮处理失败: " + t, t);
             }
         }
     }
+
+    /** 按当前身份刷新那颗按钮的文案与底色。文案没变就什么都不做。 */
+    private static void applySlotAction(SlotViews sv, boolean failed, boolean armed) {
+        String want = failed ? "重试" : (armed ? "确认重下" : "重下");
+        if (want.equals(sv.actionLabel)) return;
+        sv.actionLabel = want;
+        sv.actionView.setText(want);
+        // 上膛态借用失败那支红：它的意思是「再点一下真的要动手了」，
+        // 与紫色的常态「重下」要一眼分得开。
+        sv.actionBg.setColor(failed || armed ? 0xFFE53935 : COLOR_ACCENT2);
+        sv.actionView.invalidate();
+    }
+
+    /**
+     * 「N 秒后进入游戏」那行的点击：停表 / 放行。
+     *
+     * <p>「停留」原先是顶栏的一颗胶囊，撤进调试悬浮窗之后玩家够不着了（那扇门
+     * 后面还有悬浮窗权限与调试总闸两道闸）。放回这里而不是放回顶栏，是因为这句
+     * 倒计时<b>本来就在说同一件事</b>，只是不能点——顶栏那两组胶囊的配平因此
+     * 一个像素都不用动。vStatus 是固定两行（{@code setMinLines(2)}），加后缀
+     * 也不会撑高。
+     */
+    private static final View.OnClickListener STAY_TOGGLE = new View.OnClickListener() {
+        @Override public void onClick(View v) {
+            try {
+                boolean stay = CNDownloadUiAssist.shouldStayOnPage();
+                CNDownloadUiAssist.setStayOnPage(!stay);
+                if (!stay) {
+                    // 刚点「停在本页」：必须同时停表，否则倒计时照样把玩家带走。
+                    setAutoEnterCountdown(0L);
+                    toast(RestClient.getCurrentActivity(),
+                          "已停在本页；再点这行即可进入游戏");
+                } else {
+                    toast(RestClient.getCurrentActivity(), "已放行，正在进入游戏");
+                }
+                CNLog.i("界面", "玩家切换停留: stay=" + (!stay));
+                throttledUpdate();
+            } catch (Throwable t) {
+                CNLog.e("界面", "切换停留失败: " + t, t);
+            }
+        }
+    };
 
     /**
      * 参数是 {@link Context} 而不是 {@link Activity}：调用方常写
@@ -1762,7 +1857,7 @@ public class CNCNDownloadUI {
             headRow.addView(name, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-            // 「重试」按钮：仅在该文件失败（status==3）时可见。
+            // 行右侧那颗按钮：失败时红色「重试」，其余时候紫色「重下」。
             //
             // ⚠ 顺序有讲究：按钮一律排在**文字进度之前**。
             // 原版里文字进度的右端与下面那条整宽进度条的右端是对齐的，这一竖线
@@ -1770,23 +1865,25 @@ public class CNCNDownloadUI {
             // 往左顶，右边界立刻和进度条错开——玩家看到的就是「一失败排版就散」
             // （2026-08-13 真机连报两次）。让文字进度当这一行的最后一个孩子，
             // 按钮出现与否都不影响那条右边界。
-            TextView retry = new TextView(act);
-            retry.setText("重试");
-            retry.setTextColor(0xFFFFFFFF);
-            retry.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
-            retry.setGravity(Gravity.CENTER);
-            retry.setPadding(dp(act, 10), dp(act, 3), dp(act, 10), dp(act, 3));
-            GradientDrawable retryBg = new GradientDrawable();
-            retryBg.setColor(0xFFE53935);
-            retryBg.setCornerRadius(dp(act, 10));
-            retry.setBackground(retryBg);
-            retry.setVisibility(View.GONE);
-            retry.setOnClickListener(new RetryClick(act, fileIdx));
-            LinearLayout.LayoutParams retryLp = new LinearLayout.LayoutParams(
+            //
+            // 它现在**常驻**，不再是「失败才冒出来」。副作用恰好是好的：原先那颗
+            // 一出现就把整行推一下，常驻之后行宽从头到尾不变，上面那条教训自然
+            // 也就不会再犯。
+            TextView action = new TextView(act);
+            action.setText("重下");
+            action.setTextColor(0xFFFFFFFF);
+            action.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
+            action.setGravity(Gravity.CENTER);
+            action.setPadding(dp(act, 10), dp(act, 3), dp(act, 10), dp(act, 3));
+            GradientDrawable actionBg = new GradientDrawable();
+            actionBg.setColor(COLOR_ACCENT2);
+            actionBg.setCornerRadius(dp(act, 10));
+            action.setBackground(actionBg);
+            LinearLayout.LayoutParams actionLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT);
-            retryLp.leftMargin = dp(act, 8);
-            headRow.addView(retry, retryLp);
+            actionLp.leftMargin = dp(act, 8);
+            headRow.addView(action, actionLp);
 
             // 文字进度：这一行的最后一个孩子，右端永远贴着整宽进度条的右端。
             // 打上 TAG_SLOT_INFO，好让 CNDownloadUiAssist 的「重下」插到它前面
@@ -1826,7 +1923,11 @@ public class CNCNDownloadUI {
             divLp.topMargin = dp(act, 2);
             row.addView(div, divLp);
 
-            slotList.add(new SlotViews(fileIdx, name, info, retry, bar, div));
+            // 监听器要拿到 SlotViews（两击状态存在里面），所以先建槽再挂监听。
+            SlotViews sv = new SlotViews(fileIdx, name, info, action, actionBg, bar, div);
+            sv.actionLabel = "重下";
+            action.setOnClickListener(new SlotActionClick(act, sv));
+            slotList.add(sv);
         }
     }
 
@@ -4158,18 +4259,29 @@ public class CNCNDownloadUI {
         if (vPhase  != null) vPhase.setText(phaseText);
         if (vStatus != null) {
             long remain = autoEnterAtMs - android.os.SystemClock.uptimeMillis();
-            if (autoEnterAtMs > 0 && remain > 0) {
+            boolean staying = CNDownloadUiAssist.shouldStayOnPage();
+            if (staying) {
+                // 已经停表：这行就是唯一的「放行」入口（顶栏没有胶囊，
+                // 调试悬浮窗那扇门后面还有两道闸）。
+                vStatus.setText(detailText + "\n已停在本页 · 点这行进入游戏");
+                vStatus.setOnClickListener(STAY_TOGGLE);
+            } else if (autoEnterAtMs > 0 && remain > 0) {
                 // 倒计时让玩家一眼知道浮层没卡死、稍候自动进游戏。
                 // renderAll 每 500ms 跑一次，秒数按向上取整显示，最后 1 秒不跳 0 卡顿。
                 int secs = (int) ((remain + 999L) / 1000L);
-                vStatus.setText(detailText + "\n" + secs + " 秒后进入游戏");
+                vStatus.setText(detailText + "\n" + secs + " 秒后进入游戏 · 点这行停在本页");
+                vStatus.setOnClickListener(STAY_TOGGLE);
             } else {
+                // 没有倒计时也没停留：这行只是状态文字，不该是个能点的东西。
                 vStatus.setText(detailText);
+                vStatus.setOnClickListener(null);
+                vStatus.setClickable(false);
             }
         }
 
         // 槽位。slotList 按 DISPLAY_ORDER 排（热更两包显示在最前），
         // 状态/进度一律按槽位携带的 FILE_NAMES 下标查，与显示位置解耦。
+        long nowMs = android.os.SystemClock.uptimeMillis();
         if (!slotList.isEmpty() && status != null && progress != null) {
             for (int i = 0; i < FILE_COUNT && i < slotList.size(); i++) {
                 SlotViews sv = slotList.get(i);
@@ -4191,7 +4303,13 @@ public class CNCNDownloadUI {
                             android.content.res.ColorStateList.valueOf(color));
                 }
 
-                sv.retryView.setVisibility(st == 3 ? View.VISIBLE : View.GONE);
+                // 一颗按钮两个身份：失败=重试（红），其余=重下（紫，两击确认）。
+                // 上膛超时由这里统一撤销——点完就走开的玩家回来时不该看到
+                // 一颗还端着「确认重下」的按钮。
+                boolean slotFailed = (st == 3);
+                if (slotFailed) sv.armedUntilMs = 0L;
+                applySlotAction(sv, slotFailed, sv.armed(nowMs));
+                sv.actionView.setVisibility(View.VISIBLE);
                 if (st == 2) {
                     sv.infoView.setTextColor(0xFF66BB6A);
                     sv.infoView.setText(size != null && size[idx] > 0f

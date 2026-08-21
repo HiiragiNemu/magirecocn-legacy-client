@@ -272,10 +272,41 @@ checks = {
     # 原版里「文字进度」的右端与下面那条整宽进度条的右端对齐，这条竖线是整块的
     # 视觉基准。「重试」只要排在它后面，一出现就把它往左顶，右边界立刻错开
     # ——2026-08-13 真机连报两次。文字进度必须是资源行的最后一个孩子。
+    # 按钮改名 retry → action（一颗按钮两个身份，见下面那条），判据不变：
+    # 文字进度的右端与整宽进度条的右端对齐是整块的视觉基准，按钮必须排在它之前。
     "文字进度是资源行最后一个孩子":
         "info.setTag(CNDownloadUiAssist.TAG_SLOT_INFO)" in ui
-        and "headRow.addView(retry, retryLp);" in ui
-        and ui.index("headRow.addView(retry, retryLp);") < ui.index("headRow.addView(info, infoLp);"),
+        and before(ui, "headRow.addView(action, actionLp);",
+                       "headRow.addView(info, infoLp);"),
+    # ---- 重下与停留放回下载浮层（顶栏不动） ----
+    # 这两个原先在顶栏/资源行，撤进调试悬浮窗之后玩家够不着——那扇门后面还有
+    # 悬浮窗权限与调试总闸两道闸。放回来，但都放回它们本来的位置：
+    #   · 「重下」是按包的动作 → 资源行那颗已有的按钮位；
+    #   · 「停留」是全局二态，而「N 秒后进入游戏」那行本来就在说同一件事 → 那行。
+    # 顶栏因此一颗胶囊都不用加，左右两组的配平一个像素都不动。
+    "重下回到资源行且与重试共用一个按钮位":
+        "CNManualRedownload.request(act, index)" in code(ui)
+        and "applySlotAction(sv, slotFailed, sv.armed(nowMs));" in code(ui)
+        and "sv.actionView.setVisibility(View.VISIBLE);" in code(ui),
+    # 它贴在文字进度旁边，而对一个已经装好的包按下去就是整包重来（03 是 1.4 GB）。
+    # 两击确认放在按钮自己身上，不新开模态框——isModalOpen 已经挂了八个，
+    # 每加一个都要连带改主题切换时的树迁移与 hide() 清场（X-C8）。
+    "重下要两击确认且会自己撤销":
+        "REDOWNLOAD_ARM_MS" in code(ui)
+        and "sv.armedUntilMs = now + REDOWNLOAD_ARM_MS;" in code(ui)
+        and "boolean armed(long now)" in code(ui),
+    "停留回到倒计时那一行":
+        # 两个挂点缺一不可：倒计时进行中（停表）与已停留（放行）。
+        # 少挂一个就等于把玩家关在其中一半状态里出不来。
+        code(ui).count("vStatus.setOnClickListener(STAY_TOGGLE);") == 2
+        and "点这行停在本页" in ui and "点这行进入游戏" in ui
+        and "CNDownloadUiAssist.setStayOnPage(!stay);" in code(ui)
+        and "setAutoEnterCountdown(0L);" in code(ui),
+    # 顶栏的配平是这次改动明确要保住的东西：左四右二，加一颗就红。
+    # 真要加，改这个数之前先想清楚对称还成不成立。
+    "顶栏胶囊数量不变（左 4 右 2）":
+        code(ui).count("topLeft.addView(") == 4
+        and code(ui).count("headRight.addView(") == 2,
     # 磁盘满不能伪装成网络故障。ENOSPC 抛的是普通 IOException，和超时、断流走同一个
     # catch，于是：线路被 reportFailure（线上 switch_after_failures=1，一次就冷却
     # 60 秒）、四次重试逐条线路白烧、玩家对着「重试/备用引擎/单线程/离线包」四个
