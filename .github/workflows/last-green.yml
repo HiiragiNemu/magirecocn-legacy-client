@@ -173,6 +173,8 @@ jobs:
           python3 tools/check-dir-fsync-contract.py
           # F-088：同槽位热更提交单调性（每槽位锁 + 窗口内重读 + 单一 apply 点）。
           python3 tools/check-hotupdate-monotonic-contract.py
+          # 日志热路径的线程安全：共享 SimpleDateFormat 只能在自己的监视器下用。
+          python3 tools/check-log-threadsafety-contract.py
 
       - name: 🟢 移动 last-green tag
         env:

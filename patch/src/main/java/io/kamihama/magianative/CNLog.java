@@ -133,9 +133,6 @@ public final class CNLog {
     /** 最多保留多少个历史日志文件，超出的按序号从旧到新删除。 */
     private static final int    KEEP_LOGS = 30;
 
-    private static final SimpleDateFormat FILE_TS =
-            new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US);
-
     /** 本次启动的序号与文件名，供日志头与「复制全部」标注。 */
     private static volatile int    launchSeq  = 0;
     private static volatile String logName    = "";
@@ -150,6 +147,21 @@ public final class CNLog {
     }
     public static int launchSeq() { return launchSeq; }
 
+    /**
+     * 行首时间戳的格式化器。
+     *
+     * <p>⚠ <b>SimpleDateFormat 不是线程安全的</b>，而 write() 会被下载线程、UI 线程、
+     * logcat 回灌线程、各路看门狗并发调用。所以碰它<b>只能</b>在
+     * {@code synchronized (TS)} 里——并发 format() 轻则时间戳串行错乱，重则内部
+     * Calendar 被同时改写抛 ArrayIndexOutOfBoundsException，而那会从日志里炸出来。
+     *
+     * <p>之所以留成静态共享而不是每次新建：write() 是热路径（真机上解压期间量到过
+     * 每分钟近八百行），SimpleDateFormat 的构造要解析 pattern、建 Calendar 与
+     * DateFormatSymbols，逐行新建是实打实的开销。<b>只在这一处热路径上共享</b>；
+     * init() 那种一个进程跑一两次的地方一律用局部实例，别把这块共享状态摊开
+     * （原先 init() 就是直接用它的，而 init() 持的是 FILE_LOCK、write() 持的是 TS
+     * ——两把不同的锁碰同一个对象，等于没锁）。
+     */
     private static final SimpleDateFormat TS =
             new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
 
@@ -329,12 +341,15 @@ public final class CNLog {
                 //   见 LOG_DIR 的说明。）
                 Date now = new Date();
                 launchSeq = nextSeq(new File(dir, LOG_DIR));
-                logName   = String.format(Locale.US, "%04d_%s.log",
-                                          launchSeq, FILE_TS.format(now));
+                logName   = String.format(Locale.US, "%04d_%s.log", launchSeq,
+                        new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(now));
             }
+            // 局部实例，别碰热路径那个共享的 TS：这里持的是 FILE_LOCK，而 write()
+            // 持的是 TS，两把锁保护不了同一个对象。init() 一个进程只跑一两次，
+            // 新建一个格式化器的代价可以忽略。
             String head = (append ? "---- 日志继续（" : "==== 魔法纪录 资源安装器日志（第 "
                         + launchSeq + " 次启动，开始于 ")
-                    + TS.format(new Date())
+                    + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date())
                     + (append ? "） ----\n" : "） ====\n");
             writer = openOne(new File(dir, LOG_DIR), append, head);
             if (writer != null) openedOnce = true;
