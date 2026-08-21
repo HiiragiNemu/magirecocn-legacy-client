@@ -4471,6 +4471,9 @@ public class CNCNDownloadUI {
                 // stopOverlayFlag() 已在 hide() 里同步删掉标记；现在从 UI 线程
                 // 明确投递到 GL 线程释放 deferred top，不再碰运气等下一次文本 hook。
                 releaseEngineGate();
+                // 浮层撤下 = 屏幕交还给游戏。从这一刻起前端界面就该出来了；
+                // 迟迟不出来的兜底见 CNBootWatchdog。
+                CNBootWatchdog.arm();
                 // 先摘掉监听再拆视图，避免拆到一半又被日志回调碰上
                 CNLog.setListener(null);
                 // ⚠ 这里**不再**停 logcat 捕获、不再关文件。

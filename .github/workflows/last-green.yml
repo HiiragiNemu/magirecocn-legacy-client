@@ -163,6 +163,10 @@ jobs:
           # parseFinalFlag 各编一个 harness 跑同一张向量表——不依赖 NDK、
           # 不依赖 android.jar，几秒出结果。
           python3 tools/check-final-flag-parity.py
+          # 开机看门狗的合同：必须排在前端 TopPage 超时之后、序章期间让开、
+          # 一个进程只重载一次。这三条改错都会在真机上表现为「好好的一次加载
+          # 被掀掉」，而静态编译一句都看不见。
+          python3 tools/check-boot-watchdog-contract.py
 
       - name: 🟢 移动 last-green tag
         env:

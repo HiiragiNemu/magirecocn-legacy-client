@@ -460,6 +460,18 @@ public final class CNWebProxy {
      *
      * <p>反射失败或字段为空一律当作「还没到时候」，不报错。
      */
+    /**
+     * 取引擎当前那个 WebView（可能为 null：还没建 / 刚被 removeWebView 销毁）。
+     *
+     * <p>包内出口，给 {@link CNBootWatchdog} 用。反射目标只有这一处
+     * （{@code jp.f4samurai.web.WebViewHelper.sWebView}），别在别的类里复制第二份
+     * ——引擎换字段名时要改的地方必须只有一个。
+     */
+    static WebView currentWebView() {
+        Object o = findWebView();
+        return (o instanceof WebView) ? (WebView) o : null;
+    }
+
     private static Object findWebView() {
         try {
             Field f = webViewField;

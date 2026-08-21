@@ -137,6 +137,7 @@ python3 tools/baseline.py apply --out <目录>   # 只重建，不比对
 | `CNUserAgent` | 补丁侧统一 User-Agent（`magireco-cn-legacy/<ver> (Android …; SDK …)`），CDN/服务端日志据此识别客户端与版本。版本号与 native `CLIENT_VERSION` 同源，CI 注入。补丁发起的请求全覆盖；**WebView 转发的游戏流量不动**，仍透传原始 UA |
 | `CNRestart` | 重启本进程。原包的 `RestClient.restartApp()` 是坏的——它开头会重跑旧热更（浮层再现），且新 Activity 起在同进程里，被随后那一刀连带砍掉。**做法换过两版**：先是用 `AlarmManager` 把启动 Intent 排到 ~300ms 后再自杀，但部分机型上仍会退回桌面；现在改走独立进程的可见跳板（见下一行），确认跳板真的到了前台才杀旧进程 |
 | `CNRestartActivity` | 重启跳板，跑在独立进程 `:cnrestart` 里的透明 Activity。`onResume` 里确认自己已在前台后写就绪标记，`CNRestart` 轮询到该标记才敢杀旧进程；随后延迟拉起主 Activity，失败还会重试一次并把跳板留在前台，而不是悄悄消失。 |
+| `CNBootWatchdog` | **开机看门狗**（兜底）：浮层撤下后前端界面迟迟不出现（判据 = 引擎那个 WebView 既 `VISIBLE` 又有非零尺寸）就自动重载一次页面。救的是「前端把自己藏了再去发请求、请求不回来就没人把它显示回去」造成的黑屏（2026-08-21 玩家日志 0097/0099/0100）。截止时间由前端对 `/magica/api/page/TopPage` 的超时推导，必须排在它之后；序章期间不武装；一个进程只重载一次。逃生开关 `skipBootWatchdog` |
 | `CNTutorialPrompt` | 「下次启动去播序章」的标记读写与「自动询问只问一次」的记忆，另含给 native 用的隐藏/恢复前端界面入口。真正的触发在 native 侧（拦 `pushSceneTop` 改调 `pushScenePrologue`） |
 | `CNBgm` | 安装浮层的 BGM。不用 `MediaPlayer`——它只能整文件循环，会放出尾部 235 帧 padding 且接缝有空隙；这里自己 `MediaExtractor`+`MediaCodec` 解码喂 `AudioTrack`，按 HCA 循环点做采样级无缝循环。全类绝不外抛。 |
 | `CNLog` | 统一日志：logcat + 内存环形缓冲 + 文件，LOG 面板直接渲染同一份缓冲区 |
