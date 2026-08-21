@@ -917,9 +917,15 @@ checks = {
         and inside_archive_lock(downloader, "CNDownloadRestart.unregister(index);"),
     # 中断是重启请求特意打的，清掉它是 owner 的职责；非 owner 顺手清掉等于把上层的
     # 取消语义抹了。
+    # 锚点跟着 F-087（原子发布重启代际与请求原因）的重写换了位置：注销的实体从
+    # unregister 挪进了 finishOwner，CAS 也换成了槽位锁 + OwnerState 比对。
+    # 判据没变——中断是重启请求特意打的，清它是 owner 的职责，非 owner 顺手清掉
+    # 等于把上层的取消语义抹了。
     "非 owner 注销时不清中断位":
-        "if (ACTIVE.compareAndSet(index, current, null)) {"
-            in code(restart)
+        before(body(restart, "private static PendingRequest finishOwner(int index)"),
+               "if (ownerMatched) {", "Thread.interrupted();")
+        and body(restart, "private static PendingRequest finishOwner(int index)")
+                .count("Thread.interrupted();") == 1
         and "保留中断位" in restart,
     # 打断没命中活动 owner 时不能只弹一句「已登记」就完事：generation 那一下自增会被
     # 下一个 owner 当成初始值读走，请求蒸发，而玩家收到的是肯定的答复。
