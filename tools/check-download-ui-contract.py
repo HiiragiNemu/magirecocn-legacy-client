@@ -18,6 +18,7 @@ zipplan = Path("patch/src/main/java/io/kamihama/magianative/CNZipPlan.java").rea
 offline = Path("patch/src/main/java/io/kamihama/magianative/CNOfflineImport.java").read_text(encoding="utf-8")
 hot_tx = Path("patch/src/main/java/io/kamihama/magianative/CNHotUpdateTx.java").read_text(encoding="utf-8")
 hud = Path("patch/src/main/java/io/kamihama/magianative/CNDebugHud.java").read_text(encoding="utf-8")
+dbg = Path("patch/src/main/java/io/kamihama/magianative/CNDebugOverlay.java").read_text(encoding="utf-8")
 aria2 = Path("patch/src/main/java/io/kamihama/magianative/CNAria2.java").read_text(encoding="utf-8")
 bgm = Path("patch/src/main/java/io/kamihama/magianative/CNBgm.java").read_text(encoding="utf-8")
 atomic = Path("patch/src/main/java/io/kamihama/magianative/CNAtomicReplace.java").read_text(encoding="utf-8")
@@ -524,18 +525,18 @@ checks = {
     "悬浮窗日志预览走同一个解析器":
         "CNLogFormat.parse(r.src, r.text)" in overlay
         and "CNLog.tailRows(200)" in overlay,
-    # 权限引导页的宿主固定 decorView，靠布局回调持续置顶。曾按「下载浮层在就挂
-    # 进浮层」选宿主，可它由挂载看门狗在 Activity 出现后几毫秒触发，那时下载浮层
-    # 还没建出来——判断永远走 decorView，几百毫秒后浮层加进同一个 decorView 把它
-    # 盖住，玩家看到的还是「什么都没发生」。
-    "权限引导页随布局持续置顶":
-        "keepGuideOnTop" in overlay
-        and "OnGlobalLayoutListener" in overlay
-        and "removeOnGlobalLayoutListener" in overlay,
-    # 授权没有截止时间，轮询也不该有：原先 5 秒 × 120 之后彻底停下，玩家在系统
-    # 设置里慢一步回来就永远等不到小球，日志里只有一句「等待超时」。
-    "等待悬浮窗权限的轮询不会彻底停下":
-        "PERM_POLL_SLOW_MS" in overlay and "PERM_POLL_MAX" not in overlay,
+    # 【已废弃】原先这里有两条判据：「权限引导页随布局持续置顶」与「等待悬浮窗
+    # 权限的轮询不会彻底停下」。它们守的是同一件事的两半——**在等一个可能永远等
+    # 不到的权限**。整个悬浮窗改挂 decorView 之后（见上面那两条），引导页与轮询
+    # 都不存在了，判据随之作废。
+    #
+    # 留这段注释而不是删干净：那两条判据各自都是踩出来的（引导页曾被下载浮层
+    # 盖住、轮询曾在 5 秒 × 120 之后彻底停下），删掉一行不留，下次有人想把系统
+    # 悬浮窗加回来时会把同样的坑再踩一遍。要加回来的话，这两条也得一起回来。
+    "不再有等待悬浮窗权限的引导与轮询":
+        "keepGuideOnTop" not in code(overlay)
+        and "PERM_POLL" not in code(overlay)
+        and "showPermissionGuide" not in code(overlay),
     # SYSTEM_ALERT_WINDOW 是**原包自带**的权限，不是我们加的。5c7bdb9d 把它连同
     # MANAGE_EXTERNAL_STORAGE 一起删掉，理由写作「移除无用的悬浮窗权限」，并在这里
     # 立了一条「不许回来」的断言——而维护者对这条改动**完全不知情**。
@@ -673,6 +674,22 @@ checks = {
         and "decor.addView(tv, lp)" in hud
         and "WindowManager" not in code(hud)
         and "overlayGate" not in code(hud),
+    # 调试悬浮窗本体也搬到 decorView 了。系统悬浮窗要 SYSTEM_ALERT_WINDOW，而那个
+    # 权限在某些定制 ROM 上给不了、或给了也不生效——于是**越是出问题的设备，越挂不
+    # 出这个唯一的自救入口**。它要盖的只有我们自己这个 Activity，本来就不需要跨应用
+    # 的窗口层级（CNDebugHud 早就是这么挂的）。
+    "调试悬浮窗本体不依赖悬浮窗权限":
+        "WindowManager" not in code(dbg)
+        and "canDrawOverlays" not in code(dbg)
+        and "hostOf(act)" in code(dbg)
+        and "host.addView(" in code(dbg),
+    # decorView 上后挂的会盖住先挂的（下载浮层、面板自己的模态框），所以要能抬回来；
+    # 且 Activity 重建后旧树上的小球必须摘掉重挂，否则既泄漏又让 mount 认错。
+    "小球会被抬回最前且随 Activity 重建重挂":
+        "class Raise" in code(dbg)
+        and "bringToFront()" in code(dbg)
+        and "ballView.getParent() == decor" in code(dbg)
+        and "teardownViews();" in code(dbg),
     "调试提示条已彻底移出悬浮窗":
         "hudView" not in code(overlay) and "createHud" not in code(overlay)
         and "refreshHud" not in code(overlay) and "CNDebugHud.refresh()" in overlay,

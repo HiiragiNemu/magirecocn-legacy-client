@@ -14,7 +14,6 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
-import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -111,18 +110,19 @@ public final class CNDebugOverlay {
     // 宿主 Activity 用弱引用（F-R4-01）：config 重建后旧实例销毁，强持有会把它
     // 连同视图树钉死在静态字段里。取用一律走 currentActivity()，见其注释。
     private static WeakReference<Activity> activityRef;
-    private static WindowManager wm;
+    /** 当前挂载用的宿主（decorView）。Activity 重建后会换成新的那棵树。 */
+    private static ViewGroup host;
     private static Handler ui;
     private static SharedPreferences prefs;
 
     private static TextView ballView;
-    private static WindowManager.LayoutParams ballParams;
+    private static FrameLayout.LayoutParams ballParams;
     private static FrameLayout panelRoot;
     private static TextView pageTitleView;
     private static LinearLayout pageContent;
     private static LinearLayout bottomBar;
-    private static FrameLayout permGuide;      // 挂在 decorView 上（没权限时还没有自己的窗口）
-    private static ViewTreeObserver.OnGlobalLayoutListener guideRaise;  // 见 keepGuideOnTop
+    /** 置顶监听：后挂进 decorView 的东西会盖住小球/面板，靠它抬回来。 */
+    private static ViewTreeObserver.OnGlobalLayoutListener raise;
     private static ViewGroup guideHost;        // 摘监听要用同一个宿主
     private static TextView hintView;          // 首次引导气泡（独立小窗）
     private static FrameLayout modalView;      // 面板内的确认/结果弹窗
@@ -193,19 +193,18 @@ public final class CNDebugOverlay {
             // 可能在下载浮层从未建出来时挂起（资源早装好，直接进游戏）。先确保
             // 调色板按玩家的主题加载过一次，否则读到的是未初始化的 0 = 全透明。
             CNCNDownloadUI.ensurePalette(act);
-            if (ballView != null) return true;      // 已挂上；setActive 只调过一次
-            if (!CNDebugBridge.canDrawOverlays(act)) {
-                // 这一行不能省。2026-08-13 那次排查里，整条挂载链一行日志都没打，
-                // 于是「没权限」「没打进包」「时序不对」三种可能在日志上长得一模
-                // 一样，只能靠读代码猜。
-                CNLog.i(TAG, "没有悬浮窗权限，挂权限引导页并开始轮询");
-                showPermissionGuide(act);
-                startPermPoll();
-                return false;
+            ViewGroup decor = hostOf(act);
+            if (decor == null) return false;
+            // 判据是「挂在**当前这棵** decorView 上」，不是「字段非空」。改主题、
+            // 改系统字号、进分屏都会在同一个进程里重建 Activity，旧 decorView 连同
+            // 挂在它上面的小球一起成为孤儿：按字段非空判的话这里直接早退，玩家从此
+            // 再也见不到小球（CNDebugHud 踩过同一个坑）。
+            if (ballView != null && ballView.getParent() == decor) return true;
+            if (ballView != null) {
+                CNLog.i(TAG, "Activity 已重建，把小球从旧 decorView 迁到新的");
+                teardownViews();
             }
-            dismissPermissionGuide();
-            wm = (WindowManager) act.getSystemService(Context.WINDOW_SERVICE);
-            if (wm == null) return false;
+            host = decor;
             if (ui == null) ui = new Handler(Looper.getMainLooper());
             if (prefs == null) prefs = act.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
             createBall(act);
@@ -237,13 +236,18 @@ public final class CNDebugOverlay {
         ball.setOnTouchListener(new BallTouch());
 
         int size = dp(act, 48);
-        WindowManager.LayoutParams lp = overlayParams(size, size);
-        lp.gravity = Gravity.TOP | Gravity.LEFT;
+        FrameLayout.LayoutParams lp = overlayParams(size, size);
         int sw = act.getResources().getDisplayMetrics().widthPixels;
         int sh = act.getResources().getDisplayMetrics().heightPixels;
-        lp.x = Math.max(0, sw - size);
-        lp.y = sh / 3;
-        wm.addView(ball, lp);
+        lp.leftMargin = Math.max(0, sw - size);
+        lp.topMargin = sh / 3;
+        host.addView(ball, lp);
+        // 后挂进 decorView 的东西（下载浮层、它自己的模态框）会盖住小球，
+        // 布局变化时把它抬回最前——与 CNDebugHud 同一套做法。
+        try {
+            raise = new Raise();
+            host.getViewTreeObserver().addOnGlobalLayoutListener(raise);
+        } catch (Throwable ignore) {}
         ballView = ball;
         ballParams = lp;
         scheduleIdleFade();
@@ -265,12 +269,11 @@ public final class CNDebugOverlay {
             bg.setStroke(dp(act, 1), color("COLOR_GLASS_STK", 0x33B53C8C));
             hint.setBackground(bg);
             hint.setOnClickListener(new HintDismissClick());
-            WindowManager.LayoutParams lp = overlayParams(
+            FrameLayout.LayoutParams lp = overlayParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.gravity = Gravity.TOP | Gravity.LEFT;
-            lp.x = Math.max(0, ballParams.x - dp(act, 190));
-            lp.y = ballParams.y + dp(act, 8);
-            wm.addView(hint, lp);
+            lp.leftMargin = Math.max(0, ballParams.leftMargin - dp(act, 190));
+            lp.topMargin = ballParams.topMargin + dp(act, 8);
+            host.addView(hint, lp);
             hintView = hint;
         } catch (Throwable t) {
             CNLog.i(TAG, "引导气泡没挂出来（忽略）: " + t);
@@ -287,9 +290,7 @@ public final class CNDebugOverlay {
         }
         View v = hintView;
         hintView = null;
-        if (v != null) {
-            try { wm.removeView(v); } catch (Throwable ignore) {}
-        }
+        detach(v);
     }
 
     /**
@@ -308,8 +309,8 @@ public final class CNDebugOverlay {
                 case MotionEvent.ACTION_DOWN:
                     downRawX = e.getRawX();
                     downRawY = e.getRawY();
-                    startX = ballParams.x;
-                    startY = ballParams.y;
+                    startX = ballParams.leftMargin;
+                    startY = ballParams.topMargin;
                     moved = false;
                     wakeBall();
                     return true;
@@ -320,10 +321,10 @@ public final class CNDebugOverlay {
                             .getScaledTouchSlop();
                     if (!moved && Math.abs(dx) <= slop && Math.abs(dy) <= slop) return true;
                     moved = true;
-                    ballParams.x = startX + (int) dx;
-                    ballParams.y = startY + (int) dy;
+                    ballParams.leftMargin = startX + (int) dx;
+                    ballParams.topMargin = startY + (int) dy;
                     clampBall(v);
-                    try { wm.updateViewLayout(ballView, ballParams); } catch (Throwable ignore) {}
+                    applyBallPos();
                     return true;
                 }
                 case MotionEvent.ACTION_UP:
@@ -342,21 +343,37 @@ public final class CNDebugOverlay {
 
         /** 松手贴边：滚到离得近的那一侧。 */
         private void snapToEdge(View v) {
-            int sw = v.getResources().getDisplayMetrics().widthPixels;
+            ViewGroup h = host;
+            int sw = (h != null && h.getWidth() > 0)
+                    ? h.getWidth() : v.getResources().getDisplayMetrics().widthPixels;
             int size = ballView == null ? dp(v, 48) : ballView.getWidth();
             if (size <= 0) size = dp(v, 48);
-            ballParams.x = ballParams.x + size / 2 < sw / 2 ? 0 : Math.max(0, sw - size);
+            ballParams.leftMargin =
+                    ballParams.leftMargin + size / 2 < sw / 2 ? 0 : Math.max(0, sw - size);
             clampBall(v);
-            try { wm.updateViewLayout(ballView, ballParams); } catch (Throwable ignore) {}
+            applyBallPos();
         }
 
+        /**
+         * 夹在宿主范围内。
+         *
+         * <p>优先按宿主 decorView 的<b>实测</b>尺寸夹，取不到才退回 displayMetrics。
+         * 挂 WindowManager 时带着 FLAG_LAYOUT_NO_LIMITS，小球可以压到状态栏与
+         * 导航栏上；挂 decorView 之后没有那个 flag，再按整屏尺寸夹就会把它推到
+         * 导航栏底下——看得见一半、点不着。
+         */
         private void clampBall(View v) {
-            int sw = v.getResources().getDisplayMetrics().widthPixels;
-            int sh = v.getResources().getDisplayMetrics().heightPixels;
+            ViewGroup h = host;
+            int sw = (h != null && h.getWidth() > 0)
+                    ? h.getWidth() : v.getResources().getDisplayMetrics().widthPixels;
+            int sh = (h != null && h.getHeight() > 0)
+                    ? h.getHeight() : v.getResources().getDisplayMetrics().heightPixels;
             int size = ballView == null ? dp(v, 48) : ballView.getWidth();
             if (size <= 0) size = dp(v, 48);
-            ballParams.x = Math.max(0, Math.min(ballParams.x, Math.max(0, sw - size)));
-            ballParams.y = Math.max(0, Math.min(ballParams.y, Math.max(0, sh - size)));
+            ballParams.leftMargin = Math.max(0,
+                    Math.min(ballParams.leftMargin, Math.max(0, sw - size)));
+            ballParams.topMargin = Math.max(0,
+                    Math.min(ballParams.topMargin, Math.max(0, sh - size)));
         }
     }
 
@@ -403,211 +420,61 @@ public final class CNDebugOverlay {
 
 
 
-    // ══ 权限引导页（设计 §3：没授权时替代一切，挂在 decorView 上）═════════
-
-    private static void showPermissionGuide(final Activity act) {
-        try {
-            dismissPermissionGuide();
-            // 🔴 「谁在最上层」是会变的，所以不能只在挂的这一刻选一次宿主。
-            //
-            // CNCNDownloadUI 的下载浮层也挂在 decorView 上、全屏。上一版写的是
-            // 「浮层在就挂进浮层，不在才退回 decorView」——判断本身没错，错在
-            // **问的时机**：本引导页由 mountDebugOverlay 的看门狗触发，而它在
-            // Activity 出现后几毫秒就就绪了，那时下载浮层还没建出来。于是这个
-            // 三元表达式实际上永远走 decorView 那一支，几百毫秒后下载浮层被加进
-            // 同一个 decorView，稳稳盖在引导页上面——玩家看到的还是「什么都没
-            // 发生」，和 2026-08-13 第一次排查时一模一样。
-            //
-            // 所以宿主固定选 decorView（它一定在、也不会被换掉），改为在每次
-            // 布局后把引导页重新抬到最前。谁后加进来都盖不住它。
-            ViewGroup decor = (ViewGroup) act.getWindow().getDecorView();
-            FrameLayout mask = new FrameLayout(act);
-            mask.setBackgroundColor(color("COLOR_DIM", 0x88000000));
-            mask.setClickable(true);
-            mask.setFocusable(true);
-
-            LinearLayout card = dialogCard(act);
-            FrameLayout.LayoutParams cardLp = new FrameLayout.LayoutParams(
-                    Math.min(dp(act, 380),
-                            act.getResources().getDisplayMetrics().widthPixels - dp(act, 40)),
-                    ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
-            mask.addView(card, cardLp);
-
-            TextView title = text(act, "需要一项系统授权", 17f,
-                    color("COLOR_ACCENT", 0xFFD63384), true);
-            card.addView(title, rowLp(act, 0, 10));
-
-            TextView body = text(act,
-                    "调试小助手要浮在游戏画面上，系统要求你亲手开一次「显示在其他应用上层」。"
-                    + "只在第一次开启时需要。\n\n开完后回到游戏，下次启动小助手就会出现。",
-                    13.5f, color("COLOR_LOG_PANEL_TEXT", 0xFF2A1A3B), false);
-            body.setLineSpacing(dp(act, 2), 1f);
-            card.addView(body, rowLp(act, 0, 16));
-
-            LinearLayout buttons = new LinearLayout(act);
-            buttons.setOrientation(LinearLayout.HORIZONTAL);
-            buttons.setGravity(Gravity.END);
-            TextView later = dialogButton(act, "暂不开启", false, false);
-            TextView go = dialogButton(act, "去开启授权", true, false);
-            later.setOnClickListener(new PermLaterClick());
-            go.setOnClickListener(new PermGoClick());
-            buttons.addView(later);
-            LinearLayout.LayoutParams goLp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            goLp.leftMargin = dp(act, 10);
-            buttons.addView(go, goLp);
-            card.addView(buttons, rowLp(act, 0, 0));
-
-            decor.addView(mask, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            mask.bringToFront();
-            permGuide = mask;
-            keepGuideOnTop(decor);
-            CNLog.i(TAG, "权限引导页已显示（宿主=decorView，随布局持续置顶）");
-        } catch (Throwable t) {
-            CNLog.w(TAG, "权限引导页没挂出来: " + t);
-        }
-    }
+    // ══ 挂载点维护（decorView）══════════════════════════════════════════
 
     /**
-     * 让引导页在后来者加入后仍留在最上层。
+     * 把小球按 {@link #ballParams} 摆到位。
      *
-     * <p>只在**真的被盖住时**才抬（判据：它不是宿主的最后一个孩子）。无条件
-     * 每帧 bringToFront 会让宿主每次布局都重排一次子视图，等于给下载页白白加了
-     * 一份持续开销。
+     * <p>换掉的是 {@code wm.updateViewLayout}——decorView 上没有窗口可更新，
+     * 改 margin 之后要自己请求一次布局。
      */
-    private static void keepGuideOnTop(final ViewGroup host) {
-        if (host == null) return;
-        GuideRaise r = new GuideRaise(host);
-        host.getViewTreeObserver().addOnGlobalLayoutListener(r);
-        guideRaise = r;
-        guideHost = host;
-    }
-
-    private static final class GuideRaise
-            implements ViewTreeObserver.OnGlobalLayoutListener {
-        private final ViewGroup host;
-        GuideRaise(ViewGroup host) { this.host = host; }
-        @Override public void onGlobalLayout() {
-            try {
-                View g = permGuide;
-                if (g == null || g.getParent() != host) return;
-                if (host.getChildAt(host.getChildCount() - 1) != g) g.bringToFront();
-            } catch (Throwable ignore) {}
-        }
-    }
-
-    private static final class PermLaterClick implements View.OnClickListener {
-        @Override public void onClick(View v) {
-            // 「暂不开启」可退出，下次启动再引导（设计 §10）——不记任何状态。
-            dismissPermissionGuide();
-        }
-    }
-
-    private static final class PermGoClick implements View.OnClickListener {
-        @Override public void onClick(View v) {
-            Activity act = currentActivity();
-            boolean opened = act != null && CNDebugBridge.requestOverlayPermission(act);
-            if (!opened) {
-                toast("拉不起系统授权页，请手动到系统设置里找「显示在其他应用上层」");
-            }
-            // 授权页往返后给一次自动重试：玩家开完回来，不用非得重启才看到小球。
-            if (ui != null && act != null) {
-                ui.postDelayed(new PermRecheck(), 10_000L);
-            }
-        }
-    }
-
-    /**
-     * 权限轮询。<b>不依赖玩家点「去开启授权」那个按钮</b>——他完全可能自己摸到
-     * 系统设置里开掉（2026-08-13 就是这么试的），甚至根本没看见引导页。
-     * 只要权限到手就挂上，挂上即停。
-     */
-    private static final long PERM_POLL_MS      = 5000L;
-    private static final long PERM_POLL_SLOW_MS = 30000L;
-    /**
-     * F-R6-01：取不到 Activity（重建窗口 / 被系统回收）时的重试间隔。这个状态是
-     * 瞬时的，比 fast 档还短——「开完权限回来」的恢复要快。null 分支不递增
-     * permPolls：回来时 fast/slow 的档位计数不丢。
-     */
-    private static final long PERM_POLL_NULL_MS = 2000L;
-    /**
-     * 快节奏轮询的次数（5 秒 × 24 ≈ 2 分钟），之后转 30 秒一次的慢节奏。
-     *
-     * <p>原先是 5 秒 × 120 然后<b>彻底停下</b>。玩家去系统设置里翻「显示在其他
-     * 应用上层」这一项，慢一点、或者中途被别的事打断，回来就已经过了那 10 分钟：
-     * 权限明明开好了，小球还是不出现，而日志里只有一句「等待超时」——看起来就
-     * 像功能坏了。授权这件事没有截止时间，轮询也不该有。
-     */
-    private static final int  PERM_POLL_FAST = 24;
-    private static int permPolls;
-
-    private static void startPermPoll() {
-        if (ui == null) ui = new Handler(Looper.getMainLooper());
-        permPolls = 0;
-        ui.postDelayed(new PermPoll(), PERM_POLL_MS);
-    }
-
-    private static final class PermPoll implements Runnable {
-        // F-R4-01：不钉挂载时的 Activity。config 重建后旧实例已销毁，isFinishing
-        // 拦不住（重建不走 finish）——继续拿着它轮询就是钉着已销毁实例问权限。
-        // 每轮现查：重建后自动换到新 Activity。
-        // F-R5-01：null 是**瞬时态**（重建窗口期 / 引导流程里 Activity 被系统
-        // 回收销毁、进程还活着、mActivities 空）。直接 return 会永久停轮询——
-        // 玩家开完权限回来小球再不出现，正是本功能要救的场景。短延时重试，
-        // 与「授权没有截止时间」的既有设计一致。
-        @Override public void run() {
-            try {
-                if (ballView != null) return;                 // 已经挂上了
-                Activity act = currentActivity();
-                if (act == null) {
-                    if (ui != null) ui.postDelayed(new PermPoll(), PERM_POLL_NULL_MS);
-                    return;
-                }
-                if (CNDebugBridge.canDrawOverlays(act)) {
-                    CNLog.i(TAG, "检测到悬浮窗权限已授予，挂载小球（等了 "
-                            + permPolls + " 轮）");
-                    mount(act);
-                    return;
-                }
-                permPolls++;
-                if (permPolls == PERM_POLL_FAST) {
-                    CNLog.i(TAG, "悬浮窗权限仍未授予，轮询转为 30 秒一次（不再停）");
-                }
-                long next = permPolls < PERM_POLL_FAST ? PERM_POLL_MS : PERM_POLL_SLOW_MS;
-                if (ui != null) ui.postDelayed(new PermPoll(), next);
-            } catch (Throwable ignore) {}
-        }
-    }
-
-    private static final class PermRecheck implements Runnable {
-        // F-R5-01：与 PermPoll 一致，每轮现查 currentActivity()——授权页往返后
-        // 若期间发生了 config 重建，不再拿点击时捕获的旧实例去 mount。
-        @Override public void run() {
-            try {
-                Activity act = currentActivity();
-                if (act != null && ballView == null
-                        && CNDebugBridge.canDrawOverlays(act)) mount(act);
-            } catch (Throwable ignore) {}
-        }
-    }
-
-    private static void dismissPermissionGuide() {
-        View v = permGuide;
-        permGuide = null;
-        if (v != null && v.getParent() instanceof ViewGroup) {
-            ((ViewGroup) v.getParent()).removeView(v);
-        }
-        // 置顶监听跟着一起摘掉：留着的话每次布局都要多跑一遍判断，
-        // 而且它持着宿主 ViewGroup 的强引用。
+    private static void applyBallPos() {
+        View b = ballView;
+        if (b == null || ballParams == null) return;
         try {
-            if (guideRaise != null && guideHost != null) {
-                guideHost.getViewTreeObserver()
-                        .removeOnGlobalLayoutListener(guideRaise);
+            b.setLayoutParams(ballParams);
+            b.requestLayout();
+        } catch (Throwable ignore) {}
+    }
+
+    /**
+     * 把本类挂出去的东西全摘掉（小球 / 气泡 / 面板 / 置顶监听）。
+     *
+     * <p>Activity 重建后旧 decorView 连同挂在上面的视图一起成为孤儿：不摘的话
+     * 既是泄漏，{@code mount} 那边的「已经挂上了」判断也会认错。
+     */
+    private static void teardownViews() {
+        try {
+            if (raise != null && host != null) {
+                host.getViewTreeObserver().removeOnGlobalLayoutListener(raise);
             }
         } catch (Throwable ignore) {}
-        guideRaise = null;
-        guideHost = null;
+        raise = null;
+        closePanel();
+        detach(hintView);
+        hintView = null;
+        detach(ballView);
+        ballView = null;
+        host = null;
+    }
+
+    /**
+     * 把小球抬回最前。
+     *
+     * <p>下载浮层、面板自己的模态框都挂在同一棵 decorView 上，后挂的会盖住先挂的。
+     * 只在<b>真被盖住时</b>才抬（判据：它不是宿主的最后一个孩子）——无条件每帧
+     * bringToFront 会让宿主每次布局都重排一次子视图，等于给下载页白加一份开销。
+     */
+    private static final class Raise
+            implements ViewTreeObserver.OnGlobalLayoutListener {
+        @Override public void onGlobalLayout() {
+            try {
+                ViewGroup h = host;
+                View top = panelRoot != null ? panelRoot : ballView;
+                if (h == null || top == null || top.getParent() != h) return;
+                if (h.getChildAt(h.getChildCount() - 1) != top) top.bringToFront();
+            } catch (Throwable ignore) {}
+        }
     }
 
     // ══ 面板窗口 ═══════════════════════════════════════════════════════
@@ -623,7 +490,7 @@ public final class CNDebugOverlay {
      */
     private static void openPanel() {
         Activity act = currentActivity();
-        if (act == null || wm == null || panelRoot != null) return;
+        if (act == null || host == null || panelRoot != null) return;
         try {
             loadFlags();
             CNDebugHud.refresh();
@@ -678,9 +545,9 @@ public final class CNDebugOverlay {
             bottomBar.setGravity(Gravity.END);
             card.addView(bottomBar, rowLp(act, 8, 0));
 
-            WindowManager.LayoutParams lp = overlayParams(
+            FrameLayout.LayoutParams lp = overlayParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
-            wm.addView(root, lp);
+            host.addView(root, lp);
             panelRoot = root;
 
             pages.clear();
@@ -705,9 +572,7 @@ public final class CNDebugOverlay {
         pages.clear();
         dangerTapStage = 0;
         expandedRadio = null;
-        if (v != null) {
-            try { wm.removeView(v); } catch (Throwable ignore) {}
-        }
+        detach(v);
     }
 
     private static final class PanelMaskClick implements View.OnClickListener {
@@ -2540,16 +2405,43 @@ public final class CNDebugOverlay {
     // ══ 构件（形制继承下载浮层，设计 §9）══════════════════════════════
 
     /** 窗口参数：NOT_FOCUSABLE（不抢游戏输入），类型按 API 分叉（21–25 PHONE）。 */
-    private static WindowManager.LayoutParams overlayParams(int w, int h) {
-        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
-                w, h,
-                Build.VERSION.SDK_INT >= 26
-                        ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                        : WindowManager.LayoutParams.TYPE_PHONE,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                android.graphics.PixelFormat.TRANSLUCENT);
+    /**
+     * 挂载点：Activity 的 decorView，<b>不是</b> WindowManager。
+     *
+     * <h3>为什么换掉 WindowManager</h3>
+     *
+     * 系统悬浮窗要 {@code SYSTEM_ALERT_WINDOW}（「显示在其他应用上层」）。那个
+     * 权限在某些定制 ROM 上给不了、或者给了也不生效——于是调试悬浮窗<b>整个显示
+     * 不出来</b>，而它恰恰是玩家出问题时唯一的自救入口：越是奇葩的设备越需要它，
+     * 它偏偏越挂不上。
+     *
+     * <p>而这块面板要盖的只有<b>我们自己这个 Activity</b>，根本不需要跨应用的
+     * 窗口层级。{@code CNDebugHud} 早就是这么挂的（零权限），这里跟上。
+     *
+     * <p>换过来之后 x/y 从窗口坐标变成 decorView 里的 margin，语义一致；少了
+     * {@code FLAG_LAYOUT_NO_LIMITS}，所以小球不再能压在状态栏/挖孔区上——
+     * {@code clampBall} 改按宿主实测尺寸夹取，正好也把「拖到导航栏底下够不着」
+     * 那个老问题一并关掉。
+     */
+    private static ViewGroup hostOf(Activity act) {
+        if (act == null || act.getWindow() == null) return null;
+        View decor = act.getWindow().getDecorView();
+        return (decor instanceof ViewGroup) ? (ViewGroup) decor : null;
+    }
+
+    /** 把视图从它当前的父节点上摘下来。替代 {@code wm.removeView}。 */
+    private static void detach(View v) {
+        if (v == null) return;
+        try {
+            if (v.getParent() instanceof ViewGroup) {
+                ((ViewGroup) v.getParent()).removeView(v);
+            }
+        } catch (Throwable ignore) {}
+    }
+
+    private static FrameLayout.LayoutParams overlayParams(int w, int h) {
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(w, h);
+        lp.gravity = Gravity.TOP | Gravity.LEFT;
         return lp;
     }
 
