@@ -167,6 +167,10 @@ jobs:
           # 一个进程只重载一次。这三条改错都会在真机上表现为「好好的一次加载
           # 被掀掉」，而静态编译一句都看不见。
           python3 tools/check-boot-watchdog-contract.py
+          # 目录 fsync 的实现与契约：不许退回 RandomAccessFile（在 Android 上
+          # 对目录必定 EISDIR，会让目录级持久化静默失效），实现只留一份，
+          # 失败日志必须限流。
+          python3 tools/check-dir-fsync-contract.py
 
       - name: 🟢 移动 last-green tag
         env:

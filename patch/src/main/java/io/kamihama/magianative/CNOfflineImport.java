@@ -200,7 +200,7 @@ public final class CNOfflineImport {
         try {
             android.system.Os.rename(tmp.getAbsolutePath(), target.getAbsolutePath());
             try {
-                syncDirectory(dir);
+                CNArchiveInstallTx.syncDirOrThrow(dir);
             } catch (Throwable t) {
                 // rename 已发生，无法安全「撤回」为旧文件；但目录项未确认落盘时
                 // 绝不能向上层报告导入成功。调用方保守失败，新目标留作下次重验。
@@ -214,21 +214,6 @@ public final class CNOfflineImport {
         }
     }
 
-    /** rename 后同步父目录项，缩小掉电后目录项回退的窗口。 */
-    private static void syncDirectory(File dir) throws Exception {
-        java.io.FileDescriptor fd = null;
-        try {
-            // O_RDONLY 打开目录 + fsync 是标准目录项同步惯用法；精简 android.jar
-            // 只暴露 O_RDONLY，不依赖 O_DIRECTORY（API 21 上对目录 fsync 也有效）。
-            fd = android.system.Os.open(dir.getAbsolutePath(),
-                    android.system.OsConstants.O_RDONLY, 0);
-            android.system.Os.fsync(fd);
-        } finally {
-            if (fd != null) {
-                try { android.system.Os.close(fd); } catch (Throwable ignore) {}
-            }
-        }
-    }
 
     /** {@link CNArchiveValidate#verifyChunks} 的带进度版本。 */
     private static boolean verifyChunksWithProgress(File f,

@@ -611,26 +611,83 @@ public final class CNArchiveInstallTx {
      * 出现 rename 生效而 journal/COMMITTED 的目录项丢失，恢复方向随之误判
      * （把「已提交一半」当成「没动过」，连同回滚材料一起删掉）。
      *
-     * <p>实现与取舍：Android 上不能以写模式打开目录（{@code new FileOutputStream(dir)}
-     * 直接抛异常），但只读打开拿到 fd 后 fsync 是可行的，SDK 21 即可用。部分
-     * 挂载（sdcardfs/FUSE/个别 OEM 内核）不支持 fsync 目录——此时<b>降级为记
-     * 日志而不是判失败</b>：文件内容本身都已逐次 fsync，缺的只是「目录项 vs
-     * 掉电」这最后一个窗口，为它放弃整笔事务得不偿失。
+     * <p>实现见 {@link #syncDirOrThrow}。部分挂载（sdcardfs/FUSE/个别 OEM 内核）
+     * 不支持 fsync 目录——此时<b>降级为记日志而不是判失败</b>：文件内容本身都已
+     * 逐次 fsync，缺的只是「目录项 vs 掉电」这最后一个窗口，为它放弃整笔事务
+     * 得不偿失。失败日志按目录限流，见 {@link #warnSyncDirFailed}。
      *
      * <p>包内可见：{@code CNHotUpdateTx} 的 journal/COMMITTED/清单目录复用
      * 同一份实现，别复制第二份。
      */
     static void syncDir(File dir) {
         if (dir == null || !dir.isDirectory()) return;
-        RandomAccessFile raf = null;
         try {
-            raf = new RandomAccessFile(dir, "r");
-            raf.getFD().sync();
+            syncDirOrThrow(dir);
         } catch (Throwable t) {
+            warnSyncDirFailed(dir, t);
+        }
+    }
+
+    /**
+     * {@link #syncDir} 的底层动作，失败<b>向上抛</b>。
+     *
+     * <p>给「目录项没确认落盘就绝不能报成功」的调用方用
+     * （{@code CNOfflineImport.commitImportedFile}）。整个补丁里对目录
+     * fsync 的系统调用只有这一处，别复制第二份。
+     *
+     * <p>{@code O_RDONLY} 打开目录再 fsync 是标准的目录项同步惯用法；精简
+     * android.jar 只暴露 {@code O_RDONLY}，不依赖 {@code O_DIRECTORY}
+     * （API 21 上对目录 fsync 同样有效）。
+     *
+     * <p>⚠ <b>不要改回 {@code new RandomAccessFile(dir, "r")}</b>。那种写法在
+     * Android 上对目录<b>必定</b>抛 {@code FileNotFoundException: … EISDIR}
+     * ——2026-08-21 的玩家日志里 1386 次调用无一例外全部落进降级分支，
+     * 目录级持久化实际上从来没有生效过，而热更事务的崩溃恢复语义正是建立在
+     * 它之上的。
+     */
+    static void syncDirOrThrow(File dir) throws Exception {
+        java.io.FileDescriptor fd = null;
+        try {
+            fd = android.system.Os.open(dir.getAbsolutePath(),
+                    android.system.OsConstants.O_RDONLY, 0);
+            android.system.Os.fsync(fd);
+        } finally {
+            if (fd != null) {
+                try { android.system.Os.close(fd); } catch (Throwable ignore) {}
+            }
+        }
+    }
+
+    /**
+     * 目录 fsync 失败时限流记日志。
+     *
+     * <p>为什么要限流：确实有挂载（sdcardfs/FUSE/个别 OEM 内核）不支持对目录
+     * fsync，那种设备上<b>每一次</b>调用都会失败。一次热更有上千次调用，不限流
+     * 就是上千行同样的警告——2026-08-21 那份玩家日志里这一行占了整份的 62%，
+     * 把真正要查的东西全冲没了。每个目录只说一次，总量再封顶。
+     */
+    private static final java.util.Set<String> SYNC_DIR_WARNED =
+            java.util.Collections.synchronizedSet(new java.util.HashSet<String>());
+    private static final int SYNC_DIR_WARN_MAX = 8;
+
+    private static void warnSyncDirFailed(File dir, Throwable t) {
+        try {
+            String key = dir.getPath();
+            synchronized (SYNC_DIR_WARNED) {
+                if (SYNC_DIR_WARNED.contains(key)) return;
+                if (SYNC_DIR_WARNED.size() >= SYNC_DIR_WARN_MAX) {
+                    if (SYNC_DIR_WARNED.add("\u0000capped")) {
+                        CNLog.w(TAG, "目录 fsync 已失败 " + SYNC_DIR_WARN_MAX
+                                + " 个目录，后续不再逐个记（该文件系统多半整体不支持）");
+                    }
+                    return;
+                }
+                SYNC_DIR_WARNED.add(key);
+            }
             CNLog.w(TAG, "目录 fsync 失败（该文件系统可能不支持，掉电窗口仍在）: "
                     + dir + " : " + t);
-        } finally {
-            closeQuietly(raf);
+        } catch (Throwable ignore) {
+            // 记日志绝不能反过来把事务搞挂
         }
     }
 
