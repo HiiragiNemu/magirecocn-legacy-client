@@ -426,6 +426,9 @@ Application.onCreate
                ├─ CNHotUpdateTx.apply()            failHotUpdateApply
                └─ 慢网询问框                       skipSlowAsk
 
+（浮层撤下时，首装与热更两条路径共用同一个收尾）
+ └─ CNCNDownloadUI.hide() → CNBootWatchdog.arm()  skipBootWatchdog
+
 （native）JNI_OnLoad → 34 个 hook
  ├─ pushSceneTop 浮层闸门                         noOverlayGate
  ├─ 强制序章 / WebView 看门狗                      noTutorialForce / noTutorialGuard
