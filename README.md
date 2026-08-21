@@ -69,7 +69,8 @@ sha256 与树指纹钉死。
 |---|---|
 | `BASELINE_APK_URL` | 基线整包 |
 | `OVERLAY_URL` | 汉化图集取件地址（整条 URL，逗号分隔可列多条按序试；需要凭证时按 `https://<user>:<token>@…` 写） |
-| `TARGET_REPO` / `TARGET_REPO` | 发版与归档目标 |
+| `TARGET_REPO` | 发版目标（APK 与版本旁注发到这里；云端版本闸门不由本仓库提升） |
+| `TARGET_REPO` | 归档目标（`archive-tags.yml`）；清理工具的回退目标 |
 | `` | 上面几处的读写凭证 |
 | `CLIENT_ROOT_DOMAIN` / `CLIENT_PAGES_HOSTS` | 对外主机名，见 `CNEndpoints` |
 | `DOWNLOAD_URLS` | 介绍站上的下载线路（逗号分隔，第一条即「推荐」那条），见 `tools/inject-download-url.py` |

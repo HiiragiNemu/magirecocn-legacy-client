@@ -79,6 +79,8 @@ jobs:
           # 反过来 PAT 未必对本仓库有 actions:write，拿它删 artifact 会 403。
           : ${{ secrets. }}
           : ${{ secrets. }}
+          # 对外直链那份 APK 现在发到 TARGET_REPO；旧目标留作回退。
+          TARGET_REPO: ${{ secrets.TARGET_REPO }}
           TARGET_REPO: ${{ secrets.TARGET_REPO }}
           # 字符串输入只能经 env 传入；绝不直接插值进 run 脚本。
           KEEP_RUNS: ${{ inputs.keep_runs }}

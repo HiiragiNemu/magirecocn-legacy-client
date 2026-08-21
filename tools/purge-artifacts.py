@@ -50,7 +50,11 @@ import urllib.request
 
 API = "https://api.github.com"
 SELF = os.environ.get("GITHUB_REPOSITORY", "")
-ASSET_REPO = os.environ.get("TARGET_REPO", "").strip().strip("/")
+# 对外直链那份 APK 2026-08-21 起改发到 TARGET_REPO 指的目标。
+# 这里跟着它走，否则「保留当前对外直链那份」保的是一个已经不在那儿的名字，
+# 等于把该留的那份之外的东西全删了却没留住它。旧目标留作回退。
+ASSET_REPO = (os.environ.get("TARGET_REPO", "").strip().strip("/")
+              or os.environ.get("TARGET_REPO", "").strip().strip("/"))
 RELEASE_TAG = os.environ.get("UPSTREAM_RELEASE_TAG", "latest")
 
 
@@ -238,7 +242,9 @@ def main():
                 "\n--release-assets 要连 --yes-delete-release-assets 一起给。\n"
                 "  这一类删错会当场打断玩家的下载链接，所以不给一次「顺手就删了」的机会。")
         if not ASSET_REPO:
-            raise SystemExit("没有 TARGET_REPO，不知道该动哪个 Release")
+            raise SystemExit(
+                "没有 TARGET_REPO / TARGET_REPO，"
+                "不知道该动哪个 Release")
         keep = set(args.keep_asset) or {"magireco-latest-legacy-client.apk"}
         print("\n（Release 上保留：%s）" % "、".join(sorted(keep)))
         total += purge_release_assets(asset_token(), ASSET_REPO, RELEASE_TAG,

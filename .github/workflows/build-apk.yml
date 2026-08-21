@@ -25,7 +25,8 @@ name: 🏗️ 构建 APK
 # ║   3. Java 源码是唯一事实来源，编译产物覆盖对应补丁                  ║
 # ║   4. 重组 APK                                                      ║
 # ║   5. zipalign + apksigner（AOSP testkey）                           ║
-# ║   6. 发布 APK（公测直链，仅手动触发时）            ║
+# ║   6. 发布 APK：连同版本旁注一起交给发布目标（仅手动触发时）         ║
+# ║      —— 版本闸门不在本流水线提升                                    ║
 # ║                                                                    ║
 # ║ 触发方式：手动（workflow_dispatch），外加 main-checks.yml 以        ║
 # ║ workflow_call + verify_only 调进来复验。                            ║
@@ -57,13 +58,6 @@ on:
       # DEBUG_OVERLAY_ENABLED=false，CNDebugOverlay 建不出来。
       debug_overlay:
         description: '是否把调试悬浮窗编进包（native 总闸 MAGIA_DEBUG_OVERLAY；默认关＝发布包不带调试工具）'
-        type: boolean
-        default: false
-      # 提升版本闸门：勾上且构建+发布成功后，用跨仓库 Token 把
-      # 线上配置 的 legacy/config.json 的 client.version
-      # 提升到本次构建的版本号（1.0.<run_number>），玩家端即收到强更。
-      bump_version:
-        description: '构建成功（含发布）后提升 config.json 的 client.version 版本闸门'
         type: boolean
         default: false
   # 供 main-checks.yml 复用（push 到 main 后的复验）。APK 构建本身的
@@ -205,7 +199,6 @@ jobs:
           OVERLAY_URL: ${{ secrets.OVERLAY_URL }}
           : ${{ secrets. }}
           TARGET_REPO: ${{ secrets.TARGET_REPO }}
-          TARGET_REPO: ${{ secrets.TARGET_REPO }}
           CLIENT_ROOT_DOMAIN: ${{ secrets.CLIENT_ROOT_DOMAIN }}
           CLIENT_PAGES_HOSTS: ${{ secrets.CLIENT_PAGES_HOSTS }}
         run: |
@@ -218,7 +211,7 @@ jobs:
           # 发版相关的只有真要发版时才需要。 也在这一档：它只服务发版，
           # 构建本身不碰它——取件要凭证的话，凭证跟着 OVERLAY_URL 走。
           if [ "${{ inputs.verify_only }}" != "true" ]; then
-            NEED="$NEED  TARGET_REPO TARGET_REPO"
+            NEED="$NEED  TARGET_REPO"
           fi
           MISSING=""
           for v in $NEED; do
@@ -790,9 +783,10 @@ jobs:
             || { echo "::error::产物缺少 classes3.dex"; exit 1; }
           echo "自检通过"
 
-      # 产物交给分发链路：先传到 UP_REPO 的 latest Release，再显式 dispatch
-      # 通知 DOWN_REPO——**资产上传本身不产生 release 事件**，不 dispatch 的话
-      # 那一端要等下一次常规触发才会跟上。两个地址都由 secrets 给，见下面的 env。
+      # 产物交给发布目标，然后显式 dispatch 通知它——**资产上传本身不产生
+      # release 事件**，不 dispatch 那边不会动。
+      #
+      # 目标是什么、在哪儿，本仓库一律不写：地址只从 secret 取，注释里也不描述。
       # 注意：gh release upload 的 <file>#<name> 语法里 '#' 只改显示标签，
       # 资产真实 name 仍按本地文件名走，所以必须先改名再传——否则拿到的是一个
       # 名字对不上的资产，按名字取件的那一端会直接扑空。
@@ -803,18 +797,16 @@ jobs:
           # 目标地址由仓库变量给，不写死：它随部署走，换目标时不该改代码。
           # 它也不是安全边界——真正的保证来自 token 权限与内容 hash。
           # 缺了就直接失败，别静默发去一个错地方。
-          UP_REPO: ${{ secrets.TARGET_REPO }}
-          DOWN_REPO: ${{ secrets.TARGET_REPO }}
+          SYNC_REPO: ${{ secrets.TARGET_REPO }}
         run: |
           set -euo pipefail
           SRC=.build/legacy-client.apk
           NAME=magireco-latest-legacy-client.apk
-          for v in UP_REPO DOWN_REPO; do
-            if [ -z "${!v:-}" ]; then
-              echo "::error::secret ${v/UP_REPO/TARGET_REPO} 未配置（Settings → Secrets and variables → Actions）"
-              exit 1
-            fi
-          done
+          SIDECAR=magireco-latest-legacy-client.version.json
+          if [ -z "${SYNC_REPO:-}" ]; then
+            echo "::error::secret TARGET_REPO 未配置（Settings → Secrets and variables → Actions）"
+            exit 1
+          fi
 
           # preflight：token 必须能对 UP_REPO 的 release 读写，否则玩家那边留下的
           # 是 404 死链——宁可构建红掉也不发死链。
@@ -857,27 +849,67 @@ jobs:
             echo "::notice:: 有效期至 ${EXP}（到期后本步骤会以 401 失败）"
           fi
 
-          # 再确认够得着 UP_REPO。403 与 404 分开报：无权限时 GitHub 回的可能是
+          # 再确认够得着 SYNC_REPO。403 与 404 分开报：无权限时 GitHub 回的可能是
           # 404，不写清楚会让人以为 release 被删了。
           UP=$(curl -sS -o /dev/null -w '%{http_code}' \
                -H "Authorization: Bearer ${}" \
                -H "Accept: application/vnd.github+json" \
-               "https://api.github.com/repos/$UP_REPO/releases/tags/latest" || echo 000)
+               "https://api.github.com/repos/$SYNC_REPO/releases/tags/latest" || echo 000)
           case "$UP" in
-            200) echo "$UP_REPO latest release 可读，继续发布" ;;
-            403) echo "::error::token 有效但无权访问 $UP_REPO（HTTP 403）。细粒度 PAT 的可访问范围是签发它的那个账户，够不到范围外的目标；classic PAT 则需要 token 持有者本人对目标有写权限。"; exit 1 ;;
-            404) echo "::error::看不到 $UP_REPO 的 latest release（HTTP 404）。无权限时同样返回 404，所以这既可能是权限不够，也可能是 latest tag 真的不在了。"; exit 1 ;;
-            *)   echo "::error::读取 $UP_REPO latest release 返回 HTTP $UP，无法发布"; exit 1 ;;
+            200) echo "$SYNC_REPO latest release 可读，继续发布" ;;
+            403) echo "::error::token 有效但无权访问 $SYNC_REPO（HTTP 403）。细粒度 PAT 的可访问范围是签发它的那个账户，够不到范围外的目标；classic PAT 则需要 token 持有者本人对目标有写权限。"; exit 1 ;;
+            404) echo "::error::看不到 $SYNC_REPO 的 latest release（HTTP 404）。无权限时同样返回 404，所以这既可能是权限不够，也可能是 latest tag 真的不在了。"; exit 1 ;;
+            *)   echo "::error::读取 $SYNC_REPO latest release 返回 HTTP $UP，无法发布"; exit 1 ;;
           esac
 
+          # 版本旁注：闸门那端**只认它**——读到本次版本号后，还要用其中的
+          # sha256 与 APK 实际内容对拍，对得上才认。没有它，闸门就只能靠
+          # 「构建成功」这种与玩家能不能下到毫无因果关系的信号——那正是
+          # 2026-08-20 全体旧版客户端无限更新的成因。
           cp "$SRC" "$NAME"
-          gh release upload latest "$NAME" --repo "$UP_REPO" --clobber
-          echo "✅ 已上传 $NAME 到 $UP_REPO latest Release"
+          SHA=$(sha256sum "$NAME" | cut -d' ' -f1)
+          SIZE=$(stat -c%s "$NAME")
+          BUILT_AT=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+          APK_NAME="$NAME" APK_SHA="$SHA" APK_SIZE="$SIZE" OUT="$SIDECAR" \
+          python3 <<'PY'
+          import json, os
+          json.dump({
+              "version":  os.environ["CLIENT_VERSION"],
+              "apk":      os.environ["APK_NAME"],
+              "sha256":   os.environ["APK_SHA"],
+              "size":     int(os.environ["APK_SIZE"]),
+              "built_at": os.environ["BUILT_AT"],
+              "run": "%s/%s/actions/runs/%s" % (
+                  os.environ.get("GITHUB_SERVER_URL", ""),
+                  os.environ.get("GITHUB_REPOSITORY", ""),
+                  os.environ.get("GITHUB_RUN_ID", "")),
+          }, open(os.environ["OUT"], "w", encoding="utf-8"),
+              ensure_ascii=False, indent=2)
+          PY
+          cat "$SIDECAR"
 
-          # 通知 DOWN_REPO 立即跟进。失败不阻断——它下一次常规触发时也会跟上，
-          # 只是晚一点。
-          gh api "repos/$DOWN_REPO/dispatches" -f event_type=upstream-update \
-            || echo "::warning::dispatch 失败，DOWN_REPO 将在下次常规触发时跟上"
+          # 先包后旁注：中断时宁可留下「包已就位、还没人宣称版本」，
+          # 也不要「版本已宣称、包还没上去」——后者会把闸门抬到一个下不到的版本。
+          gh release upload latest "$NAME" --repo "$SYNC_REPO" --clobber
+          echo "✅ 已上传 $NAME 到 $SYNC_REPO latest Release"
+          gh release upload latest "$SIDECAR" --repo "$SYNC_REPO" --clobber
+          echo "✅ 已上传 $SIDECAR 到 $SYNC_REPO latest Release"
+
+          # 通知发布目标立即跟进。**这一步失败必须红**：2026-08-21 起这条
+          # dispatch 是唯一的自动通知路径，没有「下次常规触发会跟上」这回事了。
+          # 没送达 = 产物躺在那儿没人接手，而这正是要根治的那个故障形状。
+          for i in 1 2 3; do
+            if gh api "repos/$SYNC_REPO/dispatches" -f event_type=upstream-update; then
+              echo "✅ 已通知 $SYNC_REPO 同步"
+              exit 0
+            fi
+            echo "::notice::第 $i 次 dispatch 失败，重试"
+            sleep 5
+          done
+          echo "::error::无法通知发布目标（dispatch 连续失败 3 次）。"
+          echo "::error::产物已经传上去了，缺的只是那一声通知——"
+          echo "::error::在发布目标那侧手动触发一次即可补上。"
+          exit 1
 
       - name: 📊 构建报告
         if: always()
@@ -887,7 +919,7 @@ jobs:
             echo
             if [ -f .build/legacy-client.apk ]; then
               echo "- 状态：✅ 成功"
-              echo "- 客户端版本：\`${CLIENT_VERSION}\`（云端 config.json 的 client.version 抬过它即触发旧包强制更新）"
+              echo "- 客户端版本：\`${CLIENT_VERSION}\`（随 APK 一起写进版本旁注；云端闸门不在本流水线提升）"
               echo "- 主下载引擎：\`${{ inputs.engine }}\`"
               echo "- 调试悬浮窗：\`${{ inputs.debug_overlay && '开' || '关' }}\`（native MAGIA_DEBUG_OVERLAY）"
               echo "- sha256：\`$(sha256sum .build/legacy-client.apk | cut -d' ' -f1)\`"
@@ -897,53 +929,3 @@ jobs:
               echo "- 状态：❌ 失败"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: 🆙 提升版本闸门（config.json client.version）
-        # 勾了 bump_version 且非 verify_only（构建+发布都成功走到这里）才提升：
-        # 用跨仓库 Token 把在线配置仓库的 client.version 顶到本次构建版本号。
-        if: ${{ inputs.bump_version && inputs.verify_only != true }}
-        env:
-          : ${{ secrets. }}
-        run: |
-          set -euo pipefail
-          VER="1.0.${GITHUB_RUN_NUMBER}"
-          echo "本次构建版本: ${VER}"
-          rm -rf cfg
-          git clone --depth 1 \
-            "https://x-access-token:${}@github.com/MagirecoCN-Revival-Project/线上配置.git" \
-            cfg
-          cd cfg
-          python3 - "$VER" <<'PY'
-          import json, re, sys
-
-          def parse_version(value):
-              if not isinstance(value, str) or not re.fullmatch(r'[0-9]+(?:\.[0-9]+)*', value):
-                  raise SystemExit(f'非法的纯数字点分版本: {value!r}')
-              parts = [int(x) for x in value.split('.')]
-              while len(parts) > 1 and parts[-1] == 0:
-                  parts.pop()
-              return tuple(parts)
-
-          ver = sys.argv[1]
-          p = 'legacy/config.json'
-          d = json.load(open(p, encoding='utf-8'))
-          old = d.get('client', {}).get('version')
-          if parse_version(ver) <= parse_version(old):
-              raise SystemExit(f'拒绝把 client.version 非递增更新: {old} -> {ver}')
-          d.setdefault('client', {})['version'] = ver
-          # 与原格式一致（json.dumps indent=2 ensure_ascii=False，无尾换行）
-          open(p, 'w', encoding='utf-8').write(json.dumps(d, ensure_ascii=False, indent=2))
-          print(f'client.version: {old} -> {ver}')
-          PY
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add legacy/config.json
-          if git diff --cached --quiet; then
-            echo "版本未变化，跳过提交"
-            exit 0
-          fi
-          git diff --cached --stat
-          git commit -m "chore: 提升版本闸门 client.version -> ${VER} [skip ci]"
-          # 清 checkout 注入的 extraheader（默认 token 只读），强制走跨仓库 PAT
-          git -c http.extraheader= -c http.https://github.com/.extraheader= \
-              push "https://x-access-token:${}@github.com/MagirecoCN-Revival-Project/线上配置.git" HEAD:main
