@@ -49,11 +49,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * 前端自己对 TopPage 那条请求的上限是 {@value #FRONTEND_TOPPAGE_TIMEOUT_MS} ms
  * （前端那一侧 的 ajaxPrefilter 给 {@code /magica/api/page/TopPage} 单独
- * 设的 {@code options.timeout=18E4}）。看门狗必须排在它<b>后面</b>：抢在前面重载，
+ * 设的 {@code options.timeout=6E4}）。看门狗必须排在它<b>后面</b>：抢在前面重载，
  * 等于把一次本来还有希望回来的请求掀掉，而且掀完还会再等一遍——越救越慢。
  *
- * <p>代价是明摆着的：真卡住时玩家要黑屏三分半才等到自动重载。这个数字不好看，
- * 但它由前端那个 18E4 决定，不由这里决定。**要缩短就得先把 18E4 调下来**，
+ * <p>代价是明摆着的：真卡住时玩家要黑屏一分半才等到自动重载。这个数字仍不好看，
+ * 但它由前端那个 6E4 决定，不由这里决定。**要再缩短就得先把 6E4 调下来**，
  * 两边一起改；单独把这里改小只会打断前端自己的等待。
  *
  * <h3>只开一枪</h3>
@@ -71,11 +71,11 @@ public final class CNBootWatchdog {
      *
      * <p>这个值<b>不在本仓库</b>——它在 前端那一侧 的
      * {@code magica/js/libs/jquery-3.7.1.min.js} 里，形如
-     * {@code options.timeout=18E4}。这里写死一份只是为了让
+     * {@code options.timeout=6E4}。这里写死一份只是为了让
      * {@link #DEADLINE_MS} 的推导能被读懂；两边不同步时，以那边为准，
      * 并把这里一起改。
      */
-    static final long FRONTEND_TOPPAGE_TIMEOUT_MS = 180000L;
+    static final long FRONTEND_TOPPAGE_TIMEOUT_MS = 60000L;
 
     /** 浮层撤下之后等这么久，前端还没起来就重载。必须 &gt; 前端自己的超时。 */
     static final long DEADLINE_MS = FRONTEND_TOPPAGE_TIMEOUT_MS + 30000L;
@@ -108,7 +108,7 @@ public final class CNBootWatchdog {
      *   <li>取 1（等价于「哪怕见过一次就不重载」）——上面那段瞬间可见会把它闩上，
      *       于是该救的黑屏永远不救，看门狗变成摆设；
      *   <li>取 0（等价于「到点必开枪」）——玩家要是在标题页露面后 6 秒内就点进了战斗
-     *       （WebView 被藏），攒不满 {@value #VISIBLE_STREAK} 次早退，三分半后就会在
+     *       （WebView 被藏），攒不满 {@value #VISIBLE_STREAK} 次早退，一分半后就会在
      *       战斗中途重载页面，把结算流程打断。
      * </ul>
      *

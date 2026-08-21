@@ -45,7 +45,7 @@ arm = body(wd, "public static void arm()")
 front = body(wd, "static boolean frontEndUp()")
 
 # 截止时间必须由前端超时推导，且严格更大。写死一个字面量也可能碰巧更大，
-# 但那样下次前端改 18E4 时这里不会跟着动——所以要求的是「推导关系」本身。
+# 但那样下次前端改这个超时时这里不会跟着动——所以要求的是「推导关系」本身。
 deadline_derived = bool(
     re.search(
         r"DEADLINE_MS\s*=\s*FRONTEND_TOPPAGE_TIMEOUT_MS\s*\+\s*(\d+)L",
@@ -123,7 +123,7 @@ checks = {
     "截止时间严格晚于前端自己的超时":
         bool(deadline_margin) and int(deadline_margin.group(1)) > 0,
     "前端超时常量标了它的真实出处（不在本仓库）":
-        "前端那一侧" in wd and "18E4" in wd,
+        "前端那一侧" in wd and "6E4" in wd,
     "序章期间不武装":
         "CNTutorialPrompt.isArmed()" in arm,
     "有 skipBootWatchdog 逃生开关":
