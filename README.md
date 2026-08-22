@@ -69,8 +69,20 @@ sha256 与树指纹钉死。
 |---|---|
 | `BASELINE_APK_URL` | 基线整包 |
 | `OVERLAY_URL` | 汉化图集取件地址（整条 URL，逗号分隔可列多条按序试；需要凭证时按 `https://<user>:<token>@…` 写） |
-| `TARGET_REPO` | 发版目标（APK 与版本旁注发到这里；云端版本闸门不由本仓库提升） |
+| `TARGET_REPO` | 发版目标（APK 与版本旁注发到这里；云端版本闸门不由本仓库提升）。就是发布目标 `前端那一侧`，**2026-08-22 起它已断开上游、转为一个独立仓库**——转私有不影响本仓库这条链路（读写都走 ``），也不影响玩家（玩家从 CDN 下载，不直连 GitHub） |
 | `TARGET_REPO` | 归档目标（`archive-tags.yml`）；清理工具的回退目标 |
+
+> ⚠ 这两个 secret 名字里的 `DOWNSTREAM` / `UPSTREAM` 是**历史遗留**：它们来自
+> 发布目标还是 fork 的年代。发布目标独立之后这组上下游关系已不存在，名字没改是因为
+> 改 secret 名要人去 GitHub 设置里重建，不是代码能做的事。
+>
+> 🔴 **`TARGET_REPO` 的值需要人确认一次**：它若仍指向断开前的那个上游
+> 个人仓，本仓库的 tag 归档就还在往一个组织已经不再同步的仓库里传。这里读不到
+> secret 的值，只能提出来。
+
+同一个历史遗留还有一处：`build-apk.yml` 通知发布目标的 `repository_dispatch`
+事件名是 `upstream-update`，真实语义是「客户端产物就绪」。它是跨仓库的线上
+标识符，两边必须同时改才不会静默失联，所以两边都保留原名并各自注释说明。
 | `` | 上面几处的读写凭证 |
 | `CLIENT_ROOT_DOMAIN` / `CLIENT_PAGES_HOSTS` | 对外主机名，见 `CNEndpoints` |
 | `DOWNLOAD_URLS` | 介绍站上的下载线路（逗号分隔，第一条即「推荐」那条），见 `tools/inject-download-url.py` |

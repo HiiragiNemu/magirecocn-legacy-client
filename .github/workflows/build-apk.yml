@@ -898,6 +898,13 @@ jobs:
           # 通知发布目标立即跟进。**这一步失败必须红**：2026-08-21 起这条
           # dispatch 是唯一的自动通知路径，没有「下次常规触发会跟上」这回事了。
           # 没送达 = 产物躺在那儿没人接手，而这正是要根治的那个故障形状。
+          #
+          # ⚠ event_type 叫 upstream-update 是**历史遗留**，别按字面理解：
+          # 这名字来自发布目标还是某个仓库 fork 的年代。2026-08-22 起发布目标已断开
+          # 上游、转为一个独立仓库，本条 dispatch 的真实语义是「客户端产物
+          # 就绪」，与任何「上游」无关。名字两边都保留不改——它是跨仓库的线上
+          # 标识符，一边改一边没改就会静默失联（dispatch 照样返回成功，
+          # 那边没人监听）。
           for i in 1 2 3; do
             if gh api "repos/$SYNC_REPO/dispatches" -f event_type=upstream-update; then
               echo "✅ 已通知 $SYNC_REPO 同步"
