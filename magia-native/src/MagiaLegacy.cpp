@@ -2409,9 +2409,30 @@ static void setStringTrampoline(SetStringFn old, void* self, const void* text,
         old(self, text);        // 放在两句之后——它们与翻译无关，关掉翻译不该
         return;                 // 顺带把浮层收尾也关掉。
     }
-    // thread_local：fakeNdkStr 交给引擎的是这块缓冲的指针，必须在 old() 返回前
-    // 一直有效。放线程局部既保证生命周期，又不引入跨线程共享。
-    static thread_local std::string zh;
+    // 🔴 **必须是局部变量，不能再退回 static thread_local**。
+    //
+    // fakeNdkStr 交给引擎的是这块缓冲的指针，要求它在 old() 返回前一直有效——
+    // 局部变量同样满足（它活到函数结束，而 old() 在函数内部调用），所以
+    // static 从来就不是正确性需要的，只是想省掉每次的构造。
+    //
+    // 而 static 会**自我别名**，代价远大于省下的那点开销。本函数是可重入的：
+    // MenuItemLabel::setString(0x12a9bd0) 会把收到的 string 指针**原样**转给内层
+    // Label 的虚 setString（0x12a9c14 的 blr），而那个地址正是我们钩着的。于是
+    //
+    //     外层：engineLookup(text, zh) → zh = 译文；fk.data = zh.c_str()
+    //           → old(self,&fk) → 引擎转发 &fk 给内层 Label::setString
+    //     内层：本函数再次进入，text 就是 &fk（指向 zh 内部），
+    //           而 engineLookup 的 out 又是**同一个** zh
+    //
+    // 一旦译文本身也是表里的 key，内层那句 `out = it->second` 就在改写外层
+    // fk 正指着的缓冲——长度一变就重新分配，外层的指针当场悬空。今天没炸的唯一
+    // 理由是「译文又是 key」这种自指条目大概不存在，那是运气不是设计；批次三
+    // 刚加了 746 条高频短词条，正是最容易撞上的一类。
+    //
+    // 代价：多一次 std::string 构造。译文多在 22 字节以内走 SSO，不进堆；超出的
+    // 才多一次 malloc/free。同函数里前缀那条路的 combined 本来就是局部的，
+    // 统一成局部也让两条路的生命周期口径一致。
+    std::string zh;
     if (engineLookup(text, zh)) {
         FakeNdkStr fk;
         fakeNdkStr(fk, zh);
@@ -2516,10 +2537,14 @@ static void initLabelNew(void* node, void* label, const char* text, float f,
     maybeReloadEngineI18n();
     const char* use = text;
     bool hit = false;
-    // thread_local：use 会被交给引擎（initLabelOld 期间要一直有效）。
+    // use 会被交给引擎（initLabelOld 期间要一直有效）。
     // ⚠ 绝不能再写成 `use = it->second.c_str()`——那是指向表内部的指针，
     // 另一线程一重载就悬空。拷进这块缓冲，生命周期由我们自己保证。
-    static thread_local std::string combined;
+    //
+    // 局部而非 static thread_local：局部同样活到函数结束（initLabelOld 在函数内
+    // 调用），生命周期够用；而 static 会在本函数万一重入时自我别名，理由与
+    // setStringTrampoline 里那段一样。两处口径保持一致，免得下次有人只看一处。
+    std::string combined;
     EngineI18nPtr t = (text && g_engineI18nReady.load()) ? engineI18nSnapshot()
                                                         : EngineI18nPtr();
     if (t) {

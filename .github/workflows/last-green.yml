@@ -185,6 +185,9 @@ jobs:
           # 别的 PID 打的，只有第二路不带 --pid 的流看得见。这条一破，日志包
           # 看上去完全正常，只是永远没有崩溃现场。
           python3 tools/check-crash-capture-contract.py
+          # 译文替换用的缓冲必须是局部的：MenuItemLabel::setString 会重入回
+          # Label::setString，共享缓冲时两层会撞在同一块内存上。
+          python3 tools/check-i18n-buffer-alias.py
 
       - name: 🟢 移动 last-green tag
         env:
