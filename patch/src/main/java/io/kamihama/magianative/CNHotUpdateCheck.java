@@ -944,7 +944,6 @@ public final class CNHotUpdateCheck {
             c.setRequestProperty("Cache-Control", "no-cache, no-store, max-age=0");
             c.setRequestProperty("Pragma", "no-cache");
             c.setRequestProperty("Accept-Encoding", "identity");
-            CNUserAgent.apply(c);
             int code = c.getResponseCode();
             if (code / 100 != 2) throw new java.io.IOException("HTTP " + code);
             // F-080：上限要在**写进缓冲之前**判，而且超限必须报错。

@@ -112,7 +112,6 @@ public final class ChunkManifest {
             c.setRequestProperty("Cache-Control", "no-cache, no-store, max-age=0");
             c.setRequestProperty("Pragma", "no-cache");
             c.setRequestProperty("Accept-Encoding", "identity");
-            CNUserAgent.apply(c);
             int code = c.getResponseCode();
             if (code != 200) {
                 CNLog.w(TAG, "manifest 拉取失败 HTTP " + code + " url=" + url);
