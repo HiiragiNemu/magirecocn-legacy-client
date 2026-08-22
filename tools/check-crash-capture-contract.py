@@ -60,8 +60,12 @@ checks = {
         bool(crash_cmd) and "--pid" not in crash_cmd,
     "崩溃流收 DEBUG（墓碑本体：信号 / faulting address / backtrace）":
         '"DEBUG:V"' in spec,
-    "崩溃流收 libc（Fatal signal，给出崩在哪个线程）":
-        '"libc:V"' in spec,
+    # 只收 F：libc 这个 tag 不是崩溃路径独占的，bionic 平时也拿它打非致命的
+    # 东西（Access denied finding property 之类，某些 ROM 上每次属性查询一条）。
+    # 放宽到 V 就等于开了一条长期噪音流，而崩溃流又有意不受 24MB 封口约束。
+    # 要的那句 Fatal signal 本身是 FATAL 级，F 够用。
+    "崩溃流只收 FATAL 级的 libc（V 会把非致命的 libc 噪音长期灌进来）":
+        '"libc:F"' in spec and '"libc:V"' not in spec,
     "崩溃流收 AndroidRuntime（崩在 CNLog 起来之前时唯一的一份）":
         '"AndroidRuntime:E"' in spec,
     "崩溃流用 *:S 把其余静音（否则退化成整机全收）":

@@ -823,9 +823,27 @@ public final class CNLog {
      *       {@link CrashHandler} 已经记了一份，这里再收一次是因为**两者未必都在**：
      *       崩在 CNLog 自己起来之前时只有这一份。</li>
      * </ul>
+     *
+     * <h4>三个优先级为什么不一样</h4>
+     *
+     * 判据是「这个 tag 是不是**只**被崩溃路径用」：
+     *
+     * <ul>
+     *   <li>{@code DEBUG} 是 debuggerd 独占的，别处不会用，所以放宽到 {@code V}
+     *       ——墓碑各行在不同 Android 版本上未必都是同一个级别，宁可多收。</li>
+     *   <li>{@code libc} <b>不是</b>独占的。bionic 平时也用它打非致命的东西
+     *       （最常见的是 {@code Access denied finding property "…"}，某些 ROM 上
+     *       每次属性查询都来一条）。写成 {@code libc:V} 就等于开了一条**长期**的
+     *       噪音流，而崩溃流又有意不受 24MB 封口约束——两个决定单看都对，凑一起
+     *       就是「日志被一行永远重复的属性告警灌满」。而我们真正要的那句
+     *       {@code Fatal signal} 是 FATAL 级（logcat 里显示为 {@code F/libc}），
+     *       所以 {@code libc:F} 既够用又把噪音面收成了零。</li>
+     *   <li>{@code AndroidRuntime} 平时打 INFO/DEBUG（{@code Shutting down VM} 之类），
+     *       而 {@code FATAL EXCEPTION} 块是 ERROR 级，所以取 {@code E}。</li>
+     * </ul>
      */
     private static final String[] CRASH_FILTERSPEC = {
-        "DEBUG:V", "libc:V", "AndroidRuntime:E", "*:S"
+        "DEBUG:V", "libc:F", "AndroidRuntime:E", "*:S"
     };
 
     /**
