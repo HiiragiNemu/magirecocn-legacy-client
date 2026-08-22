@@ -254,7 +254,7 @@ public final class CNOfflineImport {
                 if (progress != null) progress.onProgress(h.count, h.count, true);
                 return offset == h.total && in.read() < 0;
             } finally {
-                try { in.close(); } catch (Throwable ignore) {}
+                CNIo.closeQuietly(in);
             }
         } catch (Throwable t) {
             CNLog.w(TAG, "分块校验异常: " + t);
@@ -279,7 +279,7 @@ public final class CNOfflineImport {
             }
         } catch (Throwable ignore) {
         } finally {
-            if (c != null) try { c.close(); } catch (Throwable ignore) {}
+            CNIo.closeQuietly(c);
         }
         return -1L;
     }

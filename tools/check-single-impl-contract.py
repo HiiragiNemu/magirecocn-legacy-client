@@ -70,6 +70,12 @@ def _weak(src: str) -> bool:
 
 weak_close = [name for name, src in srcs.items() if _weak(src)]
 
+# 内联的 `try { x.close(); } catch {}` —— 手搓一次就是又一份实现，而且历史上正是
+# 这种写法长出了那个只接 IOException 的弱版。CNIo 自己的注释里引用了这个形状，
+# 但 code() 已经把注释剥掉了，不会误伤。
+INLINE = re.compile(r"try \{ *\w+\.close\(\); *\} *catch")
+inline_sites = sorted(name for name, src in srcs.items() if INLINE.search(src))
+
 checks = {
     "closeQuietly 全仓库只有一份实现":
         len(close_impls) == 1,
@@ -84,6 +90,8 @@ checks = {
         len(ctx_impls) == 1,
     "那份实现在 CNRestClientActivity 里":
         ctx_impls == ["CNRestClientActivity.java"],
+    "没有内联的 try{close}catch（一律走 CNIo）":
+        not inline_sites,
     "刷新节流的时间戳是 volatile（32 位 ABI 上 long 读写才原子）":
         "public static volatile long lastUpdateTime;" in srcs.get("CNCNDownloadUI.java", ""),
 }
@@ -93,6 +101,8 @@ for name, ok in checks.items():
     print(("PASS " if ok else "FAIL ") + name)
 if close_impls and close_impls != ["CNIo.java"]:
     print("     closeQuietly 实现出现在: " + ", ".join(sorted(set(close_impls))))
+if inline_sites:
+    print("     还在内联安静关闭的文件: " + ", ".join(inline_sites))
 if ctx_impls and ctx_impls != ["CNRestClientActivity.java"]:
     print("     appContext 实现出现在: " + ", ".join(sorted(set(ctx_impls))))
 if failed:

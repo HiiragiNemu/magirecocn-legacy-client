@@ -395,7 +395,7 @@ public final class CNLog {
                 try {
                     String line = br.readLine();
                     if (line != null) seq = Integer.parseInt(line.trim());
-                } finally { try { br.close(); } catch (Throwable ignore) {} }
+                } finally { CNIo.closeQuietly(br); }
             }
         } catch (Throwable t) {
             Log.w("CNLog", ".seq 读取失败，改用「已有文件数+1」: " + t);
@@ -408,7 +408,7 @@ public final class CNLog {
         try {
             java.io.Writer w = new OutputStreamWriter(new FileOutputStream(f, false), "UTF-8");
             try { w.write(Integer.toString(seq)); w.flush(); }
-            finally { try { w.close(); } catch (Throwable ignore) {} }
+            finally { CNIo.closeQuietly(w); }
         } catch (Throwable t) {
             // 原先这里是 catch (Throwable ignore) {}。写不回去只是「下次序号会重复」，
             // 不影响本次记录，所以当初判成可以忽略——**但那让它变得不可诊断**。
@@ -495,7 +495,7 @@ public final class CNLog {
         rawSinceFlush = 0;
         if (writer != null) {
             try { writer.flush(); } catch (Throwable ignore) {}
-            try { writer.close(); } catch (Throwable ignore) {}
+            CNIo.closeQuietly(writer);
             writer = null;
         }
     }
@@ -831,7 +831,7 @@ public final class CNLog {
             } catch (Throwable t) {
                 try { write("日志", "WARN", "logcat 回收不可用: " + t, null); } catch (Throwable ignore) {}
             } finally {
-                if (br != null) { try { br.close(); } catch (Throwable ignore) {} }
+                CNIo.closeQuietly(br);
                 // 把自己从「正在跑」的记录里摘掉，否则 startLogcatCapture 的
                 // `logcatThread != null` 会永远认为采集还活着，一次意外退出
                 // （logcat 进程被系统回收、读到 EOF、抛异常）就再也起不来了，

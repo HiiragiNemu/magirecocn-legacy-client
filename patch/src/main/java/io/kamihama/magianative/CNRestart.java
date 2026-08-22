@@ -130,7 +130,7 @@ public final class CNRestart {
                 String s = new String(buf, 0, n, "UTF-8");
                 return s.contains("nonce=" + nonce);
             } finally {
-                try { in.close(); } catch (Throwable ignore) {}
+                CNIo.closeQuietly(in);
             }
         } catch (Throwable t) {
             return false;

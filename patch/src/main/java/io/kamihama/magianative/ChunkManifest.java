@@ -158,7 +158,7 @@ public final class ChunkManifest {
             }
             return map;
         } finally {
-            if (in != null) try { in.close(); } catch (Throwable ignore) {}
+            CNIo.closeQuietly(in);
             if (c != null) try { c.disconnect(); } catch (Throwable ignore) {}
         }
     }

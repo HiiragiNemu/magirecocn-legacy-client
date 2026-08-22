@@ -804,7 +804,7 @@ public class CNCNDownloadUI {
                     opts.inScaled = false;
                     bm = BitmapFactory.decodeStream(is, null, opts);
                 } finally {
-                    try { is.close(); } catch (Throwable ignore) {}
+                    CNIo.closeQuietly(is);
                 }
                 if (bm == null) {
                     CNLog.w(TAG, "背景图解码失败（将只剩兜底底色）: " + assetPath);

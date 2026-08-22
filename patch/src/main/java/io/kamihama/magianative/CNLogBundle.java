@@ -117,7 +117,7 @@ public final class CNLogBundle {
                     if (total >= MAX_TOTAL_BYTES) break;
                 }
             } finally {
-                try { os.close(); } catch (Throwable ignore) {}
+                CNIo.closeQuietly(os);
             }
             if (out.length() == 0) {
                 // 空包没有分享价值
@@ -148,7 +148,7 @@ public final class CNLogBundle {
                 }
                 return done;
             } finally {
-                try { in.close(); } catch (Throwable ignore) {}
+                CNIo.closeQuietly(in);
             }
         } catch (Throwable t) {
             CNLog.w(TAG, "读取日志文件失败 " + f.getName() + ": " + t);

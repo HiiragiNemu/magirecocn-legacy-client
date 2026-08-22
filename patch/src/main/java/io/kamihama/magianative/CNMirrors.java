@@ -667,7 +667,7 @@ public final class CNMirrors {
                 got += n;
                 if (System.nanoTime() - t0 > RACE_CAP_MS * 1000000L) break;
             }
-            try { in.close(); } catch (Throwable ignore) {}
+            CNIo.closeQuietly(in);
             if (got < RACE_MIN_BYTES) return -1L;
             long dt = System.nanoTime() - t0;
             return (long) (got * 1.0E9d / dt);
@@ -823,7 +823,7 @@ public final class CNMirrors {
             requireJsonBody(body, c.getContentType());
             return body;
         } finally {
-            if (is != null) { try { is.close(); } catch (IOException ignore) {} }
+            CNIo.closeQuietly(is);
             c.disconnect();
         }
     }

@@ -1277,7 +1277,7 @@ public final class CNWebProxy {
             byte[] buf = new byte[4096];
             if (in.read(buf) < 0) return -1;
             long ttfb = System.currentTimeMillis() - t0;
-            try { in.close(); } catch (Throwable ignore) {}
+            CNIo.closeQuietly(in);
             return ttfb;
         } catch (Throwable t) {
             return -1;

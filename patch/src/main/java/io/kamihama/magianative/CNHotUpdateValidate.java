@@ -64,7 +64,7 @@ public final class CNHotUpdateValidate {
                 } finally {
                     // R4-01：流在 finally 关——md.update 中途抛异常（文件读取中断、
                     // IO 错误）时也保证 FD 归还，否则每次 md5 中断就漏一个描述符。
-                    try { in.close(); } catch (Throwable ignore) {}
+                    CNIo.closeQuietly(in);
                 }
                 StringBuilder sb = new StringBuilder(32);
                 for (byte b : md.digest()) sb.append(String.format("%02x", b & 0xff));

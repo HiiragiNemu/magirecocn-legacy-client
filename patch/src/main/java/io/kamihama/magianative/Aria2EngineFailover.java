@@ -108,7 +108,7 @@ public final class Aria2EngineFailover {
             } catch (Throwable t) {
                 CNLog.w(TAG, "读 failover 标记失败（按默认处理）: " + t);
             } finally {
-                if (in != null) { try { in.close(); } catch (Throwable ignore) {} }
+                CNIo.closeQuietly(in);
             }
         }
         // 版本变更即重置：新版本可能修了后端/换了构建，giveUp 计数不该跨版本继承。
@@ -139,7 +139,7 @@ public final class Aria2EngineFailover {
                 out.flush();
                 out.getFD().sync();
             } finally {
-                try { out.close(); } catch (Throwable ignore) {}
+                CNIo.closeQuietly(out);
             }
             // 同目录 rename 成功时由文件系统原子替换。失败时绝不能先删旧标记：
             // 旧的 armed/deaths 即便稍旧，也比“没有任何状态”更可信。

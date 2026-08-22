@@ -325,7 +325,7 @@ public final class CNArchiveInstallTx {
             CNLog.i(TAG, "extract-complete file=" + archive.getName()
                     + " entries=" + entries.size());
         } finally {
-            try { zip.close(); } catch (Throwable ignore) {}
+            CNIo.closeQuietly(zip);
         }
     }
 

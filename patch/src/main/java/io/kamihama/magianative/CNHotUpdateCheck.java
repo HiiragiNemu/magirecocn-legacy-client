@@ -980,7 +980,7 @@ public final class CNHotUpdateCheck {
                     total += n;
                 }
             } finally {
-                try { in.close(); } catch (Throwable ignore) {}
+                CNIo.closeQuietly(in);
             }
             JSONObject o = new JSONObject(bos.toString("UTF-8"));
             return new CNHotUpdateValidate.VerMeta(o.getInt("version"),

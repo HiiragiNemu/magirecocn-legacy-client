@@ -468,7 +468,7 @@ public final class CNManualRedownload {
             }
             return new String(bos.toByteArray(), StandardCharsets.UTF_8);
         } finally {
-            if (in != null) try { in.close(); } catch (Throwable ignore) {}
+            CNIo.closeQuietly(in);
         }
     }
 
@@ -522,8 +522,8 @@ public final class CNManualRedownload {
             CNAtomicReplace.discard(cand);
             throw e;
         } finally {
-            if (out != null) try { out.close(); } catch (Throwable ignore) {}
-            if (in != null) try { in.close(); } catch (Throwable ignore) {}
+            CNIo.closeQuietly(out);
+            CNIo.closeQuietly(in);
         }
         CNAtomicReplace.commit(cand, dst);
         if (!src.delete() && src.exists()) throw new IOException("无法删除旧文件 " + src);

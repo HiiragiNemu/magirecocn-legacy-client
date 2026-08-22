@@ -206,7 +206,7 @@ public final class CNTutorialPrompt {
                 fos.flush();
                 fos.getFD().sync();   // 紧接着可能就重启了，别让它还在页缓存里
             } finally {
-                try { fos.close(); } catch (Throwable ignore) {}
+                CNIo.closeQuietly(fos);
             }
             CNLog.i(TAG, "已写出序章标记：" + f.getAbsolutePath());
         } catch (Throwable t) {

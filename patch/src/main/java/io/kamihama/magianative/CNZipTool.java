@@ -313,7 +313,7 @@ public final class CNZipTool {
             }
             return out;
         } finally {
-            try { zf.close(); } catch (Throwable ignore) {}
+            CNIo.closeQuietly(zf);
         }
     }
 

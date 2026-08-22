@@ -109,7 +109,7 @@ public final class CNBgm {
             CNLog.w(TAG, "读不到 " + META_ASSET + "，BGM 不可用", t);
             out = new Track[0];
         } finally {
-            if (in != null) try { in.close(); } catch (Throwable ignore) {}
+            CNIo.closeQuietly(in);
         }
         tracks = out;
         return tracks;
@@ -402,7 +402,7 @@ public final class CNBgm {
                     ex.setDataSource(afd.getFileDescriptor(),
                                      afd.getStartOffset(), afd.getLength());
                 } catch (Throwable notFd) {
-                    if (afd != null) { try { afd.close(); } catch (Throwable ignore) {} afd = null; }
+                    if (afd != null) { CNIo.closeQuietly(afd); afd = null; }
                     CNLog.w(TAG, "asset 是压缩的，改用 cacheDir 副本: " + notFd);
                     java.io.File cached = extractToCache(ctx, track.file);
                     if (cached == null) { CNLog.e(TAG, "释放 BGM 到 cacheDir 失败"); return; }
@@ -460,7 +460,7 @@ public final class CNBgm {
                     try { codec.release(); } catch (Throwable ignore) {}
                 }
                 if (ex != null)  try { ex.release(); }  catch (Throwable ignore) {}
-                if (afd != null) try { afd.close(); }   catch (Throwable ignore) {}
+                CNIo.closeQuietly(afd);
                 // F-R4-01：播放线程自死（解码异常/设备掉队）时静默退出，静态
                 // thread 仍指向已死线程——current() 谎报「在播」、同 id 的
                 // select() 被早返回守卫吞掉，同一首再也点不响。收尾时若 thread
@@ -613,8 +613,8 @@ public final class CNBgm {
             CNLog.w(TAG, "释放 asset 失败: " + assetPath, t);
             return null;
         } finally {
-            if (fos != null) try { fos.close(); } catch (Throwable ignore) {}
-            if (in  != null) try { in.close();  } catch (Throwable ignore) {}
+            CNIo.closeQuietly(fos);
+            CNIo.closeQuietly(in);
         }
     }
 

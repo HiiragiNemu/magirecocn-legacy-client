@@ -149,7 +149,7 @@ public final class CNAtomicReplace {
             throw new IOException("原子写失败: " + target + " : " + t);
         } finally {
             if (out != null) {
-                try { out.close(); } catch (Throwable ignore) {}
+                CNIo.closeQuietly(out);
             }
         }
     }
