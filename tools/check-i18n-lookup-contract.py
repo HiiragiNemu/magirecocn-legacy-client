@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""守卫「译文替换用的缓冲不是共享的」。
+"""守卫 i18n 查表路径的两条合同：缓冲不共享、一次翻译只用一个快照。
 
-## 这条守卫在防什么
+## 一、译文缓冲不能是共享的
+
+### 这条守卫在防什么
 
 两个文本钩子都要先把译文拷进一块自己的缓冲，再把指针交给引擎——引擎在
 `old()` / `initLabelOld()` 返回前会一直读它，所以缓冲必须活到那之后。原先这两块
@@ -24,11 +26,24 @@
 就在函数内部），所以 `static` 从来不是正确性需要的，只是想省一次构造；而它换来的
 是一整类 use-after-free。
 
-## 同时钉住「拷贝」本身
+### 同时钉住「拷贝」本身
 
 `engineLookup` 必须把译文**拷进** out，不能退回返回 `&it->second`——那是指向表
 内部的指针，另一线程一重载表就悬空（558efd5 修的就是这个）。两条判据是一件事的
 两面：缓冲要独立，内容要自有。
+
+## 二、一次翻译只能用一个快照
+
+精确查找与前缀查找原先各自 `engineI18nSnapshot()` 一次，于是「一句文案的一次
+翻译」跨了两个快照。这不只是白锁一次 `g_engineI18nMutex`（那把锁被 GL 线程、
+网络线程和重载路径共用），更要紧的是它**违反了这张表整个设计的前提**——558efd5
+把表做成不可变快照，靠的正是「读者一次性取走快照，在整个使用期间持有它」。
+
+两次取的中间要是落进一次热重载，同一句文案的精确规则来自旧表、前缀规则来自新表，
+得出的结果两个版本都没写过，而且完全无法复现。表随 `cn_js_update.zip` 下发、
+每 3 秒查一次指纹，这个窗口是真实存在的。
+
+所以快照一律由调用方取一份、传给两级查找；两个查找函数自己**不许**再取。
 """
 
 import re
@@ -62,7 +77,21 @@ prefix = body(src, "static bool enginePrefixLookup(")
 # 别的地方（比如观测去重表）用静态容器是正当的。
 SHARED = re.compile(r"(?:static|thread_local)[^;\n]*\bstd::string\b")
 
+SNAP = "engineI18nSnapshot()"
+
 checks = {
+    # ── 二、一个快照 ──
+    "engineLookup 的快照由调用方传入（自己不取）":
+        bool(lookup) and SNAP not in lookup
+        and "const EngineI18nPtr& t" in src[src.find("static bool engineLookup("):
+                                            src.find("static bool engineLookup(") + 200],
+    "enginePrefixLookup 的快照由调用方传入（自己不取）":
+        bool(prefix) and SNAP not in prefix,
+    "setStringTrampoline 整次翻译只取一份快照":
+        bool(trampoline) and trampoline.count(SNAP) == 1,
+    "initLabelNew 整次翻译只取一份快照":
+        bool(init_label) and init_label.count(SNAP) == 1,
+    # ── 一、缓冲不共享 ──
     "setStringTrampoline 的译文缓冲是局部的（不是 static/thread_local）":
         bool(trampoline) and not SHARED.search(trampoline),
     "setStringTrampoline 仍然有一块自己的 std::string 缓冲（不是改回指表内部）":

@@ -2254,9 +2254,15 @@ static NdkStrView ndkStrRead(const void* strObj) {
  * 继续用（fakeNdkStr → old()），一旦另一线程重载把旧表拆掉，指针立刻悬空。
  * 拷一份的代价是一次短字符串复制，换掉的是一整类 use-after-free。
  */
-static bool engineLookup(const void* strObj, std::string& out) {
-    if (!g_engineI18nReady.load()) return false;
-    EngineI18nPtr t = engineI18nSnapshot();
+// ⚠ 快照由**调用方**传进来，这里不再自己取。
+//
+// 原先精确查找和前缀查找各自 engineI18nSnapshot() 一次，于是「一次翻译」会跨
+// 两个快照。除了白白多锁一次 g_engineI18nMutex（那把锁被 GL 线程、网络线程和
+// 重载路径共用），更要紧的是它**违反了这张表整个设计的前提**——558efd5 把表做成
+// 不可变快照，靠的就是「读者一次性取走快照，在整个使用期间持有它」。两次取的
+// 中间要是落进一次热重载，同一句文案的精确规则和前缀规则就来自两个不同版本的表。
+// 那不会崩，但会得出一个两边都没写过的结果，而且完全无法复现。
+static bool engineLookup(const EngineI18nPtr& t, const void* strObj, std::string& out) {
     if (!t) return false;
     NdkStrView v = ndkStrRead(strObj);
     if (v.size == 0 || v.size > 8192) return false;
@@ -2276,8 +2282,9 @@ static bool engineLookup(const void* strObj, std::string& out) {
 // 服务端已经会为同一 UI 下发英文，而未来也可能需要纯汉字前缀；旧的
 // 0xE3/0xE4 字节门槛会让这些规则永远不可达。表通常只有少量前缀规则，
 // 直接按顺序比对既是正确语义，开销也可忽略。
-static bool enginePrefixLookup(const char* data, size_t size, std::string& out) {
-    EngineI18nPtr t = engineI18nSnapshot();
+// 快照同样由调用方传进来，理由见 engineLookup 上方那段。
+static bool enginePrefixLookup(const EngineI18nPtr& t, const char* data, size_t size,
+                               std::string& out) {
     if (!t || t->prefix.empty()) return false;
     for (const auto& rule : t->prefix) {
         const std::string& pre = rule.first;
@@ -2433,7 +2440,11 @@ static void setStringTrampoline(SetStringFn old, void* self, const void* text,
     // 才多一次 malloc/free。同函数里前缀那条路的 combined 本来就是局部的，
     // 统一成局部也让两条路的生命周期口径一致。
     std::string zh;
-    if (engineLookup(text, zh)) {
+    // 整次翻译只取**一份**快照，精确与前缀两级共用：既少锁一次那把被 GL 线程、
+    // 网络线程与重载路径共用的互斥量，更重要的是让「一句文案对一个版本的表」
+    // 成立。理由见 engineLookup 上方那段。
+    EngineI18nPtr t = g_engineI18nReady.load() ? engineI18nSnapshot() : EngineI18nPtr();
+    if (engineLookup(t, text, zh)) {
         FakeNdkStr fk;
         fakeNdkStr(fk, zh);
         old(self, &fk);
@@ -2441,9 +2452,9 @@ static void setStringTrampoline(SetStringFn old, void* self, const void* text,
     }
     // 精确未命中 → 前缀规则（尾部带变量的文案）
     NdkStrView v = ndkStrRead(text);
-    if (v.size && g_engineI18nReady.load()) {
+    if (v.size && t) {
         std::string combined;
-        if (enginePrefixLookup(v.data, v.size, combined)) {
+        if (enginePrefixLookup(t, v.data, v.size, combined)) {
             FakeNdkStr fk;
             fakeNdkStr(fk, combined);
             old(self, &fk);
@@ -2556,7 +2567,7 @@ static void initLabelNew(void* node, void* label, const char* text, float f,
             combined = it->second;
             use = combined.c_str();
             hit = true;
-        } else if (enginePrefixLookup(text, strlen(text), combined)) {
+        } else if (enginePrefixLookup(t, text, strlen(text), combined)) {
             use = combined.c_str();
             hit = true;
         }
