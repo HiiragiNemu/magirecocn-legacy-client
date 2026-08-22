@@ -177,6 +177,11 @@ public final class CNDebugFlags {
      *  （connect/open/error/close）打进 CNLog。零电脑数 WebSocket 连接数。 */
     public static final String COUNT_WEBSOCKET = "countWebSocket";
 
+    /** 跑一次 TLS 探针：本机起 TLS1.2 自签名服务端，再用**引擎自带的 OpenSSL**
+     *  去连它，把握手结果打进日志。验的是「自建服务端这条路通不通」，
+     *  与游戏本身的任何流程无关，跑完即止。见 {@link CNTlsProbe}。 */
+    public static final String TLS_PROBE = "tlsProbe";
+
     /** 注入延迟的时长。比 6 秒总闸长一截，保证一定触发询问框。 */
     public static final long SLOW_INJECT_MS = 9000L;
 
@@ -201,6 +206,7 @@ public final class CNDebugFlags {
         { FAIL_HOTUPDATE_APPLY, "【注入】热更事务应用到一半失败（验回滚）" },
         { USE_ARIA2,            "资源下载改用 aria2c 备用引擎（默认关）" },
         { USE_SINGLE_THREAD,    "下载一律单线程可靠模式（并发全部压到 1，默认关）" },
+        { TLS_PROBE,            "跑一次 TLS 探针（本机自签名端点 + 引擎自带 OpenSSL）" },
     };
 
     /** 开关名的合法形状：小驼峰，纯 ASCII 字母数字。见 {@link #writeState}。 */

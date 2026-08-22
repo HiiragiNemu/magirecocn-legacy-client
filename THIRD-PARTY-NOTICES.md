@@ -207,6 +207,11 @@ SOFTWARE.
   版权方。它**哪儿都不存**：`baseline.json` 里那条 op 是 `from: baseline` + `src`，
   构建时从基线树拷过来，post hash 照常核对。
 - **`lib/*/libMagiaLegacy.so`** —— 本项目自制，源码在 `magia-native/`，归 GPLv3。
+- **`assets/magia/tlsprobe.p12`** —— 本项目用 `openssl req -x509` 生成的**自签名
+  测试证书**（RSA-2048/SHA-256），不含任何第三方作品，归 GPLv3 一侧。它只在调试
+  开关 `tlsProbe` 打开时被 `CNTlsProbe` 读来起一个 **127.0.0.1 上的**测试服务端。
+  口令写在源码里是有意的：它保护的是一张**故意谁都能用**的测试证书，不承载任何
+  机密，也不被任何信任链认可（引擎那边根本不验证证书，见 `CNTlsProbe` 类注释）。
 - **`assets/fonts/witchText-export.png`** —— 在原包位图字体基础上重绘的汉化图集，
   属于对原包素材的衍生，归原包版权方一侧，见 `LICENSE.additional-terms` §3。
   它和另外 84 个汉化图集一样**不在本仓库**：构建时按 sha256 取回（`baseline.json`

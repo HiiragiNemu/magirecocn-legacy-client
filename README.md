@@ -71,6 +71,9 @@ sha256 与树指纹钉死。
 | `OVERLAY_URL` | 汉化图集取件地址（整条 URL，逗号分隔可列多条按序试；需要凭证时按 `https://<user>:<token>@…` 写） |
 | `TARGET_REPO` | 发版目标（APK 与版本旁注发到这里；云端版本闸门不由本仓库提升）。就是发布目标 `前端那一侧`，**2026-08-22 起它已断开上游、转为一个独立仓库**——转私有不影响本仓库这条链路（读写都走 ``），也不影响玩家（玩家从 CDN 下载，不直连 GitHub） |
 | `TARGET_REPO` | 归档目标（`archive-tags.yml`）；清理工具的回退目标 |
+| `` | 上面几处的读写凭证 |
+| `CLIENT_ROOT_DOMAIN` / `CLIENT_PAGES_HOSTS` | 对外主机名，见 `CNEndpoints` |
+| `DOWNLOAD_URLS` | 介绍站上的下载线路（逗号分隔，第一条即「推荐」那条），见 `tools/inject-download-url.py` |
 
 > ⚠ 这两个 secret 名字里的 `DOWNSTREAM` / `UPSTREAM` 是**历史遗留**：它们来自
 > 发布目标还是 fork 的年代。发布目标独立之后这组上下游关系已不存在，名字没改是因为
@@ -83,9 +86,6 @@ sha256 与树指纹钉死。
 同一个历史遗留还有一处：`build-apk.yml` 通知发布目标的 `repository_dispatch`
 事件名是 `upstream-update`，真实语义是「客户端产物就绪」。它是跨仓库的线上
 标识符，两边必须同时改才不会静默失联，所以两边都保留原名并各自注释说明。
-| `` | 上面几处的读写凭证 |
-| `CLIENT_ROOT_DOMAIN` / `CLIENT_PAGES_HOSTS` | 对外主机名，见 `CNEndpoints` |
-| `DOWNLOAD_URLS` | 介绍站上的下载线路（逗号分隔，第一条即「推荐」那条），见 `tools/inject-download-url.py` |
 
 ### 不在仓库里的那些
 
@@ -154,6 +154,7 @@ python3 tools/baseline.py apply --out <目录>   # 只重建，不比对
 | `CNBgm` | 安装浮层的 BGM。不用 `MediaPlayer`——它只能整文件循环，会放出尾部 235 帧 padding 且接缝有空隙；这里自己 `MediaExtractor`+`MediaCodec` 解码喂 `AudioTrack`，按 HCA 循环点做采样级无缝循环。全类绝不外抛。 |
 | `CNLog` | 统一日志：logcat + 内存环形缓冲 + 文件，LOG 面板直接渲染同一份缓冲区。**两路 logcat**：主回收带 `--pid=<自己>`；另一路只按 tag 收 `DEBUG`/`libc`/`AndroidRuntime` 且**不带 `--pid`**——原生崩溃的墓碑是 `crash_dump` 用别的 PID 打出来的，主回收看不见它，「闪退」类问题因此一直查不动。指望的是 `-T` 回灌：logcat 环形缓冲跨进程存活，玩家崩完重开一次，上一个进程的墓碑就进了新日志文件。SDK &lt; 24 不起第二路（那些设备没有 `--pid`，主回收本来就整机全收）。24MB 封口只停主回收，不停崩溃流。三个 tag 的优先级不一样是有判据的：`DEBUG` 是 debuggerd 独占的，放宽到 `V`；`libc` 被 bionic 平时也用（`Access denied finding property` 之类），必须收到 `F`，否则会长期灌噪音而它又不受封口约束 |
 | `CNCrashHistory` | 开机时记「上几次进程是怎么死的」。走 `ActivityManager.getHistoricalProcessExitReasons()`（API 30+），**与上面两路 logcat 完全独立**——那两路都建立在「墓碑确实进了 logcat 且我们读得到」这个假设上，假设不成立时会一起失明且毫无迹象。光 `reason` 一个字段就把原生崩溃 / Java 崩溃 / ANR / 低内存杀进程分开了。原生崩溃与 ANR 还带 trace；⚠ Android 12 起原生那份是 **protobuf 墓碑不是文本**，本仓库没有 protobuf 运行时也不该为它引依赖，所以按「取可打印片段」处理（protobuf 的字符串字段是长度前缀原文，扫一遍就能拿到信号名、abi、so 路径与 backtrace 符号名）。全异常吞掉 + 后台线程，不占开机关键路径 |
+| `CNTlsProbe` | **TLS 探针**（调试开关 `tlsProbe`，默认关）：本机 127.0.0.1 起一个 TLS1.2 自签名服务端（Android 自带 TLS 栈），再由 native 侧 `nativeTlsProbe` 用 `dlsym(RTLD_DEFAULT)` 拿到**引擎自己那份 OpenSSL 1.0.2s** 去连它，逐行复刻 `http2::Http2SessionManager::run` 的调用序列。验的是「自建服务端这条路通不通」——挖出来的结论是引擎**根本不验证服务端证书**（`SSL_CTX_set_verify` 全库 0 次调用、无内置 CA、`OPENSSLDIR` 指向打包机路径），而 336142563 是 OpenSSL 1.0.2s 听不懂现代 TLS 扩展的**代差**。两端都在手机里，不需要电脑或 adb |
 | `CNDebugFlags` | 调试开关目录的 Java 侧读取（与 native 共用同一个目录，见「调试开关目录」一节）。首次查询时扫一遍并缓存，之后零 I/O；任何异常一律当作「没开」 |
 | `CNDebugBridge` | 调试悬浮窗的**接线层**：native 总闸（三态，`null` = 库还没加载所以现在问不到，与「明确是关」分开——压成一个 false 已经害过一次）、合并 Java 侧与 native 侧的开关全表、落盘 + 重启、HUD 文案排版、停留/重下/日志转接 |
 | `CNDebugOverlay` | 调试悬浮窗**本体**：挂 Activity 的 `decorView`（**不要悬浮窗权限**——`SYSTEM_ALERT_WINDOW` 在某些定制 ROM 上给不了或给了不生效，而越是出问题的设备越需要这个自救入口）、可拖动小球、页面树。后挂进 decorView 的东西会盖住它，靠布局监听抬回最前；Activity 重建后从旧树摘下重挂。归总闸管——它提供的是「**改**开关」的能力 |

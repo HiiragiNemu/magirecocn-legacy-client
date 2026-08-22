@@ -100,6 +100,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdarg.h>       // TLS 探针的 append(fmt, ...)
+#include <sys/socket.h>   // 以下三个都是 TLS 探针建 TCP 用
+#include <netdb.h>
+#include <arpa/inet.h>
 
 #define LOG_TAG "MagiaCN_Legacy"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
@@ -122,6 +126,7 @@ static jclass gClsTutorialPrompt  = nullptr; // io.kamihama.magianative.CNTutori
 static jclass gClsVersionCheck    = nullptr; // io.kamihama.magianative.CNVersionCheck
 static jclass gClsCNMirrors       = nullptr; // io.kamihama.magianative.CNMirrors
 static jclass gClsDebugBridge     = nullptr; // io.kamihama.magianative.CNDebugBridge
+static jclass gClsTlsProbe        = nullptr; // io.kamihama.magianative.CNTlsProbe
 
 namespace cocos2d {
     struct Data { unsigned char* _bytes; ssize_t _size; };
@@ -2685,6 +2690,158 @@ static void setTtfCfgInternalNew(void* self, const void* cfg) {
 }
 
 // ─── JNI_OnLoad ──────────────────────────────────────────
+// ═══ TLS 探针：用**引擎自带的那份 OpenSSL** 去连一个端点 ═══════════
+//
+// 「native 引擎能不能跟我们自建的服务端说话」是自建服务端路线唯一的技术死穴。
+// 静态结论（2026-08-22 从 libmadomagi_native.so 挖出来的）是：**引擎压根不验证
+// 服务端证书**——SSL_CTX_set_verify 全库 0 次调用、没有内置 CA、OPENSSLDIR 指向
+// 打包机上不存在的路径；而 0x140920E3（=十进制 336142563，
+// SSL3_GET_SERVER_HELLO / PARSE_TLSEXT）是 OpenSSL 1.0.2s 听不懂现代 TLS 栈的
+// 扩展，属于代差不是信任。
+//
+// 静态论证再密也是论证。这里把它变成一次真实握手。
+//
+// ⚠ 关键点：**不 dlopen**。引擎 so 早就在本进程里了（本文件的 hook 就装在它
+// 身上），所以 dlsym(RTLD_DEFAULT, …) 直接就能拿到它导出的 OpenSSL API——用的
+// 就是引擎运行时用的那份 1.0.2s，不是另开一份。
+//
+// 调用序列逐行复刻 http2::Http2SessionManager::run（arm64 0xa00434）：
+//     ctx = SSL_CTX_new(TLSv1_2_method())        // boost tlsv12 = method 0xf
+//     SSL_CTX_set_default_verify_paths(ctx)      // 挂一个不存在的目录
+//     SSL_CTX_set_alpn_protos(ctx, "\x02h2", 3)  // configure_tls_context 只干这个
+//     ← 故意**不调** SSL_CTX_set_verify：引擎就是不调，这正是被测的那一点
+//
+// 判据一条：SSL_connect 对着一张自签名证书返回不返回 1。
+namespace tlsprobe {
+
+#define TP_SSL_CTRL_SET_TLSEXT_HOSTNAME 55
+#define TP_TLSEXT_NAMETYPE_host_name     0
+
+template <typename T> static T sym(const char* n, bool& ok) {
+    void* p = dlsym(RTLD_DEFAULT, n);
+    if (!p) { ok = false; }
+    return reinterpret_cast<T>(p);
+}
+
+static void append(std::string& out, const char* fmt, ...) {
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    LOGI("[tls-probe] %s", buf);
+    out += buf;
+    out += '\n';
+}
+
+static std::string run(const char* host, int port) {
+    std::string r;
+    bool ok = true;
+    auto f_init    = sym<int (*)(void)>("SSL_library_init", ok);
+    auto f_method  = sym<void* (*)(void)>("TLSv1_2_method", ok);
+    auto f_ctxnew  = sym<void* (*)(void*)>("SSL_CTX_new", ok);
+    auto f_paths   = sym<int (*)(void*)>("SSL_CTX_set_default_verify_paths", ok);
+    auto f_alpn    = sym<int (*)(void*, const unsigned char*, unsigned int)>(
+                         "SSL_CTX_set_alpn_protos", ok);
+    auto f_sslnew  = sym<void* (*)(void*)>("SSL_new", ok);
+    auto f_setfd   = sym<int (*)(void*, int)>("SSL_set_fd", ok);
+    auto f_ctrl    = sym<long (*)(void*, int, long, void*)>("SSL_ctrl", ok);
+    auto f_conn    = sym<int (*)(void*)>("SSL_connect", ok);
+    auto f_geterr  = sym<int (*)(const void*, int)>("SSL_get_error", ok);
+    auto f_ver     = sym<const char* (*)(const void*)>("SSL_get_version", ok);
+    auto f_cur     = sym<void* (*)(const void*)>("SSL_get_current_cipher", ok);
+    auto f_cname   = sym<const char* (*)(const void*)>("SSL_CIPHER_get_name", ok);
+    auto f_vres    = sym<long (*)(const void*)>("SSL_get_verify_result", ok);
+    auto f_alpnsel = sym<void (*)(const void*, const unsigned char**, unsigned int*)>(
+                         "SSL_get0_alpn_selected", ok);
+    auto f_errget  = sym<unsigned long (*)(void)>("ERR_get_error", ok);
+    auto f_errstr  = sym<void (*)(unsigned long, char*, size_t)>("ERR_error_string_n", ok);
+    if (!ok || !f_init || !f_method || !f_ctxnew || !f_sslnew || !f_conn) {
+        append(r, "✘ 拿不到引擎的 OpenSSL 符号——基线换过？");
+        return r;
+    }
+    append(r, "用引擎自带的 OpenSSL（进程内，dlsym RTLD_DEFAULT）");
+
+    f_init();
+    void* ctx = f_ctxnew(f_method());
+    if (!ctx) { append(r, "✘ SSL_CTX_new 失败"); return r; }
+    if (f_paths) f_paths(ctx);
+    if (f_alpn) f_alpn(ctx, (const unsigned char*)"\x02h2", 3);
+    // 不调 SSL_CTX_set_verify —— 与引擎一致
+
+    char portstr[16];
+    snprintf(portstr, sizeof(portstr), "%d", port);
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    struct addrinfo* res = nullptr;
+    if (getaddrinfo(host, portstr, &hints, &res) != 0 || !res) {
+        append(r, "✘ 解析 %s:%d 失败", host, port);
+        return r;
+    }
+    int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (fd < 0 || ::connect(fd, res->ai_addr, res->ai_addrlen) != 0) {
+        append(r, "✘ TCP 连不上 %s:%d", host, port);
+        if (fd >= 0) ::close(fd);
+        freeaddrinfo(res);
+        return r;
+    }
+    freeaddrinfo(res);
+
+    void* ssl = f_sslnew(ctx);
+    f_setfd(ssl, fd);
+    if (f_ctrl) f_ctrl(ssl, TP_SSL_CTRL_SET_TLSEXT_HOSTNAME,
+                       TP_TLSEXT_NAMETYPE_host_name, (void*)host);
+
+    int rc = f_conn(ssl);
+    if (rc == 1) {
+        const char* ver = f_ver ? f_ver(ssl) : "?";
+        const char* cn = "?";
+        if (f_cur && f_cname) { void* c = f_cur(ssl); if (c) cn = f_cname(c); }
+        const unsigned char* ap = nullptr; unsigned int al = 0;
+        if (f_alpnsel) f_alpnsel(ssl, &ap, &al);
+        long vr = f_vres ? f_vres(ssl) : -1;
+        append(r, "✔✔ 握手成功：引擎这份 OpenSSL 接受了自签名端点");
+        append(r, "   协议=%s cipher=%s ALPN=%.*s", ver, cn,
+               (int)al, ap ? (const char*)ap : "");
+        append(r, "   SSL_get_verify_result=%ld %s", vr,
+               vr == 0 ? "(0=ok)"
+                       : "(非 0 却仍握手成功 = SSL_VERIFY_NONE 的运行时证据)");
+        append(r, "结论：自签名可用，自建服务端的死穴解除。");
+    } else {
+        int e = f_geterr ? f_geterr(ssl, rc) : -1;
+        append(r, "✘ 握手失败 SSL_connect=%d SSL_get_error=%d", rc, e);
+        if (f_errget && f_errstr) {
+            unsigned long code;
+            while ((code = f_errget()) != 0) {
+                char buf[256];
+                f_errstr(code, buf, sizeof(buf));
+                // 十进制也打：游戏界面报的就是十进制（336142563）
+                append(r, "   err 0x%08lx (%lu): %s", code, code, buf);
+            }
+        }
+        append(r, "对照 0x140920E3=336142563（SERVER_HELLO/PARSE_TLSEXT）；");
+        append(r, "若是同一个码，说明服务端仍在发 1.0.2 看不懂的扩展。");
+    }
+    ::close(fd);
+    return r;
+}
+
+}  // namespace tlsprobe
+
+static jstring nativeTlsProbe(JNIEnv* env, jclass, jstring jhost, jint port) {
+    std::string report;
+    try {
+        const char* host = jhost ? env->GetStringUTFChars(jhost, nullptr) : nullptr;
+        report = tlsprobe::run(host ? host : "127.0.0.1", (int)port);
+        if (host) env->ReleaseStringUTFChars(jhost, host);
+    } catch (...) {
+        report = "✘ 探针自身抛异常";
+    }
+    return env->NewStringUTF(report.c_str());
+}
+
 extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     (void)reserved;
     gJvm = vm;
@@ -2711,6 +2868,7 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
             { "io/kamihama/magianative/CNVersionCheck",    &gClsVersionCheck   },
             { "io/kamihama/magianative/CNMirrors",         &gClsCNMirrors      },
             { "io/kamihama/magianative/CNDebugBridge",     &gClsDebugBridge    },
+            { "io/kamihama/magianative/CNTlsProbe",        &gClsTlsProbe       },
         };
         for (size_t i = 0; i < sizeof(want) / sizeof(want[0]); i++) {
             jclass local = env->FindClass(want[i].name);
@@ -2735,6 +2893,18 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
             if (env->RegisterNatives(gClsDownloaderFix, m, 2) != 0) {
                 if (env->ExceptionCheck()) env->ExceptionClear();
                 LOGE("[JNI] RegisterNatives(CNDownloaderFix) 失败——浮层释放将退回文本 hook 兜底");
+            }
+        }
+
+        // TLS 探针：调试开关打开时才会被 Java 侧调到，平时一次都不执行。
+        if (gClsTlsProbe) {
+            JNINativeMethod m[] = {
+                { (char*)"nativeTlsProbe", (char*)"(Ljava/lang/String;I)Ljava/lang/String;",
+                  (void*)nativeTlsProbe },
+            };
+            if (env->RegisterNatives(gClsTlsProbe, m, 1) != 0) {
+                if (env->ExceptionCheck()) env->ExceptionClear();
+                LOGE("[JNI] RegisterNatives(CNTlsProbe) 失败——TLS 探针不可用");
             }
         }
 

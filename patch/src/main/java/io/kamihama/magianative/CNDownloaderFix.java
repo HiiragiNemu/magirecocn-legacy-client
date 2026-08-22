@@ -723,6 +723,10 @@ public final class CNDownloaderFix {
             // 记下是谁把安装器叫起来的：出问题时这一行能直接回答
             // 「native hook 到底触发没有」，不必再靠猜。
             CNLog.i(TAG, "runInstaller 被调用，线程=" + Thread.currentThread().getName());
+            // 调试开关 tlsProbe 打开时跑一次 TLS 探针。放在这里是因为这是
+            // **必定会执行**的 native 入口，而探针要的只是「进程活着、引擎 so
+            // 已加载」。它自带线程、自吞异常，关着时第一行就返回。
+            CNTlsProbe.runAsync();
             if (!installerStarted.compareAndSet(false, true)) {
                 CNLog.w(TAG, "安装器已在运行中，跳过重复调用");
                 return;

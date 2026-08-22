@@ -2079,6 +2079,7 @@ public final class CNDebugOverlay {
             { "countWebSocket", GROUP_B },
             { "skipWebProxy", GROUP_B },
             { "noHttp2Bump", GROUP_B },
+            { "tlsProbe", GROUP_B },
             // C 汉化与文本（7）
             { "logI18nMiss", GROUP_C },
             { "logI18nMissAll", GROUP_C },
@@ -2337,6 +2338,10 @@ public final class CNDebugOverlay {
             { "skipWebProxy",
               "游戏内网页本有个前台接待帮忙中转；这个开关 = 跳过前台自己直连。网页打不开时，"
               + "用来判断是不是中转环节的问题。",
+              ADVICE_KEEP_OFF, null },
+            { "tlsProbe",
+              "开发用：让游戏在本机自己跟自己做一次加密握手，验证「以后能不能连"
+              + "我们自己的服务器」。跑完就停，不改变任何游戏行为；结果在日志里。",
               ADVICE_KEEP_OFF, null },
             { "noHttp2Bump",
               "我们把下载同时干活的人数从 4 提到 10；这个开关退回 4 人。人多反而互相挤"

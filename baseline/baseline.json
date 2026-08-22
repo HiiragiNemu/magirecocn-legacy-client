@@ -964,6 +964,14 @@
     },
     {
       "kind": "add",
+      "path": "assets/magia/tlsprobe.p12",
+      "group": "调试",
+      "why": "TLS 探针的自签名证书（PKCS#12）。仅在调试开关 tlsProbe 打开时被读；它保护的是一张故意谁都能用的测试证书，不承载任何机密",
+      "post": "50e86f799221b8b5547ee92c2cffa994a3c910aab7f102ad7a772b66f7522337",
+      "from": "repo"
+    },
+    {
+      "kind": "add",
       "path": "lib/armeabi-v7a/libshadowhook.so",
       "group": "第三方",
       "why": "shadowhook 预编译库",
