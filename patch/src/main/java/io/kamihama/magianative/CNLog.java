@@ -283,6 +283,9 @@ public final class CNLog {
         if (openedOnce) return;
         init(new File(PRIV_DIR));
         startLogcatCapture();
+        // 第二路，专抓原生崩溃的墓碑。必须和主回收一起在这里起：主回收带
+        // --pid，而墓碑是 crash_dump 用别的 PID 打的，主回收永远看不见。
+        startCrashLogCapture();
         startFlusher();
         installCrashHandler();
         write("日志", "INFO", "日志已启动（第 " + launchSeq + " 次启动）"
@@ -785,7 +788,14 @@ public final class CNLog {
         t.start();
     }
 
-    /** 停止 logcat 回收。 */
+    /**
+     * 停止 logcat 回收。
+     *
+     * <p><b>只停主回收，不停崩溃流</b>（{@link #startCrashLogCapture()}）。这个方法
+     * 唯一的调用者是 24MB 封口，目的是「文件不再疯长」——而崩溃流按 tag 过滤过，
+     * 一次崩溃也就几十行，封口要防的量级根本不在它身上。反过来，玩到 24MB 才崩的
+     * 那一次恰恰是最需要现场的一次，把它一起停掉等于专挑最难复现的场合失明。
+     */
     public static synchronized void stopLogcatCapture() {
         Process p = logcatProc;
         logcatProc = null;
@@ -793,6 +803,142 @@ public final class CNLog {
         if (p != null) {
             try { p.destroy(); } catch (Throwable ignore) {}
         }
+    }
+
+    // ---- 崩溃现场回收（第二路 logcat，不带 --pid）----
+
+    private static volatile Process crashLogProc;
+    private static volatile Thread  crashLogThread;
+
+    /**
+     * 崩溃现场用的 tag 过滤器。形如 {@code TAG:PRIO … *:S}：先列出要的，
+     * 最后 {@code *:S} 把其余一律静音。
+     *
+     * <ul>
+     *   <li>{@code DEBUG} —— 原生崩溃的墓碑：信号、faulting address、
+     *       完整 backtrace。<b>这是本流存在的全部理由。</b></li>
+     *   <li>{@code libc} —— {@code Fatal signal 11 (SIGSEGV), code 1, fault addr …
+     *       in tid …}，给出崩在哪个线程。</li>
+     *   <li>{@code AndroidRuntime} —— 框架版的 {@code FATAL EXCEPTION} 块。
+     *       {@link CrashHandler} 已经记了一份，这里再收一次是因为**两者未必都在**：
+     *       崩在 CNLog 自己起来之前时只有这一份。</li>
+     * </ul>
+     */
+    private static final String[] CRASH_FILTERSPEC = {
+        "DEBUG:V", "libc:V", "AndroidRuntime:E", "*:S"
+    };
+
+    /**
+     * 起第二路 logcat，专门捞原生崩溃的墓碑。
+     *
+     * <h3>为什么主回收捞不到</h3>
+     *
+     * 主回收用的是 {@code logcat --pid=<自己>}。而原生崩溃的堆栈**不是崩溃进程
+     * 打的**——内核把信号交给 {@code debuggerd}，由 {@code crash_dump} 子进程以
+     * {@code DEBUG} tag 写出来，PID 不是我们。于是 {@code --pid=} 把整段墓碑一并
+     * 滤掉：玩家把日志包发过来，里面只有崩之前最后几行业务日志，没有信号、没有
+     * faulting address、没有栈。「进战斗就闪退」这类问题因此从一开始就查不动。
+     *
+     * <h3>指望的是下一次启动，不是这一次</h3>
+     *
+     * 崩的那一刻我们自己也在死，读日志的线程跟着没了，多半来不及落盘。真正起作用
+     * 的是 <b>{@code -T} 回灌</b>：logcat 的环形缓冲跨进程存活，所以玩家重启游戏
+     * 之后，这一路会把<b>上一个进程</b>的墓碑捞进新的日志文件。也就是说
+     * 「崩溃 → 重开 → 发日志」这条玩家本来就会走的路，现在能带出现场。
+     *
+     * <p>回灌 2000 行是按墓碑的体量取的：一份 arm64 墓碑连寄存器、backtrace、
+     * memory near 段可达数百行，而崩溃到玩家重开之间机器上还会有别的日志涌进来。
+     * 取小了正好把墓碑冲掉，取大了只是多读一点被 tag 过滤掉的行。
+     *
+     * <h3>SDK &lt; 24 不起这一路</h3>
+     *
+     * 那些设备上主回收本来就<b>没有</b> {@code --pid}（{@code --pid} 是 API 24 才
+     * 有的），整机日志全收，墓碑自然在里面。再起一路只会把同样的行记两遍。
+     *
+     * <h3>已知的重复</h3>
+     *
+     * {@code libc} 那句 {@code Fatal signal} 是崩溃进程<b>自己</b>打的，PID 是我们，
+     * 所以 SDK ≥ 24 时主回收也会收到它——同一行可能进文件两次。留着不去重：为一行
+     * 建一套跨两个流的去重状态不划算，而这一行在下一次启动的回灌里是**唯一**能把
+     * 墓碑和我们的进程对上的锚点，不能不要。
+     *
+     * <p>重复调用安全。
+     */
+    public static synchronized void startCrashLogCapture() {
+        if (crashLogThread != null) return;
+        if (android.os.Build.VERSION.SDK_INT < 24) return;   // 见上：主回收已覆盖
+        Thread t = new Thread(new CrashLogReader(), "cnv-logcat-crash");
+        t.setDaemon(true);
+        crashLogThread = t;
+        t.start();
+    }
+
+    /** 停止崩溃现场回收。目前没有调用方——见 {@link #stopLogcatCapture()} 的说明。 */
+    public static synchronized void stopCrashLogCapture() {
+        Process p = crashLogProc;
+        crashLogProc = null;
+        crashLogThread = null;
+        if (p != null) {
+            try { p.destroy(); } catch (Throwable ignore) {}
+        }
+    }
+
+    private static final class CrashLogReader implements Runnable {
+        @Override public void run() {
+            java.io.BufferedReader br = null;
+            try {
+                java.util.ArrayList<String> cmd = new java.util.ArrayList<String>();
+                cmd.add("logcat");
+                cmd.add("-v"); cmd.add("time");
+                cmd.add("-T"); cmd.add("2000");
+                for (int i = 0; i < CRASH_FILTERSPEC.length; i++) cmd.add(CRASH_FILTERSPEC[i]);
+                ProcessBuilder pb = new ProcessBuilder(cmd);
+                pb.redirectErrorStream(true);
+                Process p = pb.start();
+                crashLogProc = p;
+                write("日志", "INFO", "崩溃现场回收已启动（不带 --pid，"
+                        + "抓 DEBUG/libc/AndroidRuntime；原生墓碑由 crash_dump 以别的 "
+                        + "PID 打出，主回收看不见）", null);
+                br = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(p.getInputStream(), "UTF-8"));
+                String line;
+                while ((line = br.readLine()) != null) {
+                    if (crashLogProc == null) break;
+                    // 不按 OWN_SET 过滤：这三个 tag 一个都不是我们打的。
+                    // 也不按包名过滤——墓碑里只有开头那行带 `>>> 包名 <<<`，
+                    // 后面的寄存器与 backtrace 一行都不带，逐行比对会把栈全丢掉。
+                    // DEBUG/libc 本来就极稀疏，整机收下来的噪音远小于漏掉栈的代价。
+                    writeRaw(line, crashSrcOf(line));
+                }
+            } catch (Throwable t) {
+                try { write("日志", "WARN", "崩溃现场回收不可用: " + t, null); }
+                catch (Throwable ignore) {}
+            } finally {
+                CNIo.closeQuietly(br);
+                // 与主回收同样的收尾：只在记录里存的确实是自己时才清，
+                // 否则会把后来者的线程摘掉，而且 startCrashLogCapture 的
+                // `crashLogThread != null` 会永远认为还活着，再也起不来。
+                synchronized (CNLog.class) {
+                    if (crashLogThread == Thread.currentThread()) {
+                        crashLogThread = null;
+                        crashLogProc   = null;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 崩溃流的来源归类。只影响面板上那三个显示开关，不影响落盘——
+     * {@link #writeRaw} 一律写文件。
+     *
+     * <p>{@code DEBUG}/{@code libc} 归 native（墓碑就是原生层的记录），
+     * {@code AndroidRuntime} 归 logcat（那是 Java 异常）。
+     */
+    static int crashSrcOf(String line) {
+        String tag = tagOf(line);
+        if ("DEBUG".equals(tag) || "libc".equals(tag)) return SRC_NATIVE;
+        return SRC_LOGCAT;
     }
 
     private static final class LogcatReader implements Runnable {

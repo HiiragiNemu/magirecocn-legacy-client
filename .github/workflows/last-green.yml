@@ -181,6 +181,10 @@ jobs:
           # 建连只有一个加固入口；aria2 的 loopback RPC 与 CNWebProxy 的透明代理
           # 是有理由的例外，守卫连例外一起钉。
           python3 tools/check-http-open-contract.py
+          # 原生崩溃的墓碑必须收得到：主回收带 --pid，而墓碑是 crash_dump 用
+          # 别的 PID 打的，只有第二路不带 --pid 的流看得见。这条一破，日志包
+          # 看上去完全正常，只是永远没有崩溃现场。
+          python3 tools/check-crash-capture-contract.py
 
       - name: 🟢 移动 last-green tag
         env:
