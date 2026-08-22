@@ -114,6 +114,8 @@ public final class CNMirrors {
 
     private static final int CONNECT_TIMEOUT_MS = 2000;
     private static final int READ_TIMEOUT_MS    = 3000;
+    /** 测速探针的超时。比控制面宽：它量的是「这条线快不快」，太紧会把慢线一律判死。 */
+    private static final int RACE_PROBE_TIMEOUT_MS = 4000;
     /** 线路列表响应体大小上限，防止异常内容撑爆内存。 */
     private static final int MAX_JSON_BYTES     = 256 * 1024;
 
@@ -648,11 +650,8 @@ public final class CNMirrors {
     private static long measureMirrorSpeed(Mirror m) {
         HttpURLConnection c = null;
         try {
-            c = (HttpURLConnection) new URL(m.urlFor(RACE_PROBE)).openConnection(Proxy.NO_PROXY);
-            c.setConnectTimeout(4000);
-            c.setReadTimeout(4000);
-            c.setUseCaches(false);
-            CNUserAgent.apply(c);
+            c = CNHttp.open(new URL(m.urlFor(RACE_PROBE)), true,
+                    RACE_PROBE_TIMEOUT_MS, RACE_PROBE_TIMEOUT_MS);
             c.setRequestProperty("Accept-Encoding", "identity");
             int code = c.getResponseCode();
             if (code / 100 != 2) return -1L;
@@ -800,13 +799,7 @@ public final class CNMirrors {
 
     private static String fetch(String url, boolean direct) throws IOException {
         URL u = new URL(url);
-        HttpURLConnection c = (HttpURLConnection)
-                (direct ? u.openConnection(Proxy.NO_PROXY) : u.openConnection());
-        c.setConnectTimeout(CONNECT_TIMEOUT_MS);
-        c.setReadTimeout(READ_TIMEOUT_MS);
-        c.setUseCaches(false);
-        c.setInstanceFollowRedirects(true);
-        CNUserAgent.apply(c);
+        HttpURLConnection c = CNHttp.open(u, direct, CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS);
         c.setRequestProperty("Accept", "application/json");
         c.setRequestProperty("Accept-Encoding", "identity");
         // 不写 Connection: close——保留 keep-alive 复用连接池，

@@ -12,7 +12,6 @@ import java.io.OutputStreamWriter;
 import java.io.RandomAccessFile;
 import java.io.Writer;
 import java.net.HttpURLConnection;
-import java.net.Proxy;
 import java.net.URL;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -127,13 +126,7 @@ public final class CNChunkedDownload {
 
     private static HttpURLConnection open(String url, boolean direct) throws IOException {
         URL u = new URL(url);
-        HttpURLConnection c = (HttpURLConnection)
-                (direct ? u.openConnection(Proxy.NO_PROXY) : u.openConnection());
-        c.setConnectTimeout(CONNECT_TIMEOUT_MS);
-        c.setReadTimeout(READ_TIMEOUT_MS);
-        c.setUseCaches(false);
-        c.setInstanceFollowRedirects(true);
-        CNUserAgent.apply(c);
+        HttpURLConnection c = CNHttp.open(u, direct, CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS);
         c.setRequestProperty("Accept-Encoding", "identity");
         return c;
     }

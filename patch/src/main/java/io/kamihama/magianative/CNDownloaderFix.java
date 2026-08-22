@@ -2041,13 +2041,7 @@ public final class CNDownloaderFix {
             try {
                 lease = CNDownloadConcurrency.acquire("zip-plan");
                 URL u = new URL(url);
-                c = (HttpURLConnection)
-                        (direct ? u.openConnection(Proxy.NO_PROXY) : u.openConnection());
-                c.setConnectTimeout(CONNECT_TIMEOUT_MS);
-                c.setReadTimeout(READ_TIMEOUT_MS);
-                c.setUseCaches(false);
-                c.setInstanceFollowRedirects(true);
-                CNUserAgent.apply(c);
+                c = CNHttp.open(u, direct, CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS);
                 c.setRequestProperty("Accept-Encoding", "identity");
                 c.setRequestProperty("Range", "bytes=" + start + "-" + endInclusive);
                 if (c.getResponseCode() != 206) {
@@ -2215,12 +2209,7 @@ public final class CNDownloaderFix {
         CNDownloadConcurrency.Lease networkLease =
                 CNDownloadConcurrency.acquire("base-single:" + archive.getName());
         URL u = new URL(url);
-        HttpURLConnection c = (HttpURLConnection)
-                (direct ? u.openConnection(Proxy.NO_PROXY) : u.openConnection());
-        c.setConnectTimeout(CONNECT_TIMEOUT_MS);
-        c.setReadTimeout(READ_TIMEOUT_MS);
-        c.setUseCaches(false);
-        CNUserAgent.apply(c);
+        HttpURLConnection c = CNHttp.open(u, direct, CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS);
         c.setRequestProperty("Accept-Encoding", "identity");
         // 不写 Connection: close——保留 keep-alive 复用连接池，
         // 分片/重试接连不断时省掉每段一次的 TCP+TLS 握手
@@ -2428,14 +2417,12 @@ public final class CNDownloaderFix {
 
     private static String postJson(String url, String body, boolean direct) throws IOException {
         URL u = new URL(url);
-        HttpURLConnection c = (HttpURLConnection)
-                (direct ? u.openConnection(Proxy.NO_PROXY) : u.openConnection());
-        c.setConnectTimeout(CONNECT_TIMEOUT_MS);
-        c.setReadTimeout(READ_TIMEOUT_MS);
+        // 跟跳转对 POST 的含义要清楚：HttpURLConnection 跟 3xx 时会改用 GET 重发、
+        // 丢掉请求体。这里保持与改动前完全一致——JVM 的 followRedirects 默认就是
+        // true，此处原先没显式设置，等于一直在跟。要改成不跟是另一件事，得单独论证。
+        HttpURLConnection c = CNHttp.open(u, direct, CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS);
         c.setRequestMethod("POST");
         c.setDoOutput(true);
-        c.setUseCaches(false);
-        CNUserAgent.apply(c);
         c.setRequestProperty("Content-Type", "application/json; charset=utf-8");
         c.setRequestProperty("Accept", "application/json");
         // 不写 Connection: close——保留 keep-alive 复用连接池，

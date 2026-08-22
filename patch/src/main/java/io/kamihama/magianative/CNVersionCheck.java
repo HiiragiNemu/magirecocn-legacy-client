@@ -279,12 +279,9 @@ public final class CNVersionCheck {
     private static JSONObject fetchClientSection(String url) throws Exception {
         // 尊重 Android 系统代理；无系统代理时自然直连。显式 NO_PROXY 会绕开
         // 用户已经配置好的 MuMu → Clash/mitm 链，并在控制面宕机时白等完整超时。
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        HttpURLConnection c = CNHttp.open(new URL(url), false,
+                CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS);
         try {
-            c.setConnectTimeout(CONNECT_TIMEOUT_MS);
-            c.setReadTimeout(READ_TIMEOUT_MS);
-            c.setInstanceFollowRedirects(true);
-            CNUserAgent.apply(c);
             int code = c.getResponseCode();
             if (code / 100 != 2) throw new java.io.IOException("HTTP " + code);
             InputStream in = new BufferedInputStream(c.getInputStream(), 8192);

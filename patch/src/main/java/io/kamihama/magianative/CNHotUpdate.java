@@ -6,7 +6,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
-import java.net.Proxy;
 import java.net.URL;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
@@ -272,13 +271,7 @@ public final class CNHotUpdate {
         FileOutputStream out = null;
         try {
             URL u = new URL(url);
-            c = (HttpURLConnection)
-                    (direct ? u.openConnection(Proxy.NO_PROXY) : u.openConnection());
-            c.setConnectTimeout(CONNECT_TIMEOUT_MS);
-            c.setReadTimeout(READ_TIMEOUT_MS);
-            c.setUseCaches(false);
-            c.setInstanceFollowRedirects(true);
-            CNUserAgent.apply(c);
+            c = CNHttp.open(u, direct, CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS);
             c.setRequestProperty("Accept-Encoding", "identity");
             if (offset > 0) c.setRequestProperty("Range", "bytes=" + offset + "-");
 

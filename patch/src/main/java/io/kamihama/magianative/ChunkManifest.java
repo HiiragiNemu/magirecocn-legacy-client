@@ -7,7 +7,6 @@ import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
-import java.net.Proxy;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -15,6 +14,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /** 资源包固定块哈希清单的拉取与解析。 */
 public final class ChunkManifest {
+
+    /** 与分片下载同口径：清单是下载链的一部分，超时不该比它紧。 */
+    private static final int CONNECT_TIMEOUT_MS = 15000;
+    private static final int READ_TIMEOUT_MS    = 30000;
     private static final String TAG = "ChunkManifest";
     public static final String MANIFEST_NAME = "manifest.json";
     private static final int MAX_BYTES = 2 * 1024 * 1024;
@@ -104,11 +107,8 @@ public final class ChunkManifest {
         HttpURLConnection c = null;
         InputStream in = null;
         try {
-            c = (HttpURLConnection) new java.net.URL(url).openConnection(Proxy.NO_PROXY);
-            c.setConnectTimeout(15000);
-            c.setReadTimeout(30000);
-            c.setUseCaches(false);
-            c.setInstanceFollowRedirects(true);
+            c = CNHttp.open(new java.net.URL(url), true,
+                    CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS);
             c.setRequestProperty("Cache-Control", "no-cache, no-store, max-age=0");
             c.setRequestProperty("Pragma", "no-cache");
             c.setRequestProperty("Accept-Encoding", "identity");

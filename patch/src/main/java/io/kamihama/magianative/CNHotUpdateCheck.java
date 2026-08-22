@@ -938,12 +938,9 @@ public final class CNHotUpdateCheck {
     private static CNHotUpdateValidate.VerMeta fetchMetaDirect(String url) throws Exception {
         // 尊重 Android 系统代理。未配置系统代理时 openConnection() 本身就是直连；
         // 显式 Proxy.NO_PROXY 会绕开 MuMu/Clash/mitm 链，正是本次真机长超时的来源。
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        HttpURLConnection c = CNHttp.open(new URL(url), false,
+                VER_CONNECT_TIMEOUT_MS, VER_READ_TIMEOUT_MS);
         try {
-            c.setConnectTimeout(VER_CONNECT_TIMEOUT_MS);
-            c.setReadTimeout(VER_READ_TIMEOUT_MS);
-            c.setInstanceFollowRedirects(true);
-            c.setUseCaches(false);
             c.setRequestProperty("Cache-Control", "no-cache, no-store, max-age=0");
             c.setRequestProperty("Pragma", "no-cache");
             c.setRequestProperty("Accept-Encoding", "identity");
