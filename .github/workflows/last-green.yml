@@ -190,6 +190,10 @@ jobs:
           # 会撞在同一块内存上；② 一次翻译只取一个快照——精确与前缀两级跨快照
           # 时，热重载落进中间就会得出两个版本都没写过、且无法复现的结果。
           python3 tools/check-i18n-lookup-contract.py
+          # 调试开关三处目录（native kDebugFlags / Java KNOWN / 悬浮窗面板表）
+          # 不许各说各话。2026-08-22 出过一次：native 删了 noProxyEndpoint，
+          # 悬浮窗没删，玩家拨得动一个没人读的开关，而全套守卫都是绿的。
+          python3 tools/check-debug-flag-catalog.py
 
       - name: 🟢 移动 last-green tag
         env:

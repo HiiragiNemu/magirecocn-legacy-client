@@ -435,7 +435,7 @@ Application.onCreate
 （native）JNI_OnLoad → 34 个 hook
  ├─ pushSceneTop 浮层闸门                         noOverlayGate
  ├─ 强制序章 / WebView 看门狗                      noTutorialForce / noTutorialGuard
- ├─ UrlConfig 端点重写                             noProxyEndpoint
+ ├─ UrlConfig api/chat/web 端点                    （只读观测，无开关）
  ├─ initLabel / setString 文案替换                 noI18nLabel / noI18nSetString
  │   └─（只记录）未命中的串                        logI18nMiss / logI18nMissAll
  └─ HTTP2 并发数、ADX2 采样率                      noHttp2Bump / noAdxSampleRate

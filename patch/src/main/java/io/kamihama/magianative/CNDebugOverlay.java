@@ -2078,7 +2078,6 @@ public final class CNDebugOverlay {
             { "logWebviewRequests", GROUP_B },
             { "countWebSocket", GROUP_B },
             { "skipWebProxy", GROUP_B },
-            { "noProxyEndpoint", GROUP_B },
             { "noHttp2Bump", GROUP_B },
             // C 汉化与文本（7）
             { "logI18nMiss", GROUP_C },
@@ -2338,9 +2337,6 @@ public final class CNDebugOverlay {
             { "skipWebProxy",
               "游戏内网页本有个前台接待帮忙中转；这个开关 = 跳过前台自己直连。网页打不开时，"
               + "用来判断是不是中转环节的问题。",
-              ADVICE_KEEP_OFF, null },
-            { "noProxyEndpoint",
-              "同上，但管的是数据接口：让游戏自己直连服务器。一直转圈、连不上时对照排查用。",
               ADVICE_KEEP_OFF, null },
             { "noHttp2Bump",
               "我们把下载同时干活的人数从 4 提到 10；这个开关退回 4 人。人多反而互相挤"

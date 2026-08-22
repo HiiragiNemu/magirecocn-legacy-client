@@ -104,7 +104,7 @@ public class DebugOverlayTest {
                 "OTHER".equals(CNDebugOverlay.groupIdOf("brandNewFlag"))
                 && "OTHER".equals(CNDebugOverlay.groupIdOf(null)));
 
-        // 设计 §4.2：30 个面板开关 → 24 个控件（C 6→5，D 9→4）
+        // 设计 §4.2：29 个面板开关 → 23 个控件（C 6→5，D 9→4）
         // （noFontHook 已随字体重定向定型而撤除，2026-08-14）
         String[][] full = syntheticFullTable();
         int totalControls = 0;
@@ -123,7 +123,7 @@ public class DebugOverlayTest {
                         cs.size() == 4 && radios == 1);
             }
         }
-        check("[4e] 全表 30 开关 → 24 个控件", totalControls == 24);
+        check("[4e] 全表 29 开关 → 23 个控件", totalControls == 23);
 
         // ── [5] 注释表 ──────────────────────────────────────────────
         CNDebugOverlay.Note note = CNDebugOverlay.noteFor("noTtfHooks");
@@ -243,8 +243,8 @@ public class DebugOverlayTest {
         String[] names = {
                 // A 5
                 "skipInstaller", "skipOverlay", "skipRestart", "skipSlowAsk", "noOverlayGate",
-                // B 4
-                "useAria2", "skipWebProxy", "noProxyEndpoint", "noHttp2Bump",
+                // B 3（noProxyEndpoint 已随 api/chat 改为永久只读观测而删除）
+                "useAria2", "skipWebProxy", "noHttp2Bump",
                 // C 6
                 "logI18nMiss", "logI18nMissAll", "noI18nLabel", "noI18nSetString",
                 "noInitLabelHook", "noTtfHooks",
