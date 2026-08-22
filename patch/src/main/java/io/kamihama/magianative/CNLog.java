@@ -291,6 +291,11 @@ public final class CNLog {
         write("日志", "INFO", "日志已启动（第 " + launchSeq + " 次启动）"
                 + " 文件=" + currentLogPath()
                 + " 保留最近 " + KEEP_LOGS + " 次", null);
+        // 上几次进程是怎么死的。走的是系统的退出记录（API 30+），与上面两路
+        // logcat 完全独立——那两路都建立在「墓碑确实进了 logcat 且我们读得到」
+        // 这个假设上，假设不成立时会一起失明，而且失明得毫无迹象。
+        // 自带后台线程 + 全异常吞掉，不拖慢这条开机关键路径。
+        CNCrashHistory.dumpRecentAsync();
     }
 
     /**
