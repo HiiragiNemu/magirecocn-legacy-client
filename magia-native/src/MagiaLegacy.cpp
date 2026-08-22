@@ -250,7 +250,6 @@ static bool g_dbgNoI18nSetString = false;
 static bool g_dbgNoTutorialGuard = false;
 static bool g_dbgNoTutorialForce = false;
 static bool g_dbgNoOverlayGate   = false;
-static bool g_dbgNoProxyEndpoint = false;
 static bool g_dbgNoHttp2Bump     = false;
 static bool g_dbgNoAdxSampleRate = false;
 // 下面两个是「**根本不装**这个钩子」，与上面「装了但空转」是两回事。
@@ -289,7 +288,6 @@ static const DebugFlagDef kDebugFlags[] = {
     { "noOverlayGate",   &g_dbgNoOverlayGate,   "浮层期间不闸住 pushSceneTop/BGM（引擎照常推进）" },
     { "noTutorialForce", &g_dbgNoTutorialForce, "不强制序章（即使标记在，也照常进主页）" },
     { "noTutorialGuard", &g_dbgNoTutorialGuard, "序章期间不起 WebView 看门狗" },
-    { "noProxyEndpoint", &g_dbgNoProxyEndpoint, "UrlConfig::api/chat 只观测不重写（直连）" },
     // ── 关掉渲染/文案改动 ──
     { "noI18nLabel",     &g_dbgNoI18nLabel,     "initLabel 不替换文案（引擎侧标签回日文）" },
     { "noI18nSetString", &g_dbgNoI18nSetString, "setString 系不替换文案" },
@@ -1722,7 +1720,6 @@ static const std::string* endpointRewrite(UrlGetterFn old, void* self, int type,
     if (type < 0 || type >= URLCFG_MAX_SLOTS) return orig;
     try {
         endpointObserve(slot, type, *orig, tag);
-        if (g_dbgNoProxyEndpoint) return orig;   // 调试开关：只观测，不重写
         std::string base;
         std::vector<std::string> domains;
         if (!proxySnapshot(base, domains)) return orig;
@@ -1741,6 +1738,23 @@ static const std::string* endpointRewrite(UrlGetterFn old, void* self, int type,
     } catch (...) {
         return orig;   // 钩子边界绝不外抛
     }
+}
+
+/**
+ * 端点 getter 的只读观测包装：记录原值后原样返回，结构上没有改写路径。
+ *
+ * <p>2026-08-21 真机 A/B 已确认：api/chat 被重写到代理后，旧版 Cocos/OpenSSL
+ * 在服务端握手扩展处报 0x140920E3（界面错误码 336142563），所有战斗均无法进入；
+ * 同一进程改为 native 端点直连后战斗立即成功。WebView 代理属于另一条链，仍由
+ * Java 拦截器处理。因此 api/chat 永久只读观测，不再靠调试文件临时绕过。</p>
+ */
+static const std::string* endpointObserveOnly(UrlGetterFn old, void* self, int type,
+                                              int slot, const char* tag) {
+    const std::string* orig = old(self, type);
+    try {
+        if (orig) endpointObserve(slot, type, *orig, tag);
+    } catch (...) {}      // 钩子边界绝不外抛
+    return orig;          // 原样返回，绝不改写
 }
 
 /**
@@ -1806,7 +1820,7 @@ static void probeEndpointSlots(void* self) {
 
 static const std::string* urlConfigApiNew(void* self, int type) {
     try { probeEndpointSlots(self); } catch (...) {}   // 钩子边界绝不外抛
-    return endpointRewrite(urlConfigApiOld, self, type, 0, "api");
+    return endpointObserveOnly(urlConfigApiOld, self, type, 0, "api(只读)");
 }
 // 【已停用】web 端点的**改写**没有 H() 安装它（67ad9664）。
 // 原因是查明的、可复现的：web 端点走代理后页面加载卡死黑屏
@@ -1820,7 +1834,7 @@ static const std::string* urlConfigWebNew(void* self, int type) {
 }
 static const std::string* urlConfigChatNew(void* self, int type) {
     try { probeEndpointSlots(self); } catch (...) {}
-    return endpointRewrite(urlConfigChatOld, self, type, 2, "chat");
+    return endpointObserveOnly(urlConfigChatOld, self, type, 2, "chat(只读)");
 }
 
 /**
@@ -2897,15 +2911,14 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     H("_ZN21LoadingSceneLayerInfo8setTitleENSt6__ndk112basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE",
       (void*)loadingSetTitleNew, (void**)&loadingSetTitleOld, "i18n: LoadingSceneLayerInfo::setTitle");
 
-    // Totentanz 代理（v4，端点级改写，替代崩溃的 nghttp2 逐请求钩子）:
-    // 钩 UrlConfig 的三个端点 getter——游戏所有 API/Web/Chat 地址都从这里取。
-    // 命中白名单就返回 <proxyBase><原host><原路径> 的重写地址，
-    // 游戏随后**自己**以代理为 host 建连（TLS/SNI/authority 天然一致），
-    // 不碰 nghttp2 内部（v3 证明逐请求改写会让 on_response 回调撞 UAF）。
+    // UrlConfig 三端点全部只读观测。2026-08-21 真机 A/B 证明 api/chat 端点改写会让
+    // 旧版 Cocos/OpenSSL 在代理握手阶段报 0x140920E3（界面错误码 336142563），
+    // 造成所有战斗通信失败；原样直连则同一进程立即成功。WebView 代理是 Java 侧
+    // 独立链路，不依赖这里改写。check-proxy-hooks.py 会阻止 api/chat 回流到改写。
     H("_ZNK9UrlConfig3apiENS_3Api4TypeE",
-      (void*)urlConfigApiNew, (void**)&urlConfigApiOld, "proxy: UrlConfig::api");
+      (void*)urlConfigApiNew, (void**)&urlConfigApiOld, "proxy: UrlConfig::api(只读观测)");
     H("_ZNK9UrlConfig4chatENS_4Chat4TypeE",
-      (void*)urlConfigChatNew, (void**)&urlConfigChatOld, "proxy: UrlConfig::chat");
+      (void*)urlConfigChatNew, (void**)&urlConfigChatOld, "proxy: UrlConfig::chat(只读观测)");
     // web 端点**只观测不改写**。改写会让页面加载卡死黑屏（2026-08-06 真机复现），
     // 但它的取值又必须知道：2026-08-07 真机查明，游戏的 API 流量根本不经
     // UrlConfig::api，而是走 WebView 的 shouldInterceptRequest——WebView 从哪个

@@ -34,8 +34,16 @@ def main() -> int:
     if errors:
         raise AssertionError(f"production source failed: {errors}")
 
-    marker = "static bool enginePrefixLookup(const char* data, size_t size, std::string& out) {"
-    gated = source.replace(marker, marker + "\n    if (!containsKana(data, size)) return false;", 1)
+    marker = "static bool enginePrefixLookup("
+    start = source.find(marker)
+    brace = source.find("{", start)
+    if start < 0 or brace < 0:
+        raise AssertionError("production enginePrefixLookup anchor not found")
+    gated = (
+        source[: brace + 1]
+        + "\n    if (!containsKana(data, size)) return false;"
+        + source[brace + 1 :]
+    )
     require_failure(checker, gated, "must not gate prefix lookup")
 
     no_compare = source.replace("memcmp(data, pre.data(), pre.size()) == 0", "false", 1)

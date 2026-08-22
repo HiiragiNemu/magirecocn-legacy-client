@@ -48,6 +48,44 @@ PROXY_HOOKS = [
 
 DISABLED_MARK = "【已停用"
 
+# 这两个 getter 进入旧版 Cocos/OpenSSL。2026-08-21 真机 A/B 证明一旦把它们
+# 改写到代理，所有战斗都会以 0x140920E3 / 336142563 失败；它们只能只读观测。
+NATIVE_DIRECT_HOOKS = ("urlConfigApiNew", "urlConfigChatNew")
+
+
+def function_body(text, name):
+    """返回静态函数的完整函数体；用括号深度而不是跨函数正则。"""
+    m = re.search(r"^static\s+[^\n;]*\b%s\s*\([^;]*?\)\s*\{" % re.escape(name),
+                  text, re.M | re.S)
+    if not m:
+        return None
+    start = m.end() - 1
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return None
+
+
+def validate(text):
+    problems = []
+
+    for name in NATIVE_DIRECT_HOOKS:
+        body = function_body(text, name)
+        if body is None:
+            problems.append("找不到 %s 的完整函数体。" % name)
+            continue
+        if "endpointObserveOnly(" not in body:
+            problems.append("%s 必须调用 endpointObserveOnly，确保 native 端点直连。" % name)
+        if "endpointRewrite(" in body:
+            problems.append("%s 禁止调用 endpointRewrite；这会复发战斗错误 336142563。" % name)
+
+    return problems
+
 
 def main():
     try:
@@ -59,7 +97,7 @@ def main():
     # 被 H(...) 安装的钩子：形如  (void*)urlConfigApiNew,
     installed = set(re.findall(r"\(void\s*\*\)\s*([A-Za-z_][A-Za-z0-9_]*)", text))
 
-    problems = []
+    problems = validate(text)
     live, dead = [], []
 
     for name in PROXY_HOOKS:
