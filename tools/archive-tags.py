@@ -65,8 +65,9 @@ BASENAME = "legacy-client-archive-tags"
 
 # 归档资产传到哪：地址不写死在仓库里，由环境变量给（CI 从 secrets 注入）。
 # 那边的同步链路会读它的 releases/latest 再往外镜像。
-# 形如 owner/repo，与发版步骤用的是同一个 secret——同一件事只该有一个来源，
-# 拆成 owner 与 name 两个变量只会多一处能改错的地方。
+# 形如 owner/repo，与发版步骤用的是同一个 secret（TARGET_REPO）——同一件事
+# 只该有一个来源，拆成 owner 与 name 两个变量只会多一处能改错的地方。
+# 2026-08-24：原 TARGET_REPO/DOWNSTREAM 已统一为 TARGET_REPO。
 TARGET = os.environ.get("TARGET_REPO", "").strip().strip("/")
 RELEASE_TAG = os.environ.get("UPSTREAM_RELEASE_TAG", "latest")
 
