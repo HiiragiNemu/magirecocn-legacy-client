@@ -394,6 +394,13 @@ public final class CNDownloaderFix {
                         // 真正走不走代理由 config.json 的 proxy.web_mode 决定，
                         // 而配置由 CNMirrors.refresh 下发——两条路都会调它。
                         CNWebProxy.install();
+                        // 本地状态覆盖层：与上面同理放在分支之前，两条路都覆盖到。
+                        //
+                        // 它**必须**和 CNWebProxy.install() 一样跑在 WebView 创建
+                        // 之前——addJavascriptInterface 的注入时机是「下一次页面
+                        // 加载」，挂晚了当前文档里就取不到那个桥，而前端是 hash
+                        // 路由，整局都不会再有第二次文档加载。详见 CNDeckState 类注释。
+                        CNDeckState.install();
                         // WebView 远程调试（实证手段 F）：开 useWebviewDebug 后
                         // chrome://inspect 可连本进程看 WebView 网络面板（method/URL/WS）。
                         // 静态方法全局生效，只需在 WebView 创建前调一次。

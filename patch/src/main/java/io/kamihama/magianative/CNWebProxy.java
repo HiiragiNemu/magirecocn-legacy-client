@@ -463,7 +463,7 @@ public final class CNWebProxy {
     /**
      * 取引擎当前那个 WebView（可能为 null：还没建 / 刚被 removeWebView 销毁）。
      *
-     * <p>包内出口，给 {@link CNBootWatchdog} 用。反射目标只有这一处
+     * <p>包内出口，给 {@link CNBootWatchdog} 与 {@link CNDeckState} 用。反射目标只有这一处
      * （{@code jp.f4samurai.web.WebViewHelper.sWebView}），别在别的类里复制第二份
      * ——引擎换字段名时要改的地方必须只有一个。
      */
@@ -743,6 +743,10 @@ public final class CNWebProxy {
         @Override
         public void onPageStarted(WebView view, String url, Bitmap favicon) {
             orig.onPageStarted(view, url, favicon);
+            // 本地状态覆盖层在这里注入脚本：这是拿得到的最准的时机——新文档已建立、
+            // 外部脚本还没执行，正好赶在前端发出第一个请求之前挂上 XHR 钩子。
+            // CNDeckState 自己那条轮询也会注一次，脚本有重入保护，重复注入是空操作。
+            try { CNDeckState.inject(view); } catch (Throwable ignore) {}
         }
 
         @Override

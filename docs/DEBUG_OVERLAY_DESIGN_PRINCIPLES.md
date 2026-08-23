@@ -143,21 +143,21 @@ native 加了新开关，界面最坏情况是「少一句建议」，绝不会�
 
 Java / native 两侧来源在分类页副标题标注，如「含引擎层 4 项」，不作为分类依据。
 
-> 数量是**面板可见的底层开关**数：两侧目录合计 38 个（`CNDebugFlags.KNOWN` 21 +
-> `MagiaLegacy.cpp kDebugFlags` 17），其中 4 个有意不进面板
+> 数量是**面板可见的底层开关**数：两侧目录合计 39 个（`CNDebugFlags.KNOWN` 22 +
+> `MagiaLegacy.cpp kDebugFlags` 17），其中 5 个有意不进面板
 > （`skipVersionCheck` / `skipHotUpdate` / `skipMirrorConfig` 是 P7 剔除的断同步开关，
-> `skipBootWatchdog` 是后加的逃生开关），面板可见 **34** 个。
+> `skipBootWatchdog` 与 `skipLocalState` 是后加的逃生开关），面板可见 **34** 个。
 > 经 §4.5 合并后（C 类 6 开关 → 5 个控件、D 类 9 开关 → 4 个控件），
 > 全表面板呈现 **28 个控件**。玩家看到的是控件，不是开关表。
 >
 > ⚠ 上面这些数字曾长期漂着（本文写 34/31/25、`KNOWN` 15、`kDebugFlags` 19，
-> 而代码里分别是 38/34/28、21、17）。现已由
+> 而代码里分别是 39/34/28、22、17）。现已由
 > `tools/check-debug-flag-catalog.py` 逐个钉住——**改开关表必然会让这里红灯**，
 > 所以不必再靠人记得回来改。
 
 ### 4.3 完整归属表（真实名单）
 
-> 名单以 `CNDebugFlags.KNOWN`（21）与 `MagiaLegacy.cpp kDebugFlags`（17）为准。
+> 名单以 `CNDebugFlags.KNOWN`（22）与 `MagiaLegacy.cpp kDebugFlags`（17）为准。
 > 「白话建议」列即 §5 注释表的内容来源。
 >
 > ⚠ **本节的明细行不全**：B 类代码里是 8 项，下面只列了 4 项，缺

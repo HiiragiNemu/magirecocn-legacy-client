@@ -123,7 +123,7 @@ jobs:
                    ManualRedownloadTest ArchiveInstallTxTest DownloadConcurrencyTest \
                    HotUpdateRoutingTest UiAssistStateTest DebugBridgeTest \
                    PathsTest LogFormatTest DownloadModeTest DebugOverlayTest \
-                   DiskSpaceTest ZipPlanTest InstallCompleteTest; do
+                   DiskSpaceTest ZipPlanTest InstallCompleteTest LocalStoreTest; do
             java $JLIB -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar $t
           done
           # DownloadRestartStateTest 在 io.kamihama.magianative 包里（要访问
@@ -138,6 +138,12 @@ jobs:
           # 事务分块回归：85 请求并发上限、坏块不提交、非整除布局跨重启续传
           java $JLIB -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar \
             ChunkHashIntegrationTest "http://127.0.0.1:8779/file.bin" 8388608 98690
+          # 本地状态覆盖层的前端脚本（assets/magia/localstate.js）。它是整条链路里
+          # 唯一跑在游戏页面里、Java 测试覆盖不到的一段，所以单独用 node 验一遍
+          # 「savePrm ←→ userDeckList 行」的还原与覆盖行为。
+          # runner 自带 node，不需要 setup-node。
+          node --check assets/magia/localstate.js
+          node tools/localstate-js-test.js
 
       - name: 🛡 跑全部守卫
         run: |

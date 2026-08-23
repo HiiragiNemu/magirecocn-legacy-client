@@ -138,6 +138,9 @@ public final class CNDebugFlags {
     /** {@link CNBootWatchdog} 不介入：浮层撤下后前端一直起不来也不自动重载页面。
      *  排查「到底是前端卡住还是看门狗把好好的一次加载掀了」时打开。 */
     public static final String SKIP_BOOT_WATCHDOG  = "skipBootWatchdog";
+    /** {@link CNDeckState} 不安装：不挂 JS 桥、不注入覆盖脚本，编队回到「存不住」。
+     *  排查「编队错乱到底是覆盖层干的还是前端自己的问题」时打开。 */
+    public static final String SKIP_LOCAL_STATE    = "skipLocalState";
 
     // ── failXxx / slowXxx：故障注入 ──────────────────────────────────
     /** config.json 一律拉取失败。验退避重试与「再试一次 / 用内置线路」询问框。 */
@@ -196,6 +199,7 @@ public final class CNDebugFlags {
         { SKIP_RESTART,         "装完/序章后不自动重启" },
         { SKIP_SLOW_ASK,        "网络慢时不弹询问框，退回静默 fail-open" },
         { SKIP_BOOT_WATCHDOG,   "启动看门狗不介入（前端卡住也不自动重载页面）" },
+        { SKIP_LOCAL_STATE,     "不装本地状态覆盖层（编队等自定义配置不再被记住）" },
         { USE_WEBVIEW_DEBUG,    "开启 WebView 远程调试（chrome://inspect 看网络流量）" },
         { LOG_WEBVIEW_REQUESTS, "记录 WebView 每个请求的 method+URL（去重）" },
         { COUNT_WEBSOCKET,      "注入 JS 计数 WebSocket 连接（零电脑）" },

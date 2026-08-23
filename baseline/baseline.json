@@ -972,6 +972,14 @@
     },
     {
       "kind": "add",
+      "path": "assets/magia/localstate.js",
+      "group": "本地状态",
+      "why": "本地状态覆盖层的前端脚本，由 CNDeckState 在 onPageStarted 注入。做成 asset 而不是 Java 字符串常量，是为了让它能被 diff、被 node --check、被 tools/localstate-js-test.js 覆盖",
+      "post": "4354317e4ffcaaea6b28cb10cd7e3f8b121334870dd0edc6058e6b67c94ddadb",
+      "from": "repo"
+    },
+    {
+      "kind": "add",
       "path": "lib/armeabi-v7a/libshadowhook.so",
       "group": "第三方",
       "why": "shadowhook 预编译库",

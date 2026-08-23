@@ -19,7 +19,8 @@ baseline/              ← ★ 基线钉死项 + 可复现的 patchset
 magia-native/          ← native hook 源码（libMagiaLegacy.so）
 tools/                 ← 测试套件、构建前置检查、汉化与资源工具
 assets/ lib/ res/      ← 只剩我们自己的东西：中文字体、aria2c、
-                          shadowhook、network_security_config
+                          shadowhook、network_security_config、
+                          本地状态覆盖层的前端脚本 localstate.js
 config.json            ← 线上配置的快照，仅供本地看字段长什么样，不参与构建
 ```
 
@@ -35,7 +36,7 @@ python3 tools/baseline.py apply --out work/tree
 ## 基线与补丁（`baseline/`）
 
 ```
-整包  +  baseline/ 的 119 条操作  =  工程树
+整包  +  baseline/ 的 125 条操作  =  工程树
 ```
 
 每条操作带 `pre`/`post` hash 与 `why`，逐字节确定。**分类是人写死在
@@ -46,7 +47,7 @@ python3 tools/baseline.py apply --out work/tree
 |---|---:|---|
 | `patch` | 14 | 基线里有、我们改了几行 |
 | `replace` | 85 | 基本重写或二进制没法 diff：`RestClient.smali` 桩、中文字体、83 个汉化图集（从 overlay 取） |
-| `add` | 13 | 基线里没有：`network_security_config.xml`、libaria2c×4（双后端）与 libarchive/shadowhook、浮层用的 logo 与背景、2 个新增图集页 |
+| `add` | 15 | 基线里没有：`network_security_config.xml`、libaria2c×4（双后端）与 libarchive/shadowhook、浮层用的 logo 与背景、2 个新增图集页、TLS 探针证书、`localstate.js` |
 | `remove` | 6 | 要删的：两个未引用的商业字体、被取代的 `libuwasa.so`、`RestClient$1/$2` |
 | `generated` | 5 | 构建期产出（Java→dex→smali、native `.so`、BGM 转码），不校验内容 |
 
@@ -164,6 +165,9 @@ python3 tools/baseline.py apply --out <目录>   # 只重建，不比对
 | `CNIo` | 流的收尾杂务，目前只有 `closeQuietly`。此前同一个三行方法在五个类里有六份实现，其中 `CNDownloaderFix` 那两个重载**只接 `IOException`**——而 `close()` 也会冒 `RuntimeException`/`NPE`，这个方法又几乎总是从 `finally` 里调的，一往外抛就把原始异常整个盖掉。统一后一律接 `Throwable`。守卫 `check-single-impl-contract.py` 钉住「全仓库只有一份」 |
 | `CNAtomicReplace` | 同目录原子替换的**唯一**实现（完成标记、断点元数据、整包换入共用）：候选名逐次唯一——固定成 `<目标>.tmp` 时并发写同一目标会互相截断；换入走 `rename(2)` 且**绝不预删目标**——先删再改名，两步之间被杀就把「上一次可用状态」换成什么都没有；换完 fsync 父目录。清残留一律走 `sweep`（新旧两种候选名一起收） |
 | `CNArchiveInstallTx` | ZIP 解压的**唯一**实现（首次安装、aria2 路径、离线包导入共用）：解压前按 zip 目录精确预检空间，逐条目校验，膨胀比两道防护**都在写出去之前**（写完再查等于炸弹已经落地），失败清掉半截产物 |
+| `CNLocalStore` | 客户端本地状态存储：按命名空间存一份 JSON，落盘在 `<privDir>/cn-state/`（**刻意不在 `files/` 下**——那底下 `magica/` 整个子树是 WebView 拿 URL 就能读到的供给区，存档放旁边等于把「那四道闸有没有洞」和「存档会不会被页面读走」绑成一个问题）。命名空间走白名单 `[a-z0-9_-]{1,32}`（它会被拼进文件路径，是安全边界不是命名习惯），内容必须是合法 JSON 对象/数组且单份 ≤512KB，命名空间总数 ≤64。写一律走 `CNAtomicReplace`——它不是缓存，丢了就是玩家编队没了 |
+| `CNWebStateBridge` | 上面那个存储对页面 JS 的**唯一**入口，`addJavascriptInterface` 挂成 `CNLocalState`。写限速 40 次/10s（挡死循环狂写把 flash 写坏）。不用 localStorage 的三条理由见类注释，头一条是 `nativeCommand.js` 的 `DATA_CLEAR_WEB_CACHE` 到底清不清站点数据**没有核实过** |
+| `CNDeckState` | 本地状态覆盖层的装配方：挂桥 + 在 `onPageStarted` 注入 `assets/magia/localstate.js`。🔴 **时序是这里最难的一件事**——`addJavascriptInterface` 的注入时机是「下一次页面加载」，而前端是 hash 路由，错过这一次就是错过一整局，所以它自己起一条 100ms 的快轮询而不搭 `CNWebProxy` 的便车（那条是 1s，且 API&lt;26 整个不装）。注入时追一句 `!!window.CNLocalState` 的自检回 Java 记进日志，「到底生效了没有」不靠猜。逃生开关 `skipLocalState` |
 
 补丁类的 smali（`smali_classes2/…/CNCNDownloadUI*` 与整个 `smali_classes3/`）
 **每次 CI 构建都会用 Java 源码重新生成**，手工改这些 .smali 不会影响产物。
@@ -257,6 +261,46 @@ WebViewClientImpl.shouldInterceptRequest
 黑屏别记到它头上。拿 WebView 实例要读 `WebViewHelper.sWebView`，不要遍历 view 树
 找 tag——`WebViewImpl` 构造里那个 `setTag` 随后就被覆盖掉了。`removeWebView()` 会
 换出新对象，所以等待线程长期比对实例身份，换了就重新包。
+
+### 本地状态覆盖层：服务端无状态，存档只能在客户端
+
+Totentanz 服务端是**无状态**的——彻底到打完一场战斗、结算界面的星数都不会变。
+`/magica/api/userDeck/save` 这类「写」接口，请求发出去、罐头响应回来，
+**服务端一个字节都不记**；下次进游戏编队回到默认。
+
+这条事实决定了做法，没得选：
+
+| | 为什么不行 / 行 |
+|---|---|
+| ❌ 存下 `userDeck/save` 的 payload，下次开机重放一遍 | 对无状态服务端毫无意义，回来的还是那份罐头 |
+| ❌ 在 Java 拦截层抓请求体 | `WebResourceRequest` 不提供请求体（任何 Android 版本都没有 `getBody()`），而编队保存恰好是 POST |
+| ❌ 存 localStorage | 跟着 WebView 站点数据走；`nativeCommand.js` 的 `DATA_CLEAR_WEB_CACHE` 到底清不清它**没有核实过**（在引擎侧，仓库里没有基线树） |
+| ✅ 前端记「存什么」，Java 记「让它活过这次进程」 | 见下 |
+
+```
+玩家点保存
+  └→ XHR.send 拦到 userDeck/{save,bulkSave} 的请求体（savePrm 形状）
+        └→ CNLocalState.set("deck", …) → <privDir>/cn-state/deck.json（原子写）
+
+任何带 userDeckList 的响应到达前端之前
+  └→ 用存下来的那份覆盖 / 补齐（savePrm → userDeckList 行，是 savePrmCreate 的逆）
+        └→ 前端的 responseSetStorage 从响应读进 storage，它读到什么就信什么
+```
+
+覆盖只影响**这一次**的响应，不回写存档：`userCardList` 某次回来不全并不代表玩家
+真的失去了那张卡，据此把存档改小就是拿一次响应的抖动去销毁玩家的编队。所以
+「账号里没有的魔法少女」是就地摘掉位置，盘上那份原样留着。
+
+三段实现分别是 `CNLocalStore`（落盘）、`CNWebStateBridge`（JS 桥）、
+`CNDeckState`（装配与注入），前端脚本在 `assets/magia/localstate.js`。
+覆盖的是**所有** `deckType`，所以主线、竞技场、歼灭战（70+n）、镜之魔女（100+n）
+一起生效。逃生开关 `skipLocalState`。
+
+> ⚠ **一个尚未在真机上验证的点**：`addJavascriptInterface` 的注入时机是「下一次
+> 页面加载」，而前端是 hash 路由（`location.href="#/TopPage"`），整局不会再触发
+> 第二次文档级加载——桥挂晚了就是**整局失效**。`CNDeckState` 为此用 100ms 快轮询
+> 抢在 `loadUrl` 之前，并在注入时回传一句自检写进日志：
+> `自检通过：页面里 CNLocalState 可见` / `自检未通过：…`。真机第一次跑起来先看这行。
 
 ### 为什么 ETag 只能在同一条线路上比对
 

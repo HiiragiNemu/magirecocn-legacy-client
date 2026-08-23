@@ -69,12 +69,16 @@ notes = re.findall(r'\{\s*"([A-Za-z0-9_]+)",\s*\n?\s*"', overlay_src)
 
 catalog = set(native) | set(java)
 dangling = sorted(set(panel_names) - catalog)
-# 有意不进面板的：P7 的三个断同步开关 + 后加的开机看门狗逃生开关。
+# 有意不进面板的：P7 的三个断同步开关 + 两个后加的逃生开关。
 # 写死在这里是**故意**的：新增开关若忘了挂上面板，会当场变成「目录有、面板没有」
 # 而红灯，逼人明确表态是漏了还是有意不给玩家。
 INTENTIONALLY_OFF_PANEL = {
     "skipVersionCheck", "skipHotUpdate", "skipMirrorConfig",   # P7 断同步
     "skipBootWatchdog",                                        # 逃生开关
+    # 本地状态覆盖层的逃生开关。不进面板与 skipBootWatchdog 同理：它关掉的是一个
+    # 「不开就没有」的功能（编队存不住），玩家拨它只会把自己的存档停掉；真正需要
+    # 它的场合是排查「编队错乱是不是覆盖层干的」，那是开发动作，不是玩家动作。
+    "skipLocalState",
 }
 off_panel = sorted(catalog - set(panel_names))
 
@@ -113,7 +117,7 @@ checks = {
         not dangling,
     "面板每一项都有白话说明（否则玩家只看得到接口名）":
         not note_missing,
-    "不进面板的开关正好是那 4 个有意为之的":
+    "不进面板的开关正好是那 5 个有意为之的":
         set(off_panel) == INTENTIONALLY_OFF_PANEL,
     "文档 §4.2 的分类数量与代码一致":
         dg == real_group,

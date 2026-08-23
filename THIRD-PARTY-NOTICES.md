@@ -217,3 +217,7 @@ SOFTWARE.
   它和另外 84 个汉化图集一样**不在本仓库**：构建时按 sha256 取回（`baseline.json`
   的 `overlay` 段）。配套的 `.fnt` 是原包原样，由基线树提供。
 - **`res/xml/network_security_config.xml`** —— 本项目自制配置，归 GPLv3。
+- **`assets/magia/localstate.js`** —— 本项目自制的前端脚本（本地状态覆盖层），
+  由 `CNDeckState` 注入页面，归 GPLv3。它**不含任何第三方代码**：没有引入 jQuery、
+  没有 polyfill，全篇只用 `XMLHttpRequest` 与 `JSON` 两个宿主对象。
+  之所以是 asset 而不是 Java 里的字符串常量，见 `CNDeckState` 类注释。

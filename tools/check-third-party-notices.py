@@ -42,6 +42,7 @@ SELF_MADE = (
     "lib/arm64-v8a/libMagiaLegacy.so",
     "lib/armeabi-v7a/libMagiaLegacy.so",
     "res/xml/network_security_config.xml",
+    "assets/magia/localstate.js",
 )
 
 # 归原包版权方一侧的（原样取用或汉化重绘），由 LICENSE.additional-terms §3 管。
