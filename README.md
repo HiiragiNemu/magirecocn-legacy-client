@@ -167,7 +167,7 @@ python3 tools/baseline.py apply --out <目录>   # 只重建，不比对
 | `CNArchiveInstallTx` | ZIP 解压的**唯一**实现（首次安装、aria2 路径、离线包导入共用）：解压前按 zip 目录精确预检空间，逐条目校验，膨胀比两道防护**都在写出去之前**（写完再查等于炸弹已经落地），失败清掉半截产物 |
 | `CNLocalStore` | 客户端本地状态存储：按命名空间存一份 JSON，落盘在 `<privDir>/cn-state/`（**刻意不在 `files/` 下**——那底下 `magica/` 整个子树是 WebView 拿 URL 就能读到的供给区，存档放旁边等于把「那四道闸有没有洞」和「存档会不会被页面读走」绑成一个问题）。命名空间走白名单 `[a-z0-9_-]{1,32}`（它会被拼进文件路径，是安全边界不是命名习惯），内容必须是合法 JSON 对象/数组且单份 ≤512KB，命名空间总数 ≤64。写一律走 `CNAtomicReplace`——它不是缓存，丢了就是玩家编队没了 |
 | `CNWebStateBridge` | 上面那个存储对页面 JS 的**唯一**入口，`addJavascriptInterface` 挂成 `CNLocalState`。写限速 40 次/10s（挡死循环狂写把 flash 写坏）。不用 localStorage 的三条理由见类注释，头一条是 `nativeCommand.js` 的 `DATA_CLEAR_WEB_CACHE` 到底清不清站点数据**没有核实过** |
-| `CNDeckState` | 本地状态覆盖层的装配方：挂桥 + 在 `onPageStarted` 注入 `assets/magia/localstate.js`。🔴 **时序是这里最难的一件事**——`addJavascriptInterface` 的注入时机是「下一次页面加载」，而前端是 hash 路由，错过这一次就是错过一整局，所以它自己起一条 100ms 的快轮询而不搭 `CNWebProxy` 的便车（那条是 1s，且 API&lt;26 整个不装）。注入时追一句 `!!window.CNLocalState` 的自检回 Java 记进日志，「到底生效了没有」不靠猜。逃生开关 `skipLocalState` |
+| `CNDeckState` | 本地状态覆盖层的装配方：挂桥 + 注入 `assets/magia/localstate.js`。🔴 **时序是这里最难的一件事**，而且是两件时序要求相反的事：`addJavascriptInterface` 的注入时机是「下一次页面加载」，所以**挂桥要赶在 `loadUrl` 之前、一个 WebView 只需一次**（前端是 hash 路由，错过就是错过一整局）；而脚本挂的是 `XMLHttpRequest.prototype`，活在文档的 JS 环境里，**页面一重载就没了，每个文档都得注一次**。把两者写在同一个分支里会让功能整体失效（挂桥那一刻还停在 `about:blank`，注了白注，此后再不重注）。现在是：100ms 轮询查挂桥（纯 Java），另按 500ms/5s 发一句极小的 `__MAGIACN_LOCAL_STATE__` 探针，只有「这个文档没注过」才注整段。注入时追一句 `!!window.CNLocalState` 的自检回 Java 记进日志，「到底生效了没有」不靠猜。逃生开关 `skipLocalState` |
 
 补丁类的 smali（`smali_classes2/…/CNCNDownloadUI*` 与整个 `smali_classes3/`）
 **每次 CI 构建都会用 Java 源码重新生成**，手工改这些 .smali 不会影响产物。
@@ -301,6 +301,10 @@ Totentanz 服务端是**无状态**的——彻底到打完一场战斗、结算
 > 第二次文档级加载——桥挂晚了就是**整局失效**。`CNDeckState` 为此用 100ms 快轮询
 > 抢在 `loadUrl` 之前，并在注入时回传一句自检写进日志：
 > `自检通过：页面里 CNLocalState 可见` / `自检未通过：…`。真机第一次跑起来先看这行。
+>
+> 挂桥与注入是**分开**的两件事，别再合回去：合在一起时那一次注入落在
+> `about:blank` 上，同一个 WebView 此后再不重注，于是只剩 `onPageStarted` 一条路，
+> 而它在 API &lt; 26、开了 `skipWebProxy`、或页面被 `CNBootWatchdog` 重载之后都不在。
 
 ### 为什么 ETag 只能在同一条线路上比对
 

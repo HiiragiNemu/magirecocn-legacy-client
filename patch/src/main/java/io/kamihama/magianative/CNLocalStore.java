@@ -96,6 +96,17 @@ public final class CNLocalStore {
     private static final int MAX_NS_LEN = 32;
 
     /**
+     * 内存镜像的总字节上限。
+     *
+     * <p>单份 512KB × 64 个命名空间 = 最坏 32MB 常驻——对一个把「省内存」当命的
+     * 老设备客户端来说，这个数字大到能自己把自己 OOM 掉，而且是页面 JS 单方面
+     * 就能造出来的。上限撞到就<b>整份清空</b>镜像（不是 LRU）：这里要的是一个
+     * 「绝不会悄悄长大」的保证，而不是命中率——清空之后下次读回一次磁盘就是了，
+     * 代价是一次几 KB 的 I/O。
+     */
+    private static final int MAX_CACHE_BYTES = 256 * 1024;
+
+    /**
      * 内存镜像：{@code ns -> JSON 文本}。
      *
      * <p>页面每次加载都会把整份状态读回去（覆盖响应要用），不缓存就是每次页面
@@ -106,6 +117,9 @@ public final class CNLocalStore {
 
     /** 所有读写共用一把锁：写穿要求「落盘 + 更新镜像」对读者是一个原子步。 */
     private static final Object LOCK = new Object();
+
+    /** {@link #CACHE} 里当前存了多少字节（按 UTF-16 的 length 估，不必精确）。 */
+    private static int cachedBytes;
 
     private CNLocalStore() {}
 
@@ -165,7 +179,7 @@ public final class CNLocalStore {
             String hit = CACHE.get(ns);
             if (hit != null) return hit;
             String text = readFile(fileFor(ns));
-            if (text != null) CACHE.put(ns, text);
+            if (text != null) cachePut(ns, text);
             return text;
         }
     }
@@ -231,7 +245,7 @@ public final class CNLocalStore {
             }
             try {
                 CNAtomicReplace.writeText(fileFor(ns), json);
-                CACHE.put(ns, json);     // 写穿：落盘成功之后才更新镜像
+                cachePut(ns, json);      // 写穿：落盘成功之后才更新镜像
                 return true;
             } catch (Throwable t) {
                 CNLog.w(TAG, "写入失败 ns=" + ns + " : " + t);
@@ -268,7 +282,7 @@ public final class CNLocalStore {
             return false;
         }
         synchronized (LOCK) {
-            CACHE.remove(ns);
+            cacheRemove(ns);
             File f = fileFor(ns);
             try {
                 // 顺手扫掉可能残留的候选文件，否则下次 stage 会与它们撞名。
@@ -343,10 +357,45 @@ public final class CNLocalStore {
         return sb.toString();
     }
 
+    /**
+     * 放进镜像，并维护总字节数。撑破上限就整份清空再放。
+     *
+     * <p>调用方须持有 {@link #LOCK}。
+     */
+    private static void cachePut(String ns, String text) {
+        cacheRemove(ns);
+        int add = text.length();
+        if (cachedBytes + add > MAX_CACHE_BYTES) {
+            CACHE.clear();
+            cachedBytes = 0;
+            // 单份就超上限的，干脆不进镜像：放进去等于每次写都触发一次全清，
+            // 镜像反而变成负担。它照样在盘上，读的时候现读。
+            if (add > MAX_CACHE_BYTES) return;
+        }
+        CACHE.put(ns, text);
+        cachedBytes += add;
+    }
+
+    /** 从镜像里摘掉，并维护总字节数。调用方须持有 {@link #LOCK}。 */
+    private static void cacheRemove(String ns) {
+        String old = CACHE.remove(ns);
+        if (old != null) cachedBytes -= old.length();
+        if (cachedBytes < 0) cachedBytes = 0;
+    }
+
+    /** 只给测试用：镜像总量上限。 */
+    public static int maxCacheBytesForTest() { return MAX_CACHE_BYTES; }
+
+    /** 只给测试用：当前镜像占了多少字节。 */
+    public static int cachedBytesForTest() {
+        synchronized (LOCK) { return cachedBytes; }
+    }
+
     /** 只给测试用：丢掉内存镜像，强制下次读走磁盘。 */
     public static void invalidateCacheForTest() {
         synchronized (LOCK) {
             CACHE.clear();
+            cachedBytes = 0;
         }
     }
 }

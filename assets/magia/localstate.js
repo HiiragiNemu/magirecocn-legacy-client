@@ -1,8 +1,13 @@
 /*
  * 本地状态覆盖层 —— 让无状态服务端下的编队活过一次进程。
  *
- * 由 CNDeckState 在 onPageStarted 时 evaluateJavascript 注入，注入时机早于
- * jquery/requirejs，所以这里只依赖 XMLHttpRequest 与 JSON，不碰任何前端模块。
+ * 由 CNDeckState 注入（两条路：CNWebProxy 的 onPageStarted，以及 CNDeckState 自己
+ * 那条轮询的探针补注）。注入时机早于 jquery/requirejs，所以这里只依赖
+ * XMLHttpRequest 与 JSON，不碰任何前端模块。
+ *
+ * 开头那个 __MAGIACN_LOCAL_STATE__ 标记既是重入保护，也是 Java 侧「这个文档注过
+ * 没有」的探针目标——它必须在最前面置上，且必须早于「取不到桥就返回」那一支，
+ * 否则没有桥的文档会被反复重注。
  *
  * ── 为什么是「覆盖响应」而不是「重放请求」 ──────────────────────────
  *
@@ -82,8 +87,10 @@
       delete row["userCardId" + i];
       delete row["questPositionId" + i];
       delete row["rentalPieceSetId" + i];
+      delete row["switchNpcFlag" + i];
       for (j = 1; j <= 4; j++) delete row[pieceKey(i, j)];
     }
+    delete row.switchNpcEventId;
 
     row.deckType = prm.deckType;
     if (prm.name !== undefined) row.name = prm.name;
@@ -113,11 +120,35 @@
       }
     }
 
-    // formationSheet 是个对象，deckDataCreate 会遍历它取 placeSkill* 拼 posArr。
-    // 缺了它编成界面会拼不出格子，所以从缓存补——缓存是从任何带
-    // formationSheetList/userFormationSheetList 的响应里顺手攒的。
-    if (!row.formationSheet && row.formationSheetId !== undefined) {
+    // switchNpc 系：请求体是 switchNpcEventId + switchNpcFlagList[]，响应行是
+    // switchNpcEventId + switchNpcFlagN（归档里见过 switchNpcFlag3）。
+    // 漏掉它们的后果不是报错，是 DeckFormation.js 里那段
+    // `-1!==b.indexOf("switchNpcFlag")` 每次都判不到，切换 NPC 的状态被静默抹平。
+    if (prm.switchNpcEventId !== undefined && prm.switchNpcEventId !== null) {
+      row.switchNpcEventId = prm.switchNpcEventId;
+    }
+    var npcFlags = prm.switchNpcFlagList;
+    if (npcFlags) {
+      for (i = 0; i < npcFlags.length && i < 10; i++) {
+        if (npcFlags[i] !== null && npcFlags[i] !== undefined) {
+          row["switchNpcFlag" + (i + 1)] = npcFlags[i];
+        }
+      }
+    }
+
+    // formationSheet 是个对象，deckDataCreate 会遍历它取 placeSkill* 拼 posArr，
+    // 缺了它编成界面会拼不出格子。
+    //
+    // ⚠ 它必须跟着 formationSheetId 一起换：上面从 prev 拷了一整行，其中就带着
+    // **旧的** formationSheet。玩家换过阵形之后 formationSheetId 是新的、
+    // formationSheet 还是旧的——两者对不上，格子会按旧阵形排。所以先删掉再按
+    // 新 id 找，只有 id 没变时才允许回退到 prev 那一份。
+    var prevSheet = (prev && prev.formationSheet) ? prev.formationSheet : null;
+    var prevSheetId = prev ? prev.formationSheetId : undefined;
+    delete row.formationSheet;
+    if (row.formationSheetId !== undefined) {
       var sheet = sheets[String(row.formationSheetId)];
+      if (!sheet && prevSheet && prevSheetId === row.formationSheetId) sheet = prevSheet;
       if (sheet) row.formationSheet = sheet;
     }
     return row;

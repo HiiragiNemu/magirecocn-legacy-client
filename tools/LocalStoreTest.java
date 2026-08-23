@@ -139,6 +139,30 @@ public class LocalStoreTest {
         check("清除一个本来就不存在的也算成功", CNLocalStore.clear("deck"));
         check("清除非法命名空间被拒", !CNLocalStore.clear("../evil"));
 
+        System.out.println("== 内存镜像上限 ==");
+        // 页面 JS 单方面就能造出 64 × 512KB = 32MB 常驻。这条闸不是性能优化，
+        // 是「绝不会悄悄长大」的保证——撞上限整份清空，下次读回一次磁盘。
+        CNLocalStore.invalidateCacheForTest();
+        int cap = CNLocalStore.maxCacheBytesForTest();
+        StringBuilder chunk = new StringBuilder("{\"k\":\"");
+        for (int i = 0; i < 100 * 1024; i++) chunk.append('x');   // ~100KB 一份
+        chunk.append("\"}");
+        for (int i = 0; i < 8; i++) CNLocalStore.write("big" + i, chunk.toString());
+        check("镜像总量不超上限（" + CNLocalStore.cachedBytesForTest() + " ≤ " + cap + "）",
+                CNLocalStore.cachedBytesForTest() <= cap);
+        // 清空之后内容仍在盘上，读得回来——上限只影响内存，绝不影响持久化。
+        check("撞上限清空镜像后内容仍读得回来",
+                chunk.toString().equals(CNLocalStore.read("big7")));
+
+        // 单份就超上限的不进镜像：放进去等于每次写都触发一次全清。
+        CNLocalStore.invalidateCacheForTest();
+        StringBuilder huge = new StringBuilder("{\"k\":\"");
+        for (int i = 0; i < cap + 1024; i++) huge.append('y');
+        huge.append("\"}");
+        CNLocalStore.write("huge", huge.toString());
+        check("单份超上限的不进镜像", CNLocalStore.cachedBytesForTest() == 0);
+        check("不进镜像也照样读得回来", huge.toString().equals(CNLocalStore.read("huge")));
+
         System.out.println("== JS 桥 ==");
         CNWebStateBridge b = CNWebStateBridge.instance();
         CNWebStateBridge.resetThrottleForTest();

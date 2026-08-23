@@ -229,6 +229,82 @@ console.log("== 账号里没有的魔法少女 ==");
   eq("存档不因此被改小（下次卡回来还在）", store.deck, before);
 }
 
+// ── 5b. switchNpc 系字段 ──────────────────────────────────────────
+// 归档里确认响应行用 switchNpcEventId + switchNpcFlagN（见过 switchNpcFlag3）。
+// 漏还原它们不会报错，只会让切换 NPC 的状态每次覆盖后被静默抹平。
+console.log("== switchNpc 系字段 ==");
+{
+  const store = {};
+  const page = boot(store);
+  const prm = Object.assign({}, SAVE_PRM, {
+    switchNpcEventId: 4321,
+    switchNpcFlagList: [null, null, 1, null, null, null, null, null, null, null],
+  });
+  page.roundtrip("POST", DECK_SAVE_URL, JSON.stringify(prm), { resultCode: "success" });
+  const out = page.roundtrip("POST", PAGE_URL, null, cannedPage());
+  const row = out.userDeckList.find((r) => r.deckType === 11);
+  eq("switchNpcEventId 被还原", row.switchNpcEventId, 4321);
+  eq("switchNpcFlagList[2] → switchNpcFlag3", row.switchNpcFlag3, 1);
+  eq("为空的槽位不产生字段", row.switchNpcFlag1, undefined);
+
+  // 再存一次不带这些字段的，旧值必须被清掉——我们负责的字段是「全部重写」，
+  // 只覆盖非空的那些会让玩家撤下来的设置阴魂不散。
+  page.roundtrip("POST", DECK_SAVE_URL,
+      JSON.stringify(Object.assign({}, SAVE_PRM, { switchNpcEventId: null, switchNpcFlagList: null })),
+      { resultCode: "success" });
+  const out2 = page.roundtrip("POST", PAGE_URL, null, cannedPage());
+  const row2 = out2.userDeckList.find((r) => r.deckType === 11);
+  eq("撤下之后 switchNpcEventId 被清掉", row2.switchNpcEventId, undefined);
+  eq("撤下之后 switchNpcFlag3 被清掉", row2.switchNpcFlag3, undefined);
+}
+
+// ── 5c. 相对 URL ──────────────────────────────────────────────────
+// linkList 里的地址是相对路径（/magica/api/…），归档里没有 linkList 样本，
+// 所以两种形状都得能认出来——只认绝对的话就是「保存了但没存下」。
+console.log("== 相对 URL 与带查询串 ==");
+{
+  for (const url of ["/magica/api/userDeck/save",
+                     "/magica/api/userDeck/save?_=1700000000"]) {
+    const store = {};
+    const page = boot(store);
+    page.roundtrip("POST", url, JSON.stringify(SAVE_PRM), { resultCode: "success" });
+    check("认得 " + url, !!store.deck && !!JSON.parse(store.deck)["11"]);
+  }
+  // 不该误伤的形状
+  const store = {};
+  const page = boot(store);
+  page.roundtrip("POST", "/magica/api/userDeck/saveSomethingElse",
+      JSON.stringify(SAVE_PRM), { resultCode: "success" });
+  check("不误伤 userDeck/saveSomethingElse", !store.deck);
+}
+
+// ── 5d. 换阵形之后 formationSheet 不能还是旧的 ────────────────────
+console.log("== 换阵形 ==");
+{
+  const store = {};
+  const page = boot(store);
+  // 先让缓存里同时有 111 和 112 两张阵形
+  page.roundtrip("POST", PAGE_URL, null, cannedPage({
+    userFormationSheetList: [
+      { formationSheetId: 111, formationSheet: { id: 111, name: "布雷夫阵形" } },
+      { formationSheetId: 112, formationSheet: { id: 112, name: "另一个阵形" } },
+    ],
+  }));
+  // 玩家换到 112
+  page.roundtrip("POST", DECK_SAVE_URL,
+      JSON.stringify(Object.assign({}, SAVE_PRM, { formationSheetId: 112 })),
+      { resultCode: "success" });
+  // 旧行里带着 111 的 formationSheet —— 这正是会出错的输入
+  const out = page.roundtrip("POST", PAGE_URL, null, {
+    resultCode: "success",
+    userDeckList: [{ userId: "u1", deckType: 11, formationSheetId: 111,
+                     formationSheet: { id: 111, name: "布雷夫阵形" } }],
+  });
+  const row = out.userDeckList.find((r) => r.deckType === 11);
+  eq("formationSheetId 换成新的", row.formationSheetId, 112);
+  eq("formationSheet 跟着换，不是旧那张", row.formationSheet && row.formationSheet.id, 112);
+}
+
 // ── 6. 没有桥时必须完全无副作用 ───────────────────────────────────
 console.log("== 桥没挂上时退化成空操作 ==");
 {
@@ -238,6 +314,9 @@ console.log("== 桥没挂上时退化成空操作 ==");
   const out = page.roundtrip("POST", PAGE_URL, null, canned);
   eq("响应原样放行", out, canned);
   eq("没有产生任何落盘", Object.keys(store), []);
+  // 重入标记必须在「取不到桥」之前就置上：Java 侧那条 500ms 的探针就是查它，
+  // 没置上的话没有桥的文档会被反复重注（9KB 脚本，每 500ms 一次）。
+  eq("无桥时重入标记仍然置上", page.sandbox.__MAGIACN_LOCAL_STATE__, true);
 }
 
 // ── 7. 非游戏 JSON / 非 JSON 响应不受影响 ─────────────────────────

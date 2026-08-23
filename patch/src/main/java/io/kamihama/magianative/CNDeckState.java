@@ -29,22 +29,40 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 前端是 hash 路由（{@code location.href="#/TopPage"}），<b>整局都不会再触发一次
  * 文档级加载</b>——也就是说错过这一次，就是错过一整个会话。
  *
- * <p>所以本类<b>不搭 {@link CNWebProxy} 的便车</b>，自己起一条轮询：
+ * <p>所以本类<b>不搭 {@link CNWebProxy} 的便车</b>，自己起一条轮询：前
+ * {@value #FAST_WINDOW_MS} 毫秒按 {@value #POLL_FAST_MS} 毫秒一跳。引擎建完 WebView
+ * 到 {@code loadUrl} 之间只有很短一段，{@link CNWebProxy} 那条 1 秒一跳的轮询是为
+ * 「包 WebViewClient」设计的，包晚一点只是少代理几个请求；这里晚一跳就是整局失效。
+ * 而且它<b>不受 {@code skipWebProxy} 影响</b>（那个开关关的是代理，不该把存档一起
+ * 关掉），也<b>不受 API 26 门槛影响</b>（{@link CNWebProxy} 因为要
+ * {@code getWebViewClient()} 而在 API &lt; 26 上整个不装）。
+ *
+ * <h3>🔴 挂桥与注入是两件事，不能绑在一起</h3>
+ *
+ * 这两件事的时机要求正好相反，早期版本把它们写在同一个分支里，结果是功能整体失效：
  *
  * <ul>
- *   <li><b>轮询要快</b>：前 {@value #FAST_WINDOW_MS} 毫秒按 {@value #POLL_FAST_MS}
- *       毫秒一跳。引擎建完 WebView 到 {@code loadUrl} 之间只有很短一段，
- *       {@link CNWebProxy} 那条 1 秒一跳的轮询是为「包 WebViewClient」设计的，
- *       包晚一点只是少代理几个请求；这里晚一跳就是整局失效，两者要求不同；</li>
- *   <li><b>不受 {@code skipWebProxy} 影响</b>：那个开关关的是代理，不该把存档一起关掉；</li>
- *   <li><b>不受 API 26 门槛影响</b>：{@link CNWebProxy} 因为要
- *       {@code getWebViewClient()} 而在 API &lt; 26 上整个不装，但
- *       {@code addJavascriptInterface} 与 {@code evaluateJavascript} 分别是 API 17 /
- *       19 就有的，本层在 minSdk 21 上全程可用。</li>
+ *   <li><b>挂桥要尽量早</b>——赶在 {@code loadUrl} 之前，一个 WebView 只需一次
+ *       （{@code addJavascriptInterface} 挂上之后，该 WebView 后续<b>每一次</b>页面
+ *       加载都会自动注入那个对象，不需要我们重挂）；</li>
+ *   <li><b>脚本要每个文档都注一次</b>——它挂的是 {@code XMLHttpRequest.prototype}，
+ *       活在文档的 JS 全局环境里，页面一重载就没了。</li>
  * </ul>
  *
- * <p>另外 {@link CNWebProxy} 在 {@code onPageStarted} 里也会调一次 {@link #inject}
- * ——那是 API 26+ 上更准的时机。两条路都调是有意的，脚本自己有重入保护
+ * <p>把注入写进「挂桥成功」那一支的后果：挂桥发生在 {@code loadUrl} <b>之前</b>
+ * （这正是我们要的），于是那一次注入落在 {@code about:blank} 上；此后
+ * {@code alreadyBridged} 恒为真，同一个 WebView 再也不会被注入。真正的游戏文档因此
+ * 只剩 {@link CNWebProxy#onPageStarted} 那一条路——而它在 API &lt; 26、开了
+ * {@code skipWebProxy}、或 {@link CNBootWatchdog} 重载页面之后都不在。
+ *
+ * <p>现在的做法：轮询每一跳都确认「桥挂了没有」（纯 Java，不产生 IPC），
+ * 另按 {@value #ENSURE_FAST_MS} / {@value #ENSURE_IDLE_MS} 的节奏发一次
+ * <b>极小的</b>探针 {@code __MAGIACN_LOCAL_STATE__}，只有探针说「这个文档还没注过」
+ * 才注入整段脚本。之所以不是每跳都注：注一次是 9KB 的字符串要过一次 JS 解析，
+ * 100ms 一发纯属白费——{@link CNWebProxy} 的类注释里记着同一个教训。
+ *
+ * <p>{@link CNWebProxy} 在 {@code onPageStarted} 里也会调一次 {@link #inject}，
+ * 那是 API 26+ 上更准的时机。两条路都在是有意的，脚本自己有重入保护
  * （{@code __MAGIACN_LOCAL_STATE__}），重复注入是廉价空操作。
  *
  * <h3>桥到底有没有挂上，不靠猜</h3>
@@ -85,14 +103,33 @@ public final class CNDeckState {
      */
     private static final String PROBE = ";(!!window.CNLocalState)";
 
+    /**
+     * 「这个文档注过脚本没有」的探针。与脚本开头那个重入标记同名。
+     *
+     * <p>它比整段脚本便宜四个数量级，所以可以按秒级节奏反复发；真正的注入只在它
+     * 回答「没注过」时才发生。
+     */
+    private static final String GUARD_PROBE = "(window.__MAGIACN_LOCAL_STATE__===true)";
+
     /** 快轮询窗口内的间隔。 */
     private static final long POLL_FAST_MS = 100L;
     /** 快轮询持续多久。引擎建 WebView 与 loadUrl 之间的窗口远小于它。 */
     private static final long FAST_WINDOW_MS = 30_000L;
     /** 快窗口之后的间隔。WebView 会被销毁重建，得长期守着。 */
     private static final long POLL_IDLE_MS = 5_000L;
-    /** 轮询总时长上限。超过之后不再产生任何活动。 */
-    private static final long POLL_DEADLINE_MS = 300_000L;
+
+    /**
+     * 「这个文档注过没有」的探针节奏（快窗口内 / 之后）。
+     *
+     * <p>与轮询间隔分开：挂桥检查是纯 Java 的，每跳做都无所谓；探针要过一次
+     * JS 引擎，100ms 一发是浪费。
+     *
+     * <p>刻意<b>不设总时长上限</b>——页面可能在任何时刻被重载
+     * （{@link CNBootWatchdog} 那条路，或玩家自己），一旦停掉轮询，重载之后就再没有
+     * 人把脚本注回去了。{@link CNWebProxy} 的等待线程同样是长期守着的。
+     */
+    private static final long ENSURE_FAST_MS = 500L;
+    private static final long ENSURE_IDLE_MS = 5_000L;
 
     private static final AtomicBoolean INSTALLED = new AtomicBoolean(false);
 
@@ -139,25 +176,33 @@ public final class CNDeckState {
         }
     }
 
-    /** 轮询等 WebView 出现，出现（或被重建）就挂桥。 */
+    /** 长期守着：WebView 一出现就挂桥，并按节奏确认脚本还在当前文档里。 */
     private static final class Waiter implements Runnable {
         @Override public void run() {
             long start = System.currentTimeMillis();
+            long lastEnsure = 0L;
             while (true) {
                 try {
-                    long elapsed = System.currentTimeMillis() - start;
-                    if (elapsed > POLL_DEADLINE_MS) {
-                        CNLog.i(TAG, "等 WebView 超过 " + (POLL_DEADLINE_MS / 1000) + "s，停止轮询");
-                        return;
-                    }
+                    long now = System.currentTimeMillis();
+                    boolean warmup = (now - start) < FAST_WINDOW_MS;
+
                     // 反射目标全仓库只有 CNWebProxy 那一处，这里走它的包内出口。
                     // 复制第二份的话，引擎哪天换了字段名就会漏改一个地方——
                     // tools/check-boot-watchdog-contract.py 钉着这条。
                     WebView wv = CNWebProxy.currentWebView();
-                    if (wv != null && !alreadyBridged(wv)) {
-                        new Handler(Looper.getMainLooper()).post(new Attach(wv));
+                    if (wv != null) {
+                        if (!alreadyBridged(wv)) {
+                            new Handler(Looper.getMainLooper()).post(new Attach(wv));
+                        }
+                        long gap = warmup ? ENSURE_FAST_MS : ENSURE_IDLE_MS;
+                        // now - lastEnsure < 0 是系统时间被往回调，按「该做了」处理，
+                        // 否则会一直等到时间追回来为止。
+                        if (lastEnsure == 0L || now - lastEnsure < 0L || now - lastEnsure >= gap) {
+                            lastEnsure = now;
+                            new Handler(Looper.getMainLooper()).post(new Ensure(wv));
+                        }
                     }
-                    Thread.sleep(elapsed < FAST_WINDOW_MS ? POLL_FAST_MS : POLL_IDLE_MS);
+                    Thread.sleep(warmup ? POLL_FAST_MS : POLL_IDLE_MS);
                 } catch (InterruptedException ie) {
                     return;
                 } catch (Throwable t) {
@@ -176,15 +221,60 @@ public final class CNDeckState {
             if (alreadyBridged(wv)) return;
             try {
                 wv.addJavascriptInterface(CNWebStateBridge.instance(), CNWebStateBridge.JS_NAME);
+                // 只标记，不在这里注入：此刻多半还停在 about:blank，注了也是白注，
+                // 而且会把「同一个 WebView 只注一次」的错误绑定固化下来（见类注释）。
                 markBridged(wv);
                 CNLog.i(TAG, "已挂载本地状态桥 " + CNWebStateBridge.JS_NAME);
-                // 挂桥之后立刻注一次：WebView 已经在加载页面时，这一次注入至少能
-                // 让脚本的 XHR 钩子就位（覆盖仍取决于桥在不在，自检会说明）。
-                inject(wv);
             } catch (Throwable t) {
                 // 挂不上不是致命的：脚本取不到桥会自己退化成空操作。
                 CNLog.w(TAG, "挂载本地状态桥失败，本地存档本次不生效: " + t);
             }
+        }
+    }
+
+    /** 在 UI 线程上确认当前文档注过脚本，没注过就补一次。 */
+    private static final class Ensure implements Runnable {
+        private final WebView wv;
+        Ensure(WebView w) { this.wv = w; }
+
+        @Override public void run() {
+            try {
+                if (!isRealDocument(wv)) return;
+                // 回调必须是静态嵌套类，不能写成匿名类：这里是**实例**方法
+                // （Ensure.run），匿名类会带 this$0，而带 this$0 的类会让 d8 以
+                // 一句没有行号的 NPE 崩掉（CLAUDE.md 铁律 4）。
+                wv.evaluateJavascript(GUARD_PROBE, new GuardResult(wv));
+            } catch (Throwable t) {
+                CNLog.w(TAG, "确认脚本是否在位失败: " + t);
+            }
+        }
+    }
+
+    /** 探针结果：这个文档还没注过就补一次。 */
+    private static final class GuardResult implements ValueCallback<String> {
+        private final WebView wv;
+        GuardResult(WebView w) { this.wv = w; }
+
+        @Override public void onReceiveValue(String value) {
+            if (!"true".equals(value)) inject(wv);
+        }
+    }
+
+    /**
+     * 当前是不是一个真的游戏文档。
+     *
+     * <p>拦掉 {@code about:blank} 与空 URL：往那儿注入没有意义，更要紧的是脚本一注就会
+     * 置上重入标记，而自检那一句在 {@code about:blank} 里必然报「没桥」——于是日志里
+     * 出现一条其实什么问题都没有的告警。<b>会喊狼来了的告警比没有告警更糟</b>。
+     *
+     * <p>必须在 UI 线程调（{@code getUrl()} 的要求）。
+     */
+    private static boolean isRealDocument(WebView wv) {
+        try {
+            String url = wv.getUrl();
+            return url != null && url.length() > 0 && !url.startsWith("about:");
+        } catch (Throwable t) {
+            return false;
         }
     }
 
