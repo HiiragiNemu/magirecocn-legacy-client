@@ -64,6 +64,46 @@ def sha256_file(path):
     return h.hexdigest()
 
 
+def check_patch_hunks(pf, rel):
+    """补丁 hunk 头的行数必须与实际行数一致。
+
+    手改补丁时容易只加/删行、忘了改 `@@ -a,b +c,d @@` 里的 b/d。baseline.py
+    apply_unified 不用这两个数（按实际行应用），所以不会当场炸——但 regen 会
+    算出正确的行数，提交的头与之不一致就成了漂移的定时炸弹（换基线时被 verify
+    抓到，又得回头翻是哪个补丁改岔了）。
+    """
+    try:
+        lines = open(pf, encoding="utf-8").read().splitlines()
+    except OSError as e:
+        bad("%s：读补丁失败 %s" % (rel, e))
+        return
+    for i, line in enumerate(lines):
+        if not line.startswith("@@"):
+            continue
+        m = re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+        if not m:
+            bad("%s：第 %d 行 hunk 头形状不对：%s" % (rel, i + 1, line))
+            continue
+        old_s, old_c, new_s, new_c = (int(g) if g else 1 for g in m.groups())
+        j = i + 1
+        added = removed = context = 0
+        while j < len(lines) and not lines[j].startswith("@@"):
+            tag = lines[j][:1]
+            if tag == "+":
+                added += 1
+            elif tag == "-":
+                removed += 1
+            elif tag == " ":
+                context += 1
+            j += 1
+        if context + removed != old_c:
+            bad("%s：hunk 头旧行数 %d ≠ 实际 %d（上下文 %d + 删除 %d）"
+                % (rel, old_c, context + removed, context, removed))
+        if context + added != new_c:
+            bad("%s：hunk 头新行数 %d ≠ 实际 %d（上下文 %d + 新增 %d）"
+                % (rel, new_c, context + added, context, added))
+
+
 def run(conf_path=None, quiet=False):
     """返回 (退出码, 问题列表)。conf_path 可换，供 test-check-baseline.py 注入坏样本。"""
     global problems
@@ -136,6 +176,7 @@ def run(conf_path=None, quiet=False):
             if os.path.isfile(in_tree):
                 bad("%s：标为 patch，但仓库里又出现了这个原包文件——patchset 的目标"
                     "只该存在于重建树里" % rel)
+            check_patch_hunks(pf, rel)
 
         elif kind in ("replace", "add"):
             if kind == "replace" and not HEX64.match(str(op.get("pre", ""))):

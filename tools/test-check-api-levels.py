@@ -95,6 +95,25 @@ class CheckApiLevelsTest(unittest.TestCase):
         self.assertTrue(any("desugar" in p for p in probs),
                         f"Optional import 应被拦，实得 {probs}")
 
+    def test_gt_guard_counts_as_n_plus_one(self):
+        # SDK_INT > 29 是 API 30+ 的守卫，getProcessName(28) 应通过
+        problems = check_source(
+            "String name(android.app.Application a) {\n"
+            "        if (Build.VERSION.SDK_INT > 29) {\n"
+            "            return a.getProcessName();\n"
+            "        }\n"
+            "        return \"\";\n"
+            "    }",
+            clazz="NotificationChannel")
+        self.assertEqual(problems, [], f"> N 守卫应算 N+1，实得 {problems}")
+
+    def test_comment_mentioning_import_not_flagged(self):
+        # 注释里写 `import java.util.Optional;` 不该触发 desugar 检查
+        problems = check_source(
+            "// 别写 import java.util.Optional;——desugaring 没配。\n"
+            "    void noop() { }")
+        self.assertEqual(problems, [], f"注释里的 import 不应被拦，实得 {problems}")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

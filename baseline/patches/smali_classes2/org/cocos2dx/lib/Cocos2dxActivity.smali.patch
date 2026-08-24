@@ -1,6 +1,6 @@
 --- a/smali_classes2/org/cocos2dx/lib/Cocos2dxActivity.smali
 +++ b/smali_classes2/org/cocos2dx/lib/Cocos2dxActivity.smali
-@@ -846,6 +846,47 @@
+@@ -846,6 +846,52 @@
      invoke-virtual {v0}, Ljava/lang/Exception;->printStackTrace()V
  
      :goto_0

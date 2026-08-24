@@ -46,7 +46,11 @@ HIGH_API = {
     "startForegroundService": 26,
 }
 
-_GUARD_RE = re.compile(r"Build\.VERSION\.SDK_INT\s*[<>]=?\s*(\d+|[A-Za-z_][A-Za-z0-9_]*)")
+# 运算符 -> 有效守卫 API：`>=` 就是 N；`<` 守卫（`if (SDK_INT < N) return`）让
+# 后面代码在 API >= N 跑，也是 N；`>` 与 `<=` 是 N+1。
+_OP_EFFECT = {"<": 0, ">=": 0, "<=": 1, ">": 1}
+_GUARD_RE = re.compile(
+    r"Build\.VERSION\.SDK_INT\s*(>=|<=|>|<)\s*(\d+|[A-Za-z_][A-Za-z0-9_]*)")
 _CONST_RE = re.compile(r"\b%s\s*=\s*(\d+)")
 
 # 需要 core-library desugaring 才能在 minSdk 21 上跑的 Java 库。构建未配置
@@ -60,31 +64,37 @@ DESUGAR_RE = re.compile(
     r"\bjava\.util\.concurrent\.CompletableFuture\b")
 
 
-def strip_comments_and_strings(text):
-    """去掉字符串/字符字面量、注释与 import——只对真代码里的符号做判断。
+def strip_comments_and_strings(text, keep_imports=False):
+    """去掉字符串/字符字面量与注释；默认连 import 一起去掉。
 
     import 行是声明不是运行时引用：类真被用到时，符号会在方法/字段体里
     再次出现（那里才是判断点）；只 import 不用是死代码，不构成运行时风险。
+    keep_imports=True 时保留 import，用于 desugar 检查（import 声明本身就是
+    「可能用到」的信号）——但必须建立在已去掉注释的文本上，否则注释里写
+    `import java.util.Optional` 会误捕。
     """
     text = re.sub(r'"(?:[^"\\]|\\.)*"', '""', text)
     text = re.sub(r"'(?:[^'\\]|\\.)*'", "''", text)
     text = re.sub(r"//[^\n]*", "", text)
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
-    text = re.sub(r"\bimport\s+[^;]+;", "", text)
+    if not keep_imports:
+        text = re.sub(r"\bimport\s+[^;]+;", "", text)
     return text
 
 
 def collect_guards(stripped):
-    """文件里所有 SDK_INT 守卫的数值（字面量或已定义常量）。"""
+    """文件里所有 SDK_INT 守卫的有效 API 级别（字面量或已定义常量）。"""
     guards = []
     for m in _GUARD_RE.finditer(stripped):
-        token = m.group(1)
+        op, token = m.group(1), m.group(2)
         if token.isdigit():
-            guards.append(int(token))
-            continue
-        dm = re.search(_CONST_RE.pattern % re.escape(token), stripped)
-        if dm:
-            guards.append(int(dm.group(1)))
+            value = int(token)
+        else:
+            dm = re.search(_CONST_RE.pattern % re.escape(token), stripped)
+            if not dm:
+                continue
+            value = int(dm.group(1))
+        guards.append(value + _OP_EFFECT[op])
     return guards
 
 
@@ -97,10 +107,12 @@ def relpath(path):
 
 def check_file(path):
     text = path.read_text(encoding="utf-8")
+    # 去注释/字符串但留 import：desugar 检查用它（import 声明也是信号）。
+    no_comments = strip_comments_and_strings(text, keep_imports=True)
+    # 全去掉：符号守卫检查只用真代码。
     stripped = strip_comments_and_strings(text)
     problems = []
-    imports = " ".join(re.findall(r"\bimport\s+([^;]+);", text))
-    if DESUGAR_RE.search(imports) or DESUGAR_RE.search(stripped):
+    if DESUGAR_RE.search(no_comments):
         problems.append(
             f"{relpath(path)}: 用到需要 core-library desugaring 的库（java.time / "
             "java.util.stream / java.util.function / Optional / Base64 / "

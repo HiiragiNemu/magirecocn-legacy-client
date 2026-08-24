@@ -113,6 +113,22 @@ check("预期内差异不写理由",
       lambda c: c["expected_divergence"][0].__setitem__("why", ""),
       "不写理由就是掩盖差异")
 
+# ── hunk 头行数与实际不符（手改补丁只加行、忘了改 @@ 头）──
+_tmp = tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False)
+_tmp.write("@@ -1,3 +1,3 @@\n ctx1\n+add1\n+add2\n+add3\n+add4\n")
+_tmp.close()
+_saved = cb.problems
+cb.problems = []
+try:
+    cb.check_patch_hunks(_tmp.name, "fake.patch")
+    if not any("新行数" in p for p in cb.problems):
+        fails.append("hunk 头新行数不一致应被拦")
+    else:
+        print("  ✓ hunk 头新行数不一致被拦")
+finally:
+    cb.problems = _saved
+    os.unlink(_tmp.name)
+
 code, probs = cb.run(quiet=True)
 if code != 0:
     fails.append("原样清单被误报：%s" % probs[:5])
