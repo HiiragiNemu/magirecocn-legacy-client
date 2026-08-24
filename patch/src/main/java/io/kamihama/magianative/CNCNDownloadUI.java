@@ -4926,7 +4926,23 @@ public class CNCNDownloadUI {
         try {
             java.io.File f = new java.io.File(OVERLAY_FLAG);
             boolean existed = f.exists();
-            boolean deleted = !existed || f.delete();
+            // 删 flag 后校验是否真的删除；若仍存在（异步 IO 未落盘 / 被占用），
+            // 重试几次确保清除。deleted 语义 = 「flag 最终被清掉了吗」：delete 返回
+            // true，或虽返回 false 但文件已不存在（并发下被别处删掉）都算清掉。
+            // overlayActive() 的 10s mtime 窗口会自动过期（不会永久卡），但瞬时残留
+            // 的 flag 会让 maybeReleaseDeferredTop 在后续回调里多等一个窗口才补推。
+            // 重试删除让补推更及时、少一次 10s 延迟；删失败也无害——窗口照常过期。
+            boolean deleted = !existed;
+            for (int attempt = 0; attempt < 4 && f.exists(); attempt++) {
+                boolean ok = f.delete();
+                deleted = ok || !f.exists();
+                if (!deleted) {
+                    try { Thread.sleep(30L); } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
             CNLog.i(TAG, "[Overlay] flag delete requested existed=" + existed
                     + " deleted=" + deleted + " path=" + OVERLAY_FLAG);
         } catch (Throwable th) {
