@@ -712,8 +712,13 @@ public final class CNHotUpdateTx {
                 // 调试环境可能留下伪造 journal，`../` 或绝对路径可让恢复流程移动/
                 // 覆盖/删除事务根之外的应用数据。非法条目跳过并记失败（不静默忽略）。
                 if (!isSafeManifestEntry(rel)) {
+                    // 非法条目：跳过不处理（防 Zip Slip 借恢复流程动事务根外的
+                    // 数据，F-044 初衷保留）。它**不是恢复失败**——该类路径从未
+                    // 通过安全校验、本就不该被换入，跳过即可；若把它计入
+                    // clean=false，一条恶意/损坏文件名就会让 recoverOne 恒 false、
+                    // apply fail-closed 拒开新事务，设备永久卡死（正常包无此类
+                    // 条目，这是异常包的边界）。真·恢复失败仍由下方 catch 认定。
                     CNLog.e(TAG, "journal 条目非法，拒绝处理（防事务根外覆盖/删除）: " + escapeForLog(rel));
-                    clean = false;
                     continue;
                 }
                 File live = new File(root, rel);
