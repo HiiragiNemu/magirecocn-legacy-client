@@ -187,7 +187,7 @@
       "group": "补丁",
       "why": "引擎 Activity 启动挂钩",
       "pre": "190130ff7f12d3a03c59a59f563ee4c91366930730bd555d5154116367a0d6e9",
-      "post": "ae5d9b9c34e192b02deee59b7252d08af9059ed6305d428cd40b1eecc872a862"
+      "post": "b19f087b773a68ee2c2882f986ed0e70556f06f52b9e2818c88c7eb69b9c1b44"
     },
     {
       "kind": "replace",
