@@ -778,6 +778,27 @@ jobs:
             exit 1
           fi
           echo "签名指纹校验通过（AOSP testkey）"
+          # minSdk 必须钉在 21：manifest 由 apktool 从基线 APK 重编码，构建链
+          # 从不读 uses-sdk。基线 APK 换代时若换成 minSdk≥24 的包，产物会静默
+          # 放弃 API 21 设备、CI 照样全绿——只有真机装不上才暴露。这里直接
+          # aapt dump badging 断言。
+          MIN_SDK=$("${BT_DIR}/aapt" dump badging "$APK" \
+                    | awk -F"'" '/^sdkVersion:/{print $2}')
+          TARGET_SDK=$("${BT_DIR}/aapt" dump badging "$APK" \
+                       | awk -F"'" '/^targetSdkVersion:/{print $2}')
+          if [ -z "$MIN_SDK" ]; then
+            echo "::error::aapt dump badging 读不到 sdkVersion（APK 可能损坏）"
+            exit 1
+          fi
+          if [ "$MIN_SDK" != "21" ]; then
+            echo "::error::产物 minSdkVersion=$MIN_SDK，期望 21——基线换包可能静默抬高了 minSdk，API 21 设备将无法安装"
+            exit 1
+          fi
+          echo "minSdkVersion=$MIN_SDK targetSdkVersion=$TARGET_SDK（符合 minSdk 21 约定）"
+          # 登记的高 API 符号出现处必须有 SDK_INT 守卫（见 check-api-levels.py）。
+          # javac 对 API 33 编译、d8 的 API model 只覆盖 java.*，android.* 框架
+          # 高 API 调用编译期零拦截，这条把铁律 3 从约定变成可执行检查。
+          python3 tools/check-api-levels.py
           # 补丁类必须真的在产物里
           unzip -l "$APK" | grep -qE 'classes3\.dex' \
             || { echo "::error::产物缺少 classes3.dex"; exit 1; }
