@@ -8,6 +8,11 @@
 +    # 必须在 madomagi_native 之后：本库在 JNI_OnLoad 里同步按符号名装 hook，
 +    # 引擎库没加载时符号解析必然失败。
 +    # 它取代原先的 libuwasa.so（端点重定向）与 libcn_hook.so（下载流水线）。
++    #
++    # ⚠ 本补丁新用了 v0/v1/v2 三个寄存器但不动 .locals——合法性依赖
++    # onLoadNativeLibraries 原方法声明 .locals>=3（cocos2d-x v3 模板的
++    # getPackageManager/ApplicationInfo/libName 恰好满足）。换基线/换上游
++    # 时若该方法局部寄存器变少，重汇编会越界崩，先复核此处。
 +    :try_start_1
 +    # ⚠ 只加载 MagiaLegacy，**不要**显式 loadLibrary("shadowhook")。
 +    #

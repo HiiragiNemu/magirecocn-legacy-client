@@ -77,6 +77,24 @@ class CheckApiLevelsTest(unittest.TestCase):
             "    void noop() { }")
         self.assertEqual(problems, [], f"注释里的符号不应被拦，实得 {problems}")
 
+    def test_desugar_required_library_is_flagged(self):
+        problems = check_source(
+            "long t = java.time.Instant.now().toEpochMilli();")
+        self.assertTrue(any("desugar" in p for p in problems),
+                        f"java.time 使用应被拦（未配 desugaring），实得 {problems}")
+
+    def test_import_of_desugar_required_library_is_flagged(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "CNTest.java"
+            src.write_text(
+                "package io.kamihama.magianative;\n"
+                "import java.util.Optional;\n"
+                "public class CNTest { Optional<String> f; }\n",
+                encoding="utf-8")
+            probs = cal.check_file(src)
+        self.assertTrue(any("desugar" in p for p in probs),
+                        f"Optional import 应被拦，实得 {probs}")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

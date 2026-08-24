@@ -3524,19 +3524,20 @@ public class CNCNDownloadUI {
         int screenCap = Math.max(dp(act, 120), Math.min(dp(act, 320),
                 (int) (dmm.heightPixels * 0.5f)));
         int msgCap = screenCap;
-        if (Build.VERSION.SDK_INT >= 23) {
-            try {
-                android.text.TextPaint tp = new android.text.TextPaint(msg.getPaint());
-                tp.setTextSize(msg.getTextSize());
-                int naturalW = Math.max(1, dp(act, 330) - dp(act, 44));
-                android.text.StaticLayout sl = new android.text.StaticLayout(
-                        msg.getText(), tp, naturalW,
-                        android.text.Layout.Alignment.ALIGN_NORMAL, 1.0f,
-                        dp(act, 2), false);
-                int natural = sl.getHeight() + dp(act, 6);
-                if (natural < msgCap) msgCap = Math.max(natural, dp(act, 40));
-            } catch (Throwable ignore) {}
-        }
+        // 7 参 StaticLayout 构造自 API 1 就存在（API 23 才被弃用、引入 Builder），
+        // 不需要 >= 23 守卫——旧守卫方向反了，API 21-22 永远走不到这里，超大字体
+        // 时消息区不会缩到自然高度。try/catch 兜底，任何异常回退 screenCap。
+        try {
+            android.text.TextPaint tp = new android.text.TextPaint(msg.getPaint());
+            tp.setTextSize(msg.getTextSize());
+            int naturalW = Math.max(1, dp(act, 330) - dp(act, 44));
+            android.text.StaticLayout sl = new android.text.StaticLayout(
+                    msg.getText(), tp, naturalW,
+                    android.text.Layout.Alignment.ALIGN_NORMAL, 1.0f,
+                    dp(act, 2), false);
+            int natural = sl.getHeight() + dp(act, 6);
+            if (natural < msgCap) msgCap = Math.max(natural, dp(act, 40));
+        } catch (Throwable ignore) {}
         msgSvLp.height = msgCap;
         msgScroll.setLayoutParams(msgSvLp);
         msgScroll.addView(msg, new ViewGroup.LayoutParams(

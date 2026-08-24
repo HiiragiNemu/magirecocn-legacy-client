@@ -49,6 +49,16 @@ HIGH_API = {
 _GUARD_RE = re.compile(r"Build\.VERSION\.SDK_INT\s*[<>]=?\s*(\d+|[A-Za-z_][A-Za-z0-9_]*)")
 _CONST_RE = re.compile(r"\b%s\s*=\s*(\d+)")
 
+# 需要 core-library desugaring 才能在 minSdk 21 上跑的 Java 库。构建未配置
+# desugar_jdk_libs（d8 只有 --min-api，没有 --desugared_lib），直接用会在
+# API 21-25 上 NoSuchMethodError。出现即拦，提醒先补 desugaring 再说。
+DESUGAR_RE = re.compile(
+    r"\bjava\.time\.|"
+    r"\bjava\.util\.stream\.|"
+    r"\bjava\.util\.function\.|"
+    r"\bjava\.util\.(Optional|Base64)\b|"
+    r"\bjava\.util\.concurrent\.CompletableFuture\b")
+
 
 def strip_comments_and_strings(text):
     """去掉字符串/字符字面量、注释与 import——只对真代码里的符号做判断。
@@ -89,6 +99,14 @@ def check_file(path):
     text = path.read_text(encoding="utf-8")
     stripped = strip_comments_and_strings(text)
     problems = []
+    imports = " ".join(re.findall(r"\bimport\s+([^;]+);", text))
+    if DESUGAR_RE.search(imports) or DESUGAR_RE.search(stripped):
+        problems.append(
+            f"{relpath(path)}: 用到需要 core-library desugaring 的库（java.time / "
+            "java.util.stream / java.util.function / Optional / Base64 / "
+            "CompletableFuture）——minSdk 21 构建未配置 desugar_jdk_libs，"
+            "API 21-25 上会 NoSuchMethodError。先补 desugaring 再说"
+        )
     if "Build.VERSION.SDK_INT" not in stripped:
         # 文件连 SDK_INT 都没有：任何高 API 符号都是未守卫。
         for sym in HIGH_API:
