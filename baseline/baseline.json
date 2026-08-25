@@ -17,7 +17,7 @@
   },
   "overlay": {
     "asset": "apk-overlay-atlas.zip",
-    "sha256": "3edc096b5f34a7ab57abab0e524ea8d5126730e3b42f16961a8a8afba53baef2",
+    "sha256": "e34fdda88e0579120ad3ede83bec35b5cc576b04f5c99004b9170a80f4d6de1d",
     "why": "人手重绘的汉化图集：无法从原包重建，也不该躺在代码仓库里，所以放在外部，构建时取回。用 tools/make-overlay.py 打包——那个脚本固定了条目顺序、时间戳与权限位，同一批文件永远打出同一个 sha256，钉死项才立得住。",
     "url_env": "OVERLAY_URL",
     "url_env_why": "取件地址整条由环境变量给（逗号分隔可列多条，按序试），本文件里不写。URL 里可以带 user:token 形式的凭证，脚本会把它拆出来改用 Authorization 头发送，不会出现在任何日志里。**内容一律按上面的 sha256 认**——地址只决定「去哪拿」，拿到的东西对不对由 hash 说了算，所以地址本身不是安全边界；列多条也只是别在某个来源不可用时卡住构建，不是「信任其中任何一个」。"
@@ -475,7 +475,7 @@
       "group": "汉化图集",
       "why": "人手重绘的汉化图集，任何脚本都无法从原包重现",
       "pre": "7cc6b23930bd9ec3c59d90b938807982559cbf4d145607f80c2e98d1f2a0eea9",
-      "post": "80e2c6d2fbb66094266b0225d2acb0cf17aec6384ccec77fc7646b6ff806f91d"
+      "post": "c70cd2bc94cc95ee0d68e1eb760d520cffbca5fdc2d77f011e3d4820fb7d7c29"
     },
     {
       "kind": "replace",
