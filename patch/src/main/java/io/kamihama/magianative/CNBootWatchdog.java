@@ -130,8 +130,8 @@ public final class CNBootWatchdog {
     /**
      * 浮层撤下时调一次。之后由主线程 Handler 自己续期，调用方不必管。
      *
-     * <p>本身吞掉所有异常：它挂在浮层收尾路径上，而那条路径出任何事都会让引擎
-     * 停在半路——看门狗自己把启动搞挂，比它要救的毛病还严重。
+     * <p>本路径捕获并记录异常：它挂在浮层收尾路径上，而那条路径出任何事都会让引擎
+     * 停在半路。异常必须留在日志里，同时不能让看门狗把启动路径拖挂。
      */
     public static void arm() {
         try {
@@ -230,11 +230,28 @@ public final class CNBootWatchdog {
         WebView wv = CNWebProxy.currentWebView();
         if (wv == null) {
             CNLog.w(TAG, "等了 " + (waitedMs / 1000) + " 秒前端界面仍未出现，"
-                    + "但取不到 WebView（引擎还没建或刚被销毁），本次放弃重载");
+                    + "且取不到 WebView（引擎还没建或刚被销毁）——启动一次进程级恢复");
+            try {
+                // CNRestart 会等待前台 trampoline 的握手；fire() 在主线程 Handler 上，
+                // 因此必须交给后台线程，避免把 UI 线程卡在恢复流程里。
+                Thread restart = new Thread(new Runnable() {
+                    @Override public void run() {
+                        boolean started = CNRestart.restartWithNotice(
+                                "前端启动超时，正在重新进入游戏", 0L);
+                        if (!started) {
+                            CNLog.e(TAG, "进程级恢复未启动，保留当前进程与诊断日志");
+                        }
+                    }
+                }, "cn-boot-watchdog-restart");
+                restart.setDaemon(true);
+                restart.start();
+            } catch (Throwable t) {
+                CNLog.e(TAG, "启动进程级恢复失败，保留当前进程与诊断日志", t);
+            }
             return;
         }
         String url = null;
-        try { url = wv.getUrl(); } catch (Throwable ignore) {}
+        try { url = wv.getUrl(); } catch (Throwable t) { CNLog.w(TAG, "读取当前 URL 失败: " + t); }
         CNLog.w(TAG, "等了 " + (waitedMs / 1000) + " 秒，前端界面始终没有稳定出现"
                 + "（最长连续 " + maxStreak + " 次，门槛 " + SAFE_STREAK + "）—— 判定卡在开机，"
                 + "自动重载一次页面（本进程只做这一次）。当前 URL=" + url);

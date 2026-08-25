@@ -43,6 +43,7 @@ def body(src: str, signature: str) -> str:
 
 arm = body(wd, "public static void arm()")
 front = body(wd, "static boolean frontEndUp()")
+fire = body(wd, "private static void fire(")
 
 # 截止时间必须由前端超时推导，且严格更大。写死一个字面量也可能碰巧更大，
 # 但那样下次前端改这个超时时这里不会跟着动——所以要求的是「推导关系」本身。
@@ -133,17 +134,29 @@ checks = {
         "{ SKIP_BOOT_WATCHDOG," in flags,
     "一个进程只武装一次":
         "ARMED.compareAndSet(false, true)" in arm,
-    "一个进程只重载一次（真正的 reload 调用全类仅一处）":
+    "WebView 存在时只重载一次（真正的 reload 调用全类仅一处）":
         # 用带接收者和分号的形式，避免把日志里那句 "已下发 WebView.reload()" 数进来
         wd.count("wv.reload();") == 1,
+    "WebView 缺失时只接一次现有进程恢复链":
+        wd.count("CNRestart.restartWithNotice(") == 1
+        and "if (wv == null)" in fire
+        and "本次放弃重载" not in fire,
+    "进程恢复在具名后台 daemon 线程运行，不阻塞主线程 Handler":
+        "new Thread(new Runnable()" in fire
+        and "cn-boot-watchdog-restart" in fire
+        and "restart.setDaemon(true)" in fire
+        and "restart.start()" in fire,
+    "进程恢复失败保留当前进程并写诊断":
+        "进程级恢复未启动，保留当前进程与诊断日志" in fire
+        and "启动进程级恢复失败，保留当前进程与诊断日志" in fire,
     "判据同时要求 VISIBLE 与非零尺寸":
         "getVisibility() != View.VISIBLE" in front
         and "getWidth() > 0" in front
         and "getHeight() > 0" in front,
     "判据读不出来时判为「没起来」，不误判成功":
         "return false;" in front.split("catch (Throwable t)")[-1],
-    "武装路径整体吞异常，不把浮层收尾拖挂":
-        "catch (Throwable t)" in arm,
+    "武装路径捕获并记录异常，不把浮层收尾拖挂":
+        "catch (Throwable t)" in arm and "武装失败" in arm,
     "WebView 只通过 CNWebProxy 的单一出口取":
         "CNWebProxy.currentWebView()" in wd
         and "WebViewHelper" not in wd,
