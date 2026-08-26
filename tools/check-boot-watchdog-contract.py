@@ -123,8 +123,10 @@ checks = {
         deadline_derived,
     "截止时间严格晚于前端自己的超时":
         bool(deadline_margin) and int(deadline_margin.group(1)) > 0,
+    # 出处只说到「前端那一侧」为止。按对外表述的约定，具体出处不写在这里，
+    # 这条断言自然也不能去钉那个名字——钉了守卫自己就成了泄漏源。
     "前端超时常量标了它的真实出处（不在本仓库）":
-        "前端那一侧" in wd and "6E4" in wd,
+        "不在本仓库" in wd and "6E4" in wd,
     "序章期间不武装":
         "CNTutorialPrompt.isArmed()" in arm,
     "有 skipBootWatchdog 逃生开关":

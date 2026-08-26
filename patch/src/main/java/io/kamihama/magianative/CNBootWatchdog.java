@@ -31,9 +31,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 就没有人再把它显示回去，于是玩家看到的是一块纯黑。玩家当时是靠游戏自带的
  * 「重新加载」走出来的：WebView 被重建、页面重跑一遍，一次就成。
  *
- * <p>前端侧的修法（错误分支补 {@code d.setWebView()}）已经在发布目标
- * {@code 前端那一侧} 里做了（2026-08-22 起该仓是一个<b>独立
- * 仓</b>，没有权限的人翻不到，别以为是链接失效）。这个看门狗是<b>兜底</b>：
+ * <p>前端侧的修法（错误分支补 {@code d.setWebView()}）已经<b>在前端那一侧</b>
+ * 做了——那些文件不在本仓库，随资源包下发。这个看门狗是<b>兜底</b>：
  * 前端要是压根没走到错误分支——JS 抛了、
  * 请求发都没发出去、WebView 自己死了——那边的修法一句也帮不上，只有从 Java
  * 这侧看「屏幕上到底有没有东西」才发现得了。
@@ -50,7 +49,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <h3>为什么等这么久（{@value #DEADLINE_MS} ms）</h3>
  *
  * 前端自己对 TopPage 那条请求的上限是 {@value #FRONTEND_TOPPAGE_TIMEOUT_MS} ms
- * （前端那一侧 的 ajaxPrefilter 给 {@code /magica/api/page/TopPage} 单独
+ * （前端的 ajaxPrefilter 给 {@code /magica/api/page/TopPage} 单独
  * 设的 {@code options.timeout=6E4}）。看门狗必须排在它<b>后面</b>：抢在前面重载，
  * 等于把一次本来还有希望回来的请求掀掉，而且掀完还会再等一遍——越救越慢。
  *
@@ -71,7 +70,7 @@ public final class CNBootWatchdog {
     /**
      * 前端给 TopPage 那条请求的超时上限，单位 ms。
      *
-     * <p>这个值<b>不在本仓库</b>——它在 前端那一侧 的
+     * <p>这个值<b>不在本仓库</b>——它在前端那一侧的
      * {@code magica/js/libs/jquery-3.7.1.min.js} 里，形如
      * {@code options.timeout=6E4}。这里写死一份只是为了让
      * {@link #DEADLINE_MS} 的推导能被读懂；两边不同步时，以那边为准，

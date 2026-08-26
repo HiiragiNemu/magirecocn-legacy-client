@@ -85,7 +85,7 @@ function boot(store, opts) {
   };
 }
 
-// ── 素材：与 抓包归档 归档样本同形 ──────────────────────────
+// ── 素材：与抓包归档里的样本同形 ────────────────────────────────
 // magica/api/userDeck/save/001.json 的请求体（ID 已换成短的假值）。
 const SAVE_PRM = {
   deckType: 11,

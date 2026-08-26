@@ -70,16 +70,20 @@ sha256 与树指纹钉死。
 |---|---|
 | `BASELINE_APK_URL` | 基线整包 |
 | `OVERLAY_URL` | 汉化图集取件地址（整条 URL，逗号分隔可列多条按序试；需要凭证时按 `https://<user>:<token>@…` 写） |
-| `TARGET_REPO` | 发版目标、归档目标（`archive-tags.yml`）与清理工具的回退目标，**是同一个仓库**：发布目标 `前端那一侧`。APK 与版本旁注发到这里（云端版本闸门不由本仓库提升）。**2026-08-22 起它已断开上游、转为一个独立仓库**——转私有不影响本仓库这条链路（读写都走 ``），也不影响玩家（玩家从 CDN 下载，不直连 GitHub） |
+| `TARGET_REPO` | 发版目标、归档目标（`archive-tags.yml`）与清理工具的回退目标，**是同一个仓库**，形如 `owner/repo`。APK 与版本旁注发到这里（云端版本闸门不由本仓库提升）。读写都走 ``；玩家不受影响（玩家从 CDN 下载，不直连 GitHub） |
 | `` | 上面几处的读写凭证 |
 | `CLIENT_ROOT_DOMAIN` / `CLIENT_PAGES_HOSTS` | 对外主机名，见 `CNEndpoints` |
 | `DOWNLOAD_URLS` | 介绍站上的下载线路（逗号分隔，第一条即「推荐」那条），见 `tools/inject-download-url.py` |
 
 > ⚠ 这里原本是 `ASSET_REPO_UPSTREAM` / `ASSET_REPO_DOWNSTREAM` **两个** secret，
-> 名字来自发布目标还是 fork 的年代。发布目标独立之后上下游关系已不存在、两个目标也
+> 名字来自发布目标还是 fork 的年代。那层上下游关系早已不存在、两个目标也
 > 合成了同一个仓库，2026-08-24 统一为单个中性的 `TARGET_REPO`（见
 > `refactor(ci): ASSET_REPO_UPSTREAM/DOWNSTREAM 统一为 TARGET_REPO`）。
-> 新 secret 已在仓库设置里建好并指向组织自己的发布目标。
+> 新 secret 已在仓库设置里建好。
+
+> 🔒 **按对外表述的约定，这里不写具体出处**——地址与仓库名一律
+> 由 secret 给。这不只是「地址不是安全边界」的老原则，也是不要靠这个仓库
+> 去替别的仓库宣告它存在。同理，注释里提到别处的东西时只说它的角色，不点名。
 
 历史遗留还剩一处，这处**没有**跟着改：`build-apk.yml` 通知发布目标的 `repository_dispatch`
 事件名是 `upstream-update`，真实语义是「客户端产物就绪」。它是跨仓库的线上

@@ -3,7 +3,7 @@
 
 ## 来源
 
-`中文 Wiki 本地镜像` 是 wiki-source 中文 Wiki 的完整镜像。站方有一份成文的
+输入是 wiki-source 中文 Wiki 的一份完整本地镜像（路径由命令行给）。站方有一份成文的
 [[magirecowiki:翻译规范]]，其中把实际对照表托管在几个模板里：
 
     Template:效果中文    Buff/Debuff 与战斗效果（最大的一份）
@@ -32,7 +32,7 @@
 地区词。本脚本只取 zh-cn（本项目面向简体），没有分歧的原样取用。
 
 用法：
-    python3 tools/i18n-glossary.py <中文 Wiki 本地镜像 路径> [-o glossary.tsv]
+    python3 tools/i18n-glossary.py <Wiki 镜像路径> [-o glossary.tsv]
 """
 
 import argparse
@@ -110,7 +110,7 @@ def parse_switch(text):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('wiki', help='中文 Wiki 本地镜像 仓库路径')
+    ap.add_argument('wiki', help='中文 Wiki 本地镜像的路径')
     ap.add_argument('-o', '--out', default='glossary.tsv')
     args = ap.parse_args()
 
