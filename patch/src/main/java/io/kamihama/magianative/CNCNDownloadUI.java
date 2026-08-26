@@ -204,7 +204,7 @@ public class CNCNDownloadUI {
      * 热更完成后自动进游戏的倒计时截止时刻（{@code uptimeMillis}；0 = 不在倒计时）。
      * 由 {@code CNHotUpdateCheck.awaitPlayerWindow} 在停留窗口期间逐轮更新，
      * {@link #renderAll} 据它渲染「N 秒后进入游戏」，让玩家知道浮层没卡死、
-     * 稍候自动进入；玩家点「停留本页」/开着弹窗时置 0（无限期，不数秒）。
+     * 稍候自动进入；玩家点状态行「停在本页」/开着弹窗时置 0（无限期，不数秒）。
      */
     private static volatile long autoEnterAtMs;
 
@@ -228,7 +228,7 @@ public class CNCNDownloadUI {
      * EnsureVisible / toggleTheme）在热更后的停留窗口里<b>全都不存在</b>：
      * 下载已完成（无进度事件）、EnsureVisible 看门狗在进 awaitPlayerWindow
      * 之前已停（CNHotUpdateCheck 先 stopWatchdog 再进窗口）、StayLoop 只在
-     * 玩家点「停留本页」后才起。所以倒计时不能指望任何既有周期驱动——
+     * 玩家点状态行「停在本页」后才起。所以倒计时不能指望任何既有周期驱动——
      * 这里自己挂一个 1 秒一跳的轻量 tick，到点/撤场自停。
      *
      * <p>为什么<b>不</b>塞进全局 UpdateRunnable：它是「被显式 post 才跑
@@ -684,6 +684,15 @@ public class CNCNDownloadUI {
 
     /** 「重下」上膛后这么久没有第二击就自己撤销。 */
     private static final long REDOWNLOAD_ARM_MS = 3000L;
+
+    /**
+     * 资源行那颗按钮的最小宽度，单位 em（≈ 一个汉字宽）。
+     *
+     * <p>取 4，是因为三个文案里最宽的「确认重下」正好四个字。<b>这个数不是留白
+     * 偏好，是布局不变量</b>：按钮是这一行右边界的锚点（见建行处的注释），宽度
+     * 一变，左边的文字进度就跟着晃。改文案前先数字数——多一个字就要改这里。
+     */
+    private static final int ACTION_MIN_EMS = 4;
 
     private static final List<SlotViews> slotList = new ArrayList<SlotViews>();
 
@@ -1656,7 +1665,10 @@ public class CNCNDownloadUI {
                         && st[index] == ST_ERROR;
                 if (failed) {
                     sv.armedUntilMs = 0L;
-                    v.setVisibility(View.GONE);   // 与原「重试」一致：点完就藏，等状态刷新
+                    // 点完就藏，等状态刷新——但只能 INVISIBLE 不能 GONE：
+                    // 按钮现在是这一行右边界的锚点，GONE 会把位置一起收掉，
+                    // 于是文字进度当场往右弹一下，正是要避免的那种抖动。
+                    v.setVisibility(View.INVISIBLE);
                     CNLog.i("界面", "玩家点击重试: index=" + index);
                     toast(act, "正在重新安排该文件");
                     CNManualRedownload.retry(act, index);
@@ -1870,37 +1882,7 @@ public class CNCNDownloadUI {
             headRow.addView(name, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-            // 行右侧那颗按钮：失败时红色「重试」，其余时候紫色「重下」。
-            //
-            // ⚠ 顺序有讲究：按钮一律排在**文字进度之前**。
-            // 原版里文字进度的右端与下面那条整宽进度条的右端是对齐的，这一竖线
-            // 是整块的视觉基准。按钮排在它后面时，「重试」一出现就把文字进度整体
-            // 往左顶，右边界立刻和进度条错开——玩家看到的就是「一失败排版就散」
-            // （2026-08-13 真机连报两次）。让文字进度当这一行的最后一个孩子，
-            // 按钮出现与否都不影响那条右边界。
-            //
-            // 它现在**常驻**，不再是「失败才冒出来」。副作用恰好是好的：原先那颗
-            // 一出现就把整行推一下，常驻之后行宽从头到尾不变，上面那条教训自然
-            // 也就不会再犯。
-            TextView action = new TextView(act);
-            action.setText("重下");
-            action.setTextColor(0xFFFFFFFF);
-            action.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
-            action.setGravity(Gravity.CENTER);
-            action.setPadding(dp(act, 10), dp(act, 3), dp(act, 10), dp(act, 3));
-            GradientDrawable actionBg = new GradientDrawable();
-            actionBg.setColor(COLOR_ACCENT2);
-            actionBg.setCornerRadius(dp(act, 10));
-            action.setBackground(actionBg);
-            LinearLayout.LayoutParams actionLp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT);
-            actionLp.leftMargin = dp(act, 8);
-            headRow.addView(action, actionLp);
-
-            // 文字进度：这一行的最后一个孩子，右端永远贴着整宽进度条的右端。
-            // 打上 TAG_SLOT_INFO，好让 CNDownloadUiAssist 的「重下」插到它前面
-            // 而不是追加到它后面（追加就等于又把它顶走了）。
+            // 文字进度。打上 TAG_SLOT_INFO 作为槽位标记。
             TextView info = new TextView(act);
             info.setText("");
             info.setTextColor(COLOR_SUB);
@@ -1912,6 +1894,39 @@ public class CNCNDownloadUI {
                     ViewGroup.LayoutParams.WRAP_CONTENT);
             infoLp.leftMargin = dp(act, 8);
             headRow.addView(info, infoLp);
+
+            // 行右侧那颗按钮：失败时红色「重试」，其余时候紫色「重下」。
+            //
+            // ⚠ 它是这一行的**最后一个孩子**，右端贴着下面那条整宽进度条的右端。
+            // 这条竖线是整块的视觉基准，原先由文字进度承担，现在交给按钮——
+            // 一行里只能有一个东西钉在那条线上，两个都想要就必然有一个错开。
+            //
+            // 换过来之后，2026-08-13 那条教训（按钮一出现就把右边界顶歪）落到了
+            // 文字进度头上，所以要用**同一招**堵死，而且这次是两道：
+            //
+            //   ① 按钮常驻（不再「失败才冒出来」），出现与否不改变行宽；
+            //   ② 按钮宽度**恒定**——setMinEms(ACTION_MIN_EMS) 按最宽的那个文案
+            //      （「确认重下」四个字）留位。文案在 重下/重试/确认重下 之间换时
+            //      宽度不变，文字进度的右边界因此也不动。
+            //
+            // 用 em 而不是 dp：字号会被 CNDownloadUiAssist 的缩放改，em 跟着字号
+            // 走，dp 不跟——写死 dp 的话，玩家把字调大一档「确认重下」就被挤出去了。
+            TextView action = new TextView(act);
+            action.setText("重下");
+            action.setTextColor(0xFFFFFFFF);
+            action.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
+            action.setGravity(Gravity.CENTER);
+            action.setMinEms(ACTION_MIN_EMS);
+            action.setPadding(dp(act, 10), dp(act, 3), dp(act, 10), dp(act, 3));
+            GradientDrawable actionBg = new GradientDrawable();
+            actionBg.setColor(COLOR_ACCENT2);
+            actionBg.setCornerRadius(dp(act, 10));
+            action.setBackground(actionBg);
+            LinearLayout.LayoutParams actionLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            actionLp.leftMargin = dp(act, 8);
+            headRow.addView(action, actionLp);
 
             ProgressBar bar = new ProgressBar(
                     act, null, android.R.attr.progressBarStyleHorizontal);
@@ -3976,7 +3991,7 @@ public class CNCNDownloadUI {
                 // 会因 overlayView==null、decorView 无 TAG 走进下面的认领/
                 // 重建分支，挂出一个再没人会收的「幽灵浮层」盖住游戏——且
                 // startOverlayFlag() 只在 show() 成功路径调，引擎闸门状态也
-                // 随之错乱，按钮还停在「停留本页」没有正常出口。hide() 先把
+                // 随之错乱，状态行还停在「已停在本页」没有正常出口。hide() 先把
                 // 代际 +1、isShowing 置 false 再投 HideRunnable（见 hide()
                 // 注释），两个条件任一不满足都说明这趟回调已过期。
                 if (gen != overlayGeneration) return;

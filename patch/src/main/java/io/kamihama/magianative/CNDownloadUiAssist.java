@@ -109,7 +109,6 @@ public final class CNDownloadUiAssist {
     public static final int SCROLLBAR_GUTTER_DP = 7;
 
     private static final String LEGACY_TAG = "cn-download-ui-assist";
-    private static final String TAG_STAY = "cn-download-stay";
     private static final String TAG_DISPLAY = "cn-download-display";
     private static final String TAG_SPLIT = "cn-download-split";
 
@@ -142,7 +141,7 @@ public final class CNDownloadUiAssist {
     private static final String OLD_LINGER =
             "即将进入游戏；点按浮层（如「教程」胶囊播序章）可稍作停留";
     private static final String NEW_LINGER =
-            "检查已完成。可查看日志或管理资源；需要停留请使用“停留本页”。";
+            "检查已完成。可查看日志或管理资源；点带倒计时那行文字可停在本页。";
 
     private static final Object STAY_LOCK = new Object();
 
@@ -187,7 +186,6 @@ public final class CNDownloadUiAssist {
     private static View contentRoot;
     private static HorizontalScrollView hScroll;
     private static ScrollView vScroll;
-    private static TextView stayChip;
     private static TextView displayChip;
     private static TextView scaleLabel;
     private static SeekBar scaleSeek;
@@ -233,7 +231,6 @@ public final class CNDownloadUiAssist {
 
     private static final class ApplyTask implements Runnable {
         @Override public void run() {
-            styleStay();
             styleDisplay();
             styleScrollbars();
             applyScale();
@@ -264,10 +261,8 @@ public final class CNDownloadUiAssist {
         }
 
         replaceLinger(overlay);
-        installStay(overlay);
         installDisplay(overlay);
         installSplit();
-        styleStay();
         styleDisplay();
         styleScrollbars();
         applyScale();
@@ -338,7 +333,6 @@ public final class CNDownloadUiAssist {
         contentRoot = null;
         hScroll = null;
         vScroll = null;
-        stayChip = null;
         displayChip = null;
         scaleLabel = null;
         scaleSeek = null;
@@ -785,49 +779,7 @@ public final class CNDownloadUiAssist {
         }
     }
 
-    // ══ 顶部胶囊：停留 / 显示 ═══════════════════════════════════════════
-
-    private static LinearLayout findTopLeftRow(View root) {
-        TextView log = findText(root, "LOG");
-        return log != null && log.getParent() instanceof LinearLayout
-                ? (LinearLayout) log.getParent() : null;
-    }
-
-    /**
-     * 调试悬浮窗<b>真的挂在屏幕上</b>时，浮层不再重复摆同一颗按钮。
-     *
-     * <p>判据用 {@link CNDebugBridge#isActive()}（真挂上了）而不是「允许挂」：
-     * 本体没实现、权限没授予、挂载抛异常——任何一种情况下这些按钮都得原样留着。
-     * 「停留」是玩家卡住时自救的手段，不能因为另一处入口<b>可能</b>存在就先撤掉。
-     */
-    private static boolean overlayTookOver() {
-        try { return CNDebugBridge.isActive(); }
-        catch (Throwable t) { return false; }
-    }
-
-    private static void dropChip(LinearLayout row, String tag) {
-        View old = row.findViewWithTag(tag);
-        if (old != null) row.removeView(old);
-    }
-
-    private static void installStay(View root) {
-        LinearLayout row = findTopLeftRow(root);
-        if (row == null) return;
-        if (overlayTookOver()) {
-            dropChip(row, TAG_STAY);
-            stayChip = null;
-            return;
-        }
-        View existing = row.findViewWithTag(TAG_STAY);
-        if (existing instanceof TextView) {
-            stayChip = (TextView) existing;
-            return;
-        }
-        TextView chip = createTopChip(row, TAG_STAY);
-        chip.setOnClickListener(new StayClick());
-        row.addView(chip, topChipLp(chip));
-        stayChip = chip;
-    }
+    // ══ 顶部胶囊：显示 ═════════════════════════════════════════════════
 
     private static void installDisplay(View root) {
         LinearLayout row = CNCNDownloadUI.headRightRow;
@@ -875,46 +827,11 @@ public final class CNDownloadUiAssist {
         return lp;
     }
 
-    private static final class StayClick implements View.OnClickListener {
-        @Override public void onClick(View v) {
-            Activity act = RestClient.getCurrentActivity();
-            if (stayRequested && CNManualRedownload.handleLeaveRequest(act)) return;
-            boolean next = !stayRequested;
-            setStayOnPage(next);
-            CNCNDownloadUI.noteInteraction();
-            if (next) {
-                CNCNDownloadUI.toast(act, "已停留；点“进入游戏”再离开资源页");
-            } else if (CNHotUpdateCheck.isRunning() || CNDownloaderFix.isInstalling()) {
-                CNCNDownloadUI.toast(act, "将在当前任务安全收尾后进入游戏");
-            } else {
-                CNCNDownloadUI.hide();
-            }
-        }
-    }
-
     private static final class DisplayClick implements View.OnClickListener {
         @Override public void onClick(View v) {
             openDisplay(RestClient.getCurrentActivity());
             CNCNDownloadUI.noteInteraction();
         }
-    }
-
-    private static void styleStay() {
-        TextView v = stayChip;
-        if (v == null) return;
-        GradientDrawable bg = new GradientDrawable();
-        bg.setCornerRadius(dp(v, 20));
-        if (stayRequested) {
-            v.setText("进入游戏");
-            v.setTextColor(0xFFFFFFFF);
-            bg.setColor(color("COLOR_ACCENT", 0xFFD63384));
-        } else {
-            v.setText("停留本页");
-            v.setTextColor(color("COLOR_SUB", 0xFF6E5276));
-            bg.setColor(0x00000000);
-            bg.setStroke(dp(v, 1), color("COLOR_GLASS_STK", 0x55B53C8C));
-        }
-        v.setBackground(bg);
     }
 
     private static void styleDisplay() {
@@ -961,7 +878,7 @@ public final class CNDownloadUiAssist {
         postInstall();
     }
 
-    /** 首次安装收尾调用：玩家点了“停留本页”时一直等到其点“进入游戏”。 */
+    /** 首次安装收尾调用：玩家点过状态行「停在本页」时一直等到其再点一次放行。 */
     public static void awaitReleaseIfRequested() {
         synchronized (STAY_LOCK) {
             while (stayRequested) {

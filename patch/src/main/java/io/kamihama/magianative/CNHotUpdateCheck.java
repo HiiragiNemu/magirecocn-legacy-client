@@ -75,12 +75,12 @@ public final class CNHotUpdateCheck {
     /**
      * 没有更新时，把结论留在屏幕上的基础时长（无交互）。
      *
-     * <p>两头夹的值：4 秒太短（2026-08-13 反馈：玩家看不清、够不着 LOG/「停留本页」）；
+     * <p>两头夹的值：4 秒太短（2026-08-13 反馈：玩家看不清、够不着 LOG/停留入口）；
      * 涨到 9 秒后又太长（2026-08-17 反馈：热更检查完成后干等九秒，像卡死了）。
      * 取中间 6 秒——比 4 秒多 50% 反应时间，比 9 秒短三分之一，既来得及看清
      * 并决定要不要点 LOG/停留，又不至于让启动画面看起来停住不动。
      *
-     * <p>真要久留有「停留本页」，那条不受这里限制。
+     * <p>真要久留就点状态行「停在本页」，那条不受这里限制。
      */
     private static final long IDLE_LINGER_MS = 6000L;
 
@@ -630,11 +630,11 @@ public final class CNHotUpdateCheck {
         } else {
             CNLog.i(TAG, "热更检查完毕：无需更新");
             CNCNDownloadUI.updateSimple(summaryPhase,
-                    "检查已完成。可查看日志或管理资源；需要停留请使用“停留本页”。", 0);
+                    "检查已完成。可查看日志或管理资源；点带倒计时那行文字可停在本页。", 0);
         }
         awaitPlayerWindow();
         awaitConfigSettled();
-        // 配置到位的短等待期间玩家仍可能点‘停留本页’；收浮层前再做一次
+        // 配置到位的短等待期间玩家仍可能点状态行停留；收浮层前再做一次
         // 无上限的显式停留闸。只有玩家自己点‘进入游戏’才释放。
         awaitExplicitStayRelease();
         // running 要在浮层收掉之前清掉：之后再点胶囊（浮层还在的最后一刻）
@@ -1115,8 +1115,8 @@ public final class CNHotUpdateCheck {
      *   <li>弹窗/日志面板开着：等待玩家操作，但受总上限约束（X-C8：
      *       modal split-brain 或真忘关时不能永远拦住启动）；</li>
      *   <li>总上限 {@link #PLAYER_WINDOW_MAX_MS}：弹窗忘了关也最终放行，
-     *       不把玩家永远拦在启动画面。唯「显式停留」（玩家点过
-     *       「停留本页」）不受此限。</li>
+     *       不把玩家永远拦在启动画面。唯「显式停留」（玩家点过状态行的
+     *       「停在本页」）不受此限。</li>
      * </ul>
      */
     private static void awaitPlayerWindow() {

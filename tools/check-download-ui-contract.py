@@ -115,6 +115,14 @@ def followed_by(src, first, second):
                for i in range(len(lines) - 1))
 
 
+# ── 资源行按钮：文案表与宽度锁 ────────────────────────────────────────
+# 从源码里抠，而不是在守卫里另抄一份：抄一份就会漂移，而漂移的表现是
+# 「守卫全绿但真机上文字被挤出按钮」。
+_m = re.search(r'ACTION_MIN_EMS\s*=\s*(\d+)\s*;', ui)
+action_min_ems = int(_m.group(1)) if _m else None
+_m = re.search(r'String want = failed \? (".*?") : \(armed \? (".*?") : (".*?")\);', ui)
+action_labels = [x.strip('"') for x in _m.groups()] if _m else []
+
 checks = {
     "不再向 decorView 添加独立显示控件": "decor.addView(dock" not in assist and "decor.addView(panel" not in assist,
     "不再平移整个下载浮层": "setTranslationX((panX" not in assist and "setTranslationY((panY" not in assist,
@@ -233,15 +241,26 @@ checks = {
     # 「重下」要删离线候选、「用刚导入的包」要留它，同一个清理函数两种语义。
     "离线即时安装不会自删离线候选": "keepOffline" in downloader
         and "cleanupArchiveDownloadState(index, true)" in downloader,
-    # 原版里「文字进度」的右端与下面那条整宽进度条的右端对齐，这条竖线是整块的
-    # 视觉基准。「重试」只要排在它后面，一出现就把它往左顶，右边界立刻错开
-    # ——2026-08-13 真机连报两次。文字进度必须是资源行的最后一个孩子。
-    # 按钮改名 retry → action（一颗按钮两个身份，见下面那条），判据不变：
-    # 文字进度的右端与整宽进度条的右端对齐是整块的视觉基准，按钮必须排在它之前。
-    "文字进度是资源行最后一个孩子":
+    # 资源行的右边界只能由**一个**东西钉住，它要与下面那条整宽进度条的右端对齐。
+    # 2026-08-27 起这个角色从「文字进度」换成了那颗按钮（玩家要求：重下/重试与
+    # 进度条右对齐）。锚点换人，2026-08-13 那条教训（真机连报两次：按钮一出现
+    # 就把右边界顶歪）也跟着换到了文字进度头上，所以下面三条缺一不可。
+    "按钮是资源行最后一个孩子（右边界锚点）":
         "info.setTag(CNDownloadUiAssist.TAG_SLOT_INFO)" in ui
-        and before(ui, "headRow.addView(action, actionLp);",
-                       "headRow.addView(info, infoLp);"),
+        and before(ui, "headRow.addView(info, infoLp);",
+                       "headRow.addView(action, actionLp);"),
+    # 宽度必须恒定，否则换文案时左边的文字进度跟着晃。用 em 不用 dp：字号会被
+    # CNDownloadUiAssist 缩放改，em 跟着字号走。
+    "按钮宽度按最宽文案锁死，且够装得下最长的那个":
+        "action.setMinEms(ACTION_MIN_EMS)" in code(ui)
+        and action_min_ems is not None
+        and bool(action_labels)
+        and max(len(x) for x in action_labels) <= action_min_ems,
+    # 点「重试」后按钮要藏，但只能 INVISIBLE：GONE 连位置一起收掉，右边界当场塌一下。
+    "点重试后按钮 INVISIBLE 而不是 GONE":
+        "v.setVisibility(View.INVISIBLE);" in code(ui)
+        and "v.setVisibility(View.GONE);" not in code(ui)
+        and "sv.actionView.setVisibility(View.VISIBLE);" in code(ui),
     # ---- 重下与停留放回下载浮层（顶栏不动） ----
     # 这两个原先在顶栏/资源行，撤进调试悬浮窗之后玩家够不着——那扇门后面还有
     # 悬浮窗权限与调试总闸两道闸。放回来，但都放回它们本来的位置：
