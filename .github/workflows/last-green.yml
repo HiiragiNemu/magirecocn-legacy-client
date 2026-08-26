@@ -201,6 +201,12 @@ jobs:
           # 悬浮窗没删，玩家拨得动一个没人读的开关，而全套守卫都是绿的。
           python3 tools/check-debug-flag-catalog.py
 
+          # 下一步那段「tag 该不该移」的判断只在 CI 上、只在特定时序下才执行到，
+          # 错了全是沉默的（该拦没拦 = tag 被往回拖；该放没放 = 每次 push 都红）。
+          # 这个自测把那段 shell 原样抠出来，离线跑四种时序。放在移 tag 之前：
+          # 判断是坏的，就不该让它去动 tag。
+          python3 tools/test-last-green-tag-move.py
+
       - name: 🟢 移动 last-green tag
         env:
           GH_PAT: ${{ secrets. }}
@@ -212,8 +218,7 @@ jobs:
           git fetch --force origin "refs/tags/last-green:refs/tags/last-green" 2>/dev/null || true
 
           # F-020：last-green 只能向前移动。候选必须是 origin/main 祖先；
-          # 旧 tag 必须已是候选的祖先。旧 run 乱序完成想回退 → 拒绝；
-          # 历史分叉 → 失败。
+          # 旧 tag 必须已是候选的祖先。旧 run 乱序完成想回退 → 拒绝。
           git merge-base --is-ancestor "${GITHUB_SHA}" origin/main \
             || { echo "::error::${GITHUB_SHA} 已不是 origin/main 的祖先"; exit 1; }
 
@@ -226,8 +231,26 @@ jobs:
                 echo "last-green 已在更新的提交 $OLD_COMMIT；旧 run 不回退 tag"
                 exit 0
               fi
-              echo "::error::last-green 与候选提交历史分叉，拒绝强推"
-              exit 1
+              # 走到这里说明两个提交互不为祖先。有两种成因，后果相反：
+              #
+              #   ① 历史被重写过（filter-repo 或 rebase 整条主线）。
+              #      旧 tag 落在一条已经没人要的历史上，此时**必须**强制前移
+              #      ——否则 tag 会一直钉着那段旧历史，既让它保持可达（清敏感
+              #      内容就白清了），又让本 job 每次 push 都红，tag 永远动不了。
+              #      2026-08-26 就是这么卡住的，靠人去网页删 tag 才解开。
+              #   ② 真的分叉（有人把 main 推成了另一条线）。这种要拦。
+              #
+              # 分辨方法：旧 tag 的提交**还在不在 origin/main 上**。①里它已经
+              # 不可达；②里它仍然可达（否则 main 自己就是被重写的那个，仍归①）。
+              # 注意这一条不会削弱 F-020：它防的是「旧 run 把 tag 往回拖」，
+              # 那种情形 OLD_COMMIT 一定是 origin/main 上的提交，已被上面两条
+              # 分支拦住，落不到这里。
+              if git merge-base --is-ancestor "$OLD_COMMIT" origin/main; then
+                echo "::error::last-green（$OLD_COMMIT）仍在 origin/main 上却与候选分叉，拒绝强推"
+                exit 1
+              fi
+              echo "::warning::last-green 原先指向 $OLD_COMMIT，该提交已不在 origin/main 上"
+              echo "判定为历史被重写，强制把 tag 前移到 ${GITHUB_SHA}"
             fi
           fi
           git tag -f last-green "${GITHUB_SHA}"
