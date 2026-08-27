@@ -371,6 +371,17 @@ public final class CNDownloaderFix {
                         // 紧跟 initEarly：调试开关的首次读取要落在这条后台线程上，
                         // 而不是碰运气落到 UI 线程（见 CNDebugFlags.preload）。
                         CNDebugFlags.preload();
+                        // 调试开关 tlsProbe 打开时跑一次 TLS 探针。
+                        //
+                        // ⚠ 这一句原先只挂在 runInstaller 开头，注释还写着「必定
+                        // 会执行的 native 入口」——**是错的**。runInstaller 只在
+                        // 资源没装齐时才被叫起；装齐的设备（也就是所有真机）走的
+                        // 是下面 installed==true 那一支，runInstaller 一次都不调。
+                        // 2026-08-27 两轮真机日志里「runInstaller 被调用」都是 0 次，
+                        // 开着开关也拿不到任何一行探针输出。放到这里，因为
+                        // triggerInstaller 是装没装齐都会跑的那条路。
+                        // 两处都留：runAsync 自己有一次性哨兵，重复调用是空操作。
+                        CNTlsProbe.runAsync();
                         // 紧跟 preload：单线程模式的三层来源里有一层就是调试开关，
                         // 得等它读完才问得出结果。四处并发里连接闸门与并行文件池
                         // 是长期对象，必须在这里显式下发一次，否则玩家上次选的
@@ -730,9 +741,11 @@ public final class CNDownloaderFix {
             // 记下是谁把安装器叫起来的：出问题时这一行能直接回答
             // 「native hook 到底触发没有」，不必再靠猜。
             CNLog.i(TAG, "runInstaller 被调用，线程=" + Thread.currentThread().getName());
-            // 调试开关 tlsProbe 打开时跑一次 TLS 探针。放在这里是因为这是
-            // **必定会执行**的 native 入口，而探针要的只是「进程活着、引擎 so
-            // 已加载」。它自带线程、自吞异常，关着时第一行就返回。
+            // 调试开关 tlsProbe 打开时跑一次 TLS 探针。
+            // ⚠ 这条路**不是**必定会执行的：资源装齐时 triggerInstaller 走
+            // installed==true 那一支，压根不叫 runInstaller。真正保底的那一次
+            // 在 triggerInstaller 里，见那边的注释。这里留着是为了「资源没装齐
+            // 时也能探」——runAsync 有一次性哨兵，两处都调不会跑两遍。
             CNTlsProbe.runAsync();
             if (!installerStarted.compareAndSet(false, true)) {
                 CNLog.w(TAG, "安装器已在运行中，跳过重复调用");

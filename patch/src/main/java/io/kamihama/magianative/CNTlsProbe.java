@@ -97,14 +97,33 @@ public final class CNTlsProbe {
     /** native 侧实现，见 MagiaLegacy.cpp 的 tlsprobe 命名空间。 */
     public static native String nativeTlsProbe(String host, int port);
 
+    /** 一个进程只探一次。两个调用点都会叫它，见下面 runAsync 的注释。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean STARTED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /** 等 native 库加载的上限。超时就照常试一次，让失败自己说话。 */
+    private static final long NATIVE_WAIT_MS = 30000L;
+    private static final long NATIVE_POLL_MS = 250L;
+
     /**
      * 跑一次。<b>只在调试开关打开时调用</b>；本身吞掉所有异常。
      *
      * <p>自己起线程：要等一次完整握手，不能压在调用方的线程上（调用点在启动链上）。
+     *
+     * <h3>为什么有两个调用点</h3>
+     *
+     * 本来只挂在 {@code CNDownloaderFix.runInstaller} 开头，注释还写着「必定会
+     * 执行的 native 入口」。<b>那是错的</b>：runInstaller 只在资源没装齐时才被
+     * 叫起，而真机上资源早就装齐，走的是 {@code triggerInstaller} 里
+     * {@code installed==true} 那一支。2026-08-27 两轮真机日志「runInstaller 被
+     * 调用」都是 0 次——开关打开也一行输出都没有，看上去像探针坏了，其实是根本
+     * 没被调到。现在 triggerInstaller 里也调一次（那条路装没装齐都会跑），
+     * 用上面的哨兵保证只探一遍。
      */
     public static void runAsync() {
         try {
             if (!CNDebugFlags.isOn(CNDebugFlags.TLS_PROBE)) return;
+            if (!STARTED.compareAndSet(false, true)) return;
             Thread t = new Thread(new Runner(), "cnv-tls-probe");
             t.setDaemon(true);
             t.start();
@@ -113,11 +132,48 @@ public final class CNTlsProbe {
         }
     }
 
+    /**
+     * 等到 native 库真的加载完。
+     *
+     * <p>两个调用点都在启动链很靠前的位置，那时 {@code libMagiaLegacy.so} 往往
+     * 还没 load——真机日志里 CNDebugBridge 在同一毫秒就吃过
+     * {@code UnsatisfiedLinkError}，500ms 后才就绪。直接调
+     * {@link #nativeTlsProbe} 会当场 UnsatisfiedLinkError，日志里看起来像「探针
+     * 失败」，而真正的原因只是早了半秒。
+     *
+     * <p>判据借 {@link CNDebugBridge#overlayGate()} 的三态：{@code null} =
+     * 库还没加载。那是本仓库里现成的、写过教训的「native 好了没有」信号
+     * （见它的类注释里 2026-08-13 那次相差一毫秒的失败），不必再造一个。
+     *
+     * @return 真的等到了返回 true；超时返回 false（调用方仍会试一次）
+     */
+    private static boolean awaitNative() {
+        long deadline = android.os.SystemClock.elapsedRealtime() + NATIVE_WAIT_MS;
+        boolean waited = false;
+        while (android.os.SystemClock.elapsedRealtime() < deadline) {
+            try {
+                if (CNDebugBridge.overlayGate() != null) {
+                    if (waited) CNLog.i(TAG, "native 库已就绪，开始探测");
+                    return true;
+                }
+            } catch (Throwable ignore) {}
+            waited = true;
+            try { Thread.sleep(NATIVE_POLL_MS); }
+            catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        CNLog.w(TAG, "等了 " + (NATIVE_WAIT_MS / 1000) + " 秒仍拿不到 native 就绪信号，照常试一次");
+        return false;
+    }
+
     private static final class Runner implements Runnable {
         @Override public void run() {
             SSLServerSocket server = null;
             try {
                 CNLog.i(TAG, "==== TLS 探针开始（服务端与客户端都在本机）====");
+                awaitNative();
                 server = startServer();
                 int port = server.getLocalPort();
                 CNLog.i(TAG, "本机 TLS1.2 服务端已起：127.0.0.1:" + port

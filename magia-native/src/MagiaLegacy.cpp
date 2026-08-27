@@ -314,6 +314,55 @@ static const DebugFlagDef kDebugFlags[] = {
     { "tutorialSkipAfterBattle3",&g_dbgTutAfterB3,    "序章跳到结尾剧情（测序章收尾最快）" },
 };
 
+/**
+ * <b>Java 侧</b>才读的开关名。native 一个都不读，但必须认得。
+ *
+ * <h3>为什么 native 要背一份它根本不用的名单</h3>
+ *
+ * 下面那圈「目录里有不认识的文件」只拿 {@code kDebugFlags} 比对，于是玩家每开一个
+ * Java 侧开关，日志里就多一条 ERROR 说他名字打错了。2026-08-27 的真机日志是这样的：
+ *
+ *   ⚠ 目录里有不认识的文件 countWebSocket —— 名字打错了？      ← 假的，开关正常
+ *   ⚠ 目录里有不认识的文件 useAria2 —— 名字打错了？            ← 假的
+ *   ⚠ 目录里有不认识的文件 logWebviewRequests —— 名字打错了？   ← 假的
+ *   ⚠ 目录里有不认识的文件 tlaProbe —— 名字打错了？             ← **真的**（tlsProbe 打错）
+ *
+ * 四条长得一模一样，唯一那条真的埋在里面。维护者据此以为探针坏了，回头查了半天
+ * 调用链——而实际上警告早就把答案喊出来了，只是喊得跟三次狼来了没有区别。
+ *
+ * 这正是本仓库自己写下的那条：会喊狼来了的告警比没有告警更糟。
+ *
+ * <h3>为什么是抄一份而不是共享一份</h3>
+ *
+ * native 与 Java 之间没有共用的开关表，跨 JNI 现取一份只为打日志不划算。抄一份的
+ * 代价是会漂移——所以 {@code tools/check-debug-flag-catalog.py} 钉住
+ * 「本表 == Java 的 KNOWN 减去 kDebugFlags」，两边任何一侧加减开关都会红。
+ */
+static const char* const kJavaSideFlags[] = {
+    "skipWebProxy",
+    "skipInstaller",
+    "skipOverlay",
+    "skipVersionCheck",
+    "skipMirrorConfig",
+    "skipHotUpdate",
+    "skipTutorialPrompt",
+    "skipRestart",
+    "skipSlowAsk",
+    "skipBootWatchdog",
+    "skipLocalState",
+    "useWebviewDebug",
+    "logWebviewRequests",
+    "countWebSocket",
+    "failConfigFetch",
+    "failVersionQuery",
+    "slowVersionQuery",
+    "failDownload",
+    "failHotUpdateApply",
+    "useAria2",
+    "useSingleThread",
+    "tlsProbe",
+};
+
 // 跳段开关 → 起始段的映射表。按段号升序排，loadDebugFlags 里后者覆盖前者，
 // 于是多个同时放时以跳得最远的为准。
 struct TutorialSkipDef { const bool* on; const char* section; };
@@ -370,6 +419,12 @@ static void loadDebugFlags() {
             bool known = false;
             for (size_t i = 0; i < sizeof(kDebugFlags) / sizeof(kDebugFlags[0]); i++) {
                 if (::strcmp(e->d_name, kDebugFlags[i].name) == 0) { known = true; break; }
+            }
+            // Java 侧的开关也算「认识」：它们由 CNDebugFlags 读，native 不读，
+            // 但报成打错名字会把真正打错的那一个埋掉（见 kJavaSideFlags 的注释）。
+            for (size_t i = 0; !known
+                    && i < sizeof(kJavaSideFlags) / sizeof(kJavaSideFlags[0]); i++) {
+                if (::strcmp(e->d_name, kJavaSideFlags[i]) == 0) { known = true; break; }
             }
             if (!known) LOGE("[DEBUG] ⚠ 目录里有不认识的文件 %s —— 名字打错了？", e->d_name);
         }

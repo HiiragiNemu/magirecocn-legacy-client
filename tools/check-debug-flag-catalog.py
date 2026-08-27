@@ -112,7 +112,20 @@ dg = doc_group_counts()
 ds = doc_section_counts()
 real_group = {g: str(by_group[g]) for g in "ABCDEF"}
 
+# ── native 背的那份「Java 侧开关名」 ────────────────────────────────
+# native 的「目录里有不认识的文件」只拿 kDebugFlags 比对时，每个 Java 侧开关都会
+# 被报成打错名字。2026-08-27 的真机日志里三条假警报把唯一一条真的（tlaProbe，
+# tlsProbe 打错）埋掉了，维护者据此以为探针坏了。修法是让 native 也认得 Java 的
+# 名字；代价是抄了一份，会漂移——这条判据就是防漂移的那个落点。
+_m = re.search(r"kJavaSideFlags\[\]\s*=\s*\{(.*?)\n\};", cpp_src, re.S)
+cpp_java_side = re.findall(r'"([A-Za-z0-9_]+)"', _m.group(1)) if _m else []
+
 checks = {
+    # 少一个 → 那个开关的假警报回来；多一个（比如 Java 删了开关而这边没删）→
+    # 目录里真出现这个名字时反而不报了，等于把打错名字的兜底悄悄挖掉。
+    "native 认得的 Java 侧开关名 == Java 的 KNOWN 减去 kDebugFlags":
+        set(cpp_java_side) == (set(java) - set(native))
+        and len(cpp_java_side) == len(set(cpp_java_side)),
     "面板上没有悬空开关（拨了不会有任何代码去读的）":
         not dangling,
     "面板每一项都有白话说明（否则玩家只看得到接口名）":
