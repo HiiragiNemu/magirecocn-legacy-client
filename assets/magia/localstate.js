@@ -397,12 +397,34 @@
    */
   function serveLocal(xhr, text) {
     var body;
+    var wantJson = xhr.responseType === "json";
+
+    // ⚠ 先把 response 路由跑完，再把结果暴露出去——顺序错了会静默走偏。
+    //
+    // 正常网络路径上我们是安全的：本脚本在 open() 里 addEventListener，注册得比
+    // jquery 早，所以覆盖先发生、前端后拿到。而这里是**伪造**的派发，下面那圈
+    // 先叫 onreadystatechange 再 dispatchEvent；jquery 用的正是 onreadystatechange
+    // ——于是本地应答这条路上，前端会先拿到**没跑过覆盖**的那份。
+    //
+    // 与其去复刻真实 XHR 的监听器顺序（那东西依赖 onX 属性何时被赋值，脆得很），
+    // 不如让 body 在被任何人看见之前就已经是最终形态。跑完打上 __cnStateServed，
+    // applyToResponse 见到就跳过，避免同一份 json 被覆盖两遍。
+    // 本地应答**必须是合法 JSON 对象**，否则如实退回出网。
+    //
+    // 第一版写的是「只有 responseType==='json' 时才校验」——那条承诺只在一半
+    // 情况下成立：默认的 responseType 是空串，于是一份写坏的应答会被原样塞给
+    // 前端，表现是前端在离这里很远的地方解析炸掉。而整个游戏 API 都是 JSON
+    // （applyToResponse 里那句「不是 { 开头的直接放过」是同一个前提），所以
+    // 把判据拉齐成「一律要求 JSON」，两种 responseType 下行为一致。
+    var obj = null;
+    try { obj = JSON.parse(text); } catch (e) { obj = null; }
+    if (!obj || typeof obj !== "object") return false;
     try {
-      var wantJson = xhr.responseType === "json";
-      body = wantJson ? JSON.parse(text) : text;
-    } catch (e) {
-      return false;                 // 自己给的东西都解析不了，别硬来
-    }
+      runResponseRoutes(obj, xhr.__cnStateUrl || "");
+      text = JSON.stringify(obj);
+    } catch (e) {}
+    body = wantJson ? obj : text;
+
     try {
       define(xhr, "readyState", 4);
       define(xhr, "status", 200);
@@ -412,6 +434,12 @@
     } catch (e) {
       return false;
     }
+    // ⚠ 这一句必须排在上面那圈 define **全部成功之后**。
+    // 放在前面的话，只要中间任何一个 defineProperty 抛了，我们就带着已经置上的
+    // __cnStateServed 走 return false —— 请求照常发出去，而 applyToResponse 见到
+    // 这个标记会直接跳过，于是这条真实响应**一次覆盖都不会跑**。
+    // 「伪造失败就当无事发生」是这个函数的全部承诺，标记早置一行就毁了它。
+    define(xhr, "__cnStateServed", true);
     var fire = function () {
       try { if (typeof xhr.onreadystatechange === "function") xhr.onreadystatechange(); } catch (e) {}
       try { if (typeof xhr.dispatchEvent === "function") xhr.dispatchEvent(mkEvent("readystatechange")); } catch (e) {}
@@ -445,6 +473,8 @@
    * 顺序无所谓：编队字段全是 ID，翻译不碰它们。
    */
   function applyToResponse(xhr) {
+    // serveLocal 已经在暴露之前跑过一轮路由了，再跑一遍等于对同一份 json 覆盖两次。
+    if (xhr.__cnStateServed) return;
     var type = xhr.responseType;
     var url = xhr.__cnStateUrl || "";
 

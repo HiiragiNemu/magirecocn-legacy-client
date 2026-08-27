@@ -389,6 +389,32 @@ console.log("== 路由表：answer 本地应答 ==");
   check("没被登记的 path 照常发出去", y.__sent === true);
 }
 
+console.log("== 路由表：本地应答在暴露之前就已是最终形态 ==");
+{
+  const page = boot({});
+  const st = page.sandbox.__MAGIACN_STATE__;
+  let responseRuns = 0;
+  st.route({
+    name: "t:ans",
+    test: (u) => u.indexOf("/api/test/both") >= 0,
+    answer: () => JSON.stringify({ resultCode: "success", n: 1 })
+  });
+  st.route({
+    name: "t:res",
+    test: (u) => u.indexOf("/api/test/both") >= 0,
+    response: (json) => { responseRuns++; json.n = 2; return true; }
+  });
+
+  const x = new page.sandbox.XMLHttpRequest();
+  x.open("POST", "https://dorothy.magi-reco.com/magica/api/test/both");
+  x.send("{}");
+  check("没有出网", x.__sent === false);
+  // 关键判据：前端不管是从 onreadystatechange 还是 dispatchEvent 拿到的，
+  // 看见的都必须是跑过 response 路由之后的那份。
+  eq("暴露出去的 body 已经跑过 response 路由", JSON.parse(x.responseText).n, 2);
+  check("response 路由只跑了一次（不是覆盖两遍）", responseRuns === 1);
+}
+
 console.log("== 路由表：answer 失败要如实退回出网 ==");
 {
   const page = boot({});
@@ -406,6 +432,23 @@ console.log("== 路由表：answer 失败要如实退回出网 ==");
   x.send("{}");
   check("伪造失败后照常发出去", x.__sent === true);
   check("没有留下半死的 readyState", x.readyState !== 4);
+
+  // 「伪造失败就当无事发生」必须是完整的：这条真实响应照样要跑覆盖。
+  // 曾经差点写错——把 __cnStateServed 标记置在那圈 defineProperty **之前**，
+  // 于是中间任何一个 define 抛出时，标记已经置上、请求照常发出去，而
+  // applyToResponse 见到标记直接跳过，这条响应一次覆盖都不会跑。
+  const page2 = boot({});
+  const st2 = page2.sandbox.__MAGIACN_STATE__;
+  st2.route({
+    name: "t:bad2",
+    test: (u) => u.indexOf("/api/page/") >= 0,
+    answer: () => "这不是 JSON"
+  });
+  page2.roundtrip("POST", DECK_SAVE_URL, JSON.stringify(SAVE_PRM), { resultCode: "success" });
+  const out2 = page2.roundtrip("POST", PAGE_URL, null, cannedPage());
+  const row2 = out2.userDeckList.find((r) => r.deckType === SAVE_PRM.deckType);
+  check("伪造失败之后，真实响应照样跑覆盖",
+        !!row2 && row2.userCardId1 === SAVE_PRM.userCardIds[0]);
 }
 
 console.log("== 路由表：一条路由抛异常不连累请求 ==");

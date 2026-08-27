@@ -690,7 +690,14 @@ public final class CNWebProxy {
 
         // ── WebView 请求日志（无电脑实证手段）：logWebviewRequests 开关下，把
         // shouldInterceptRequest 看到的每个请求 method+URL 记进 CNLog。去重防页面
-        // 子资源（CSS/JS/图）刷屏。看不到 WebSocket（Chromium 内部不经过这里）。──
+        // 子资源（CSS/JS/图）刷屏。看不到 WebSocket（Chromium 内部不经过这里）。
+        //
+        // ⚠ 也看不到被 localstate.js 的路由表**本地应答**掉的请求：那种请求根本
+        // 没有离开 JS，压根到不了这一层。所以某个端点从这份日志里消失，第一反应
+        // 不该是「前端不再调它了」——先去 chrome://inspect 敲
+        // __MAGIACN_STATE__.stats() 看看是不是有条 answer 路由把它接走了。
+        // （写这行注释时还没有任何路由用 answer，但这条日志是排查的起点，
+        // 等到真有人登记了再想起来就晚了。）──
         private static final java.util.Set<String> sLoggedWebRequests = new java.util.HashSet<>();
 
         private static void logWebRequest(WebResourceRequest req) {

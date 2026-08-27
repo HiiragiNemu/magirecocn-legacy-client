@@ -115,6 +115,11 @@ def followed_by(src, first, second):
                for i in range(len(lines) - 1))
 
 
+# SlotActionClick 整个类：上面那条 GONE/INVISIBLE 判据只在这里成立。
+# ⚠ 锚点不能用 "public void onClick(View v)"——这个签名在本文件里有好几处，
+# body() 取的是第一个，抓到的会是别的监听器。
+slot_click = body(ui, "private static final class SlotActionClick")
+
 # ── 资源行按钮：文案表与宽度锁 ────────────────────────────────────────
 # 从源码里抠，而不是在守卫里另抄一份：抄一份就会漂移，而漂移的表现是
 # 「守卫全绿但真机上文字被挤出按钮」。
@@ -257,9 +262,14 @@ checks = {
         and bool(action_labels)
         and max(len(x) for x in action_labels) <= action_min_ems,
     # 点「重试」后按钮要藏，但只能 INVISIBLE：GONE 连位置一起收掉，右边界当场塌一下。
+    # ⚠ 判据只看 SlotActionClick 那个方法体，不看全文。第一版写的是
+    # 「全文里不许出现 v.setVisibility(View.GONE);」——那是过界的：`v` 是极常见的
+    # 局部变量名，将来任何一处不相干的代码写成这个形状都会被误判成「按钮又改回
+    # GONE 了」。守卫误报的代价不比漏报小：喊过几次狼来了之后，下一个真的红灯
+    # 也会被当成噪音跳过。
     "点重试后按钮 INVISIBLE 而不是 GONE":
-        "v.setVisibility(View.INVISIBLE);" in code(ui)
-        and "v.setVisibility(View.GONE);" not in code(ui)
+        "v.setVisibility(View.INVISIBLE);" in slot_click
+        and "View.GONE" not in slot_click
         and "sv.actionView.setVisibility(View.VISIBLE);" in code(ui),
     # ---- 重下与停留放回下载浮层（顶栏不动） ----
     # 这两个原先在顶栏/资源行，撤进调试悬浮窗之后玩家够不着——那扇门后面还有
