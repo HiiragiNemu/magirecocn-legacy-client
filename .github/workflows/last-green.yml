@@ -155,9 +155,12 @@ jobs:
           # 它们读的是**工程树**里的文件（字体、引擎 web 那几个 smali），而
           # 2026-08-14 起工程树不在仓库里了——要在这边跑就得先下 80 MB 重建一次，
           # 每次 push 都做不划算。守卫跟着它要检查的东西走。
+          # check-class-table：README 的补丁层类表与实际类文件两边一一对应。
+          # 2026-08-27 发现 54 个类里 18 个从没登记进表——漏的原因是「没有任何
+          # 东西会因此报红」，这条就是那个落点。
           for g in check-proxy-hooks check-base-urls check-entry-guard \
                    check-branch-hygiene check-baseline check-third-party-notices \
-                   check-debug-flag-boundary check-docs-fresh; do
+                   check-debug-flag-boundary check-docs-fresh check-class-table; do
             python3 tools/$g.py
           done
           # 下载页新增合同：任意 ZIP 独立重下、动态热更身份、全局并发预算、

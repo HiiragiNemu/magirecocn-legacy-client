@@ -137,16 +137,27 @@ python3 tools/baseline.py apply --out <目录>   # 只重建，不比对
 | `CNCNDownloadUI` | 资源下载浮层。背景图 + 毛玻璃底板 + 左列署名区 + 右列文件槽位/总进度；左上 LOG 胶囊、右上主题切换与 GitHub 胶囊 |
 | `CNDownloaderFix` | 资源安装器。15 个基础包的下载、解压校验、完成标记、重试 |
 | `CNChunkedDownload` | 多线程分片下载 + 断点续传 |
+| `ChunkManifest` | 资源包**固定块哈希清单**（16 MiB 一块）的拉取与解析。它是「这个包是不是官方那一份」的唯一内容判据——基础包没有 md5/size 下发，只有这份清单，所以断点续传、离线导入、下载完工校验三条路都靠它 |
+| `CNDownloadConcurrency` | 所有 Java 下载器共享的**连接闸门**：允许多个 ZIP 同时推进，长连接总数始终不超过 8。排队等许可**不算线路停滞**——调用方传 heartbeat，排队期间每秒刷一次，否则另一个文件占满连接时，当前文件会被自己的停滞看门狗误杀 |
+| `CNDownloadRestart` | 按文件的**重启代际 + 在跑线程登记表**。重下请求绝不为同一个包起第二个 writer：它只推进代际并打断当前 worker，既有任务观察到代际过期后**只丢这一个文件**的下载状态、从字节 0 重来，别的文件照常跑 |
+| `CNManualRedownload` | 任意 ZIP 的**手动强制重下协调器**。不要求另外 14 个 marker 齐全、不撤销总完成标记、不为了开始下载而重启。不同文件最多三个并行，同一文件去重；真正解压仍由 `CNDownloaderFix` 的全局提交锁串行。旧 marker 只有在新包完整装成之后才被覆盖 |
+| `CNArchiveValidate` | 基础包的**下载完工校验**：ZIP 结构预检 + 按 `ChunkManifest` 的分块指纹逐块比对。与热更那套分开（见 `CNHotUpdateValidate`），因为基础包没有 size/md5 可核 |
+| `CNOfflineImport` | **离线包注入**：把玩家自己从网盘下好的官方 zip 拷进私有离线区，按分块清单校验后标记「离线就位」，之后 `installArchive` 直接跳过网络。⚠ 拷 1GB+ 要几十秒，所以逐 4MB 回调进度——不显示的话玩家会以为界面定住而再导一次，两个导入线程会并发写同一个 `.importing` 临时文件互相覆盖；`IMPORTING` 互斥位就是为这个 |
+| `CNOfflineImportActivity` | 上面那件事的 trampoline Activity：拉起 `ACTION_GET_CONTENT` 选文件、拷贝、校验、写离线标记，结果经静态回调通知 UI。它是「下载反复失败 / 服务器不可达」时的兜底通道 |
 | `CNDownloadMode` | **单线程可靠模式**开关。四处并发（分片工作线程、字节分段、全局连接闸门、并行文件数）共用它一个判据 `cap()`——各写各的判断迟早漏掉一处，而漏掉的表现是「选了单线程但并发没降下来」，不报错不崩，只有翻日志数连接才发现得了。 |
 | `CNDiskSpace` | **「装不下」与「网络坏了」的分界**。ENOSPC 抛的是普通 `IOException`，和超时、断流走同一个 catch，于是磁盘满会被当成线路故障：无辜线路被记失败进 60 秒冷却（线上 `switch_after_failures=1`，一次就够）、四次重试逐条线路白烧、玩家对着「重试 / 备用引擎 / 单线程 / 离线包」四个都不解决问题的选项反复点。 |
 | `CNZipPlan` | **下载前算出安装峰值**。装一个包的磁盘峰值是 ZIP + 解压后（ZIP 要留到解压成功才删），而这个比例各包差得很远：`cn_base_03.zip` 1.32→2.79 GiB（**2.11x**），其余全在 1.02–1.16x。03 因此拥有 15 个包里最高的安装峰值 **4.11 GiB**，而进度条上只写着 1.3 GB——玩家按这个数去清理空间，然后在解压阶段翻车。 |
 | `CNEndpoints` | **全部对外主机名的唯一来源**。源码里只留结构（`assets.` 子域 + 主域这样的拼法），真实取值由 `tools/inject-endpoints.py` 在构建期从 Secret 注入，仓库与历史里都不出现。注入缺失时 fail-closed：放行列表不含自有域、线路表为空、热更地址拼不出来——退化成「什么都下不了」，而不是退回某个不受控的默认值。 |
 | `CNMirrors` | 线路目录：从 `config.json` 拉取线路表，失败/停滞/过慢时自动换线 |
 | `CNAria2` | **进程内 aria2 引擎**（`libaria2c_{ossl,gnutls}.so`，JNI 加载，备用或构建期选作主引擎）：**双 TLS 后端共存 + dead-man's switch**（`Aria2EngineFailover`）——默认 openssl 后端，原生崩溃或加载失败自动换 gnutls 后端，连 4 次死亡才回退主引擎。由 linker 加载共享库、**无 exec**，绕开 SELinux exec 闸与 16KB 页对齐（与 libarchive 同思路）。loopback JSON-RPC 控制，单文件同步下载、多连接 + 断点续传。**日志不落独立文件**：aria2 控制台输出经 native 源码层 AndroidLogFile sink 直进 logcat（`tools/aria2/patches/0001-console-android-log-sink.patch`，不重定向进程 fd），随 CNLog 一起进玩家分享包（2026-08-18 原则，别加回 `--log=`）。构建与许可明细见 THIRD-PARTY-NOTICES.md。 |
+| `CNAria2Lib` | 上面那两枚 `.so` 的 JNI 装载层。两组导出**同名 JNI 符号**，因此【硬约束】同一进程只允许加载一个后端——`load(Backend)` 显式选，重复调用返回已加载的那个，绝不双载 |
+| `Aria2EngineFailover` | aria2 的 **dead-man's switch**。原生崩溃整体杀进程，Java 层没有任何 catch 机会，所以在启动 aria2 **之前**落盘 armed 标记，只有 RPC 确认干净关停才 disarm；下次启动读到标记仍 armed 就换后端。加载期失败（`UnsatisfiedLinkError`）可捕获，当场换、不等下次。连续 armed-death 达上限则整体停用 aria2（两组 so 是同一份 aria2 代码，负载触发的崩溃换组也会连环炸），并在**客户端版本变更**时自动重置计数 |
 | `CNHotUpdate` | 热更新的文件下载，与首次安装共用同一套选线与分片逻辑 |
 | `CNHotUpdateCheck` | 热更检查流程：启动时比对台词包/前端脚本包版本，必要时下载并应用。重写自原包的 `RestClient.checkAndApplyHotUpdate`——那版浮层自始至终不出现，无从判断跑没跑 |
 | `CNHotUpdateTx` | 热更包的**事务化应用**：暂存 → 备份 → 换入，出错整体回滚，崩溃后按 journal 恢复。只用于热更，安装器的大包仍直接解压 |
+| `CNHotUpdateValidate` | 热更包的下载完工校验：热更的版本 json 带 size/md5 三元组，逐字节核对才放行。这套是热更专属——基础包没有这三元组，走 `CNArchiveValidate` 那条 |
 | `CNWebProxy` | WebView 拦截层代理：把原 `WebViewClient` 包一层，本地文件没命中的 GET 可改走 `/stream/`。默认纯透传，模式由 `config.json` 的 `proxy.web_mode`（`off` / `measure` / `on`）下发，切换不用重打 APK。端点级代理在真机上五次会话零命中（见「网络出口」一节），这是替代路线 |
+| `CNWebLocalFiles` | WebView 本地资源拦截的**全部判据**。基线的 `WebViewClientImpl.shouldInterceptRequest` 经补丁改写后只剩一行调它。判据收进 Java 而不是留在 smali，是因为这里每一行都是**安全边界**：旧 smali 版按「URL 任意位置 contains("/magica/")、只剥查询串」拼路径，把 `..` 放进查询串就能穿越出去（F-E-01）。守卫 `check-webview-interceptor.py` 同时钉两侧的形状 |
 | `CNSafeLink` | 外链统一出口：只放行 HTTPS 且域名在**写死在客户端**的允许列表内（自有域与那三个站的主机名由 `CNEndpoints` 构建期注入——注入发生在编译前，进包后同样是常量池里的死串，配置改不动它，性质不变）。挡的是「服务端被攻破后靠改配置把玩家导去任意地址」与配置写错，**不是**中间人——那一层已由 DNSSEC + 完整 TLS 验证覆盖 |
 | `CNVersionCheck` | 客户端版本检查，跑在热更检查与首次安装**两者之前**（装不上资源的玩家最需要强更提示）。本端版本硬编码在 native（`CLIENT_VERSION`，与 APK 的 versionName/versionCode 无关），云端版本在 `config.json` 的 `client` 段。任何异常一律放行，绝不因网络抖动挡住进游戏 |
 | `CNUserAgent` | 补丁侧统一 User-Agent（`magireco-cn-legacy/<ver> (Android …; SDK …)`），CDN/服务端日志据此识别客户端与版本。版本号与 native `CLIENT_VERSION` 同源，CI 注入。补丁发起的请求全覆盖；**WebView 转发的游戏流量不动**，仍透传原始 UA |
@@ -156,6 +167,9 @@ python3 tools/baseline.py apply --out <目录>   # 只重建，不比对
 | `CNTutorialPrompt` | 「下次启动去播序章」的标记读写与「自动询问只问一次」的记忆，另含给 native 用的隐藏/恢复前端界面入口。真正的触发在 native 侧（拦 `pushSceneTop` 改调 `pushScenePrologue`） |
 | `CNBgm` | 安装浮层的 BGM。不用 `MediaPlayer`——它只能整文件循环，会放出尾部 235 帧 padding 且接缝有空隙；这里自己 `MediaExtractor`+`MediaCodec` 解码喂 `AudioTrack`，按 HCA 循环点做采样级无缝循环。全类绝不外抛。 |
 | `CNLog` | 统一日志：logcat + 内存环形缓冲 + 文件，LOG 面板直接渲染同一份缓冲区。**两路 logcat**：主回收带 `--pid=<自己>`；另一路只按 tag 收 `DEBUG`/`libc`/`AndroidRuntime` 且**不带 `--pid`**——原生崩溃的墓碑是 `crash_dump` 用别的 PID 打出来的，主回收看不见它，「闪退」类问题因此一直查不动。指望的是 `-T` 回灌：logcat 环形缓冲跨进程存活，玩家崩完重开一次，上一个进程的墓碑就进了新日志文件。SDK &lt; 24 不起第二路（那些设备没有 `--pid`，主回收本来就整机全收）。24MB 封口只停主回收，不停崩溃流。三个 tag 的优先级不一样是有判据的：`DEBUG` 是 debuggerd 独占的，放宽到 `V`；`libc` 被 bionic 平时也用（`Access denied finding property` 之类），必须收到 `F`，否则会长期灌噪音而它又不受封口约束 |
+| `CNLogFormat` | 日志行**解析器**：把一条原始日志拆成来源 / 时刻 / 级别 / 组件 / 正文。LOG 面板原先是把一大坨字符串整个塞进一个 `TextView`，真机上 logcat 一秒几百行，满屏等宽字在飞——而这个面板的用途恰恰是「玩家把现场发给客服」，看不懂等于没有。纯字符串处理、不碰 Android 类型，所以能在 JVM 上直接测 |
+| `CNLogBundle` | 「分享日志」的打包：把本次与最近若干次启动的日志拼成一个 txt 落在 `cacheDir/share/`，走 `ACTION_SEND` 交给任意 App 转发。直接复制文本会被 QQ 之类截断，而不是人人都会用 adb 取文件 |
+| `CNLogShareProvider` | 上面那个包的只读 `ContentProvider`（`exported=false` + 一次性 URI 授权）。不用 androidx 的 `FileProvider`：编译 classpath 只有 android.jar + OkHttp/Okio，引用了编译期就挂。只服务 `cacheDir/share/` 一个子目录，不开 files/ 与存储卡 |
 | `CNCrashHistory` | 开机时记「上几次进程是怎么死的」。走 `ActivityManager.getHistoricalProcessExitReasons()`（API 30+），**与上面两路 logcat 完全独立**——那两路都建立在「墓碑确实进了 logcat 且我们读得到」这个假设上，假设不成立时会一起失明且毫无迹象。光 `reason` 一个字段就把原生崩溃 / Java 崩溃 / ANR / 低内存杀进程分开了。原生崩溃与 ANR 还带 trace；⚠ Android 12 起原生那份是 **protobuf 墓碑不是文本**，本仓库没有 protobuf 运行时也不该为它引依赖，所以按「取可打印片段」处理（protobuf 的字符串字段是长度前缀原文，扫一遍就能拿到信号名、abi、so 路径与 backtrace 符号名）。全异常吞掉 + 后台线程，不占开机关键路径 |
 | `CNTlsProbe` | **TLS 探针**（调试开关 `tlsProbe`，默认关）：本机 127.0.0.1 起一个 TLS1.2 自签名服务端（Android 自带 TLS 栈），再由 native 侧 `nativeTlsProbe` 用 `dlsym(RTLD_DEFAULT)` 拿到**引擎自己那份 OpenSSL 1.0.2s** 去连它，逐行复刻 `http2::Http2SessionManager::run` 的调用序列。验的是「自建服务端这条路通不通」——挖出来的结论是引擎**根本不验证服务端证书**（`SSL_CTX_set_verify` 全库 0 次调用、无内置 CA、`OPENSSLDIR` 指向打包机路径），而 336142563 是 OpenSSL 1.0.2s 听不懂现代 TLS 扩展的**代差**。两端都在手机里，不需要电脑或 adb |
 | `CNDebugFlags` | 调试开关目录的 Java 侧读取（与 native 共用同一个目录，见「调试开关目录」一节）。首次查询时扫一遍并缓存，之后零 I/O；任何异常一律当作「没开」 |
@@ -164,9 +178,13 @@ python3 tools/baseline.py apply --out <目录>   # 只重建，不比对
 | `CNDebugHud` | 屏幕上缘那行「调试模式：…」。挂 Activity 的 `decorView`，**不需要悬浮窗权限，也不看总闸**：开关是读文件生效的，不依赖悬浮窗，所以「有开关正在生效就得说出来」不该被悬浮窗的两道闸挡住——某人开了开关又回收了悬浮窗权限，开关照旧生效而提示没了，恰好在最需要它的时候失效。它管的是**监测**，不是操作 |
 | `CNDownloadUiAssist` | 下载浮层的显示辅助：字号缩放（含「按分辨率推荐」）、横纵滚动条状态、窄屏弹窗宽度、停留状态（`shouldStayOnPage`，入口在状态行那句话上）、左右两列之间那条可长按拖动的分界线（占比夹在 20%–70% 并落盘）。字号推荐参考 720dp、斜率取半、夹在 85–125：`dp = px/density`，720p 低密度手机报出的 dp 比 1080p 还多，dp 宽度不是屏幕大小的代理 |
 | `CNHttp` | 建连的**唯一**加固入口：超时按调用方传（控制面 1.8s/2.2s 要快失败、数据面 15s/30s 要能等，这个差异是有意的），统一做的是 `setUseCaches(false)` + `setInstanceFollowRedirects(true)` + UA + 代理语义（绕开系统代理 / 尊重系统代理）。此前六处样板已漂移——三处缺跟跳转、一处缺禁缓存，靠平台默认恰好等价而已。两条例外：`CNAria2` 的 loopback JSON-RPC 有意不跟跳转，`CNWebProxy` 是透明代理要原样转发头 |
+| `CNPaths` | 应用私有目录解析器。补丁层与 native 历史上全硬编码 `/data/data/<pkg>`——那只是指向 `/data/user/0` 的兼容软链，非标准容器/深度定制 ROM 可能没建。真碰上时引擎没事（Cocos 走 `getFilesDir()`），补丁层却会全瘫：完成标记永远读不到 → 每次启动都判「未安装」→ 反复全量重下。改为读 `/proc/self/{cmdline,status}`（**不依赖 Context**，native 最早期触发的 Java 调用也能用）算出用户号后按序探测，取第一个可写的。🔴 用户号 = `uid / 100000`，**不能写死 0**——工作资料 / 系统分身 / 厂商多开不是 0，真机上见过 10 和 999 |
+| `CNBuildConfig` | 构建期配置，源码里只留**默认值**，真实取值由 CI 在编译前注入（构建时的「主引擎」选择框 → sed 改写 `MAIN_ENGINE`）。与 `CNEndpoints` 的分工相反：那两个是 fail-closed 的空串，注入失败宁可什么都下不了；这里是「默认值 + 可选注入」，不注入也跑得好。⚠ 别把注入后的值提交进仓库，否则再也分不清「构建选过」与「库里写死」 |
+| `CNRestClientActivity` | `RestClient.getCurrentActivity()` 的健壮实现（F-053）。基线那版反射读 `ActivityThread.mActivities` 后无条件取 `valueAt(0)`——`ArrayMap` 第 0 项不是「当前前台 Activity」的合同。进程里同时有主 Activity、离线导入 trampoline、计费代理与重启 trampoline 时，会拿到隐藏/旧实例，把 UI 挂进死视图树、或从错误的 task 发起重启与文件选择。改为遍历全部记录、只收还活着的，且 `paused/stopped` 必须**明确读到 false** 才算可交互——反射失败返回 null，绝不拿 false 冒充 |
 | `CNIo` | 流的收尾杂务，目前只有 `closeQuietly`。此前同一个三行方法在五个类里有六份实现，其中 `CNDownloaderFix` 那两个重载**只接 `IOException`**——而 `close()` 也会冒 `RuntimeException`/`NPE`，这个方法又几乎总是从 `finally` 里调的，一往外抛就把原始异常整个盖掉。统一后一律接 `Throwable`。守卫 `check-single-impl-contract.py` 钉住「全仓库只有一份」 |
 | `CNAtomicReplace` | 同目录原子替换的**唯一**实现（完成标记、断点元数据、整包换入共用）：候选名逐次唯一——固定成 `<目标>.tmp` 时并发写同一目标会互相截断；换入走 `rename(2)` 且**绝不预删目标**——先删再改名，两步之间被杀就把「上一次可用状态」换成什么都没有；换完 fsync 父目录。清残留一律走 `sweep`（新旧两种候选名一起收） |
 | `CNArchiveInstallTx` | ZIP 解压的**唯一**实现（首次安装、aria2 路径、离线包导入共用）：解压前按 zip 目录精确预检空间，逐条目校验，膨胀比两道防护**都在写出去之前**（写完再查等于炸弹已经落地），失败清掉半截产物 |
+| `CNZipTool` | 内置 libarchive 的 JNI 封装：进程内解压 zip，替代 exec `bsdtar` 二进制。换掉 exec 的两个理由与 `CNAria2` 同源——Android 10+ 的 SELinux W^X 闸（`app_data_file` 无 execute 权限）与 16KB 页对齐。编成标准 native library 由 linker 从只读的 `nativeLibraryDir` 加载，两个都绕开。资源包里那种「冗余 ZIP64」老设备的 `java.util.zip.ZipFile` 可能打不开，也一并解决 |
 | `CNLocalStore` | 客户端本地状态存储：按命名空间存一份 JSON，落盘在 `<privDir>/cn-state/`（**刻意不在 `files/` 下**——那底下 `magica/` 整个子树是 WebView 拿 URL 就能读到的供给区，存档放旁边等于把「那四道闸有没有洞」和「存档会不会被页面读走」绑成一个问题）。命名空间走白名单 `[a-z0-9_-]{1,32}`（它会被拼进文件路径，是安全边界不是命名习惯），内容必须是合法 JSON 对象/数组且单份 ≤512KB，命名空间总数 ≤64。写一律走 `CNAtomicReplace`——它不是缓存，丢了就是玩家编队没了 |
 | `CNWebStateBridge` | 上面那个存储对页面 JS 的**唯一**入口，`addJavascriptInterface` 挂成 `CNLocalState`。写限速 40 次/10s（挡死循环狂写把 flash 写坏）。不用 localStorage 的三条理由见类注释，头一条是 `nativeCommand.js` 的 `DATA_CLEAR_WEB_CACHE` 到底清不清站点数据**没有核实过** |
 | `CNDeckState` | 本地状态覆盖层的装配方：挂桥 + 注入 `assets/magia/localstate.js`。🔴 **时序是这里最难的一件事**，而且是两件时序要求相反的事：`addJavascriptInterface` 的注入时机是「下一次页面加载」，所以**挂桥要赶在 `loadUrl` 之前、一个 WebView 只需一次**（前端是 hash 路由，错过就是错过一整局）；而脚本挂的是 `XMLHttpRequest.prototype`，活在文档的 JS 环境里，**页面一重载就没了，每个文档都得注一次**。把两者写在同一个分支里会让功能整体失效（挂桥那一刻还停在 `about:blank`，注了白注，此后再不重注）。现在是：100ms 轮询查挂桥（纯 Java），另按 500ms/5s 发一句极小的 `__MAGIACN_LOCAL_STATE__` 探针，只有「这个文档没注过」才注整段。注入时追一句 `!!window.CNLocalState` 的自检回 Java 记进日志，「到底生效了没有」不靠猜。逃生开关 `skipLocalState` |
