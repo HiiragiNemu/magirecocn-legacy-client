@@ -135,7 +135,7 @@ python3 tools/baseline.py apply --out <目录>   # 只重建，不比对
 | 类 | 职责 |
 |---|---|
 | `CNCNDownloadUI` | 资源下载浮层。背景图 + 毛玻璃底板 + 左列署名区 + 右列文件槽位/总进度；左上 LOG 胶囊、右上主题切换与 GitHub 胶囊 |
-| `CNDownloaderFix` | 资源安装器。15 个基础包的下载、解压校验、完成标记、重试 |
+| `CNDownloaderFix` | 资源安装器。**15 个槽位**（13 个基础包 + 2 个热更包，`FILE_COUNT = 15`）的下载、解压校验、完成标记、重试。两类的校验判据不同：基础包套 `manifest.json` 的分块指纹，热更包按版本 json 的 size/md5——别把 15 个一律叫「基础包」 |
 | `CNChunkedDownload` | 多线程分片下载 + 断点续传 |
 | `ChunkManifest` | 资源包**固定块哈希清单**（16 MiB 一块）的拉取与解析。它是「这个包是不是官方那一份」的唯一内容判据——基础包没有 md5/size 下发，只有这份清单，所以断点续传、离线导入、下载完工校验三条路都靠它 |
 | `CNDownloadConcurrency` | 所有 Java 下载器共享的**连接闸门**：允许多个 ZIP 同时推进，长连接总数始终不超过 8。排队等许可**不算线路停滞**——调用方传 heartbeat，排队期间每秒刷一次，否则另一个文件占满连接时，当前文件会被自己的停滞看门狗误杀 |
@@ -259,7 +259,7 @@ java -cp .build-test:.cache/deps/android.jar ConfigGuardTest
 |---|---|---|
 | `config.json` | 直连主线 | `CNMirrors.MIRRORS_URL` |
 | `version_scenario.json` / `version_js.json` | 走支线 | `CNHotUpdateCheck.fetchMetaSafe` |
-| 15 个基础资源包 | 走支线 | `CNDownloaderFix.fetchArchive` |
+| 13 个基础资源包 | 走支线 | `CNDownloaderFix.fetchArchive` |
 | 两个热更包 | 走支线 | `CNHotUpdate.download` |
 | `/magica/api/snaa`（端点发现） | 有代理配置走 `/stream/`，否则直连 | `CNDownloaderFix.snaaUrl()` |
 | **游戏本身的 API / 页面 / 图片** | 不经上述任何一条 | 见下 |

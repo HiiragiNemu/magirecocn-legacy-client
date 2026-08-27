@@ -327,7 +327,7 @@ public final class CNHotUpdateCheck {
         // runInstaller() 就 return 了，整个会话拦截层都没装上。移到分支之前
         // 才能两条路都覆盖。install() 内部有 CAS，重复调用无副作用。
 
-        // final flag 已存在时，15 个基础资源的 marker 才是 UI 的事实源。
+        // final flag 已存在时，15 个槽位的 marker 才是 UI 的事实源。
         // 先恢复真实完成状态；稍后只有确认“需要热更”的 0/1 号槽位才切回等待。
         CNDownloaderFix.syncInstalledUiState();
 

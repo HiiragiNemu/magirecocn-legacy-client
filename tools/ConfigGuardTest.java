@@ -11,7 +11,7 @@ import java.lang.reflect.Method;
  *
  * <ul>
  *   <li>{@code mirrors[].base} / {@code proxy.base} 一旦允许 {@code http://}，
- *       TLS 就整个不参与了。而安装器那 15 个基础包<b>没有 md5/sha 校验</b>，
+ *       TLS 就整个不参与了。而 15 个槽位里那 13 个基础包<b>没有 md5/sha 校验</b>，
  *       完整性全押在 TLS 上，{@code extractChecked} 又只验结构不验内容——
  *       投毒 zip 里的 JS 会落进 {@code <files>/magica/js/}，被 WebView 永久执行。</li>
  *   <li>{@code proxy.domains} 是<b>后缀</b>匹配，没有下限的话填个 {@code "com"}

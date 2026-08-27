@@ -392,7 +392,7 @@ public final class CNMirrors {
      * 只要往 {@code mirrors[].base} 或 {@code proxy.base} 里填一个 {@code http://}，
      * TLS 就整个不参与了，防线被它要防的东西一句话解除。
      *
-     * <p>后果不只是「被人看见下了什么」。安装器那 15 个基础包<b>没有 md5/sha 校验</b>
+     * <p>后果不只是「被人看见下了什么」。15 个槽位里那 13 个基础包<b>没有 md5/sha 校验</b>
      * （只有热更包有 {@code verifyZip}），完整性全押在 TLS 上；
      * 而 {@code extractChecked} 只验结构不验内容。于是：
      *
