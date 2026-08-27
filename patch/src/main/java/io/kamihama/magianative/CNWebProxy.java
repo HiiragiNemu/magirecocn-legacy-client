@@ -40,10 +40,20 @@ import java.util.concurrent.atomic.AtomicLong;
  *       只观测不改写。引擎自己压根没调过这些槽位。</li>
  * </ul>
  *
+ * <p>⚠ 这段「一次都没生效过」与 native 侧 {@code endpointObserveOnly} 的注释
+ * （2026-08-21 A/B：「重写之后所有战斗都进不去」）<b>互相对不上</b>——重写要是
+ * 从没生效，那次 A/B 观察到的就不该是重写造成的。两处都别当定论，详见
+ * {@code MagiaLegacy.cpp} 里 endpointObserveOnly 的「未解」一节。
+ *
  * <p>而游戏真正的 API 流量走的是 WebView 的 {@code shouldInterceptRequest}
- * （拦截器日志里 {@code /magica/api/page/TopPage?…} 就是从那儿过的；该每请求
- * 日志已于 2026-08 随 F-E-03 移除，流量路径不变）。所以代理要真
- * 生效，就得落在这一层。
+ * ——拦截器日志里 {@code /magica/api/page/TopPage?…} 就是从那儿过的。所以代理
+ * 要真生效，就得落在这一层。
+ *
+ * <p>那条每请求日志<b>没有被删掉</b>，只是从常开改成了调试开关
+ * {@code logWebviewRequests}（见 {@link #logWebRequest}，按 method+URL 去重、
+ * 上限 2000 条）。此前这里写的是「已随 F-E-03 移除」——不准确，而且方向是坏的：
+ * 照它的说法，想看 WebView 到底发了哪些请求就得自己再造一个，而现成的开关就在
+ * 那儿。2026-08-27 那次把整条战斗链路摸清楚，靠的正是它。
  *
  * <h3>为什么这一层没有跨域问题</h3>
  *

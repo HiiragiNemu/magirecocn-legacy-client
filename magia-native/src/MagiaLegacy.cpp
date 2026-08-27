@@ -1807,6 +1807,31 @@ static const std::string* endpointRewrite(UrlGetterFn old, void* self, int type,
  * 在服务端握手扩展处报 0x140920E3（界面错误码 336142563），所有战斗均无法进入；
  * 同一进程改为 native 端点直连后战斗立即成功。WebView 代理属于另一条链，仍由
  * Java 拦截器处理。因此 api/chat 永久只读观测，不再靠调试文件临时绕过。</p>
+ *
+ * <h3>⚠ 未解：上面这段与另外两处记载对不上</h3>
+ *
+ * 三份材料放在一起是矛盾的，谁翻到这里都该先知道，别拿其中一条当定论：
+ *
+ * <ol>
+ *   <li><b>本段</b>（2026-08-21 A/B）说「重写之后战斗全挂」——前提是那次<b>重写
+ *       真的发生了</b>。</li>
+ *   <li><b>CNWebProxy 的类注释</b>说端点级代理「一次都没生效过」：0103/0104/
+ *       0105/0107/0112 五份日志里，表示改写成功的 {@code [proxy] api[n]: 原址
+ *       -> 新址} 一行都没有；成因是 api[0] 的取值是个<b>裸主机名</b>（没有
+ *       scheme），tryRewriteUrl 第一道 "https://" 判断就返回 false。</li>
+ *   <li><b>2026-08-27 的三份日志</b>（0131/0132/0134，其中 0134 完整打了一场
+ *       主线战斗）：{@code [proxy] api} 观测 <b>0 条</b>，而钩子确实装着
+ *       （34 成功 0 失败）；同一场战斗里 quest/start（敌人配置）与 QuestResult
+ *       （结果回传）<b>全部走 WebView</b>，战斗本身那 46 秒一条请求都没有。</li>
+ * </ol>
+ *
+ * ①与②不可能同时为真：要么那次 A/B 用的不是这条改写路径，要么 336142563 来自
+ * 别的连接。③只说明「引擎这条通道没在传战斗数据」，它不能替①或②作证。
+ *
+ * <p><b>本决定不受影响</b>：只读观测是两种可能下都安全的那一边——真会挂就必须
+ * 只读，不会挂也只是少一条没人用的改写路径。但谁要重新启用改写，<b>先把①②哪
+ * 条不成立查清楚</b>，别照着其中一条往下推。查法：开 tlsProbe 拿到握手结论，
+ * 再看下面 probeEndpointSlots 那行汇总（它会说清 getter 到底读没读到东西）。
  */
 static const std::string* endpointObserveOnly(UrlGetterFn old, void* self, int type,
                                               int slot, const char* tag) {

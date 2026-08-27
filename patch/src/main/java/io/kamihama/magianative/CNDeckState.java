@@ -58,7 +58,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>现在的做法：轮询每一跳都确认「桥挂了没有」（纯 Java，不产生 IPC），
  * 另按 {@value #ENSURE_FAST_MS} / {@value #ENSURE_IDLE_MS} 的节奏发一次
  * <b>极小的</b>探针 {@code __MAGIACN_LOCAL_STATE__}，只有探针说「这个文档还没注过」
- * 才注入整段脚本。之所以不是每跳都注：注一次是 9KB 的字符串要过一次 JS 解析，
+ * 才注入整段脚本。之所以不是每跳都注：注一次是二十几 KB 的字符串要过一次 JS 解析，
  * 100ms 一发纯属白费——{@link CNWebProxy} 的类注释里记着同一个教训。
  *
  * <p>{@link CNWebProxy} 在 {@code onPageStarted} 里也会调一次 {@link #inject}，
@@ -75,7 +75,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <h3>为什么脚本是 asset 而不是 Java 里的字符串常量</h3>
  *
  * {@link CNWebProxy} 里那段 WS 计数脚本是拼在 Java 字符串里的，十几行还能忍。本层
- * 的脚本两百多行，继续拼字符串会有三个后果：JS 语法错误只有真机上才暴露、diff 全
+ * 的脚本五百多行，继续拼字符串会有三个后果：JS 语法错误只有真机上才暴露、diff 全
  * 是转义看不出改了什么、没有任何工具能对它做检查。放进
  * {@code assets/magia/localstate.js} 之后它就是一个正常的 .js 文件。
  *
