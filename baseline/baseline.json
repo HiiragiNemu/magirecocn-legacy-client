@@ -975,7 +975,7 @@
       "path": "assets/magia/localstate.js",
       "group": "本地状态",
       "why": "本地状态覆盖层的前端脚本，由 CNDeckState 在 onPageStarted 注入。做成 asset 而不是 Java 字符串常量，是为了让它能被 diff、被 node --check、被 tools/localstate-js-test.js 覆盖",
-      "post": "abb8b48772c61d9861a5f1534ff72c7cb451d40938dbcc02e49046851d295e75",
+      "post": "d3164d98ae5b30fa34b6a89eb2ed3c7490833c44bece8f6216b45f26860e4207",
       "from": "repo"
     },
     {

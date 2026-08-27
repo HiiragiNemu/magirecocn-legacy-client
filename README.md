@@ -294,6 +294,43 @@ Totentanz 服务端是**无状态**的——彻底到打完一场战斗、结算
 
 三段实现分别是 `CNLocalStore`（落盘）、`CNWebStateBridge`（JS 桥）、
 `CNDeckState`（装配与注入），前端脚本在 `assets/magia/localstate.js`。
+
+#### 路由表：这一层能做的不止「改响应」
+
+2026-08-27 的真机日志（`logWebviewRequests` 开着，完整打了一场主线）把整条战斗
+链路摊开了，**全部走 WebView，全部是这一层看得见的 XHR**：
+
+```
+MainQuest → MainQuestBranch → QuestBattleSelect → SupportSelect → DeckFormation
+  → quest/start（敌人配置）→ …46 秒静默，战斗在 native 引擎里跑… → QuestResult（结果）
+```
+
+引擎自带的那份 OpenSSL 1.0.2s **整场零流量**（三份日志里 `[proxy] api` 观测都是
+0 条）。也就是说「服务端要做的事」在这一层是**可枚举**的，而且不必碰引擎那条
+有代差问题的通道。
+
+`localstate.js` 因此从「几个写死的 if」改成一张路由表，每条路由自报拦哪个 path、
+以哪种方式介入：
+
+| 钩子 | 能做什么 |
+|---|---|
+| `request(url, body)` | 看请求体。**这是全客户端唯一看得到 POST body 的地方** |
+| `response(json, url)` | 就地改响应，返回是否动过（动过才重新序列化） |
+| `answer(url, body)` | 返回字符串即**整份本地应答，不出网** |
+
+内置三条：`deck:capture`（捕获编队）、`sheet:harvest`（攒阵形）、`deck:overlay`
+（覆盖 userDeckList）。前两条 `test` 恒真，名字里带「(全站)」标出来。
+
+> ⚠ **目前没有任何一条路由用 `answer`**，这是有意的。本地应答要先有那个端点的
+> 真实响应样本（归档里的 `magica/api/<路径>/NNN.json`），照着形状答才有意义；
+> 照猜的形状答只会把前端弄崩，而且崩在离原因很远的地方。机制立好了，第一条
+> 何时登记是另一件事。`serveLocal` 伪造的范围也有意划得很窄——只有
+> `readyState`/`status`/`statusText`/`responseText`/`response` 加两个事件，
+> **没有响应头**，登记第一条 `answer` 之前得先确认前端不在乎。
+
+调试口子：`chrome://inspect` 里 `__MAGIACN_STATE__.stats()` 看每条路由命中多少次
+（判断某条端点该不该本地答，第一步就是知道它一局里被叫了几次），
+`.routes()` 列名单，`.route(def)` 让别处也能登记而不必改这个文件。
 覆盖的是**所有** `deckType`，所以主线、竞技场、歼灭战（70+n）、镜之魔女（100+n）
 一起生效。逃生开关 `skipLocalState`。
 

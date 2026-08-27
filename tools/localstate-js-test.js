@@ -54,13 +54,21 @@ function boot(store, opts) {
   sandbox.console = { log() {}, warn() {}, error() {} };
   if (!opts.noBridge) sandbox.CNLocalState = makeBridge(store);
 
-  function FakeXHR() { this.__l = []; this.responseType = ""; }
+  // __sent 记「真的发出去了没有」：answer 路由的全部意义就是让它保持 false。
+  function FakeXHR() { this.__l = []; this.__fired = []; this.responseType = ""; this.__sent = false; }
   FakeXHR.prototype.open = function (m, u) { this.__method = m; this.__url = u; };
-  FakeXHR.prototype.send = function (b) { this.__body = b; };
+  FakeXHR.prototype.send = function (b) { this.__body = b; this.__sent = true; };
   FakeXHR.prototype.addEventListener = function (ev, fn) {
     if (ev === "readystatechange") this.__l.push(fn);
   };
+  FakeXHR.prototype.dispatchEvent = function (ev) {
+    this.__fired.push(ev && ev.type);
+    return true;
+  };
   sandbox.XMLHttpRequest = FakeXHR;
+  // 脚本里 serveLocal 走 setTimeout(fn, 0)（真实 XHR 一定是 send 先返回、回调后到）。
+  // 测试台里同步跑掉即可：这里要验的是「派发了什么」，不是「什么时候派发」。
+  sandbox.setTimeout = function (fn) { fn(); return 0; };
   sandbox.JSON = JSON;
   sandbox.Object = Object;
   sandbox.Array = Array;
@@ -329,6 +337,116 @@ console.log("== 不相干的响应不受影响 ==");
   eq("不带 userDeckList 的响应原样放行",
      page.roundtrip("POST", "https://dorothy.magi-reco.com/magica/api/page/MyPage", null, other),
      other);
+}
+
+// ── 8. 路由表 ─────────────────────────────────────────────────────
+//
+// 这一节测的是机制本身，不是编队。机制错了的后果比编队错乱更大：answer 一旦
+// 半死（readyState=4 但 status=0），前端报出来的错会离原因十万八千里。
+console.log("== 路由表：登记与统计 ==");
+{
+  const page = boot({});
+  const st = page.sandbox.__MAGIACN_STATE__;
+  eq("内置三条路由都登记了", st.routes(),
+     ["deck:capture", "sheet:harvest(全站)", "deck:overlay(全站)"]);
+
+  page.roundtrip("POST", DECK_SAVE_URL, JSON.stringify(SAVE_PRM), { resultCode: "success" });
+  check("捕获路由记了一次 request", st.stats()["deck:capture"].req === 1);
+
+  page.roundtrip("POST", PAGE_URL, null, cannedPage());
+  check("覆盖路由记了一次 response", st.stats()["deck:overlay(全站)"].res >= 1);
+  // 攒阵形不改 json（response 返回 false），所以它的 res 恒为 0——这不是没跑，
+  // 是「跑了但没动过」。两者在 stats 里必须分得开，否则 stats 会骗人。
+  check("攒阵形路由不计入 res（它不改 json）", st.stats()["sheet:harvest(全站)"].res === 0);
+}
+
+console.log("== 路由表：answer 本地应答 ==");
+{
+  const page = boot({});
+  const st = page.sandbox.__MAGIACN_STATE__;
+  const LOCAL = JSON.stringify({ resultCode: "success", localAnswer: true });
+  st.route({
+    name: "t:answer",
+    test: (u) => /\/magica\/api\/test\/local(?:\?|$)/.test(u),
+    answer: () => LOCAL
+  });
+
+  const x = new page.sandbox.XMLHttpRequest();
+  x.open("POST", "https://dorothy.magi-reco.com/magica/api/test/local");
+  x.send("{}");
+  check("没有真的发出去", x.__sent === false);
+  eq("responseText 就是本地那份", x.responseText, LOCAL);
+  eq("readyState 伪造成 4", x.readyState, 4);
+  eq("status 伪造成 200", x.status, 200);
+  check("派发了 readystatechange 与 load",
+        x.__fired.indexOf("readystatechange") >= 0 && x.__fired.indexOf("load") >= 0);
+  check("answer 计数加了一次", st.stats()["t:answer"].ans === 1);
+
+  // 同一个页面里，没登记 answer 的 path 必须照常出网。
+  const y = new page.sandbox.XMLHttpRequest();
+  y.open("POST", PAGE_URL);
+  y.send(null);
+  check("没被登记的 path 照常发出去", y.__sent === true);
+}
+
+console.log("== 路由表：answer 失败要如实退回出网 ==");
+{
+  const page = boot({});
+  const st = page.sandbox.__MAGIACN_STATE__;
+  // responseType='json' 时 serveLocal 会先 JSON.parse，解析不了就必须返回 false，
+  // 让请求照常发出去——而不是留下一个 readyState=4、status=0 的半死 XHR。
+  st.route({
+    name: "t:bad",
+    test: (u) => u.indexOf("/api/test/bad") >= 0,
+    answer: () => "这不是 JSON"
+  });
+  const x = new page.sandbox.XMLHttpRequest();
+  x.responseType = "json";
+  x.open("POST", "https://dorothy.magi-reco.com/magica/api/test/bad");
+  x.send("{}");
+  check("伪造失败后照常发出去", x.__sent === true);
+  check("没有留下半死的 readyState", x.readyState !== 4);
+}
+
+console.log("== 路由表：一条路由抛异常不连累请求 ==");
+{
+  const page = boot({});
+  const st = page.sandbox.__MAGIACN_STATE__;
+  st.route({
+    name: "t:boom",
+    test: () => { throw new Error("test 炸了"); },
+    request: () => { throw new Error("不该跑到"); }
+  });
+  st.route({
+    name: "t:boom2",
+    test: () => true,
+    response: () => { throw new Error("response 炸了"); }
+  });
+  const canned = cannedPage();
+  let out;
+  let threw = false;
+  try { out = page.roundtrip("POST", PAGE_URL, null, canned); } catch (e) { threw = true; }
+  check("请求本身没被带崩", threw === false);
+  check("其余路由照常工作", out && out.userDeckList instanceof Array);
+}
+
+// ── 9. 「还没有人用 answer」是一句会过期的话，钉住它 ──────────────
+//
+// README 和脚本头部都写着「目前没有任何一条路由用 answer」。这种话最会悄悄
+// 变成谎话：谁顺手加一条，文档不会自己更新，而下一个人会照着那句话去信任
+// 「本地应答还没启用」。这条判据让「加第一条 answer」变成一个必须同时改文档
+// 的动作——不是禁止，是逼着表态。
+//
+// 判据读源码而不是问运行时：运行时只看得到 __MAGIACN_STATE__.route 登记的那些，
+// 而这里要管的恰恰是文件里内置的那几条。
+console.log("== 内置路由尚未启用 answer ==");
+{
+  const builtin = src.match(/\broute\(\{[\s\S]*?\n  \}\);/g) || [];
+  check("内置路由抓得到（正则没失效）", builtin.length === 3);
+  const withAnswer = builtin.filter((b) => /(^|[^.\w])answer\s*:/.test(b));
+  check("没有任何内置路由登记 answer" +
+        (withAnswer.length ? "  —— 有了就要同步改 README 与脚本头部那句话" : ""),
+        withAnswer.length === 0);
 }
 
 console.log("");

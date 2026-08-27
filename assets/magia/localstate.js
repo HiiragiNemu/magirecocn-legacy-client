@@ -18,13 +18,30 @@
  * 的响应到达前端之前**把它换成我们记住的那份。前端的 responseSetStorage 从响应
  * 读进 storage，它读到什么就信什么——这一点在 backboneCommon.js 里是无条件的。
  *
- * ── 两条路 ──────────────────────────────────────────────────────────
+ * ── 三种介入方式，由一张路由表统一登记 ──────────────────────────────
  *
- *   写：XHR.send 拦 userDeck/save 与两个 bulkSave 的请求体（savePrm 形状），存起来
- *   读：XHR 响应里出现 userDeckList 就用存下来的覆盖/补齐
+ *   request(url, body)     看请求体（唯一能看到 POST body 的地方）
+ *   response(json, url)    改响应，返回是否动过
+ *   answer(url, body)      **整份本地应答**，返回字符串即不发网络请求
  *
  * 请求体只有在 JS 层拿得到——Java 侧的 shouldInterceptRequest 看不见 POST body
  * （WebResourceRequest 没有 getBody），这是本脚本必须存在的直接原因。
+ *
+ * 为什么要是一张表而不是几个 if：2026-08-27 的真机日志把整条战斗链路摊开了，
+ * 全部走 WebView，全部是这一层看得见的 XHR：
+ *
+ *     MainQuest → MainQuestBranch → QuestBattleSelect → SupportSelect
+ *       → DeckFormation → quest/start（敌人配置）→ …战斗在 native 跑…
+ *       → QuestResult（结果回传）
+ *
+ * 也就是说「服务端要做的事」在这一层是**可枚举**的。要往那个方向走，就不能每
+ * 加一条端点就在 send/onreadystatechange 里多插一段 if——那会长成没人敢动的
+ * 一坨。表的形状逼着每条端点自报「我拦哪个 path、我是改响应还是整份自己答」。
+ *
+ * ⚠ 目前**没有任何一条路由用 answer**：本地应答要先有那个端点的真实响应样本
+ * （归档里的 magica/api/<路径>/NNN.json），照着形状答才有意义；照猜的形状答
+ * 只会把前端弄崩，而且崩在离原因很远的地方。机制先立好，第一条何时登记是另一
+ * 件事，见 tools/localstate-js-test.js 里对 answer 的判据。
  *
  * 落盘走 CNLocalState（addJavascriptInterface 挂进来的 Java 桥），不是
  * localStorage——理由见 CNWebStateBridge 的类注释。
@@ -233,6 +250,40 @@
     }
   }
 
+  // ── 路由表 ──────────────────────────────────────────────────────
+  //
+  // 一条路由 = { name, test(url), request?, response?, answer? }，三个钩子都可选：
+  //
+  //   request(url, body)      纯观察，看得到 POST 体。不返回值。
+  //   response(json, url)     就地改 json，返回 true 表示动过（动过才重新序列化）。
+  //   answer(url, body)       返回字符串 = 这一条**不出网**，就用这份当响应；
+  //                           返回 null/undefined = 照常发出去。
+  //
+  // test 返回 false 的路由三个钩子都不跑。test 恒真的路由（如攒阵形）也允许，
+  // 但要在 name 上写清楚，否则一眼看不出它对全站生效。
+
+  var ROUTES = [];
+  var STATS = {};
+
+  function route(def) {
+    ROUTES.push(def);
+    STATS[def.name] = { req: 0, res: 0, ans: 0 };
+  }
+
+  function bump(name, kind) {
+    var s = STATS[name];
+    if (s) s[kind]++;
+  }
+
+  /* 钩子里抛出去会连累前端的请求本身，所以每条路由都各自兜住。 */
+  function safe(fn, a, b) {
+    try { return fn(a, b); } catch (e) { return undefined; }
+  }
+
+  function matches(r, url) {
+    try { return !!r.test(url); } catch (e) { return false; }
+  }
+
   // ── 捕获 ────────────────────────────────────────────────────────
 
   /* 这三个端点的请求体就是玩家的编队意图，是本脚本唯一的信息来源。 */
@@ -258,6 +309,32 @@
     if (changed) save(NS_DECK, decks);
   }
 
+  // ── 登记 ────────────────────────────────────────────────────────
+  //
+  // 现有行为原样搬过来，一条不多一条不少：编队捕获 + 编队覆盖 + 攒阵形。
+  // 顺序有意义：攒阵形排在覆盖之前，因为 toRow 会去 sheets 里找 formationSheet
+  // ——同一份响应里既带着新阵形又带着 userDeckList 时，先攒后覆盖才拼得出格子。
+
+  route({
+    name: "deck:capture",
+    test: isDeckSave,
+    request: function (url, body) {
+      if (typeof body === "string") capture(url, body);
+    }
+  });
+
+  route({
+    name: "sheet:harvest(全站)",
+    test: function () { return true; },
+    response: function (json) { harvestSheets(json); return false; }
+  });
+
+  route({
+    name: "deck:overlay(全站)",
+    test: function () { return true; },
+    response: function (json) { return overlay(json); }
+  });
+
   // ── XHR 挂钩 ────────────────────────────────────────────────────
   //
   // 直接挂 XMLHttpRequest.prototype 而不是 jQuery.ajaxPrefilter：本脚本注入
@@ -278,11 +355,83 @@
 
   var origSend = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.send = function (body) {
+    var url = this.__cnStateUrl || "";
+    var i, r;
     try {
-      if (isDeckSave(this.__cnStateUrl || "") && typeof body === "string") capture(this.__cnStateUrl, body);
+      for (i = 0; i < ROUTES.length; i++) {
+        r = ROUTES[i];
+        if (!r.request || !matches(r, url)) continue;
+        safe(r.request, url, body);
+        bump(r.name, "req");
+      }
+      // answer 排在 request 之后：先让所有观察者看过这次请求体，再决定出不出网。
+      // 否则一条路由自己答掉，另一条就永远看不到玩家干了什么。
+      for (i = 0; i < ROUTES.length; i++) {
+        r = ROUTES[i];
+        if (!r.answer || !matches(r, url)) continue;
+        var out = safe(r.answer, url, body);
+        if (typeof out !== "string") continue;
+        bump(r.name, "ans");
+        if (serveLocal(this, out)) return;    // 不出网
+        break;                                // 伪造失败就照常发，别再问下一条
+      }
     } catch (e) {}
     return origSend.apply(this, arguments);
   };
+
+  /*
+   * 本地整份应答：不发网络请求，直接把 text 当成这次 XHR 的响应交给前端。
+   *
+   * ⚠ 这是整个脚本里唯一「无中生有」的地方，做不到就必须**如实失败**——
+   * 返回 false 让调用方照常发出去，而不是留下一个半死的 XHR。前端拿着一个
+   * readyState=4 但 status=0 的对象，报出来的错会离原因十万八千里。
+   *
+   * 伪造的范围有意划得很窄：readyState / status / statusText / responseText /
+   * response，外加把 readystatechange 与 load 派发一遍。**没有响应头**——
+   * getAllResponseHeaders 仍是原样，谁要是依赖它就会看到空的。第一条真的
+   * answer 路由登记之前，这一点得先确认前端不在乎。
+   *
+   * 异步派发（setTimeout 0）而不是同步：真实 XHR 的 send() 一定是先返回、
+   * 回调后到。同步派发会让前端在自己还没写完 onreadystatechange 的时候就被回调，
+   * 那种 bug 只在真机上偶发。
+   */
+  function serveLocal(xhr, text) {
+    var body;
+    try {
+      var wantJson = xhr.responseType === "json";
+      body = wantJson ? JSON.parse(text) : text;
+    } catch (e) {
+      return false;                 // 自己给的东西都解析不了，别硬来
+    }
+    try {
+      define(xhr, "readyState", 4);
+      define(xhr, "status", 200);
+      define(xhr, "statusText", "OK");
+      define(xhr, "responseText", text);
+      define(xhr, "response", body);
+    } catch (e) {
+      return false;
+    }
+    var fire = function () {
+      try { if (typeof xhr.onreadystatechange === "function") xhr.onreadystatechange(); } catch (e) {}
+      try { if (typeof xhr.dispatchEvent === "function") xhr.dispatchEvent(mkEvent("readystatechange")); } catch (e) {}
+      try { if (typeof xhr.onload === "function") xhr.onload(); } catch (e) {}
+      try { if (typeof xhr.dispatchEvent === "function") xhr.dispatchEvent(mkEvent("load")); } catch (e) {}
+    };
+    if (typeof setTimeout === "function") setTimeout(fire, 0); else fire();
+    return true;
+  }
+
+  function define(obj, name, value) {
+    Object.defineProperty(obj, name, { value: value, configurable: true, writable: true });
+  }
+
+  function mkEvent(type) {
+    try {
+      if (typeof Event === "function") return new Event(type);
+    } catch (e) {}
+    return { type: type };
+  }
 
   /*
    * 把覆盖结果写回这个 XHR 的响应。
@@ -297,12 +446,12 @@
    */
   function applyToResponse(xhr) {
     var type = xhr.responseType;
+    var url = xhr.__cnStateUrl || "";
 
     if (type === "json") {
       var obj = xhr.response;
       if (!obj || typeof obj !== "object") return;
-      harvestSheets(obj);
-      overlay(obj);
+      runResponseRoutes(obj, url);   // 就地改，前端拿到的就是改过的，不必回写
       return;
     }
 
@@ -318,8 +467,7 @@
     try { json = JSON.parse(text); } catch (e) { return; }
     if (!json || typeof json !== "object") return;
 
-    harvestSheets(json);
-    if (!overlay(json)) return;      // 没动过就别重新序列化，白费一次大字符串
+    if (!runResponseRoutes(json, url)) return;   // 没动过就别重新序列化，白费一次大字符串
 
     var out = JSON.stringify(json);
     try {
@@ -330,10 +478,40 @@
     } catch (e) {}
   }
 
-  // 给前端/调试用的小口子：看当前存了什么、或者整份清掉。
+  /*
+   * 跑一遍 response 钩子，返回「有没有人动过 json」。
+   *
+   * ⚠ 不能在第一个返回 true 的地方短路：路由之间是叠加关系不是择一关系
+   * （攒阵形不改 json 但必须跑，编队覆盖要跑在它之后）。「动过」是或运算。
+   */
+  function runResponseRoutes(json, url) {
+    var touched = false;
+    for (var i = 0; i < ROUTES.length; i++) {
+      var r = ROUTES[i];
+      if (!r.response || !matches(r, url)) continue;
+      if (safe(r.response, json, url) === true) {
+        touched = true;
+        bump(r.name, "res");
+      }
+    }
+    return touched;
+  }
+
+  // 给前端/调试用的小口子：看当前存了什么、路由各命中多少次、或者整份清掉。
+  //
+  // stats 不只是好看：要判断「某条端点该不该本地答」，第一步就是知道它一局里
+  // 到底被叫了几次。chrome://inspect 里敲 __MAGIACN_STATE__.stats() 就有。
   window.__MAGIACN_STATE__ = {
     decks: function () { return decks; },
     sheets: function () { return sheets; },
+    routes: function () {
+      var out = [];
+      for (var i = 0; i < ROUTES.length; i++) out.push(ROUTES[i].name);
+      return out;
+    },
+    stats: function () { return STATS; },
+    /* 让别处（将来的前端包）也能登记路由，不必改这个文件。 */
+    route: route,
     reset: function () {
       decks = {};
       sheets = {};
