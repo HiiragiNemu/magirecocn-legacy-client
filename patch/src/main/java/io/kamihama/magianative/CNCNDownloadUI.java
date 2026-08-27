@@ -688,11 +688,18 @@ public class CNCNDownloadUI {
     /**
      * 资源行那颗按钮的最小宽度，单位 em（≈ 一个汉字宽）。
      *
-     * <p>取 4，是因为三个文案里最宽的「确认重下」正好四个字。<b>这个数不是留白
-     * 偏好，是布局不变量</b>：按钮是这一行右边界的锚点（见建行处的注释），宽度
-     * 一变，左边的文字进度就跟着晃。改文案前先数字数——多一个字就要改这里。
+     * <p><b>这个数不是留白偏好，是布局不变量</b>：按钮是这一行右边界的锚点
+     * （见建行处的注释），宽度一变，左边的文字进度就跟着晃。所以它必须 ≥ 最宽
+     * 的那个文案的字数，{@code check-download-ui-contract.py} 会从源码里把三个
+     * 文案抠出来数一遍再比对——改文案不用记得回来改这里，守卫会当场提醒。
+     *
+     * <p>取 2：三个文案「重试」「重下」「确认」都是两个字，按钮因此正好是它的
+     * 自然宽度，一个像素都不浪费。上膛文案原先是「确认重下」（四个字），那会让
+     * <b>每一行的文件名永久少两个汉字的宽度</b>——只为一个持续 3 秒的瞬时状态
+     * 买单，而 150% 字号下那两个汉字尤其显眼。缩成「确认」之后语义没丢：按钮
+     * 同时从紫变红，颜色与文案一起说「再点一下就真动手了」。
      */
-    private static final int ACTION_MIN_EMS = 4;
+    private static final int ACTION_MIN_EMS = 2;
 
     private static final List<SlotViews> slotList = new ArrayList<SlotViews>();
 
@@ -1645,8 +1652,8 @@ public class CNCNDownloadUI {
      * <h3>「重下」为什么要两击</h3>
      *
      * 它贴在文字进度旁边，而且对一个<b>已经装好</b>的包按下去意味着整包重来
-     * （03 那种是 1.4 GB）。第一击只把文案换成「确认重下」并上膛 3 秒，第二击
-     * 才真动手；3 秒内没有第二击就自己撤销。
+     * （03 那种是 1.4 GB）。第一击只把文案换成「确认」<b>并同时变红</b>、上膛
+     * 3 秒，第二击才真动手；3 秒内没有第二击就自己撤销。
      *
      * <p>没有做成弹窗：{@code isModalOpen} 已经挂了八个模态框，每加一个都要连带
      * 改主题切换时的树迁移与 hide() 的清场（X-C8 那条教训）。两击把确认放在按钮
@@ -1694,7 +1701,7 @@ public class CNCNDownloadUI {
 
     /** 按当前身份刷新那颗按钮的文案与底色。文案没变就什么都不做。 */
     private static void applySlotAction(SlotViews sv, boolean failed, boolean armed) {
-        String want = failed ? "重试" : (armed ? "确认重下" : "重下");
+        String want = failed ? "重试" : (armed ? "确认" : "重下");
         if (want.equals(sv.actionLabel)) return;
         sv.actionLabel = want;
         sv.actionView.setText(want);
@@ -1905,12 +1912,13 @@ public class CNCNDownloadUI {
             // 文字进度头上，所以要用**同一招**堵死，而且这次是两道：
             //
             //   ① 按钮常驻（不再「失败才冒出来」），出现与否不改变行宽；
-            //   ② 按钮宽度**恒定**——setMinEms(ACTION_MIN_EMS) 按最宽的那个文案
-            //      （「确认重下」四个字）留位。文案在 重下/重试/确认重下 之间换时
-            //      宽度不变，文字进度的右边界因此也不动。
+            //   ② 按钮宽度**恒定**——setMinEms(ACTION_MIN_EMS) 兜住下限。三个文案
+            //      「重试」「重下」「确认」都是两个字，宽度天然不变，文字进度的
+            //      右边界因此也不动；minEms 是把这条不变量写出来、让守卫钉得住，
+            //      而不是靠「碰巧都两个字」。
             //
             // 用 em 而不是 dp：字号会被 CNDownloadUiAssist 的缩放改，em 跟着字号
-            // 走，dp 不跟——写死 dp 的话，玩家把字调大一档「确认重下」就被挤出去了。
+            // 走，dp 不跟——写死 dp 的话，玩家把字调大一档文案就被挤出去了。
             TextView action = new TextView(act);
             action.setText("重下");
             action.setTextColor(0xFFFFFFFF);
@@ -4334,7 +4342,7 @@ public class CNCNDownloadUI {
 
                 // 一颗按钮两个身份：失败=重试（红），其余=重下（紫，两击确认）。
                 // 上膛超时由这里统一撤销——点完就走开的玩家回来时不该看到
-                // 一颗还端着「确认重下」的按钮。
+                // 一颗还端着红色「确认」的按钮。
                 boolean slotFailed = (st == 3);
                 if (slotFailed) sv.armedUntilMs = 0L;
                 applySlotAction(sv, slotFailed, sv.armed(nowMs));
