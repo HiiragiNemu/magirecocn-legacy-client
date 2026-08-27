@@ -1868,14 +1868,43 @@ static void probeEndpointSlots(void* self) {
     }
     lastProbe.store(now, std::memory_order_relaxed);
 
+    // ⚠ 下面这一行汇总不是可有可无的调试残留，它是**这段探测唯一的存在证明**。
+    //
+    // 2026-08-27 的三份真机日志（0131/0132/0134，其中 0134 还完整打了一场主线
+    // 战斗）里，[proxy] 只有 web 那两行，api / chat 一条都没有——而钩子明明装上了
+    // （日志里 `[Hook] ✓ proxy: UrlConfig::api(只读观测)`，34 成功 0 失败）。
+    // 「没有输出」当时对应三种完全不同的事实，而日志里长得一模一样：
+    //
+    //   ① probeEndpointSlots 压根没跑到（节流/CAS 抢名额失败/根本没被调用）；
+    //   ② 跑了，但 getter 返回 nullptr，一个槽位都没读到；
+    //   ③ 读到了，但 endpointObserve 因为去重把每一条都咽了。
+    //
+    // 三者指向的下一步完全相反，而当时无从分辨——这正是 endpointObserve 自己
+    // 那段注释里记着的同一个教训（「getter 没被调用」与「调用了但没命中」压成
+    // 同一种沉默），只是这次沉默发生在更外面一层。所以补一行：跑过就留痕，
+    // 读到几个、其中几个非空，一行说清。每轮最多一行，八轮封顶，不吵。
+    int apiRead = 0, apiNonEmpty = 0, chatRead = 0, chatNonEmpty = 0;
     for (int t = 0; t < URLCFG_API_SLOTS; t++) {
         const std::string* v = urlConfigApiOld ? urlConfigApiOld(self, t) : nullptr;
-        if (v) endpointObserve(0, t, *v, "api");
+        if (v) {
+            apiRead++;
+            if (!v->empty()) apiNonEmpty++;
+            endpointObserve(0, t, *v, "api");
+        }
     }
     for (int t = 0; t < URLCFG_CHAT_SLOTS; t++) {
         const std::string* v = urlConfigChatOld ? urlConfigChatOld(self, t) : nullptr;
-        if (v) endpointObserve(2, t, *v, "chat");
+        if (v) {
+            chatRead++;
+            if (!v->empty()) chatNonEmpty++;
+            endpointObserve(2, t, *v, "chat");
+        }
     }
+    LOGI("[proxy] 主动探测第 %d 轮：api 读到 %d/%d（非空 %d），chat 读到 %d/%d（非空 %d）"
+         "%s",
+         done + 1, apiRead, URLCFG_API_SLOTS, apiNonEmpty,
+         chatRead, URLCFG_CHAT_SLOTS, chatNonEmpty,
+         (urlConfigApiOld && urlConfigChatOld) ? "" : "  ⚠ 有 getter 指针是空的（钩子没装上）");
 }
 
 static const std::string* urlConfigApiNew(void* self, int type) {

@@ -84,6 +84,22 @@ def validate(text):
         if "endpointRewrite(" in body:
             problems.append("%s 禁止调用 endpointRewrite；这会复发战斗错误 336142563。" % name)
 
+    # 主动探测必须留痕。2026-08-27 三份真机日志里 [proxy] 只有 web 那两行，
+    # api/chat 一条都没有，而钩子明明装上了——「没有输出」当时同时对应「没跑到」
+    # 「getter 返回 null」「读到了但被去重咽了」三种事实，指向的下一步完全相反，
+    # 而日志里长得一模一样。汇总行是这段探测唯一的存在证明，删了就退回那种沉默。
+    probe = function_body(text, "probeEndpointSlots")
+    if probe is None:
+        problems.append("找不到 probeEndpointSlots 的完整函数体。")
+    else:
+        if "主动探测第" not in probe:
+            problems.append(
+                "probeEndpointSlots 必须打一行汇总（读到几个槽位、其中几个非空）："
+                "没有它，「没跑到」与「跑了但读不到」在日志里分不开。")
+        for var in ("apiRead", "chatRead", "apiNonEmpty", "chatNonEmpty"):
+            if var not in probe:
+                problems.append("probeEndpointSlots 的汇总缺 %s 计数。" % var)
+
     return problems
 
 
