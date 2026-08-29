@@ -415,24 +415,26 @@ public class CNCNDownloadUI {
     private static final int KIND_SUB   = 3;
 
     private static final int[] CREDIT_KINDS = {
-        KIND_TITLE, KIND_ITEM, KIND_SUB, KIND_HEAD, KIND_ITEM, KIND_ITEM,
-        KIND_ITEM, KIND_HEAD, KIND_ITEM, KIND_ITEM, KIND_ITEM, KIND_ITEM, KIND_ITEM
+        KIND_TITLE, KIND_ITEM, KIND_HEAD, KIND_ITEM, KIND_SUB, KIND_ITEM,
+        KIND_SUB, KIND_HEAD, KIND_ITEM, KIND_ITEM, KIND_HEAD, KIND_ITEM,
+        KIND_ITEM, KIND_ITEM
     };
 
     private static final String[] CREDIT_TEXTS = {
         "魔法纪录Totentanz中文化",
-        "【核心逆向开发】MadeInMagius【B站ID】",
-        "(独立完成汉化引擎以及下载系统和日服国服资源合并)",
-        "其他个人网站",
+        "项目官网：" + CNEndpoints.HOME_HOST,
+        "主力人员",
+        "【汉化主力和资源整理】MadeInMagius（点击赞助）",
+        "bilibili个人主页",
+        "【程序主力和国内加速】CyberNova/PhotonFlow（点击赞助）",
+        "bilibili个人主页",
+        "其他协助者",
+        "【国服外翻译和校对】水银h2oag（点击个人主页）",
+        "【国服数据留存】segfault（点击个人主页）",
+        "友情链接",
         CNEndpoints.site(0) + "【魔法纪录剧情中日双语阅读网站】",
         CNEndpoints.site(1) + "【MagiaExedra和魔法纪录Live2D网站】",
-        CNEndpoints.site(2) + "【魔法少女称呼关系搜索与身高对比网站】",
-        "【协助与鸣谢】",
-        "国服文件之外的翻译和校对：水银h2oag【阅读器网站为主，资源已同步至游戏】",
-        "下载加速及资源自动化推送：CyberNova",
-        "国服数据留存：segfault",
-        "项目官网：" + CNEndpoints.HOME_HOST + "【通往其他个人网站和提供联系方式】",
-        "bilibili视频教程：BV1faRiBBExk"
+        CNEndpoints.site(2) + "【魔法少女称呼关系搜索与身高对比网站】"
     };
 
     /**
@@ -443,18 +445,19 @@ public class CNCNDownloadUI {
      */
     private static final String[] CREDIT_URLS = {
         "",                                                     // 标题
-        "https://b23.tv/aNjcz1p",                               // MadeInMagius
-        "",                                                     // 说明
-        "",                                                     // 「其他个人网站」小标题
+        CNEndpoints.HOME_URL,                                   // 项目官网
+        "",                                                     // 「主力人员」小标题
+        "https://afdian.com/a/madeinmagius",                    // MadeInMagius（赞助）
+        "https://b23.tv/aNjcz1p",                               // MadeInMagius 个人主页
+        "https://afdian.com/a/cybernova",                       // CyberNova/PhotonFlow（赞助）
+        "https://b23.tv/9vyRcI8",                               // CyberNova/PhotonFlow 个人主页
+        "",                                                     // 「其他协助者」小标题
+        "https://b23.tv/ovvbrNw",                               // 水银h2oag
+        "https://b23.tv/xjXW9DI",                               // segfault
+        "",                                                     // 「友情链接」小标题
         CNEndpoints.siteUrl(0),
         CNEndpoints.siteUrl(1),
-        CNEndpoints.siteUrl(2),
-        "",                                                     // 「协助与鸣谢」小标题
-        "https://b23.tv/ovvbrNw",                               // 水银h2oag
-        "https://b23.tv/9vyRcI8",                               // CyberNova
-        "https://b23.tv/xjXW9DI",                               // segfault
-        CNEndpoints.HOME_URL,
-        "https://www.bilibili.com/video/BV1faRiBBExk"
+        CNEndpoints.siteUrl(2)
     };
 
     /**
@@ -466,18 +469,19 @@ public class CNCNDownloadUI {
      */
     private static final String[] CREDIT_LINK_SPANS = {
         "",
-        "MadeInMagius",
+        CNEndpoints.HOME_HOST,
         "",
+        "MadeInMagius",
+        "个人主页",
+        "CyberNova/PhotonFlow",
+        "个人主页",
+        "",
+        "水银h2oag",
+        "segfault",
         "",
         CNEndpoints.site(0),
         CNEndpoints.site(1),
-        CNEndpoints.site(2),
-        "",
-        "水银h2oag",
-        "CyberNova",
-        "segfault",
-        CNEndpoints.HOME_HOST,
-        "BV1faRiBBExk"
+        CNEndpoints.site(2)
     };
 
     /**
@@ -498,8 +502,8 @@ public class CNCNDownloadUI {
 
     /** 底部常驻署名条：原先塞在速度行里的那句长文案，原文保留。 */
     private static final String FOOTER_CREDIT =
-        "核心开发: B站 @MadeInMagius【B站xhs tx同名】 | 国内加速+修复：@PhotonFlow "
-        + "| 如果需要联系请先b站私信，会提供群聊 | 该游戏支持后续剧情更新";
+        "汉化主力与资源整理: B站 @MadeInMagius | 程序主力和国内加速：@CyberNova/PhotonFlow "
+        + "| 如需联系请先B站私信，将提供群聊 | 该游戏支持后续剧情更新";
 
     // ---- 云端可配的署名内容 ----
     //
