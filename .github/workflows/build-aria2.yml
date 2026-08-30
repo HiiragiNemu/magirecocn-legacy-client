@@ -28,7 +28,7 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: 📦 检出仓库
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 📥 下载并钉死 NDK r25c（与 main 主机验证配方完全一致）
         # runner 自带 NDK 已漂到 r26+：verify_so 的 armv7 校验读 r25c 专属
@@ -185,7 +185,7 @@ jobs:
               push "https://x-access-token:${}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main
 
       - name: 🚚 上传产物（.so + 清单 + 构建日志）
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: libaria2c-so
           path: |

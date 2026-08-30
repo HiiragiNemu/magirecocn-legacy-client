@@ -35,7 +35,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: 📦 检出仓库
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # F-020：祖先校验需要全量历史（fetch-depth: 0）。
           # X-C3：不把 PAT 写进 .git/config（http.extraheader）。默认开启时，
@@ -46,7 +46,7 @@ jobs:
           fetch-depth: 0
 
       - name: ☕ 设置 JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'

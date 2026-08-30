@@ -41,7 +41,7 @@ jobs:
       contents: write   # 只有这一项需要写提交评论
     steps:
       - name: 📦 检出（全量历史）
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -100,7 +100,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 📦 检出
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0   # BEFORE 可能落后好几个提交，浅拉取 diff 不到
 

@@ -63,7 +63,7 @@ jobs:
       # 那一列要拿 origin/main 比。浅克隆下这列会整列写错而不报错——脚本里
       # require_main() 就是拦这个的。
       - name: 📦 检出仓库（全量历史 + 全部 tag）
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -119,7 +119,7 @@ jobs:
 
       # 索引与校验和很小，永远留一份在 artifact 里，方便事后查「当时备份了什么」。
       - name: 📤 索引与校验和（artifact）
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: archive-tags-index
           path: |
@@ -131,7 +131,7 @@ jobs:
       # 否则这次运行等于白跑。
       - name: 📤 bundle（artifact，仅未上传时）
         if: ${{ !inputs.upload }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: archive-tags-bundle
           path: work/archive/*.bundle
