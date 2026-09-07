@@ -47,7 +47,7 @@ jobs:
 
       - name: 🔍 检查 24h 内同文件改动
         env:
-          : ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
@@ -80,7 +80,7 @@ jobs:
             BODY=$(printf '⚠️ **并发预警**：本次提交改动的文件中，有以下文件在 24 小时内被**其他人/会话**改过（仅提醒，不阻断）：\n\n%s\n\n建议开工前先 `git pull --rebase`，并在 ACTIVE.md 登记自己在动哪片。' "$WARN")
             printf '%s' "$BODY" | python3 -c 'import json,sys; print(json.dumps({"body": sys.stdin.read()}))' > /tmp/comment.json
             curl -sS -X POST \
-              -H "Authorization: Bearer ${}" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
               "https://api.github.com/repos/${REPO}/commits/${AFTER}/comments" \
               -d @/tmp/comment.json > /dev/null

@@ -837,7 +837,11 @@ jobs:
           # 目标地址由仓库变量给，不写死：它随部署走，换目标时不该改代码。
           # 它也不是安全边界——真正的保证来自 token 权限与内容 hash。
           # 缺了就直接失败，别静默发去一个错地方。
-          SYNC_REPO: ${{ secrets.SYNC_REPO }}
+          # 仓库里真实存在的 secret 名是 TARGET_REPO（2026-08-24 由两个上下游
+          # 名字合并而来，见 README）。这里的 env 键名 SYNC_REPO 是本步骤内部叫法，
+          # 下面 run 块通篇引用它，保持不变；改的是右边取哪个 secret——取一个不
+          # 存在的名字会静默拿到空串，而下一行的判空提示写的正是 TARGET_REPO。
+          SYNC_REPO: ${{ secrets.TARGET_REPO }}
         run: |
           set -euo pipefail
           SRC=.build/legacy-client.apk
@@ -867,7 +871,7 @@ jobs:
           # 先问 token 自己是谁，顺带把有效期打出来——过期是这条路最常见的
           # 死法，而它到期前一天和到期后一天在配置界面上长得一模一样。
           WHO=$(curl -sS -o /tmp/who.json -D /tmp/who.hdr -w '%{http_code}' \
-                -H "Authorization: Bearer ${}" \
+                -H "Authorization: Bearer ${GH_TOKEN}" \
                 -H "Accept: application/vnd.github+json" \
                 https://api.github.com/user || echo 000)
           if [ "$WHO" = "401" ]; then
@@ -892,7 +896,7 @@ jobs:
           # 再确认够得着 SYNC_REPO。403 与 404 分开报：无权限时 GitHub 回的可能是
           # 404，不写清楚会让人以为 release 被删了。
           UP=$(curl -sS -o /dev/null -w '%{http_code}' \
-               -H "Authorization: Bearer ${}" \
+               -H "Authorization: Bearer ${GH_TOKEN}" \
                -H "Accept: application/vnd.github+json" \
                "https://api.github.com/repos/$SYNC_REPO/releases/tags/latest" || echo 000)
           case "$UP" in
