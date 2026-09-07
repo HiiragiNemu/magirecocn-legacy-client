@@ -123,7 +123,8 @@ jobs:
                    ManualRedownloadTest ArchiveInstallTxTest DownloadConcurrencyTest \
                    HotUpdateRoutingTest UiAssistStateTest DebugBridgeTest \
                    PathsTest LogFormatTest DownloadModeTest DebugOverlayTest \
-                   DiskSpaceTest ZipPlanTest InstallCompleteTest LocalStoreTest; do
+                   DiskSpaceTest ZipPlanTest InstallCompleteTest LocalStoreTest \
+                   OverlayLayoutTest; do
             java $JLIB -cp .build-test:.cache/deps/orgjson.jar:.cache/deps/android.jar $t
           done
           # DownloadRestartStateTest 在 io.kamihama.magianative 包里（要访问
