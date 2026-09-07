@@ -151,13 +151,24 @@ jobs:
             | sudo tee /usr/local/bin/baksmali > /dev/null
           sudo chmod +x /usr/local/bin/baksmali
 
-          # ── Android SDK build-tools（d8 / zipalign / apksigner）──────
-          BT_DIR="$(ls -d "${ANDROID_HOME}"/build-tools/*/ 2>/dev/null | sort -r | head -1 || true)"
-          if [ -z "${BT_DIR}" ]; then
-            yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "build-tools;34.0.0" > /dev/null
-            BT_DIR="$(ls -d "${ANDROID_HOME}"/build-tools/*/ | sort -r | head -1)"
+          # ── Android SDK build-tools（d8 / zipalign / apksigner / aapt）──
+          # **钉死版本**，不再「取 runner 上最新的那个」。原先那种写法等于让 d8
+          # 与签名工具跟着 runner 镜像漂：镜像一换，产出的 dex 就换了一套工具链，
+          # 而这件事不会有任何输出提到它。d8 的 desugar 行为与 minSdk 21 强相关，
+          # 正是最不该浮动的一环。
+          #
+          # ⚠ 不能钉 34.0.0。它带的是 R8 8.2.2-dev，在 CNAria2Lib.Backend（带构造
+          # 器的嵌套 enum）上直接崩 NullPointerException——那是 CLAUDE.md 铁律 4
+          # 记的两种形状**之外的第三种**，2026-09-07 本地实测。旧写法一直取
+          # runner 上最新的 build-tools，所以从没撞上；一钉到文档里那个 34.0.0
+          # 就必崩。铁律 4 的两条判据仍然成立，只是那个 d8 版本本身已经不能用了。
+          BT_VER="37.0.0"
+          BT_DIR="${ANDROID_HOME}/build-tools/${BT_VER}"
+          if [ ! -d "${BT_DIR}" ]; then
+            yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "build-tools;${BT_VER}" > /dev/null
           fi
-          echo "BT_DIR=${BT_DIR%/}" >> "$GITHUB_ENV"
+          [ -x "${BT_DIR}/d8" ] || { echo "::error::build-tools ${BT_VER} 装不上"; exit 1; }
+          echo "BT_DIR=${BT_DIR}" >> "$GITHUB_ENV"
           echo "build-tools: ${BT_DIR}"
 
           apktool --version
@@ -453,15 +464,28 @@ jobs:
           # 取代原先包内两个预编译的 Dobby hook 库：
           #   libuwasa.so   一改：端点重定向（顺带按英文行宽重排剧情文本，正是要去掉的）
           #   libcn_hook.so 二改：拦引擎下载入口接我们的浮层
-          NDK_ROOT="${ANDROID_NDK_HOME:-}"
-          if [ -z "$NDK_ROOT" ] || [ ! -d "$NDK_ROOT" ]; then
-            NDK_BASE="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/ndk"
-            NDK_ROOT="$(ls -1d $NDK_BASE/* 2>/dev/null | sort -V | tail -1)"
+          # ── NDK 钉死 r27d（27.3.13750724 / clang 18.0.4）───────────────
+          # 原先是「取 runner 上最新的那个 NDK」。那等于让编译 libMagiaLegacy 的
+          # 工具链跟着镜像漂，而本仓库有两处对工具链敏感的硬约束：minSdk 21 的
+          # 目标 API，以及 check-native-string-layout.py 钉住的 libc++
+          # std::string 双 ABI 布局。编译器换个大版本，这两处都可能悄悄变，
+          # 而 CI 全绿——只有真机才炸。
+          #
+          # 版本从**已发布产物**反查确定：1.0.171 那个包里的 libMagiaLegacy.so
+          # 报 clang 18.0.4，对应 r27d。装不上或版本对不上一律硬失败，不回退到
+          # 「随便找一个」——那正是要根除的行为。
+          NDK_VER="27.3.13750724"
+          NDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}/ndk/${NDK_VER}"
+          if [ ! -d "$NDK_ROOT" ]; then
+            yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VER}" > /dev/null
           fi
-          if [ -z "$NDK_ROOT" ] || [ ! -d "$NDK_ROOT" ]; then
-            echo "::error::找不到 Android NDK"; exit 1
-          fi
-          echo "[NDK] 使用 $NDK_ROOT"
+          [ -d "$NDK_ROOT" ] || { echo "::error::NDK ${NDK_VER} 装不上"; exit 1; }
+          GOT_REV="$(sed -n 's/^Pkg.Revision = //p' "$NDK_ROOT/source.properties")"
+          [ "$GOT_REV" = "$NDK_VER" ] || { echo "::error::NDK 版本不符：${GOT_REV} ≠ ${NDK_VER}"; exit 1; }
+          # 连编译器本身也断言一次：NDK 版本号相同而 clang 被换掉，产物一样会变。
+          GOT_CLANG="$(head -1 "$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/AndroidVersion.txt")"
+          [ "$GOT_CLANG" = "18.0.4" ] || { echo "::error::clang 版本不符：${GOT_CLANG} ≠ 18.0.4"; exit 1; }
+          echo "[NDK] 使用 $NDK_ROOT（clang ${GOT_CLANG}）"
           # shadowhook v2.0.1 的 CMakeLists 要求 CMake >= 4.0.2
           # （magia-native/CMakeLists.txt 的 PATCH_COMMAND 已把它降回 3.22；
           # sed 降级补丁的命中由 FetchContent_MakeAvailable 之后的守卫显式
@@ -499,22 +523,16 @@ jobs:
             if [ -e "$f" ]; then echo "::error::$f 仍然存在，会与 libMagiaLegacy 冲突"; exit 1; fi
           done
 
-      - name: 🎵 转换 BGM：HCA → OGG（vgmstream + ffmpeg）
+      - name: 🎵 转换 BGM：HCA → OGG（vgmstream + oggenc）
         env:
-          # R4-04：FFmpeg 钉不可变 autobuild，从仓库 Variable 读取官方 digest。
           # vgmstream 可选校验（WARN 不阻断），从仓库 Variable 读取官方 digest。
-          FFMPEG_SHA256: ${{ vars.FFMPEG_SHA256 }}
           VGMS_SHA256: ${{ vars.VGMS_SHA256 }}
         run: |
           set -euo pipefail
           # assets 里的 BGM 是 CRI HCA 且 ciphType=56（加密），Android 放不了。
-          # vgmstream 自带 CRI 游戏的密钥库，能直接解；再用 ffmpeg 转 OGG。
+          # vgmstream 自带 CRI 游戏的密钥库，能直接解；再用 oggenc 编成 Vorbis。
           mkdir -p .cache/audio
 
-          # R4-04：FFmpeg 是浮动下载（latest 标签可重指）且随后 chmod +x 直接
-          # 执行——供应链投毒即 CI RCE。缓解：curl -f 拒绝 HTTP 错误页；FFmpeg
-          # 钉**不可变 autobuild**（URL 带时间戳 tag + GitHub Release API 的官方
-          # assets[].digest），摘要缺失/不符即硬失败。
           # vgmstream **不钉**（维护者决定 2026-08-19）：只做 HCA 音频解密转换、
           # 内置密钥库不删减、非关键路径；curl -f 已拒绝 HTTP 错误页。
           curl -fsSL -o .cache/audio/vgms.tar.gz \
@@ -533,19 +551,19 @@ jobs:
           VGMS="$(find .cache/audio/vgms -name vgmstream-cli -type f | head -1)"
           chmod +x "${VGMS}"
 
-          # ffmpeg：不走 apt（源不稳），直接拉 BtbN 的静态构建（含 libvorbis）。
-          # 钉不可变 autobuild-2026-08-18-15-03 的 ffmpeg-N-126207-g21bbd98e7b，
-          # 官方 digest = FFMPEG_SHA256 仓库 Variable。
-          : "${FFMPEG_SHA256:?缺少仓库变量 FFMPEG_SHA256；拒绝执行未钉摘要的 FFmpeg}"
-          curl -fsSL -o .cache/audio/ff.tar.xz \
-            "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-18-15-03/ffmpeg-N-126207-g21bbd98e7b-linux64-gpl.tar.xz"
-          echo "${FFMPEG_SHA256}  .cache/audio/ff.tar.xz" | sha256sum -c -
-          mkdir -p .cache/audio/ff
-          tar xJf .cache/audio/ff.tar.xz -C .cache/audio/ff
-          FF="$(find .cache/audio/ff -name ffmpeg -type f | head -1)"
-          chmod +x "${FF}"
+          # 编码器用 oggenc（vorbis-tools），不再拉 350MB 的 ffmpeg 静态包。
+          # 换掉的直接原因：原先钉的「不可变 autobuild」tag 已被上游删除（BtbN
+          # 只保留最近三十多个 autobuild），链接 404，这一步必红——「不可变」
+          # 这个前提本身就不成立。而这一步只需要「WAV 编成 Vorbis」一件事，
+          # oggenc 正是干这个的，发行版自带、1.4.2 十余年没动过。
+          # 质量标度与 libvorbis 的 -q:a 相同，参数含义不变。
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq vorbis-tools
+          OGGENC="$(command -v oggenc)"
+          [ -n "${OGGENC}" ] || { echo "::error::oggenc 装不上"; exit 1; }
+          oggenc --version
 
-          python3 tools/convert-bgm.py --vgmstream "${VGMS}" --ffmpeg "${FF}" --tree "${TREE}"
+          python3 tools/convert-bgm.py --vgmstream "${VGMS}" --oggenc "${OGGENC}" --tree "${TREE}"
 
           # 产物必须齐全：缺了浮层就没有 BGM。音频不是关键路径，只告警不阻断。
           for f in "${TREE}"/assets/magia/bgm1.ogg "${TREE}"/assets/magia/bgm2.ogg "${TREE}"/assets/magia/bgm.json; do

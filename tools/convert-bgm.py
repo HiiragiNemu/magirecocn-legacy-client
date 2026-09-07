@@ -11,9 +11,20 @@ OGG(Vorbis) 放进 assets/magia/。
 简单地整文件 setLooping()。两者的差别在于文件尾部那几百帧编码器 padding
 **不属于循环区**，整文件循环会把它放出来并在接缝留下空隙。
 
+## 为什么编码器是 oggenc 而不是 ffmpeg
+
+这一步只做一件事：把 vgmstream 解出来的 WAV 编成 Vorbis。为此曾经拉一个 350MB
+的 ffmpeg 静态包，按「不可变 autobuild」的 tag 加官方摘要钉死——**而那个 tag 在
+2026-09 被上游删了**（只保留最近三十多个 autobuild），钉死的前提本身不成立，
+链接 404，这一步必红。
+
+oggenc 来自 vorbis-tools，正是干这一件事的工具，1.4.2 从 2010 年至今没再动过，
+各发行版自带、apt 一行装好。依赖从「一个会消失的浮动二进制」变成「发行版包」。
+质量标度与 libvorbis 的 -q:a 相同，参数含义不变。
+
 用法：
-    python3 tools/convert-bgm.py                 # 需要 vgmstream-cli 与 ffmpeg 在 PATH
-    python3 tools/convert-bgm.py --vgmstream ... --ffmpeg ...
+    python3 tools/convert-bgm.py                 # 需要 vgmstream-cli 与 oggenc 在 PATH
+    python3 tools/convert-bgm.py --vgmstream ... --oggenc ...
 """
 
 import argparse
@@ -105,8 +116,9 @@ def probe_loop(vgmstream, path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--vgmstream", default="vgmstream-cli")
-    ap.add_argument("--ffmpeg", default="ffmpeg")
-    ap.add_argument("--quality", default="5", help="libvorbis -q:a，默认 5")
+    ap.add_argument("--oggenc", default="oggenc")
+    ap.add_argument("--quality", default="5",
+                    help="oggenc -q，默认 5（与 libvorbis 的 -q:a 同一标度）")
     # 工程树根。默认是当前目录（仓库自己那棵树）；CI 的 baseline 腿从 Totentanz 整包
     # 重建出另一棵树，源与产物都得落在那棵树里，而不是仓库根。
     ap.add_argument("--tree", default=".", help="客户端基线树根，默认当前目录")
@@ -173,12 +185,11 @@ def main():
             failed.append(name)
             continue
 
-        r = run(f'"{args.ffmpeg}" -y -hide_banner -loglevel error '
-                f'-i "{wav}" -c:a libvorbis -q:a {args.quality} "{ogg}"')
+        r = run(f'"{args.oggenc}" -Q -q {args.quality} -o "{ogg}" "{wav}"')
         if os.path.exists(wav):
             os.remove(wav)
         if r.returncode != 0 or not os.path.exists(ogg):
-            print(f"::error::ffmpeg 编码失败 {name}: {r.stderr.strip()[-800:]}")
+            print(f"::error::oggenc 编码失败 {name}: {r.stderr.strip()[-800:]}")
             failed.append(name)
             continue
 

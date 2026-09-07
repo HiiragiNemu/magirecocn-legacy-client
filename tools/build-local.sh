@@ -34,7 +34,7 @@
 #                    不低于线上 client.version 的值，如 1.0.9999）
 #   ENGINE           主下载引擎默认值 self|aria2c（默认 self）
 #   DEBUG_OVERLAY    1 = 编入调试悬浮窗并保留 SYSTEM_ALERT_WINDOW（默认 0，与正式包一致）
-#   VGMSTREAM / FFMPEG   BGM 转码工具；缺了只告警，包里没有浮层 BGM
+#   VGMSTREAM / OGGENC   BGM 转码工具；缺了只告警，包里没有浮层 BGM
 #   BASELINE_JAVA    重建基线树用的 java（需 JDK 19+；默认 PATH 上的 java）
 set -euo pipefail
 
@@ -194,14 +194,14 @@ done
 # ── 🎵 BGM：HCA → OGG ──────────────────────────────────────────────
 say "转换 BGM（HCA → OGG）"
 VGMS="${VGMSTREAM:-$(command -v vgmstream-cli || true)}"
-FF="${FFMPEG:-$(command -v ffmpeg || true)}"
-if [ -n "$VGMS" ] && [ -n "$FF" ]; then
-    python3 tools/convert-bgm.py --vgmstream "$VGMS" --ffmpeg "$FF" --tree "$TREE"
+OGGENC="${OGGENC:-$(command -v oggenc || true)}"
+if [ -n "$VGMS" ] && [ -n "$OGGENC" ]; then
+    python3 tools/convert-bgm.py --vgmstream "$VGMS" --oggenc "$OGGENC" --tree "$TREE"
     for f in bgm1.ogg bgm2.ogg bgm.json; do
         [ -s "$TREE/assets/magia/$f" ] || echo "⚠ 缺少 assets/magia/$f，本包浮层将没有 BGM"
     done
 else
-    echo "⚠ 找不到 vgmstream-cli 或 ffmpeg（可用 VGMSTREAM= / FFMPEG= 指定）——本包浮层将没有 BGM"
+    echo "⚠ 找不到 vgmstream-cli 或 oggenc（可用 VGMSTREAM= / OGGENC= 指定；oggenc 来自 vorbis-tools）——本包浮层将没有 BGM"
 fi
 
 # ── 🚂 注入主下载引擎 ───────────────────────────────────────────────
