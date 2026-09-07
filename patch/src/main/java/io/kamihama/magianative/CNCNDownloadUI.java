@@ -891,7 +891,7 @@ public class CNCNDownloadUI {
                 ViewGroup.LayoutParams.MATCH_PARENT);
         mainLp.leftMargin   = dp(act, 14) + dp(act, 14);
         mainLp.rightMargin  = dp(act, 14) + dp(act, 14);
-        main-hostMargin    = dp(act, 52) + dp(act, 12);
+        mainLp.topMargin    = dp(act, 52) + dp(act, 12);
         mainLp.bottomMargin = dp(act, 40) + dp(act, 12);
 
         HorizontalScrollView mainScroll = new HorizontalScrollView(act);
@@ -1274,7 +1274,7 @@ public class CNCNDownloadUI {
                 ViewGroup.LayoutParams.MATCH_PARENT);
         panelLp.leftMargin   = dp(act, 20);
         panelLp.rightMargin  = dp(act, 20);
-        panel-hostMargin    = dp(act, 20);
+        panelLp.topMargin    = dp(act, 20);
         panelLp.bottomMargin = dp(act, 20);
         logModal.addView(panel, panelLp);
 
@@ -1785,7 +1785,7 @@ public class CNCNDownloadUI {
                 LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT);
-                row-hostMargin = dp(act, 1);
+                rowLp.topMargin = dp(act, 1);
                 vContribList.addView(row, rowLp);
 
                 DotView dot = new DotView(act,
@@ -3585,7 +3585,7 @@ public class CNCNDownloadUI {
         if (fontScale >= 1.2f) {
             LinearLayout.LayoutParams qLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            q-hostMargin = dp(act, 10);
+            qLp.topMargin = dp(act, 10);
             LinearLayout.LayoutParams gLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             gLp.topMargin = dp(act, 10);
