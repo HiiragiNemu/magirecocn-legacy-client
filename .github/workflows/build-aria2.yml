@@ -121,7 +121,7 @@ jobs:
       - name: 🚚 替换仓库 .so + 刷新 pin + 提交（refresh_repo=true 时）
         if: ${{ inputs.refresh_repo }}
         env:
-          : ${{ secrets. }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           set -euo pipefail
           # 1) 替换 4 枚 .so

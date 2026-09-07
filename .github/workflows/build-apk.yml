@@ -197,7 +197,7 @@ jobs:
         env:
           BASELINE_APK_URL: ${{ secrets.BASELINE_APK_URL }}
           OVERLAY_URL: ${{ secrets.OVERLAY_URL }}
-          : ${{ secrets. }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
           TARGET_REPO: ${{ secrets.TARGET_REPO }}
           CLIENT_ROOT_DOMAIN: ${{ secrets.CLIENT_ROOT_DOMAIN }}
           CLIENT_PAGES_HOSTS: ${{ secrets.CLIENT_PAGES_HOSTS }}
@@ -814,7 +814,7 @@ jobs:
       - name: 🚀 发布 APK
         if: ${{ inputs.verify_only != true }}
         env:
-          : ${{ secrets. }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
           # 目标地址由仓库变量给，不写死：它随部署走，换目标时不该改代码。
           # 它也不是安全边界——真正的保证来自 token 权限与内容 hash。
           # 缺了就直接失败，别静默发去一个错地方。

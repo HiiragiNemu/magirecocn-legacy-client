@@ -104,7 +104,7 @@ jobs:
       - name: 🚀 传到发布仓库 Release
         if: ${{ inputs.upload }}
         env:
-          : ${{ secrets. }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
           TARGET_REPO: ${{ secrets.TARGET_REPO }}
         run: python3 tools/archive-tags.py upload
 
@@ -113,7 +113,7 @@ jobs:
       - name: 🔍 下回来校验 sha256
         if: ${{ inputs.upload }}
         env:
-          : ${{ secrets. }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
           TARGET_REPO: ${{ secrets.TARGET_REPO }}
         run: python3 tools/archive-tags.py verify
 
