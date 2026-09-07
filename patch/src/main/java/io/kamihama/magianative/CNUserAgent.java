@@ -14,25 +14,41 @@ import java.net.HttpURLConnection;
  * <p>UA 形如：
  * <pre>magireco-cn-legacy/1.0.86 (Android 13; SDK 33)</pre>
  *
- * <p>版本号与 native 侧 {@code CLIENT_VERSION} 同源：CI 出包时由
- * build-apk.yml 注入（1.0.&lt;run_number&gt;）；本文件里的字面量只是
- * build-local.sh 本地构建的兜底。
+ * <p>版本号<b>只有 native 一份</b>（native 侧 {@code CLIENT_VERSION}，CI 出包时
+ * 由 build-apk.yml 注入 1.0.&lt;run_number&gt;）。这里不再存字面量：
+ * {@code static final String} 会被 javac <b>内联到每一个引用处</b>，等于把版本号
+ * 明文撒进整个 dex，而拿 APK 管理器改包的人第一步就是全局搜这个串。
+ * 理由与 native 侧的编译期混淆是同一条，详见那边的注释。
  *
  * <p><b>注意</b>：{@link CNWebProxy} 转发 WebView 游戏流量时<b>不要</b>套用本 UA
  * ——那是游戏自己的请求，透传原始 UA 才不会改变游戏在服务器侧的表现。
  */
 public final class CNUserAgent {
 
-    /** CI 注入点：build-apk.yml 按 CLIENT_VERSION 同样式 sed 替换。 */
-    private static final String CLIENT_VERSION = "1.0.0";
+    /** 向 native 问到之后就缓存下来；问不到时保持 null，下次再问。 */
+    private static volatile String version;
 
     /**
-     * 客户端版本号（与 native 侧 {@code CLIENT_VERSION} 同源，CI 注入）。
-     * {@link Aria2EngineFailover} 用作「版本变更即重置」的判据：新版本可能修了
+     * 客户端版本号，向 native 取（唯一来源）。
+     *
+     * <p>{@link Aria2EngineFailover} 用作「版本变更即重置」的判据：新版本可能修了
      * 后端/换了构建，aria2 的 giveUp 计数不该跨版本继承。
+     *
+     * <p>native 库要等 {@code Cocos2dxActivity} 起来才加载，早于它的调用会撞
+     * {@link UnsatisfiedLinkError}。那时返回<b>空串</b>——UA 里省掉版本段，而不是
+     * 编一个假的填进去；调用方看到空串就知道「还不知道」，不会把它当成真版本。
      */
     public static String clientVersion() {
-        return CLIENT_VERSION;
+        String v = version;
+        if (v != null) return v;
+        try {
+            v = CNVersionCheck.nativeClientVersion();
+        } catch (Throwable ignore) {
+            return "";          // 库还没加载，下次再问
+        }
+        if (v == null || v.isEmpty()) return "";
+        version = v;
+        return v;
     }
 
     private static volatile String cached;
@@ -41,12 +57,14 @@ public final class CNUserAgent {
 
     public static String get() {
         String ua = cached;
-        if (ua == null) {
-            ua = "magireco-cn-legacy/" + CLIENT_VERSION
-                    + " (Android " + Build.VERSION.RELEASE
-                    + "; SDK " + Build.VERSION.SDK_INT + ")";
-            cached = ua;
-        }
+        if (ua != null) return ua;
+        String v = clientVersion();
+        ua = "magireco-cn-legacy/" + (v.isEmpty() ? "unknown" : v)
+                + " (Android " + Build.VERSION.RELEASE
+                + "; SDK " + Build.VERSION.SDK_INT + ")";
+        // 版本还没拿到就先别缓存：否则 unknown 会被钉死到进程结束，
+        // 而 native 通常只晚一步就绪。
+        if (!v.isEmpty()) cached = ua;
         return ua;
     }
 

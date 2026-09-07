@@ -431,13 +431,10 @@ jobs:
             magia-native/src/MagiaLegacy.cpp
           grep -q "CLIENT_VERSION = \"${VER}\"" magia-native/src/MagiaLegacy.cpp \
             || { echo "::error::版本号注入失败（CLIENT_VERSION 常量没匹配上）"; exit 1; }
-          # 同一版本号也注入 Java 侧统一 UA 常量（CNUserAgent.CLIENT_VERSION），
-          # CDN 日志里的 magireco-cn-legacy/<ver> 与强制更新通道的版本一致。
-          sed -i -E "s/CLIENT_VERSION = \"[^\"]+\"/CLIENT_VERSION = \"${VER}\"/" \
-            patch/src/main/java/io/kamihama/magianative/CNUserAgent.java
-          grep -q "CLIENT_VERSION = \"${VER}\"" \
-            patch/src/main/java/io/kamihama/magianative/CNUserAgent.java \
-            || { echo "::error::版本号注入失败（CNUserAgent.CLIENT_VERSION 常量没匹配上）"; exit 1; }
+          # Java 侧**不再**有版本号常量可注入：`static final String` 会被 javac
+          # 内联到每一个引用处，等于把版本号明文撒进整个 dex，而拿 APK 管理器改包
+          # 的人第一步就是全局搜这个串。CNUserAgent 现在向 native 要版本号，
+          # 全 dex 只剩一次方法调用。理由见 MagiaLegacy.cpp 里 CLIENT_VERSION 的注释。
           echo "CLIENT_VERSION=${VER}" >> "$GITHUB_ENV"
 
       # 主机名是部署参数：源码里 CNEndpoints 的两个常量恒为空串，取值在这里
@@ -787,6 +784,10 @@ jobs:
           # 两次都能打包、能签名、能安装，只有真机跑起来才暴露，而且现象会把人
           # 引向去查功能逻辑而不是查产物
           python3 tools/check-apk-freshness.py "$APK"
+          # 版本号明文不许出现在我们自己的产物里——那是「拿管理器搜字符串改包」
+          # 这条路的入口。两处防线（native 编译期异或、Java 不存字面量）都可能
+          # 被后续改动无声地退回去，所以直接翻产物。
+          python3 tools/check-no-plain-version.py "$APK" "${CLIENT_VERSION}"
           # 签名指纹必须是 AOSP testkey，否则装不上既有设备
           FP=$("${BT_DIR}/apksigner" verify --print-certs "$APK" \
                 | grep -m1 'SHA-256 digest' | awk '{print $NF}')

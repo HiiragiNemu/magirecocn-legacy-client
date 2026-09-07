@@ -61,7 +61,6 @@ die() { echo "✘ $*" >&2; exit 1; }
 # 被顺手提交进历史（版本号、主域、主引擎都不该入库）。用快照还原而不是逐个
 # `--reset`：三种注入各有各的还原方式，漏一个就是一次意外提交。
 INJECTED=(magia-native/src/MagiaLegacy.cpp
-          patch/src/main/java/io/kamihama/magianative/CNUserAgent.java
           patch/src/main/java/io/kamihama/magianative/CNEndpoints.java
           patch/src/main/java/io/kamihama/magianative/CNBuildConfig.java)
 SNAP="$OUT/snap"
@@ -149,8 +148,8 @@ tools/check-native-syntax.sh
 say "注入客户端版本号 $CLIENT_VERSION"
 sed -i -E "s/CLIENT_VERSION = \"[^\"]+\"/CLIENT_VERSION = \"${CLIENT_VERSION}\"/" magia-native/src/MagiaLegacy.cpp
 grep -q "CLIENT_VERSION = \"${CLIENT_VERSION}\"" magia-native/src/MagiaLegacy.cpp || die "版本号注入失败（MagiaLegacy.cpp）"
-sed -i -E "s/CLIENT_VERSION = \"[^\"]+\"/CLIENT_VERSION = \"${CLIENT_VERSION}\"/" patch/src/main/java/io/kamihama/magianative/CNUserAgent.java
-grep -q "CLIENT_VERSION = \"${CLIENT_VERSION}\"" patch/src/main/java/io/kamihama/magianative/CNUserAgent.java || die "版本号注入失败（CNUserAgent.java）"
+# Java 侧不再有版本号常量可注入（CNUserAgent 向 native 要），理由见
+# MagiaLegacy.cpp 里 CLIENT_VERSION 的注释。
 
 # ── 🌐 注入端点 ─────────────────────────────────────────────────────
 # 不回显取值：主域是部署参数，终端记录也会长期留存。
@@ -282,6 +281,7 @@ python3 tools/check-so-deps.py "$APK"
 python3 tools/check-so-alignment.py
 python3 tools/check-so-alignment.py "$TREE/lib/arm64-v8a/libMagiaLegacy.so" "$TREE/lib/arm64-v8a/libshadowhook.so"
 python3 tools/check-apk-freshness.py "$APK"
+python3 tools/check-no-plain-version.py "$APK" "$CLIENT_VERSION"
 FP=$("$BUILD_TOOLS/apksigner" verify --print-certs "$APK" | grep -m1 'SHA-256 digest' | awk '{print $NF}')
 EXPECT="a40da80a59d170caa950cf15c18c454d47a39b26989d8b640ecd745ba71bf5dc"
 [ "$FP" = "$EXPECT" ] || die "签名指纹不符，实得 $FP"

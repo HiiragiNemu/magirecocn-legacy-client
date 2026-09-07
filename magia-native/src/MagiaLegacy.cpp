@@ -1371,16 +1371,65 @@ static void setMaxConnectionNumNew(void* _this, int n) {
 // ─── 客户端版本号 ────────────────────────────────────────
 //
 // 本客户端自己的版本号，不读也不改 APK 的 versionName/versionCode（那是上游
-// 包的身份，动了会影响覆盖安装）。**CI 构建时会把这个常量改写成
+// 包的身份，动了会影响覆盖安装）。**CI 构建时会把下面那个字面量改写成
 // 1.0.<run_number>**（见 build-apk.yml 的「注入客户端版本号」步骤，每个构建
 // 单调递增）——这里的字面量只是本地构建（tools/build-local.sh）的兜底，
 // 发版不需要手改本文件。云端 config.json 的 client.version 抬过某个构建号，
 // 低于它的包启动时就弹强制更新框（Java 侧 CNVersionCheck）。
-static const char* CLIENT_VERSION = "1.0.0";
+//
+// ## 为什么要编译期混淆它
+//
+// 要防的**不是**逆向工程师：能读懂 smali 与 JNI 的人，直接 fork 仓库自己重打包
+// 就行，本仓库拦不住、也不打算拦。要防的是拿 APK 管理器照着教程改包的人，
+// 他们的全部手法就是「全局搜版本号 → 改成一个大的 → 用管理器内置签名重签 →
+// 装」。签名这一环拦不住——包用的是公开的 AOSP 测试密钥，谁都能重签成同一
+// 指纹——所以唯一有意义的一步是**让第一步就搜不到东西**。
+//
+// 做法：字面量只在编译期存在，逐字节异或之后才进 .rodata；异或密钥随下标变化，
+// 免得整串同一偏移、扫一眼就看出规律。运行时在栈上还原，用完即清。
+// 注意 strip 不动 .rodata（tools/check-apk-freshness.py 正是靠这一点做新鲜度
+// 比对），所以指望 strip 把明文带走是不成立的，必须在源码层面就不留。
+//
+// Java 侧同理：`CNUserAgent` 不再持有版本号字面量，改为向本函数要——
+// `static final String` 会被 javac 内联到每一个引用处，等于把明文撒进整个 dex。
+namespace verobf {
+
+// 密钥随下标变化。写成 constexpr 函数而不是宏，保证在编译期求值。
+constexpr uint8_t key_at(size_t i) {
+    return static_cast<uint8_t>(0x5Au + i * 0x1Fu);
+}
+
+template <size_t N>
+struct Hidden {
+    char bytes[N];
+    constexpr explicit Hidden(const char (&s)[N]) : bytes{} {
+        for (size_t i = 0; i < N; ++i)
+            bytes[i] = static_cast<char>(static_cast<uint8_t>(s[i]) ^ key_at(i));
+    }
+};
+
+}  // namespace verobf
+
+// ⚠ CI 与本地构建按 `CLIENT_VERSION = "…"` 这个**形状**做 sed 注入，改写法要同步
+//   改 build-apk.yml 与 tools/build-local.sh 两处。它是 constexpr、从不取地址，
+//   只在编译期喂给下面的 Hidden，因此不会有一份明文留在产物里。
+static constexpr char CLIENT_VERSION[] = "1.0.0";
+
+// 真正进二进制的是这一份：异或之后的字节。
+static constexpr auto kVersionHidden =
+        verobf::Hidden<sizeof(CLIENT_VERSION)>(CLIENT_VERSION);
 
 // 经 RegisterNatives 绑给 CNVersionCheck.nativeClientVersion()。
 static jstring nativeClientVersion(JNIEnv* env, jclass) {
-    return env->NewStringUTF(CLIENT_VERSION);
+    char plain[sizeof(CLIENT_VERSION)];
+    for (size_t i = 0; i < sizeof(plain); ++i)
+        plain[i] = static_cast<char>(
+                static_cast<uint8_t>(kVersionHidden.bytes[i]) ^ verobf::key_at(i));
+    jstring s = env->NewStringUTF(plain);
+    // 别把明文留在栈上。volatile 防止优化器把这次清零当成死代码删掉。
+    volatile char* wipe = plain;
+    for (size_t i = 0; i < sizeof(plain); ++i) wipe[i] = 0;
+    return s;
 }
 
 // ═══ 调试悬浮窗的总闸：烧在包里的一个布尔 ═══════════════════════════

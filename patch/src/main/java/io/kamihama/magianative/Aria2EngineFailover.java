@@ -113,13 +113,33 @@ public final class Aria2EngineFailover {
         }
         // 版本变更即重置：新版本可能修了后端/换了构建，giveUp 计数不该跨版本继承。
         // 重置成全新状态（默认 OSSL、未 armed、deaths=0）并把版本号烙进标记。
-        if (!CNUserAgent.clientVersion().equals(s.gen)) {
+        //
+        // ⚠ 版本号空串表示「还没问到」（native 库要等 Cocos2dxActivity 起来才加载，
+        // 见 CNUserAgent.clientVersion）。**空串不算版本变更**——否则每次在 native
+        // 就绪之前走到这里，都会把 giveUp 计数清成全新状态，防抖等于没有，而这件事
+        // 不会有任何报错，只表现为「aria2 明明已经禁用了却又被启用」。
+        String ver = CNUserAgent.clientVersion();
+        if (!ver.isEmpty() && !ver.equals(s.gen)) {
             s = new State();
-            s.gen = CNUserAgent.clientVersion();
+            s.gen = ver;
+            genToWrite = ver;
             write(s.backend, s.armed, s.deaths);
+        } else {
+            // 版本没变、或这会儿还问不到版本：标记里原有的 gen 原样保留。
+            genToWrite = s.gen == null ? "" : s.gen;
         }
         return s;
     }
+
+    /**
+     * 要写进标记的 gen，由 {@link #read()} 维护。
+     *
+     * <p><b>不在 {@link #write} 里现问版本号</b>：那一刻可能还问不到（native 库要等
+     * {@code Cocos2dxActivity} 起来才加载），写进去一个空 gen，下次 read() 就会把它
+     * 当成「版本变更」再清一次计数。存最后一次真正知道的版本；始终不知道时保持
+     * 空串，写出来的标记不带版本，而空串不参与变更比较，因此也不会误触发。
+     */
+    private static volatile String genToWrite = "";
 
     private static synchronized void write(Backend backend, boolean armed, int deaths) {
         try {
@@ -134,7 +154,7 @@ public final class Aria2EngineFailover {
                 sb.append("backend=").append(backend.name()).append('\n');
                 sb.append("armed=").append(armed ? "1" : "0").append('\n');
                 sb.append("deaths=").append(deaths).append('\n');
-                sb.append("gen=").append(CNUserAgent.clientVersion()).append('\n');
+                sb.append("gen=").append(genToWrite).append('\n');
                 out.write(sb.toString().getBytes(Charset.forName("UTF-8")));
                 out.flush();
                 out.getFD().sync();
