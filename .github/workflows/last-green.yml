@@ -212,7 +212,7 @@ jobs:
 
       - name: 🟢 移动 last-green tag
         env:
-          GH_PAT: ${{ secrets. }}
+          GH_PAT: ${{ secrets.GH_TOKEN }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"

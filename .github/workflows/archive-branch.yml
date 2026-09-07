@@ -37,7 +37,7 @@ jobs:
           # 用维护者 PAT 而不是默认 ：打 archive tag / 删分支
           # 会被 ruleset（活跃分支保护 / refs/tags/*）拦下——
           # 的 github-actions[bot] 身份不能绕过 ruleset，PAT 在 bypass 列表。
-          token: ${{ secrets. }}
+          token: ${{ secrets.GH_TOKEN }}
 
       - name: 🗄️ 打 tag → 验证 → 删分支
         env:
