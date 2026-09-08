@@ -59,6 +59,13 @@ public final class CNEndpoints {
      */
     public static final String PAGES_HOSTS = "";
 
+    // 编译必须先经过 tools/inject-endpoints.py。生成类不在源码库中；若有人
+    // 绕过唯一注入入口直接 javac，符号解析会在构建期失败，而不是产出
+    // ROOT_DOMAIN/MIRRORS_URL 为空的可安装包。该常量不参与运行时分支。
+    @SuppressWarnings("unused")
+    private static final String BUILD_INJECTION_GUARD =
+            CNEndpointInjectionGuard.INJECTED_MARKER;
+
     private CNEndpoints() {}
 
     /** 官网（署名区「项目官网」那条）。 */
@@ -81,8 +88,8 @@ public final class CNEndpoints {
     /** 线路列表（config.json）地址。路径部分是固定约定，只有主机名随部署变。 */
     public static final String MIRRORS_URL = API_BASE.isEmpty() ? "" : API_BASE + "legacy/config.json";
 
-    /** 内置兜底线路之一：自有域下的 edge。 */
-    public static final String EDGEONE_BASE = ROOT_DOMAIN.isEmpty() ? "" : "https://edge.assets." + ROOT_DOMAIN + "/";
+    /** 内置兜底线路之一：自有域下的 EdgeOne。 */
+    public static final String EDGEONE_BASE = ROOT_DOMAIN.isEmpty() ? "" : "https://edgeone.assets." + ROOT_DOMAIN + "/";
 
     /** 内置兜底线路之二：自有域下的阿里 ESA。 */
     public static final String ESA_BASE = ROOT_DOMAIN.isEmpty() ? "" : "https://esa.assets." + ROOT_DOMAIN + "/";
