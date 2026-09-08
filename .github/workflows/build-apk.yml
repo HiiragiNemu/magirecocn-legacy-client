@@ -114,10 +114,10 @@ jobs:
           exit 1
 
       - name: 📦 检出仓库
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: ☕ 设置 JDK 17
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
@@ -151,24 +151,13 @@ jobs:
             | sudo tee /usr/local/bin/baksmali > /dev/null
           sudo chmod +x /usr/local/bin/baksmali
 
-          # ── Android SDK build-tools（d8 / zipalign / apksigner / aapt）──
-          # **钉死版本**，不再「取 runner 上最新的那个」。原先那种写法等于让 d8
-          # 与签名工具跟着 runner 镜像漂：镜像一换，产出的 dex 就换了一套工具链，
-          # 而这件事不会有任何输出提到它。d8 的 desugar 行为与 minSdk 21 强相关，
-          # 正是最不该浮动的一环。
-          #
-          # ⚠ 不能钉 34.0.0。它带的是 R8 8.2.2-dev，在 CNAria2Lib.Backend（带构造
-          # 器的嵌套 enum）上直接崩 NullPointerException——那是 CLAUDE.md 铁律 4
-          # 记的两种形状**之外的第三种**，2026-09-07 本地实测。旧写法一直取
-          # runner 上最新的 build-tools，所以从没撞上；一钉到文档里那个 34.0.0
-          # 就必崩。铁律 4 的两条判据仍然成立，只是那个 d8 版本本身已经不能用了。
-          BT_VER="37.0.0"
-          BT_DIR="${ANDROID_HOME}/build-tools/${BT_VER}"
-          if [ ! -d "${BT_DIR}" ]; then
-            yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "build-tools;${BT_VER}" > /dev/null
+          # ── Android SDK build-tools（d8 / zipalign / apksigner）──────
+          BT_DIR="$(ls -d "${ANDROID_HOME}"/build-tools/*/ 2>/dev/null | sort -r | head -1 || true)"
+          if [ -z "${BT_DIR}" ]; then
+            yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "build-tools;34.0.0" > /dev/null
+            BT_DIR="$(ls -d "${ANDROID_HOME}"/build-tools/*/ | sort -r | head -1)"
           fi
-          [ -x "${BT_DIR}/d8" ] || { echo "::error::build-tools ${BT_VER} 装不上"; exit 1; }
-          echo "BT_DIR=${BT_DIR}" >> "$GITHUB_ENV"
+          echo "BT_DIR=${BT_DIR%/}" >> "$GITHUB_ENV"
           echo "build-tools: ${BT_DIR}"
 
           apktool --version
@@ -219,10 +208,10 @@ jobs:
           # 发生（线路表为空、外链全不放行、热更地址拼不出来）。所以在这里拦，
           # 而不是等玩家装上才发现。
           NEED="BASELINE_APK_URL OVERLAY_URL CLIENT_ROOT_DOMAIN CLIENT_PAGES_HOSTS"
-          # 发版相关的只有真要发版时才需要。 也在这一档：它只服务发版，
+          # 发版相关的只有真要发版时才需要。GH_TOKEN 也在这一档：它只服务发版，
           # 构建本身不碰它——取件要凭证的话，凭证跟着 OVERLAY_URL 走。
           if [ "${{ inputs.verify_only }}" != "true" ]; then
-            NEED="$NEED  TARGET_REPO"
+            NEED="$NEED GH_TOKEN TARGET_REPO"
           fi
           MISSING=""
           for v in $NEED; do
@@ -236,6 +225,8 @@ jobs:
             exit 1
           fi
           echo "必需的 secret 都在（$NEED）"
+          # Fail before injection if production endpoints are blank or misbound.
+          python3 tools/check-production-endpoints.py
 
       - name: 🚧 校验 native 入口保护（异常绝不外泄）
         run: python3 tools/check-entry-guard.py
@@ -431,10 +422,13 @@ jobs:
             magia-native/src/MagiaLegacy.cpp
           grep -q "CLIENT_VERSION = \"${VER}\"" magia-native/src/MagiaLegacy.cpp \
             || { echo "::error::版本号注入失败（CLIENT_VERSION 常量没匹配上）"; exit 1; }
-          # Java 侧**不再**有版本号常量可注入：`static final String` 会被 javac
-          # 内联到每一个引用处，等于把版本号明文撒进整个 dex，而拿 APK 管理器改包
-          # 的人第一步就是全局搜这个串。CNUserAgent 现在向 native 要版本号，
-          # 全 dex 只剩一次方法调用。理由见 MagiaLegacy.cpp 里 CLIENT_VERSION 的注释。
+          # 同一版本号也注入 Java 侧统一 UA 常量（CNUserAgent.CLIENT_VERSION），
+          # CDN 日志里的 magireco-cn-legacy/<ver> 与强制更新通道的版本一致。
+          sed -i -E "s/CLIENT_VERSION = \"[^\"]+\"/CLIENT_VERSION = \"${VER}\"/" \
+            patch/src/main/java/io/kamihama/magianative/CNUserAgent.java
+          grep -q "CLIENT_VERSION = \"${VER}\"" \
+            patch/src/main/java/io/kamihama/magianative/CNUserAgent.java \
+            || { echo "::error::版本号注入失败（CNUserAgent.CLIENT_VERSION 常量没匹配上）"; exit 1; }
           echo "CLIENT_VERSION=${VER}" >> "$GITHUB_ENV"
 
       # 主机名是部署参数：源码里 CNEndpoints 的两个常量恒为空串，取值在这里
@@ -461,28 +455,15 @@ jobs:
           # 取代原先包内两个预编译的 Dobby hook 库：
           #   libuwasa.so   一改：端点重定向（顺带按英文行宽重排剧情文本，正是要去掉的）
           #   libcn_hook.so 二改：拦引擎下载入口接我们的浮层
-          # ── NDK 钉死 r27d（27.3.13750724 / clang 18.0.4）───────────────
-          # 原先是「取 runner 上最新的那个 NDK」。那等于让编译 libMagiaLegacy 的
-          # 工具链跟着镜像漂，而本仓库有两处对工具链敏感的硬约束：minSdk 21 的
-          # 目标 API，以及 check-native-string-layout.py 钉住的 libc++
-          # std::string 双 ABI 布局。编译器换个大版本，这两处都可能悄悄变，
-          # 而 CI 全绿——只有真机才炸。
-          #
-          # 版本从**已发布产物**反查确定：1.0.171 那个包里的 libMagiaLegacy.so
-          # 报 clang 18.0.4，对应 r27d。装不上或版本对不上一律硬失败，不回退到
-          # 「随便找一个」——那正是要根除的行为。
-          NDK_VER="27.3.13750724"
-          NDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}/ndk/${NDK_VER}"
-          if [ ! -d "$NDK_ROOT" ]; then
-            yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VER}" > /dev/null
+          NDK_ROOT="${ANDROID_NDK_HOME:-}"
+          if [ -z "$NDK_ROOT" ] || [ ! -d "$NDK_ROOT" ]; then
+            NDK_BASE="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/ndk"
+            NDK_ROOT="$(ls -1d $NDK_BASE/* 2>/dev/null | sort -V | tail -1)"
           fi
-          [ -d "$NDK_ROOT" ] || { echo "::error::NDK ${NDK_VER} 装不上"; exit 1; }
-          GOT_REV="$(sed -n 's/^Pkg.Revision = //p' "$NDK_ROOT/source.properties")"
-          [ "$GOT_REV" = "$NDK_VER" ] || { echo "::error::NDK 版本不符：${GOT_REV} ≠ ${NDK_VER}"; exit 1; }
-          # 连编译器本身也断言一次：NDK 版本号相同而 clang 被换掉，产物一样会变。
-          GOT_CLANG="$(head -1 "$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/AndroidVersion.txt")"
-          [ "$GOT_CLANG" = "18.0.4" ] || { echo "::error::clang 版本不符：${GOT_CLANG} ≠ 18.0.4"; exit 1; }
-          echo "[NDK] 使用 $NDK_ROOT（clang ${GOT_CLANG}）"
+          if [ -z "$NDK_ROOT" ] || [ ! -d "$NDK_ROOT" ]; then
+            echo "::error::找不到 Android NDK"; exit 1
+          fi
+          echo "[NDK] 使用 $NDK_ROOT"
           # shadowhook v2.0.1 的 CMakeLists 要求 CMake >= 4.0.2
           # （magia-native/CMakeLists.txt 的 PATCH_COMMAND 已把它降回 3.22；
           # sed 降级补丁的命中由 FetchContent_MakeAvailable 之后的守卫显式
@@ -520,16 +501,22 @@ jobs:
             if [ -e "$f" ]; then echo "::error::$f 仍然存在，会与 libMagiaLegacy 冲突"; exit 1; fi
           done
 
-      - name: 🎵 转换 BGM：HCA → OGG（vgmstream + oggenc）
+      - name: 🎵 转换 BGM：HCA → OGG（vgmstream + ffmpeg）
         env:
+          # R4-04：FFmpeg 钉不可变 autobuild，从仓库 Variable 读取官方 digest。
           # vgmstream 可选校验（WARN 不阻断），从仓库 Variable 读取官方 digest。
+          FFMPEG_SHA256: ${{ vars.FFMPEG_SHA256 }}
           VGMS_SHA256: ${{ vars.VGMS_SHA256 }}
         run: |
           set -euo pipefail
           # assets 里的 BGM 是 CRI HCA 且 ciphType=56（加密），Android 放不了。
-          # vgmstream 自带 CRI 游戏的密钥库，能直接解；再用 oggenc 编成 Vorbis。
+          # vgmstream 自带 CRI 游戏的密钥库，能直接解；再用 ffmpeg 转 OGG。
           mkdir -p .cache/audio
 
+          # R4-04：FFmpeg 是浮动下载（latest 标签可重指）且随后 chmod +x 直接
+          # 执行——供应链投毒即 CI RCE。缓解：curl -f 拒绝 HTTP 错误页；FFmpeg
+          # 钉**不可变 autobuild**（URL 带时间戳 tag + GitHub Release API 的官方
+          # assets[].digest），摘要缺失/不符即硬失败。
           # vgmstream **不钉**（维护者决定 2026-08-19）：只做 HCA 音频解密转换、
           # 内置密钥库不删减、非关键路径；curl -f 已拒绝 HTTP 错误页。
           curl -fsSL -o .cache/audio/vgms.tar.gz \
@@ -548,19 +535,19 @@ jobs:
           VGMS="$(find .cache/audio/vgms -name vgmstream-cli -type f | head -1)"
           chmod +x "${VGMS}"
 
-          # 编码器用 oggenc（vorbis-tools），不再拉 350MB 的 ffmpeg 静态包。
-          # 换掉的直接原因：原先钉的「不可变 autobuild」tag 已被上游删除（BtbN
-          # 只保留最近三十多个 autobuild），链接 404，这一步必红——「不可变」
-          # 这个前提本身就不成立。而这一步只需要「WAV 编成 Vorbis」一件事，
-          # oggenc 正是干这个的，发行版自带、1.4.2 十余年没动过。
-          # 质量标度与 libvorbis 的 -q:a 相同，参数含义不变。
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq vorbis-tools
-          OGGENC="$(command -v oggenc)"
-          [ -n "${OGGENC}" ] || { echo "::error::oggenc 装不上"; exit 1; }
-          oggenc --version
+          # ffmpeg：不走 apt（源不稳），直接拉 BtbN 的静态构建（含 libvorbis）。
+          # 钉不可变 autobuild-2026-08-18-15-03 的 ffmpeg-N-126207-g21bbd98e7b，
+          # 官方 digest = FFMPEG_SHA256 仓库 Variable。
+          : "${FFMPEG_SHA256:?缺少仓库变量 FFMPEG_SHA256；拒绝执行未钉摘要的 FFmpeg}"
+          curl -fsSL -o .cache/audio/ff.tar.xz \
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-18-15-03/ffmpeg-N-126207-g21bbd98e7b-linux64-gpl.tar.xz"
+          echo "${FFMPEG_SHA256}  .cache/audio/ff.tar.xz" | sha256sum -c -
+          mkdir -p .cache/audio/ff
+          tar xJf .cache/audio/ff.tar.xz -C .cache/audio/ff
+          FF="$(find .cache/audio/ff -name ffmpeg -type f | head -1)"
+          chmod +x "${FF}"
 
-          python3 tools/convert-bgm.py --vgmstream "${VGMS}" --oggenc "${OGGENC}" --tree "${TREE}"
+          python3 tools/convert-bgm.py --vgmstream "${VGMS}" --ffmpeg "${FF}" --tree "${TREE}"
 
           # 产物必须齐全：缺了浮层就没有 BGM。音频不是关键路径，只告警不阻断。
           for f in "${TREE}"/assets/magia/bgm1.ogg "${TREE}"/assets/magia/bgm2.ogg "${TREE}"/assets/magia/bgm.json; do
@@ -749,14 +736,14 @@ jobs:
             --v1-signing-enabled true \
             --v2-signing-enabled true \
             --v3-signing-enabled true \
-            --out .build/legacy-client.apk \
+            --out .build/magirecocn-legacy-client.apk \
             .build/aligned.apk
-          "${BT_DIR}/apksigner" verify --print-certs .build/legacy-client.apk
+          "${BT_DIR}/apksigner" verify --print-certs .build/magirecocn-legacy-client.apk
 
       - name: 🔍 构建后自检
         run: |
           set -euo pipefail
-          APK=.build/legacy-client.apk
+          APK=.build/magirecocn-legacy-client.apk
           echo "sha256: $(sha256sum "$APK" | cut -d' ' -f1)"
           echo "大小:   $(stat -c%s "$APK") 字节"
           # BGM 的 ogg 必须未压缩，否则 AssetManager.openFd() 打不开，
@@ -784,10 +771,7 @@ jobs:
           # 两次都能打包、能签名、能安装，只有真机跑起来才暴露，而且现象会把人
           # 引向去查功能逻辑而不是查产物
           python3 tools/check-apk-freshness.py "$APK"
-          # 版本号明文不许出现在我们自己的产物里——那是「拿管理器搜字符串改包」
-          # 这条路的入口。两处防线（native 编译期异或、Java 不存字面量）都可能
-          # 被后续改动无声地退回去，所以直接翻产物。
-          python3 tools/check-no-plain-version.py "$APK" "${CLIENT_VERSION}"
+          python3 tools/check-built-endpoints.py "$APK"
           # 签名指纹必须是 AOSP testkey，否则装不上既有设备
           FP=$("${BT_DIR}/apksigner" verify --print-certs "$APK" \
                 | grep -m1 'SHA-256 digest' | awk '{print $NF}')
@@ -837,14 +821,10 @@ jobs:
           # 目标地址由仓库变量给，不写死：它随部署走，换目标时不该改代码。
           # 它也不是安全边界——真正的保证来自 token 权限与内容 hash。
           # 缺了就直接失败，别静默发去一个错地方。
-          # 仓库里真实存在的 secret 名是 TARGET_REPO（2026-08-24 由两个上下游
-          # 名字合并而来，见 README）。这里的 env 键名 SYNC_REPO 是本步骤内部叫法，
-          # 下面 run 块通篇引用它，保持不变；改的是右边取哪个 secret——取一个不
-          # 存在的名字会静默拿到空串，而下一行的判空提示写的正是 TARGET_REPO。
           SYNC_REPO: ${{ secrets.TARGET_REPO }}
         run: |
           set -euo pipefail
-          SRC=.build/legacy-client.apk
+          SRC=.build/magirecocn-legacy-client.apk
           NAME=magireco-latest-legacy-client.apk
           SIDECAR=magireco-latest-legacy-client.version.json
           if [ -z "${SYNC_REPO:-}" ]; then
@@ -855,7 +835,7 @@ jobs:
           # preflight：token 必须能对 UP_REPO 的 release 读写，否则玩家那边留下的
           # 是 404 死链——宁可构建红掉也不发死链。
           #
-          # ⚠ 报错必须分清是哪一种。原先三种情况共用一句「 缺失或无权限」，
+          # ⚠ 报错必须分清是哪一种。原先三种情况共用一句「GH_TOKEN 缺失或无权限」，
           # 于是 2026-08-13 那次 401（token 本身失效）把维护者送去查权限设置——
           # 而权限一直是对的，过期的是 token。三者的处理办法完全不同：
           #
@@ -863,8 +843,8 @@ jobs:
           #   401         → token 已过期/被撤销/粘进了空白，重新签发一枚
           #   403 / 404   → token 有效，但够不着目标（细粒度 PAT 的可访问范围
           #                 是签发它的那个账户，够不到范围外的目标）
-          if [ -z "${:-}" ]; then
-            echo "::error:: secret 未配置或为空（Settings → Secrets and variables → Actions）"
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::GH_TOKEN secret 未配置或为空（Settings → Secrets and variables → Actions）"
             exit 1
           fi
 
@@ -875,14 +855,14 @@ jobs:
                 -H "Accept: application/vnd.github+json" \
                 https://api.github.com/user || echo 000)
           if [ "$WHO" = "401" ]; then
-            echo "::error:: 无效（HTTP 401 Bad credentials）。这不是权限问题——token 已过期、被撤销，或写进 secret 时混入了换行/空格。请重新签发一枚并更新 secret。"
+            echo "::error::GH_TOKEN 无效（HTTP 401 Bad credentials）。这不是权限问题——token 已过期、被撤销，或写进 secret 时混入了换行/空格。请重新签发一枚并更新 secret。"
             exit 1
           fi
           if [ "$WHO" != "200" ]; then
-            echo "::error::校验  时 GitHub 返回 HTTP $WHO，无法确认凭据"
+            echo "::error::校验 GH_TOKEN 时 GitHub 返回 HTTP $WHO，无法确认凭据"
             exit 1
           fi
-          echo " 身份：$(grep -o '"login"[^,]*' /tmp/who.json | head -1)"
+          echo "GH_TOKEN 身份：$(grep -o '"login"[^,]*' /tmp/who.json | head -1)"
           EXP=$(tr -d '\r' < /tmp/who.hdr \
                 | grep -i '^github-authentication-token-expiration:' | cut -d' ' -f2- || true)
           # 写成 if 而不是 `[ -n "$EXP" ] && echo ...`。后者在 EXP 为空时整条
@@ -890,7 +870,7 @@ jobs:
           # 但只要哪天它被挪到脚本末尾，这一步就会以 exit 1 收场——一个纯提示
           # 把发布搞挂。if 形式没有这个位置依赖。
           if [ -n "$EXP" ]; then
-            echo "::notice:: 有效期至 ${EXP}（到期后本步骤会以 401 失败）"
+            echo "::notice::GH_TOKEN 有效期至 ${EXP}（到期后本步骤会以 401 失败）"
           fi
 
           # 再确认够得着 SYNC_REPO。403 与 404 分开报：无权限时 GitHub 回的可能是
@@ -944,9 +924,9 @@ jobs:
           # 没送达 = 产物躺在那儿没人接手，而这正是要根治的那个故障形状。
           #
           # ⚠ event_type 叫 upstream-update 是**历史遗留**，别按字面理解：
-          # 这名字来自发布目标还是某个仓库 fork 的年代，那层上下游关系早已不存在。
-          # 本条 dispatch 的真实语义是「客户端产物就绪」，与任何「上游」无关。
-          # 名字两边都保留不改——它是跨仓库的线上
+          # 这名字来自资产仓还是某个仓库 fork 的年代。2026-08-22 起资产仓已断开
+          # 上游、转为组织下的独立私有仓，本条 dispatch 的真实语义是「客户端产物
+          # 就绪」，与任何「上游」无关。名字两边都保留不改——它是跨仓库的线上
           # 标识符，一边改一边没改就会静默失联（dispatch 照样返回成功，
           # 那边没人监听）。
           for i in 1 2 3; do
@@ -968,13 +948,13 @@ jobs:
           {
             echo "## 构建结果"
             echo
-            if [ -f .build/legacy-client.apk ]; then
+            if [ -f .build/magirecocn-legacy-client.apk ]; then
               echo "- 状态：✅ 成功"
               echo "- 客户端版本：\`${CLIENT_VERSION}\`（随 APK 一起写进版本旁注；云端闸门不在本流水线提升）"
               echo "- 主下载引擎：\`${{ inputs.engine }}\`"
               echo "- 调试悬浮窗：\`${{ inputs.debug_overlay && '开' || '关' }}\`（native MAGIA_DEBUG_OVERLAY）"
-              echo "- sha256：\`$(sha256sum .build/legacy-client.apk | cut -d' ' -f1)\`"
-              echo "- 大小：$(( $(stat -c%s .build/legacy-client.apk) / 1024 / 1024 )) MB"
+              echo "- sha256：\`$(sha256sum .build/magirecocn-legacy-client.apk | cut -d' ' -f1)\`"
+              echo "- 大小：$(( $(stat -c%s .build/magirecocn-legacy-client.apk) / 1024 / 1024 )) MB"
               echo "- 签名：AOSP testkey（v1+v2+v3）"
             else
               echo "- 状态：❌ 失败"
