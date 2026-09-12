@@ -416,7 +416,7 @@ public class CNCNDownloadUI {
 
     private static final int[] CREDIT_KINDS = {
         KIND_TITLE, KIND_ITEM, KIND_HEAD, KIND_ITEM, KIND_SUB, KIND_ITEM,
-        KIND_SUB, KIND_HEAD, KIND_ITEM, KIND_ITEM, KIND_HEAD, KIND_ITEM,
+        KIND_SUB, KIND_HEAD, KIND_ITEM, KIND_ITEM, KIND_SUB, KIND_ITEM, KIND_HEAD, KIND_ITEM,
         KIND_ITEM, KIND_ITEM
     };
 
@@ -430,6 +430,8 @@ public class CNCNDownloadUI {
         "bilibili个人主页",
         "其他协助者",
         "【国服与圆环记录汉化组外剧情翻译及部分校对】水银h2oag（点击个人主页）",
+        "【圆环记录汉化组】国服外剧情翻译",
+        "可核验贡献统计：MadeInMagius 2,692 条；剧情字段 2 条；战斗技能 2,374 条；语音字幕 0 条；Wiki 1,096 条",
         "【国服数据留存】segfault（点击个人主页）",
         "友情链接",
         CNEndpoints.site(0) + "【魔法纪录剧情中日双语阅读网站】",
@@ -453,6 +455,8 @@ public class CNCNDownloadUI {
         "https://b23.tv/9vyRcI8",                               // CyberNova/PhotonFlow 个人主页
         "",                                                     // 「其他协助者」小标题
         "https://b23.tv/ovvbrNw",                               // 水银h2oag
+        "https://magireco.moe",                              // 圆环记录汉化组
+        "",                                                     // 统计
         "https://b23.tv/xjXW9DI",                               // segfault
         "",                                                     // 「友情链接」小标题
         CNEndpoints.siteUrl(0),
@@ -477,6 +481,8 @@ public class CNCNDownloadUI {
         "个人主页",
         "",
         "水银h2oag",
+        "圆环记录汉化组",
+        "",
         "segfault",
         "",
         CNEndpoints.site(0),
@@ -502,8 +508,7 @@ public class CNCNDownloadUI {
 
     /** 底部常驻署名条：原先塞在速度行里的那句长文案，原文保留。 */
     private static final String FOOTER_CREDIT =
-        "汉化主力与资源整理: B站 @MadeInMagius | 程序主力和国内加速：@CyberNova/PhotonFlow "
-        + "| 如需联系请先B站私信，将提供群聊 | 该游戏支持后续剧情更新";
+        "总体规划与大部分实现、汉化引擎及内容修复：@MadeInMagius | 国内加速、下载 UI 与部分下载技术协助：@CyberNova/PhotonFlow | 国服与圆环记录汉化组外剧情翻译及部分校对：水银h2oag | 圆环记录汉化组提供50项剧情及战斗技能译文引用";
 
     // ---- 云端可配的署名内容 ----
     //
@@ -5050,4 +5055,3 @@ public class CNCNDownloadUI {
         }
     }
 }
-
