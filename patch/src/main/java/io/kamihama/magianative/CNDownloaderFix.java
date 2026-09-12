@@ -57,6 +57,20 @@ import java.util.zip.ZipFile;
  */
 public final class CNDownloaderFix {
 
+    /** 主线程调试回调；静态类避免编译产物携带外层线程实例。 */
+    private static final class EnableWebViewDebug implements Runnable {
+        @Override public void run() {
+            try {
+                android.webkit.WebView.setWebContentsDebuggingEnabled(true);
+                CNLog.i(TAG, "调试开关 useWebviewDebug 生效，WebView 远程调试已开启");
+            } catch (Throwable t) {
+                CNLog.w(TAG, "启用 WebView 远程调试失败（不影响下载流程）", t);
+            }
+        }
+    }
+
+
+
     private static final String BOOTSTRAP_URL = "https://totentanz-9b.magi-reco.com/magica/api/snaa";
 
     /** SNAA 引导地址：代理配置下发后改经 /stream 走香港代理（尽量全代理）。 */
@@ -416,16 +430,7 @@ public final class CNDownloaderFix {
                         // 异步派发不等待 WebView；provider 异常仍隔离，版本检查照常接力。
                         if (CNDebugFlags.isOn(CNDebugFlags.USE_WEBVIEW_DEBUG)) {
                             try {
-                                Runnable enableDebug = new Runnable() {
-                                    @Override public void run() {
-                                        try {
-                                            android.webkit.WebView.setWebContentsDebuggingEnabled(true);
-                                            CNLog.i(TAG, "调试开关 useWebviewDebug 生效，WebView 远程调试已开启");
-                                        } catch (Throwable t) {
-                                            CNLog.w(TAG, "启用 WebView 远程调试失败（不影响下载流程）", t);
-                                        }
-                                    }
-                                };
+                                Runnable enableDebug = new EnableWebViewDebug();
                                 if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
                                     enableDebug.run();
                                 } else {
