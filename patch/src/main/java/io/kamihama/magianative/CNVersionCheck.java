@@ -45,6 +45,12 @@ public final class CNVersionCheck {
 
     private static final String TAG = "CNVersion";
 
+    /** 最近一次多源检查结果，供主界面版本面板显示；初始值保持可读。 */
+    public static volatile String lastLocalVersion = "—";
+    public static volatile String lastBestVersion = "—";
+    public static volatile String lastPersonalVersion = "—";
+    public static volatile String lastEdgeOneVersion = "—";
+
     // config 是可选控制面：失败必须快速放行。**原先是 15s + 15s**，落在启动关键
     // 路径上就是最多白等半分钟，而这一步失败本来就只意味着「本次不弹强更框」。
     // 所以收到下面这两个值——不是「随手调紧」，是这一步的失败代价本来就近乎为零。
@@ -149,6 +155,7 @@ public final class CNVersionCheck {
         }
 
         String local = awaitClientVersion();
+        lastLocalVersion = local == null ? "—" : local;
         if (local == null) {
             // 读不到本端版本就没法比较——放行，别误伤。
             CNLog.w(TAG, "拿不到本端版本，跳过版本检查");
@@ -286,6 +293,8 @@ public final class CNVersionCheck {
             JSONObject candidate=reply.value;
             if (!validClient(candidate)) { CNLog.w(TAG,"客户端更新源元数据不完整 source="+reply.url); continue; }
             String version=candidate.getString("version");
+            if (isEdgeOneSource(reply.url)) lastEdgeOneVersion = higherVersion(lastEdgeOneVersion, version);
+            else lastPersonalVersion = higherVersion(lastPersonalVersion, version);
             CNLog.i(TAG,"客户端更新源 source="+reply.url+" version="+version);
             candidates.add(candidate);
             identities.add(new CNUpdateSources.ClientIdentity(version,candidate.getLong("size"),candidate.getString("sha256")));
@@ -293,6 +302,7 @@ public final class CNVersionCheck {
         CNLog.i(TAG,"客户端多源检查 completed="+replies.size()+" total="+urls.size());
         int selected=CNUpdateSources.highestClientIndex(identities);
         JSONObject best=selected<0?null:candidates.get(selected);
+        lastBestVersion = best == null ? "—" : best.optString("version", "—");
         if (best!=null) {
             // 安装器换线只使用同版本、同大小、同哈希的来源，绝不在下载时退回旧包。
             org.json.JSONArray same=new org.json.JSONArray();
@@ -307,6 +317,16 @@ public final class CNVersionCheck {
             CNLog.i(TAG,"客户端最高有效版本="+best.getString("version")+" source="+best.optString("_source"));
         }
         return best;
+    }
+
+    private static boolean isEdgeOneSource(String url) {
+        String s = url == null ? "" : url.toLowerCase(java.util.Locale.US);
+        return s.contains("edgeone") || s.contains("esa") || s.contains("edge-one");
+    }
+
+    private static String higherVersion(String a, String b) {
+        if (a == null || a.equals("—") || a.isEmpty()) return b;
+        return compareVersion(a, b) >= 0 ? a : b;
     }
 
     static boolean validClient(JSONObject c) {

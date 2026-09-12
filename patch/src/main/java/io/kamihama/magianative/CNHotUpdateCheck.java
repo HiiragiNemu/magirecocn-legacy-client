@@ -61,6 +61,12 @@ public final class CNHotUpdateCheck {
 
     private static final String TAG = "MagiaCNHotUpdate";
 
+    /** 最新多源热更版本，供主界面显示；-1 表示尚未收到该项元数据。 */
+    public static volatile int latestJsVersion = -1;
+    public static volatile int latestScenarioVersion = -1;
+    public static volatile int edgeJsVersion = -1;
+    public static volatile int edgeScenarioVersion = -1;
+
     private static final String FILES_DIR  = CNPaths.filesDir() + "/";
     // 安装完成的判据统一在 CNDownloaderFix.isBaseInstallationComplete()（F-074），
     // 这里不再自己拼一份 cn_base_done.flag 的路径——两份路径常量迟早会分叉。
@@ -911,7 +917,14 @@ public final class CNHotUpdateCheck {
             if (reply.error!=null) CNLog.w(TAG,"热更新源失败（不计入传输冷却） source="+reply.url+" error="+reply.error);
             else if (CNUpdateSources.validHot(reply.value)) {
                 values.add(reply.value);
-                CNLog.i(TAG,"热更新源 source="+reply.url+" version="+reply.value.version);
+                boolean edge = isEdgeOneSource(reply.url);
+                if (name.contains("js")) {
+                    if (edge) edgeJsVersion = Math.max(edgeJsVersion, reply.value.version);
+                    else latestJsVersion = Math.max(latestJsVersion, reply.value.version);
+                } else if (name.contains("scenario")) {
+                    if (edge) edgeScenarioVersion = Math.max(edgeScenarioVersion, reply.value.version);
+                    else latestScenarioVersion = Math.max(latestScenarioVersion, reply.value.version);
+                }
             } else CNLog.w(TAG,"热更新源元数据不完整 source="+reply.url);
         }
         CNHotUpdateValidate.VerMeta best=CNUpdateSources.highestHot(values);
@@ -922,6 +935,11 @@ public final class CNHotUpdateCheck {
     }
 
     /** 从单条线路直取版本 json 并解析 version/size/md5。 */
+    private static boolean isEdgeOneSource(String url) {
+        String s = url == null ? "" : url.toLowerCase(java.util.Locale.US);
+        return s.contains("edgeone") || s.contains("esa") || s.contains("edge-one");
+    }
+
     private static CNHotUpdateValidate.VerMeta fetchMetaDirect(String url) throws Exception {
         // 尊重 Android 系统代理。未配置系统代理时 openConnection() 本身就是直连；
         // 显式 Proxy.NO_PROXY 会绕开 MuMu/Clash/mitm 链，正是本次真机长超时的来源。

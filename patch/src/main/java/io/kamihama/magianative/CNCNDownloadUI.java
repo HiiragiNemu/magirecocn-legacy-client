@@ -424,9 +424,9 @@ public class CNCNDownloadUI {
         "魔法纪录Totentanz中文化",
         "项目官网：" + CNEndpoints.HOME_HOST,
         "主力人员",
-        "【汉化主力和资源整理】MadeInMagius（点击赞助）",
+        "【总体规划、路线设计与核心实现】MadeInMagius（点击赞助）",
         "bilibili个人主页",
-        "【程序主力和国内加速】CyberNova/PhotonFlow（点击赞助）",
+        "【国内加速与下载协助】CyberNova/PhotonFlow（点击赞助）",
         "bilibili个人主页",
         "其他协助者",
         "【国服外翻译和校对】水银h2oag（点击个人主页）",
@@ -617,6 +617,8 @@ public class CNCNDownloadUI {
     private static TextView     vOverallText;
     private static LinearLayout slotContainer;
     private static LinearLayout vContribList;
+    /** 左侧版本状态面板：显示本端、资源侧（GitHub/Cloudflare）、EdgeOne 及热更版本。 */
+    private static TextView     vVersionInfo;
     private static TextView     vThemeChip;
     private static TextView     vGitHubChip;
     /** 右上角胶囊行（主题 / GitHub / 字号）。assist 把字号胶囊挂进来。 */
@@ -956,6 +958,15 @@ public class CNCNDownloadUI {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 1));
         divLp.bottomMargin = dp(act, 8);
         leftCol.addView(divider, divLp);
+
+        vVersionInfo = new TextView(act);
+        vVersionInfo.setText(versionPanelText());
+        vVersionInfo.setTextColor(COLOR_SUB);
+        vVersionInfo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f);
+        vVersionInfo.setGravity(Gravity.START);
+        vVersionInfo.setPadding(dp(act, 6), 0, dp(act, 4), dp(act, 6));
+        leftCol.addView(vVersionInfo, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         ScrollView contribScroll = new ScrollView(act);
         contribScroll.setFillViewport(true);
@@ -1850,6 +1861,7 @@ public class CNCNDownloadUI {
             @Override public void run() {
                 try {
                     populateContributors(act);
+                    if (vVersionInfo != null) vVersionInfo.setText(versionPanelText());
                     applyRightPill(act);   // GitHub 胶囊可变: config 下发 right_pill 则替换文案/动作
                     if (vFooter != null) {
                         vFooter.setText(footerText());
@@ -4227,12 +4239,28 @@ public class CNCNDownloadUI {
         return (aria2 ? "aria2c" : "自建引擎") + " · " + CNDownloadMode.describe();
     }
 
+    private static String versionPanelText() {
+        return "版本状态"
+                + "\n本端客户端：v" + CNVersionCheck.lastLocalVersion
+                + "\n资源侧 GitHub/Cloudflare：v" + CNVersionCheck.lastBestVersion
+                + "\nEdgeOne：v" + CNVersionCheck.lastEdgeOneVersion
+                + "\nJS：" + hotVersion(CNHotUpdateCheck.latestJsVersion)
+                + " / EdgeOne " + hotVersion(CNHotUpdateCheck.edgeJsVersion)
+                + "\nScenario：" + hotVersion(CNHotUpdateCheck.latestScenarioVersion)
+                + " / EdgeOne " + hotVersion(CNHotUpdateCheck.edgeScenarioVersion);
+    }
+
+    private static String hotVersion(int value) {
+        return value < 0 ? "—" : String.valueOf(value);
+    }
+
     private static void renderAll() {
         // 日志面板内容（安装状态 + 运行日志）。
         // 这里**必须**走 renderLogModal()：早先直接 setText(buildStatusText())
         // 会把刚拼进去的日志段整段抹掉，而 renderAll 每 500ms 就跑一次——
         // 表现就是日志行刚打印出来就转瞬即逝。
         scheduleLogRefresh();
+        if (vVersionInfo != null) vVersionInfo.setText(versionPanelText());
 
         int[]   status     = fileStatus;
         int[]   progress   = fileProgress;
@@ -4548,6 +4576,7 @@ public class CNCNDownloadUI {
                 vOverallText  = null;
                 slotContainer = null;
                 vContribList  = null;
+                vVersionInfo  = null;
                 vThemeChip    = null;
                 vLogPill      = null;
                 logModal      = null;
