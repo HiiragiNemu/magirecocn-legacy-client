@@ -412,17 +412,27 @@ public final class CNDownloaderFix {
                         // 加载」，挂晚了当前文档里就取不到那个桥，而前端是 hash
                         // 路由，整局都不会再有第二次文档加载。详见 CNDeckState 类注释。
                         CNDeckState.install();
-                        // WebView 远程调试（实证手段 F）：开 useWebviewDebug 后
-                        // chrome://inspect 可连本进程看 WebView 网络面板（method/URL/WS）。
-                        // 静态方法全局生效，只需在 WebView 创建前调一次。
-                        // ⚠ 必须 try/catch 隔离：部分设备上该调用会触发 WebView provider
-                        // 初始化并抛异常，裸调会中断本方法（启动链），下载浮层随之消失。
+                        // 调试开关在后台读取，WebView 调试 API 仅在主线程调用。
+                        // 异步派发不等待 WebView；provider 异常仍隔离，版本检查照常接力。
                         if (CNDebugFlags.isOn(CNDebugFlags.USE_WEBVIEW_DEBUG)) {
                             try {
-                                android.webkit.WebView.setWebContentsDebuggingEnabled(true);
-                                CNLog.i(TAG, "调试开关 useWebviewDebug 生效，WebView 远程调试已开启");
+                                Runnable enableDebug = new Runnable() {
+                                    @Override public void run() {
+                                        try {
+                                            android.webkit.WebView.setWebContentsDebuggingEnabled(true);
+                                            CNLog.i(TAG, "调试开关 useWebviewDebug 生效，WebView 远程调试已开启");
+                                        } catch (Throwable t) {
+                                            CNLog.w(TAG, "启用 WebView 远程调试失败（不影响下载流程）", t);
+                                        }
+                                    }
+                                };
+                                if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+                                    enableDebug.run();
+                                } else {
+                                    new android.os.Handler(android.os.Looper.getMainLooper()).post(enableDebug);
+                                }
                             } catch (Throwable t) {
-                                CNLog.w(TAG, "启用 WebView 远程调试失败（不影响下载流程）", t);
+                                CNLog.w(TAG, "派发 WebView 远程调试失败（不影响下载流程）", t);
                             }
                         }
 
