@@ -1421,10 +1421,12 @@ static constexpr auto kVersionHidden =
 
 // 经 RegisterNatives 绑给 CNVersionCheck.nativeClientVersion()。
 static jstring nativeClientVersion(JNIEnv* env, jclass) {
+    // 保留运行期读取：否则优化器会把 constexpr 解码再折叠成明文字面量。
+    const volatile char* encoded = kVersionHidden.bytes;
     char plain[sizeof(CLIENT_VERSION)];
     for (size_t i = 0; i < sizeof(plain); ++i)
         plain[i] = static_cast<char>(
-                static_cast<uint8_t>(kVersionHidden.bytes[i]) ^ verobf::key_at(i));
+                static_cast<uint8_t>(encoded[i]) ^ verobf::key_at(i));
     jstring s = env->NewStringUTF(plain);
     // 别把明文留在栈上。volatile 防止优化器把这次清零当成死代码删掉。
     volatile char* wipe = plain;
