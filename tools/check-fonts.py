@@ -34,7 +34,7 @@
 其中 33.4 MB 还是同一个字体存了三份。
 
 `MTF4a5kp.ttf` 也删了（2B）。引擎确实会按这个名字请求，但 `fontPathFix` 无条件把它
-改指 `mbm_20160902.ttf`——**而且 `noFontHook` 那个能绕过重定向的调试开关已经一并撤除**，
+改指 `TTZhiHeiGB3-W4.ttf`——**而且 `noFontHook` 那个能绕过重定向的调试开关已经一并撤除**，
 所以重定向成了唯一路径，不存在"绕过后找不到文件"的情形。留着一个永远不被打开的
 16.7 MB 商业字体没有意义。
 
@@ -44,7 +44,7 @@
 > 历史提醒：`koruri-semibold.ttf` 这个文件名是**误导性**的。Koruri 是 Apache-2.0
 > 的日文开源字体，而那个文件的内容是腾祥嘉丽大圆——按文件名做合规审计会看走眼。
 > 这不是本仓库造成的（根提交就这样，是国服官方汉化时替换文件内容留下的），
-> 但清理时正好把这个雷一起拆了。同理，现行的 `MTF4a5kp → mbm_20160902` 重定向
+> 但清理时正好把这个雷一起拆了。同理，现行的 `MTF4a5kp → TTZhiHeiGB3-W4` 重定向
 > 并不是「日文换中文」——后者国服早就做完了——而是把 UI 汇到覆盖最好的字体上。
 
 ## 判据
@@ -82,6 +82,18 @@ EXPECTED = {
         "1ab05592922270fe52792431f7843a9f767aa50efbfbcbb22f65ea90a78a8118",
         None,
         "魔女文字的位图字体描述",
+    ),
+    "TTDaYuanGB3.ttf": (
+        17507340,
+        "01bbb65b3b21f8d445fe15412fc3b5864425033f534464be26de0aa7ed8150c0",
+        "Tensentype JiaLiDaYuanGB18030",
+        "剧情内对话、角色看板字幕与字幕场景字体",
+    ),
+    "TTZhiHeiGB3-W4.ttf": (
+        8367096,
+        "01a4be2e5fca489c30219b3bec5edac0b7c98128c5fa629c34a0208ed5b0ba34",
+        "Tensentype ZhiHeiGB18030-W4",
+        "对话框及原生 UI 字体；MTF4a5kp 路由目标",
     ),
     "witchText-export.png": (
         2065782,
@@ -229,7 +241,7 @@ def main():
         print("要换界面字体，改 magia-native/src/MagiaLegacy.cpp 里那对常量：",
               file=sys.stderr)
         print('    static const char kFrom[] = "fonts/MTF4a5kp.ttf";', file=sys.stderr)
-        print('    static const char kTo[]   = "fonts/mbm_20160902.ttf";',
+        print('    static const char kTo[]   = "fonts/TTZhiHeiGB3-W4.ttf";',
               file=sys.stderr)
         print("这样随时能热回滚；直接替换文件内容做不到，而且历史上已经回滚过一次"
               "（702ebbf3 → 703cb30f）。", file=sys.stderr)
