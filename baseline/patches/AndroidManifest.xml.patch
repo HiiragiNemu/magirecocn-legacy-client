@@ -1,14 +1,15 @@
 --- a/AndroidManifest.xml
 +++ b/AndroidManifest.xml
-@@ -15,6 +15,7 @@
+@@ -15,6 +15,8 @@
      <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
      <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
      <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
 +    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
++    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
      <uses-permission android:name="com.android.vending.BILLING"/>
      <queries>
          <intent>
-@@ -26,7 +27,7 @@
+@@ -26,7 +28,7 @@
      <uses-permission android:name="io.kamihama.totentanz.permission.C2D_MESSAGE"/>
      <permission android:name="io.kamihama.totentanz.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" android:protectionLevel="signature"/>
      <uses-permission android:name="io.kamihama.totentanz.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"/>
@@ -17,20 +18,23 @@
          <meta-data android:name="BUILD_TYPE" android:value="@string/build_type"/>
          <meta-data android:name="SERVER_TYPE" android:value="@string/server_type"/>
          <meta-data android:name="APP_TYPE" android:value="@string/app_type"/>
-@@ -52,6 +53,8 @@
+@@ -52,7 +54,9 @@
                  <data android:scheme="magireco.reward"/>
              </intent-filter>
          </activity>
+-        <service android:exported="true" android:name="jp.f4samurai.pnote.util.MyFcmListenerService">
 +        <activity android:excludeFromRecents="true" android:exported="false" android:launchMode="singleTask" android:name="io.kamihama.magianative.CNRestartActivity" android:noHistory="true" android:process=":cnrestart" android:screenOrientation="userLandscape" android:taskAffinity="io.kamihama.totentanz.cnrestart" android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
 +        <activity android:excludeFromRecents="true" android:exported="false" android:launchMode="singleTask" android:name="io.kamihama.magianative.CNOfflineImportActivity" android:noHistory="true" android:screenOrientation="userLandscape" android:taskAffinity="io.kamihama.totentanz.offlineimport" android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
--        <service android:exported="true" android:name="jp.f4samurai.pnote.util.MyFcmListenerService">
 +        <service android:exported="false" android:name="jp.f4samurai.pnote.util.MyFcmListenerService">
              <intent-filter>
                  <action android:name="com.google.firebase.MESSAGING_EVENT"/>
-@@ -129,6 +132,7 @@
+             </intent-filter>
+@@ -129,6 +133,9 @@
          <receiver android:enabled="false" android:exported="false" android:name="cn.thinkingdata.analytics.utils.broadcast.TDReceiver"/>
          <meta-data android:name="com.google.android.play.billingclient.version" android:value="5.2.1"/>
          <activity android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize" android:exported="false" android:name="com.android.billingclient.api.ProxyBillingActivity" android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
++        <activity android:name="io.kamihama.magianative.CNApkUpdateActivity" android:exported="false" android:screenOrientation="userLandscape" android:configChanges="orientation|screenSize|keyboardHidden" android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
++        <provider android:name="io.kamihama.magianative.CNApkProvider" android:authorities="io.kamihama.totentanz.updateapk" android:exported="false" android:grantUriPermissions="true"/>
 +        <provider android:name="io.kamihama.magianative.CNLogShareProvider" android:authorities="io.kamihama.totentanz.logshare" android:exported="false" android:grantUriPermissions="true"/>
          <service android:name="com.google.firebase.components.ComponentDiscoveryService">
              <meta-data android:name="com.google.firebase.components:com.google.firebase.analytics.connector.internal.AnalyticsConnectorRegistrar" android:value="com.google.firebase.components.ComponentRegistrar"/>

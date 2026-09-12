@@ -3481,7 +3481,7 @@ public class CNCNDownloadUI {
      */
     public static void showVersionUpdateDialog(final Activity act, final String local,
                                                final String cloud, final String url,
-                                               final String note) {
+                                               final String note, final org.json.JSONObject metadata) {
         final FrameLayout host = overlayView;
         if (act == null || host == null) {
             CNLog.w("界面", "浮层不在，无法显示强制更新框");
@@ -3489,7 +3489,7 @@ public class CNCNDownloadUI {
         }
         act.runOnUiThread(new Runnable() {
             @Override public void run() {
-                try { buildVersionUpdateDialog(act, host, local, cloud, url, note); }
+                try { buildVersionUpdateDialog(act, host, local, cloud, url, note, metadata); }
                 catch (Throwable t) { CNLog.e("界面", "构建强制更新框失败", t); }
             }
         });
@@ -3498,7 +3498,7 @@ public class CNCNDownloadUI {
     /** 在 UI 线程上真正把强制更新框建出来。 */
     private static void buildVersionUpdateDialog(final Activity act, FrameLayout host,
                                                  String local, String cloud,
-                                                 final String url, String note) {
+                                                 final String url, String note, final org.json.JSONObject metadata) {
         if (versionModal != null) return;      // 已经开着，别叠第二层
 
         final FrameLayout modal = new FrameLayout(act);
@@ -3529,7 +3529,7 @@ public class CNCNDownloadUI {
         TextView msg = new TextView(act);
         String text = "发现新版本客户端：v" + cloud + "（当前 v" + local + "）\n\n"
                 + "客户端版本过旧，继续游戏可能无法正常运行，请下载并安装最新版本。\n\n"
-                + "· 「前往更新」：打开浏览器下载新包（覆盖安装即可，数据不丢）\n"
+                + "· 「立即更新」：应用内下载并校验，随后确认覆盖安装，保留存档与资源\n"
                 + "· 「退出游戏」：本次不玩，下次启动会再次提醒";
         if (note != null && !note.isEmpty()) text += "\n\n" + note;
         msg.setText(text);
@@ -3581,7 +3581,7 @@ public class CNCNDownloadUI {
         panel.addView(row, lpRow(0, 0));
 
         TextView quit = dialogButton(act, "退出游戏", COLOR_LOG_PANEL_TEXT, 0x00000000, true);
-        TextView go   = dialogButton(act, "前往更新", 0xFFFFFFFF, COLOR_ACCENT, false);
+        TextView go   = dialogButton(act, "立即更新", 0xFFFFFFFF, COLOR_ACCENT, false);
         if (fontScale >= 1.2f) {
             LinearLayout.LayoutParams qLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -3611,10 +3611,8 @@ public class CNCNDownloadUI {
         });
         go.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
-                CNLog.i("界面", "玩家在强制更新框选择前往更新: " + url);
-                // apk_url 同样是云端下发的。这一处尤其要卡死：玩家在这个框里
-                // 是被明确引导去「装一个包」的，跳到哪里就装哪里的东西。
-                CNSafeLink.open(act, url, "强制更新");
+                CNLog.i("界面", "玩家选择应用内更新");
+                CNApkUpdateActivity.start(act, metadata);
             }
         });
 

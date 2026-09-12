@@ -196,7 +196,7 @@ public final class CNVersionCheck {
         CNLog.w(TAG, "云端版本更高（" + local + " → " + cloud + "），弹强制更新框");
         if (act != null && overlayReady) {
             CNCNDownloadUI.updateSimple("客户端更新", "发现新版本 v" + cloud + "，需要更新客户端", 0);
-            CNCNDownloadUI.showVersionUpdateDialog(act, local, cloud, apkUrl, note);
+            CNCNDownloadUI.showVersionUpdateDialog(act, local, cloud, apkUrl, note, client);
         } else {
             // F-064：强更的唯一阻断依据是「玩家确实看得到更新模态」。无 Activity 或
             // 浮层创建失败时继续吞掉 continuation，会形成既没对话框也不启动后续流程
@@ -293,7 +293,19 @@ public final class CNVersionCheck {
         CNLog.i(TAG,"客户端多源检查 completed="+replies.size()+" total="+urls.size());
         int selected=CNUpdateSources.highestClientIndex(identities);
         JSONObject best=selected<0?null:candidates.get(selected);
-        if (best!=null) CNLog.i(TAG,"客户端最高有效版本="+best.getString("version")+" source="+best.optString("_source"));
+        if (best!=null) {
+            // 安装器换线只使用同版本、同大小、同哈希的来源，绝不在下载时退回旧包。
+            org.json.JSONArray same=new org.json.JSONArray();
+            same.put(best.getString("apk_url"));
+            for(JSONObject c:candidates) {
+                if(c==best)continue;
+                if(compareVersion(c.getString("version"),best.getString("version"))==0
+                   && c.getLong("size")==best.getLong("size")
+                   && c.getString("sha256").equalsIgnoreCase(best.getString("sha256")))same.put(c.getString("apk_url"));
+            }
+            best.put("_apk_urls",same);
+            CNLog.i(TAG,"客户端最高有效版本="+best.getString("version")+" source="+best.optString("_source"));
+        }
         return best;
     }
 

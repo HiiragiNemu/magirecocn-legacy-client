@@ -51,6 +51,7 @@ public final class MultiSourceUpdateTest {
         check((System.nanoTime()-start)/1000000<1500,"slow_route_does_not_block_global_budget");
         check(CNUpdateSources.highestHot(values(replies)).version==91,"fast_new_reply_survives_slow_route_timeout");
         check(CNUpdateSources.highestClientIndex(Arrays.asList(client("1.0.171"),client("1.0.174"),client("1.0.173")))==1,"client174_wins_while_edge171");
+        check(CNUpdateSources.highestClientIndex(Arrays.asList(client("1.0.176"),client("1.0.175")))==0,"higher_edge_version_wins_over_personal");
         check(CNUpdateSources.highestClientIndex(Arrays.asList(client("1.0.9"),client("1.0.10")))==1,"client_version_numeric_not_lexical");
         check(CNUpdateSources.highestClientIndex(Arrays.asList(client("invalid"),client("1.0.174")))==1,"malformed_client_version_rejected");
         conflict=false;
