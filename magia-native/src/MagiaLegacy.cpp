@@ -1413,7 +1413,7 @@ struct Hidden {
 // ⚠ CI 与本地构建按 `CLIENT_VERSION = "…"` 这个**形状**做 sed 注入，改写法要同步
 //   改 build-apk.yml 与 tools/build-local.sh 两处。它是 constexpr、从不取地址，
 //   只在编译期喂给下面的 Hidden，因此不会有一份明文留在产物里。
-static constexpr char CLIENT_VERSION[] = "1.0.0";
+static constexpr char CLIENT_VERSION[] = "1.0.177";
 
 // 真正进二进制的是这一份：异或之后的字节。
 static constexpr auto kVersionHidden =
@@ -2800,9 +2800,9 @@ static void fontPathOverwrite(void* strObj, const char* nv, size_t n) {
 //     fonts/MTF4a5kp.ttf          ← 这里重定向
 //     fonts/mbm_20160902.ttf      ← 重定向的目标，本来就是它
 //     fonts/witchText-export.fnt  ← 魔女文字位图字体，另一套机制，不动
-// 所以「把所有字体引用汇到 mbm」落到实处就是下面这一对常量。
+// 所以「剧情、看板台词与选择界面统一到 TTDaYuanGB3」落到实处就是下面这一对常量。
 //
-// 为什么目标是 mbm 而不是先前的 TTZhiHeiGB3-W4：
+// 为什么目标是 TTDaYuanGB3 而不是先前的 mbm/TTZhiHeiGB3-W4：
 //   · 覆盖最好——mbm 是格式 12 cmap、30823 个码位（ZhiHei 是格式 4、28611），
 //     CJK 基本区 20945/20992 对 20902，扩展 A 也多。换过去只多字不掉字。
 //   · 风格统一——mbm 是游戏自己的 MagiReco CN Medium，剧情文本本来就用它，
@@ -2810,7 +2810,7 @@ static void fontPathOverwrite(void* strObj, const char* nv, size_t n) {
 //   · 更安全——见下面那段关于长度的说明。
 static void fontPathFix(void* strObj, const char* tag) {
     static const char kFrom[] = "fonts/MTF4a5kp.ttf";        // 18 字符
-    static const char kTo[]   = "fonts/mbm_20160902.ttf";    // 22 字符
+    static const char kTo[]   = "fonts/TTDaYuanGB3.ttf";    // 21 字符
     // ⚠ ARM64 的短串上限是 22，kFrom=18、kTo=22，二者都走内联；ARMv7 的
     // 短串上限只有 10，二者都走 long。fontPathOverwrite 必须同时覆盖这两种路径。
     // 先前的 "fonts/TTZhiHeiGB3-W4.ttf" 是 24 字符，超了，于是每次重定向都要走
@@ -2821,7 +2821,7 @@ static void fontPathFix(void* strObj, const char* tag) {
     NdkStrView v = ndkStrRead(strObj);
     if (v.size == sizeof(kFrom) - 1 && memcmp(v.data, kFrom, sizeof(kFrom) - 1) == 0) {
         fontPathOverwrite(strObj, kTo, sizeof(kTo) - 1);
-        LOGI("[font] %s: MTF4a5kp → mbm_20160902", tag);
+        LOGI("[font] %s: MTF4a5kp → TTDaYuanGB3", tag);
     }
 }
 
@@ -3293,7 +3293,7 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
           (void*)initLabelNew, (void**)&initLabelOld, "i18n: LbUtility::initLabel");
     }
 
-    // ── 引擎 UI 字体路径重定向（MTF4a5kp → mbm_20160902）──
+    // ── 引擎 UI 字体路径重定向（MTF4a5kp → TTDaYuanGB3）──
     if (g_dbgNoTtfHooks) {
         LOGE("[DEBUG] noTtfHooks 生效：**不安装** createWithTTF/setTTFConfig 三个钩子");
     } else {
@@ -3312,3 +3312,5 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     LOGI("[JNI] hooks 安装完成：成功 %d 个，失败 %d 个", hookOk, hookFail);
     return JNI_VERSION_1_6;
 }
+
+

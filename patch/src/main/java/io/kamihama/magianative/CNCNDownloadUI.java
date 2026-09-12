@@ -429,7 +429,7 @@ public class CNCNDownloadUI {
         "【国内加速与下载协助】CyberNova/PhotonFlow（点击赞助）",
         "bilibili个人主页",
         "其他协助者",
-        "【国服外翻译和校对】水银h2oag（点击个人主页）",
+        "【国服与圆环记录汉化组外剧情翻译及部分校对】水银h2oag（点击个人主页）",
         "【国服数据留存】segfault（点击个人主页）",
         "友情链接",
         CNEndpoints.site(0) + "【魔法纪录剧情中日双语阅读网站】",
@@ -5050,3 +5050,4 @@ public class CNCNDownloadUI {
         }
     }
 }
+
