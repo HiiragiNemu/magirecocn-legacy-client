@@ -99,6 +99,10 @@ public final class CNEndpoints {
     /** 内置兜底线路之二：自有域下的阿里 ESA。 */
     public static final String ESA_BASE = !SECONDARY_BASE_OVERRIDE.isEmpty() ? SECONDARY_BASE_OVERRIDE : (ROOT_DOMAIN.isEmpty() ? "" : "https://esa.assets." + ROOT_DOMAIN + "/");
 
+    /** Previous publisher routes remain independent update candidates after transport migration. */
+    public static final String LEGACY_EDGEONE_BASE = ROOT_DOMAIN.isEmpty() ? "" : "https://edgeone.assets." + ROOT_DOMAIN + "/";
+    public static final String LEGACY_ESA_BASE = ROOT_DOMAIN.isEmpty() ? "" : "https://esa.assets." + ROOT_DOMAIN + "/";
+
     /**
      * 署名区那三个站的主机名数组；注入缺失时返回<b>空数组</b>（＝一个都不放行）。
      *

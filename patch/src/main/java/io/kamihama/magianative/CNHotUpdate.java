@@ -100,9 +100,11 @@ public final class CNHotUpdate {
         }
 
         if (!CNMirrors.isLoaded()) CNMirrors.ensureLoadedAsync();
+        final java.util.List<CNMirrors.Mirror> updateMirrors =
+                CNUpdateSources.mirrors(expected == null ? null : expected.sourceBase);
         CNLog.i(TAG, "开始下载 " + displayName + " file=" + remoteName
                 + " identity=" + hotIdentity(expected)
-                + " 可用线路=" + CNMirrors.healthy().size());
+                + " 可用线路=" + updateMirrors.size());
 
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             if (Thread.currentThread().isInterrupted()) {
@@ -117,7 +119,8 @@ public final class CNHotUpdate {
             CNMirrors.Mirror mirror;
             String tryUrl;
             try {
-                mirror = CNMirrors.pick(attempt);
+                if (updateMirrors.isEmpty()) throw new IllegalStateException("无可用更新线路");
+                mirror = updateMirrors.get((attempt - 1) % updateMirrors.size());
                 tryUrl = withIdentity(mirror.urlFor(remoteName), expected);
             } catch (IllegalStateException noMirror) {
                 CNLog.e(TAG, "no-mirror file=" + remoteName + " attempt=" + attempt, noMirror);

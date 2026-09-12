@@ -890,48 +890,35 @@ public final class CNHotUpdateCheck {
     // 版本号
     // ==================================================================
 
-    /**
-     * 取版本 json。<b>走换线</b>：与资源文件同一套线路（维护者 2026-08-03 定的
-     * 新规——「配置直连主线」的铁律对这两份 version json 不再适用；仍直连主线
-     * 的只有线路表本身 config.json，它定义了线路，没得选）。从规范地址取出
-     * 文件名后逐条线路试，失败记冷却；全部失败才抛出（调用方按「跳过本次
-     * 热更」处理，不会卡住启动）。
-     */
+    /** Query every independent publisher; select the highest complete identity per package. */
     private static CNHotUpdateValidate.VerMeta fetchMeta(String url) throws Exception {
-        // 规范前缀，不是兜底线路——换兜底线路时这里必须岿然不动，
-        // 否则剥不出文件名，拼出来的地址每条线路都会 404。
-        String base = CNMirrors.CANONICAL_BASE;
-        String name = url.startsWith(base) ? url.substring(base.length()) : url;
-        // 内置 fallback 一直存在；远程 config 只在后台刷新，绝不在
-        // 版本查询关键路径同步等线路表服务。
+        String base=CNMirrors.CANONICAL_BASE;
+        final String name=url.startsWith(base)?url.substring(base.length()):url;
         if (!CNMirrors.isLoaded()) CNMirrors.ensureLoadedAsync();
-        Exception last = null;
-        for (CNMirrors.Mirror m : CNMirrors.healthy()) {
-            try {
-                String metaUrl = m.urlFor(name);
-                String sep = metaUrl.indexOf('?') >= 0 ? "&" : "?";
-                metaUrl = metaUrl + sep + "cnv_version="
-                        + System.currentTimeMillis() + "-" + Math.abs(name.hashCode());
-                return fetchMetaDirect(metaUrl);
-            } catch (Exception t) {
-                // 只换下一条线路，**不调 reportFailure**。
-                //
-                // 这里失败不代表这条线路不适合传大文件。版本 json 是个几十字节的
-                // 冷对象，一次回源慢就可能超时；而 reportFailure 在
-                // switch_after_failures=1 的线上配置下会让它立刻进 60 秒冷却，
-                // 冷却中的线路被 healthy() 整个排除——于是后续所有资源包都不再用它。
-                //
-                // 实际撞到过：竞速刚用 cn_js_update.zip 的前 256KB 实测吞吐把
-                // 某条线路评为最快、排到最前，紧接着版本 json 这一步就把它拉黑了。
-                // 两个机制测的根本不是一回事：小文件冷启动的延迟与大文件的吞吐
-                // 没有因果关系。线路适不适合传大文件，交给竞速与下载过程中的
-                // stall / 限速判定去管，那才是对口的度量。
-                CNLog.w(TAG, "版本 json 线路失败（只换线，不计入冷却） mirror="
-                        + m.name + ": " + t);
-                last = t;
-            }
+        final java.util.LinkedHashMap<String,String> bases=new java.util.LinkedHashMap<String,String>();
+        for (CNMirrors.Mirror m:CNUpdateSources.mirrors(null)) bases.put(m.urlFor(name),m.base);
+        java.util.List<String> urls=new java.util.ArrayList<String>(bases.keySet());
+        java.util.List<CNUpdateSources.Reply<CNHotUpdateValidate.VerMeta>> replies=CNUpdateSources.collect(urls,
+            new CNUpdateSources.Loader<CNHotUpdateValidate.VerMeta>() {
+                public CNHotUpdateValidate.VerMeta load(String source) throws Exception {
+                    String request=source+(source.indexOf('?')>=0?"&":"?")+"cnv_version="+System.nanoTime();
+                    CNHotUpdateValidate.VerMeta v=fetchMetaDirect(request);
+                    return new CNHotUpdateValidate.VerMeta(v.version,v.size,v.md5,bases.get(source));
+                }
+            },CNUpdateSources.QUERY_BUDGET_MS);
+        java.util.List<CNHotUpdateValidate.VerMeta> values=new java.util.ArrayList<CNHotUpdateValidate.VerMeta>();
+        for (CNUpdateSources.Reply<CNHotUpdateValidate.VerMeta> reply:replies) {
+            if (reply.error!=null) CNLog.w(TAG,"热更新源失败（不计入传输冷却） source="+reply.url+" error="+reply.error);
+            else if (CNUpdateSources.validHot(reply.value)) {
+                values.add(reply.value);
+                CNLog.i(TAG,"热更新源 source="+reply.url+" version="+reply.value.version);
+            } else CNLog.w(TAG,"热更新源元数据不完整 source="+reply.url);
         }
-        throw last != null ? last : new java.io.IOException("无可用线路");
+        CNHotUpdateValidate.VerMeta best=CNUpdateSources.highestHot(values);
+        if (best==null) throw new java.io.IOException("所有来源均未返回完整有效的版本身份");
+        CNLog.i(TAG,"最高热更版本 file="+name+" version="+best.version+" source="+best.sourceBase
+                   +" completed="+replies.size()+" total="+urls.size());
+        return best;
     }
 
     /** 从单条线路直取版本 json 并解析 version/size/md5。 */

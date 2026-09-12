@@ -26,7 +26,11 @@ public final class CNHotUpdateValidate {
         public final int    version;
         public final long   size;
         public final String md5;
-        public VerMeta(int v, long s, String m) { version = v; size = s; md5 = m; }
+        public final String sourceBase;
+        public VerMeta(int v, long s, String m) { this(v,s,m,null); }
+        public VerMeta(int v, long s, String m, String source) {
+            version=v; size=s; md5=m; sourceBase=source;
+        }
     }
 
     /**

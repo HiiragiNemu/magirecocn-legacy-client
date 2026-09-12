@@ -113,7 +113,21 @@ public final class CNSafeLink {
      * <p>署名区那三个站都挂在同一个静态站托管平台的**公共后缀**下——按域名
      * 放行等于把任何人在那个平台上开的站都放进来了，所以这三个只认全名。
      */
-    private static final String[] ALLOW_HOSTS = CNEndpoints.pagesHosts();
+    private static final String[] ALLOW_HOSTS = buildAllowHosts();
+
+    /** Exact build-time publisher hosts, never a public-suffix or remotely supplied allow rule. */
+    private static String[] buildAllowHosts() {
+        java.util.LinkedHashSet<String> hosts = new java.util.LinkedHashSet<String>();
+        for (String host : CNEndpoints.pagesHosts()) hosts.add(host);
+        for (String base : new String[] {CNEndpoints.PRIMARY_BASE_OVERRIDE, CNEndpoints.SECONDARY_BASE_OVERRIDE}) {
+            try {
+                URI u = new URI(base);
+                if ("https".equals(u.getScheme()) && u.getUserInfo()==null && u.getHost()!=null)
+                    hosts.add(u.getHost().toLowerCase(Locale.US));
+            } catch (Exception ignored) {}
+        }
+        return hosts.toArray(new String[hosts.size()]);
+    }
 
     private CNSafeLink() {}
 

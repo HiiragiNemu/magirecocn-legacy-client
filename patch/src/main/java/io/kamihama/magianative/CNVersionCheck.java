@@ -22,8 +22,8 @@ import java.net.URL;
  * 动了会影响覆盖安装；客户端更新通道的版本号是我们自己的一套。
  *
  * <p>云端版本与下载地址记在 {@code config.json} 的 {@code client} 段
- * （{@code version} / {@code apk_url}）。配置类请求一律直连主线，与
- * {@link CNHotUpdateCheck#fetchVersion} 同理。
+ * （{@code version} / {@code apk_url}），并兼容正式 APK 旁注。独立来源并行核对，
+ * 采用完整元数据中的最高版本，不因首个旧版本响应而停止。
  *
  * <h3>失败放行</h3>
  *
@@ -158,7 +158,7 @@ public final class CNVersionCheck {
 
         JSONObject client;
         try {
-            client = fetchClientSection(CNMirrors.MIRRORS_URL);
+            client = fetchBestClientSection();
         } catch (Throwable t) {
             CNLog.w(TAG, "config.json 拉取/解析失败，按不强制更新放行: " + t);
             proceed();
@@ -272,33 +272,67 @@ public final class CNVersionCheck {
     // 网络
     // ==================================================================
 
-    /**
-     * 直连主线拉 config.json 并取出 client 段。配置类请求一律不换线。
-     * 没有 client 段时返回 null；网络/解析异常向上抛（调用方按放行处理）。
-     */
-    private static JSONObject fetchClientSection(String url) throws Exception {
-        // 尊重 Android 系统代理；无系统代理时自然直连。显式 NO_PROXY 会绕开
-        // 用户已经配置好的 MuMu → Clash/mitm 链，并在控制面宕机时白等完整超时。
-        HttpURLConnection c = CNHttp.open(new URL(url), false,
-                CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS);
-        try {
-            int code = c.getResponseCode();
-            if (code / 100 != 2) throw new java.io.IOException("HTTP " + code);
-            InputStream in = new BufferedInputStream(c.getInputStream(), 8192);
-            ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            byte[] buf = new byte[8192];
-            int n;
-            // config.json 只有几 KB；设个上限免得对面返回一坨东西把内存吃了
-            while ((n = in.read(buf)) >= 0 && bos.size() < 262144) bos.write(buf, 0, n);
-            in.close();
-            String body = bos.toString("UTF-8");
-            // 不是 JSON 时把响应体开头带进异常——否则只剩一句「Value <html> …」，
-            // 而那页 HTML 恰恰写着是谁拦的。判据与措辞见 CNMirrors.requireJsonBody。
-            CNMirrors.requireJsonBody(body, c.getContentType());
-            return new JSONObject(body).optJSONObject("client");
-        } finally {
-            try { c.disconnect(); } catch (Throwable ignore) {}
+    /** Query built-in independent publishers even when the primary config responds with an old version. */
+    static JSONObject fetchBestClientSection() throws Exception {
+        java.util.List<String> urls=CNUpdateSources.clientUrls();
+        java.util.List<CNUpdateSources.Reply<JSONObject>> replies=CNUpdateSources.collect(urls,
+            new CNUpdateSources.Loader<JSONObject>() {
+                public JSONObject load(String url) throws Exception { return fetchClientSection(url); }
+            }, CNUpdateSources.QUERY_BUDGET_MS);
+        java.util.List<JSONObject> candidates=new java.util.ArrayList<JSONObject>();
+        java.util.List<CNUpdateSources.ClientIdentity> identities=new java.util.ArrayList<CNUpdateSources.ClientIdentity>();
+        for (CNUpdateSources.Reply<JSONObject> reply:replies) {
+            if (reply.error!=null) { CNLog.w(TAG,"客户端更新源失败 source="+reply.url+" error="+reply.error); continue; }
+            JSONObject candidate=reply.value;
+            if (!validClient(candidate)) { CNLog.w(TAG,"客户端更新源元数据不完整 source="+reply.url); continue; }
+            String version=candidate.getString("version");
+            CNLog.i(TAG,"客户端更新源 source="+reply.url+" version="+version);
+            candidates.add(candidate);
+            identities.add(new CNUpdateSources.ClientIdentity(version,candidate.getLong("size"),candidate.getString("sha256")));
         }
+        CNLog.i(TAG,"客户端多源检查 completed="+replies.size()+" total="+urls.size());
+        int selected=CNUpdateSources.highestClientIndex(identities);
+        JSONObject best=selected<0?null:candidates.get(selected);
+        if (best!=null) CNLog.i(TAG,"客户端最高有效版本="+best.getString("version")+" source="+best.optString("_source"));
+        return best;
+    }
+
+    static boolean validClient(JSONObject c) {
+        return c!=null && c.optString("version","").matches("[0-9]+(\\.[0-9]+){1,3}")
+            && c.optLong("size",-1)>0 && c.optString("sha256","").matches("(?i)[0-9a-f]{64}")
+            && CNSafeLink.reject(c.optString("apk_url",""))==null;
+    }
+
+    /** Accept either a config client section or the existing APK Release sidecar. */
+    private static JSONObject fetchClientSection(String sourceUrl) throws Exception {
+        String url=sourceUrl+(sourceUrl.indexOf('?')>=0?"&":"?")+"cnv_probe="+System.nanoTime();
+        HttpURLConnection c=CNHttp.open(new URL(url),false,CONNECT_TIMEOUT_MS,READ_TIMEOUT_MS);
+        try {
+            c.setRequestProperty("Cache-Control","no-cache, no-store, max-age=0");
+            int code=c.getResponseCode();
+            if (code/100!=2) throw new java.io.IOException("HTTP "+code);
+            if (c.getContentLength()>262144) throw new java.io.IOException("config response too large");
+            InputStream in=new BufferedInputStream(c.getInputStream(),8192);
+            ByteArrayOutputStream bos=new ByteArrayOutputStream();
+            try {
+                byte[] buf=new byte[8192];int n;
+                while ((n=in.read(buf))>=0) {
+                    if (n>262144-bos.size()) throw new java.io.IOException("config response too large");
+                    bos.write(buf,0,n);
+                }
+            } finally { CNIo.closeQuietly(in); }
+            String body=bos.toString("UTF-8");
+            CNMirrors.requireJsonBody(body,c.getContentType());
+            JSONObject root=new JSONObject(body);
+            JSONObject client=root.optJSONObject("client");
+            if (sourceUrl.endsWith(CNUpdateSources.CLIENT_META)) {
+                if (!CNUpdateSources.CLIENT_APK.equals(root.optString("apk"))) throw new java.io.IOException("unexpected APK filename");
+                client=new JSONObject(root.toString());
+                client.put("apk_url",sourceUrl.substring(0,sourceUrl.length()-CNUpdateSources.CLIENT_META.length())+CNUpdateSources.CLIENT_APK);
+            }
+            if (client!=null) client.put("_source",sourceUrl);
+            return client;
+        } finally { c.disconnect(); }
     }
 
     // ==================================================================
