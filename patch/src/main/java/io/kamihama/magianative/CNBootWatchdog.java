@@ -174,6 +174,32 @@ public final class CNBootWatchdog {
         }
     }
 
+    /**
+     * 读取当前 WebView URL。读取失败返回 {@code null}，让原有启动黑屏判据继续工作。
+     */
+    static String currentUrl() {
+        try {
+            WebView wv = CNWebProxy.currentWebView();
+            return wv == null ? null : wv.getUrl();
+        } catch (Throwable t) {
+            CNLog.w(TAG, "读取当前 URL 失败: " + t);
+            return null;
+        }
+    }
+
+    /**
+     * 看门狗只负责启动页。只要路由已经离开 TopPage，就说明启动生命周期已完成；
+     * 即使此时 WebView 隐藏或尺寸为零，也可能是战斗、剧情或活动原生场景正在接管屏幕，
+     * 绝不能再用启动恢复去重载它。
+     */
+    static boolean bootRecoveryAllowedForUrl(String url) {
+        if (url == null || url.length() == 0) return true;
+        int fragment = url.indexOf('#');
+        if (fragment < 0 || fragment == url.length() - 1) return true;
+        String route = url.substring(fragment);
+        return "#/TopPage".equals(route) || route.startsWith("#/TopPage?");
+    }
+
     /** 主线程上的轮询：起来了就收工，到点还没起来就开那一枪。 */
     private static final class Tick implements Runnable {
         private final Handler handler;
@@ -193,6 +219,11 @@ public final class CNBootWatchdog {
         @Override public void run() {
             try {
                 long now = SystemClock.elapsedRealtime();
+                String url = currentUrl();
+                if (!bootRecoveryAllowedForUrl(url)) {
+                    CNLog.i(TAG, "当前已进入非启动路由，不重载，看门狗收工。当前 URL=" + url);
+                    return;
+                }
                 if (frontEndUp()) {
                     visibleStreak++;
                     if (visibleStreak > maxStreak) maxStreak = visibleStreak;
@@ -249,8 +280,11 @@ public final class CNBootWatchdog {
             }
             return;
         }
-        String url = null;
-        try { url = wv.getUrl(); } catch (Throwable t) { CNLog.w(TAG, "读取当前 URL 失败: " + t); }
+        String url = currentUrl();
+        if (!bootRecoveryAllowedForUrl(url)) {
+            CNLog.i(TAG, "到点前已进入非启动路由，拒绝重载并收工。当前 URL=" + url);
+            return;
+        }
         CNLog.w(TAG, "等了 " + (waitedMs / 1000) + " 秒，前端界面始终没有稳定出现"
                 + "（最长连续 " + maxStreak + " 次，门槛 " + SAFE_STREAK + "）—— 判定卡在开机，"
                 + "自动重载一次页面（本进程只做这一次）。当前 URL=" + url);

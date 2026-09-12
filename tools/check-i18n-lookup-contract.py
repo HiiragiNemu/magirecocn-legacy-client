@@ -70,6 +70,9 @@ def last_body(signature):
 
 trampoline = last_body("static void setStringTrampoline(")
 init_label = last_body("static void initLabelNew(")
+ttf_initial = last_body("static bool translateTtfInitialText(")
+ttf_cfg = last_body("static void* createWithTtfCfgNew(")
+ttf_str = last_body("static void* createWithTtfStrNew(")
 lookup = body(src, "static bool engineLookup(")
 prefix = body(src, "static bool enginePrefixLookup(")
 
@@ -91,6 +94,8 @@ checks = {
         bool(trampoline) and trampoline.count(SNAP) == 1,
     "initLabelNew 整次翻译只取一份快照":
         bool(init_label) and init_label.count(SNAP) == 1,
+    "createWithTTF 初始文案整次翻译只取一份快照":
+        bool(ttf_initial) and ttf_initial.count(SNAP) == 1,
     # ── 一、缓冲不共享 ──
     "setStringTrampoline 的译文缓冲是局部的（不是 static/thread_local）":
         bool(trampoline) and not SHARED.search(trampoline),
@@ -100,6 +105,19 @@ checks = {
         bool(init_label) and not SHARED.search(init_label),
     "initLabelNew 仍然有一块自己的 std::string 缓冲":
         bool(init_label) and "std::string combined;" in init_label,
+    "createWithTTF 初始文案 helper 同时覆盖精确与前缀查找":
+        bool(ttf_initial) and "engineLookup(t, text, translated)" in ttf_initial
+        and "enginePrefixLookup(t, v.data, v.size, translated)" in ttf_initial,
+    "createWithTTF 初始文案受 noI18nSetString 统一控制":
+        bool(ttf_initial) and "g_dbgNoI18nSetString" in ttf_initial,
+    "createWithTTF(cfg) 的译文与伪 string 都是调用期局部变量":
+        bool(ttf_cfg) and not SHARED.search(ttf_cfg)
+        and "std::string translated;" in ttf_cfg and "FakeNdkStr fk;" in ttf_cfg
+        and "createWithTtfCfgOld(cfg, &fk, h, i)" in ttf_cfg,
+    "createWithTTF(str) 的译文与伪 string 都是调用期局部变量":
+        bool(ttf_str) and not SHARED.search(ttf_str)
+        and "std::string translated;" in ttf_str and "FakeNdkStr fk;" in ttf_str
+        and "createWithTtfStrOld(&fk, font, size, dims, h, v)" in ttf_str,
     "engineLookup 把译文**拷进** out，不返回指向表内部的指针":
         bool(lookup) and "out = it->second;" in lookup
         and "&it->second" not in lookup,

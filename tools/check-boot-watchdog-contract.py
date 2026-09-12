@@ -7,6 +7,7 @@
 * 序章期间不武装 —— 序章全程 native 每 250ms 把 WebView 按回隐藏，
   不让开就会在序章正中间重载页面；
 * 只开一枪 —— 重载完还不行就该让前端的错误弹窗接手，再刷下去玩家连报错都看不到；
+* 只处理启动路由 —— 战斗、剧情和活动页即使 WebView 隐藏也已经离开启动阶段；
 * 判据三个条件齐全 —— 只看 VISIBLE 不看尺寸，会把 0×0 的 WebView 判成「起来了」，
   而 0×0 恰恰就是玩家报的那块黑屏。
 """
@@ -166,6 +167,16 @@ checks = {
         "visibleStreak >= VISIBLE_STREAK" in wd and VISIBLE_STREAK >= 2,
     "到点只在「从没稳定露过面」时才开枪":
         "maxStreak >= SAFE_STREAK" in wd,
+    "启动恢复只允许无路由或 TopPage":
+        'return "#/TopPage".equals(route) || route.startsWith("#/TopPage?");' in wd
+        and "static boolean bootRecoveryAllowedForUrl(String url)" in wd,
+    "轮询和开枪前都对活动路由 fail-closed":
+        wd.count("if (!bootRecoveryAllowedForUrl(url))") == 2
+        and "当前已进入非启动路由，不重载，看门狗收工" in wd
+        and "到点前已进入非启动路由，拒绝重载并收工" in wd,
+    "战斗与活动路由不进入 reload 路径":
+        not ("QuestBackground" in wd or "EventWitchTopPage" in wd)
+        and "wv.reload();" in fire,
     "SAFE_STREAK 取值既不退化成「见过就不救」也不退化成「到点必开枪」":
         2 <= SAFE_STREAK <= VISIBLE_STREAK,
     "状态机时序模拟全部符合预期":

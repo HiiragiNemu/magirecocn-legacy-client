@@ -58,6 +58,11 @@ public final class CNEndpoints {
      * 任何人在同一后缀下开的站都放进来。同样构建期注入，源码里留空串。
      */
     public static final String PAGES_HOSTS = "";
+    /** 可独立迁移配置和传输端点；不改变安装标记使用的规范资源身份。 */
+    public static final String CONFIG_URL_OVERRIDE = "";
+    public static final String PRIMARY_BASE_OVERRIDE = "";
+    public static final String SECONDARY_BASE_OVERRIDE = "";
+
 
     // 编译必须先经过 tools/inject-endpoints.py。生成类不在源码库中；若有人
     // 绕过唯一注入入口直接 javac，符号解析会在构建期失败，而不是产出
@@ -86,13 +91,13 @@ public final class CNEndpoints {
     public static final String ASSETS_BASE = ROOT_DOMAIN.isEmpty() ? "" : "https://assets." + ROOT_DOMAIN + "/";
 
     /** 线路列表（config.json）地址。路径部分是固定约定，只有主机名随部署变。 */
-    public static final String MIRRORS_URL = API_BASE.isEmpty() ? "" : API_BASE + "legacy/config.json";
+    public static final String MIRRORS_URL = !CONFIG_URL_OVERRIDE.isEmpty() ? CONFIG_URL_OVERRIDE : (API_BASE.isEmpty() ? "" : API_BASE + "legacy/config.json");
 
     /** 内置兜底线路之一：自有域下的 EdgeOne。 */
-    public static final String EDGEONE_BASE = ROOT_DOMAIN.isEmpty() ? "" : "https://edgeone.assets." + ROOT_DOMAIN + "/";
+    public static final String EDGEONE_BASE = !PRIMARY_BASE_OVERRIDE.isEmpty() ? PRIMARY_BASE_OVERRIDE : (ROOT_DOMAIN.isEmpty() ? "" : "https://edgeone.assets." + ROOT_DOMAIN + "/");
 
     /** 内置兜底线路之二：自有域下的阿里 ESA。 */
-    public static final String ESA_BASE = ROOT_DOMAIN.isEmpty() ? "" : "https://esa.assets." + ROOT_DOMAIN + "/";
+    public static final String ESA_BASE = !SECONDARY_BASE_OVERRIDE.isEmpty() ? SECONDARY_BASE_OVERRIDE : (ROOT_DOMAIN.isEmpty() ? "" : "https://esa.assets." + ROOT_DOMAIN + "/");
 
     /**
      * 署名区那三个站的主机名数组；注入缺失时返回<b>空数组</b>（＝一个都不放行）。

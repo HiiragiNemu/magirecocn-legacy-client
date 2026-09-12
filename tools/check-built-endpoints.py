@@ -53,10 +53,10 @@ def main():
     literals = [
         "https://www." + root,
         "https://api." + root + "/",
-        "https://api." + root + "/legacy/config.json",
+        const_value(source, "CONFIG_URL_OVERRIDE") or "https://api." + root + "/legacy/config.json",
         "https://assets." + root + "/",
-        "https://edgeone.assets." + root + "/",
-        "https://esa.assets." + root + "/",
+        const_value(source, "PRIMARY_BASE_OVERRIDE") or "https://edgeone.assets." + root + "/",
+        const_value(source, "SECONDARY_BASE_OVERRIDE") or "https://esa.assets." + root + "/",
         pages,
     ]
     needles = [value.encode("utf-8") for value in literals]

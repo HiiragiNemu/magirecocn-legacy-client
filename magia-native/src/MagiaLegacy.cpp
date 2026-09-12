@@ -2830,15 +2830,44 @@ static CreateWithTtfCfgFn createWithTtfCfgOld = nullptr;
 static CreateWithTtfStrFn createWithTtfStrOld = nullptr;
 static SetTtfCfgFn        setTtfCfgInternalOld = nullptr;
 
+// 战斗中的技能浮字有一部分在 createWithTTF() 构造时一次性传入，之后不会再走
+// Label::setString。字体钩子已经覆盖这两个构造入口，因此在同一入口复用 engine 表，
+// 同时仍由 noI18nSetString 统一关闭这类动态 Label 文案替换。
+static bool translateTtfInitialText(const void* text, const char* label,
+                                    std::string& translated) {
+    maybeReloadEngineI18n();
+    if (g_dbgNoI18nSetString || !text) return false;
+
+    EngineI18nPtr t = g_engineI18nReady.load() ? engineI18nSnapshot() : EngineI18nPtr();
+    if (engineLookup(t, text, translated)) return true;
+
+    NdkStrView v = ndkStrRead(text);
+    if (v.size && t && enginePrefixLookup(t, v.data, v.size, translated)) return true;
+    noteI18nMiss(v.data, v.size, label);
+    return false;
+}
+
 // createWithTTF(const _ttfConfig& cfg, ...)：fontFilePath 在 cfg 偏移 0
 static void* createWithTtfCfgNew(void* cfg, const void* text, int h, int i) {
     fontPathFix(cfg, "createWithTTF(cfg)");
+    std::string translated;
+    if (translateTtfInitialText(text, "Label::createWithTTF(cfg)", translated)) {
+        FakeNdkStr fk;
+        fakeNdkStr(fk, translated);
+        return createWithTtfCfgOld(cfg, &fk, h, i);
+    }
     return createWithTtfCfgOld(cfg, text, h, i);
 }
 // createWithTTF(const std::string& text, const std::string& fontFile, float, ...)
 static void* createWithTtfStrNew(void* text, const void* font, float size,
                                  void* dims, int h, int v) {
     fontPathFix((void*)font, "createWithTTF(str)");
+    std::string translated;
+    if (translateTtfInitialText(text, "Label::createWithTTF(str)", translated)) {
+        FakeNdkStr fk;
+        fakeNdkStr(fk, translated);
+        return createWithTtfStrOld(&fk, font, size, dims, h, v);
+    }
     return createWithTtfStrOld(text, font, size, dims, h, v);
 }
 // Label::setTTFConfigInternal(const _ttfConfig&)

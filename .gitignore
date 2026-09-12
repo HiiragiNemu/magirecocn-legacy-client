@@ -40,3 +40,6 @@ __pycache__/
 
 # 只读参考产物：不参与构建，不入库。
 jadx-reference/
+
+# Generated build-time endpoint proof.
+patch/src/main/java/io/kamihama/magianative/CNEndpointInjectionGuard.java

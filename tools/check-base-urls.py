@@ -138,7 +138,7 @@ def main():
     #
     # 拦的是「本地注入过、顺手 git add 了」。那样一来真实域名就跟着提交进了
     # 历史，而这一整套的目的正是不让它进历史。
-    for name in ("ROOT_DOMAIN", "PAGES_HOSTS"):
+    for name in ("ROOT_DOMAIN", "PAGES_HOSTS", "CONFIG_URL_OVERRIDE", "PRIMARY_BASE_OVERRIDE", "SECONDARY_BASE_OVERRIDE"):
         m = re.search(r'public static final String\s+%s\s*=\s*"([^"]*)";' % name, endpoints)
         if not m:
             problems.append("%s 里找不到 %s 常量——注入脚本会失手，"
@@ -205,7 +205,7 @@ def main():
 
     # ---- 5. 补丁源码里不得有未列入白名单的绝对地址 ----
     for path in java_files():
-        if path in EXEMPT_FILES:
+        if path.replace(chr(92), "/") in EXEMPT_FILES:
             continue
         try:
             text = open(path, encoding="utf-8").read()
@@ -248,7 +248,7 @@ def main():
         return 1
 
     print("✔ 基址核对通过")
-    print("    · CNEndpoints 的两个注入位都是空串（取值构建期注入）")
+    print("    · CNEndpoints 的五个注入位都是空串（取值构建期注入）")
     print("    · %d 个基址常量全部委托给 CNEndpoints" % len(DELEGATES))
     print("    · 热更表与浮层文件表里没有绝对地址（前缀对不上在结构上已不可能）")
     print("    · FILE_URLS 由 FILE_NAMES 逐项拼出")
