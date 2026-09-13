@@ -196,7 +196,7 @@
       "group": "补丁",
       "why": "精简为桩：startCNDownload → CNDownloaderFix.runInstaller，并去掉 getUnsafeOkHttpClient（信任一切证书的 OkHttp）。498 行只剩 147 行，其中我们自己写的占绝大多数，存整份比存一份删 400 行的 diff 更诚实",
       "pre": "f2d78425de7f8cd3078047dea7d221d6f0f0a2f0329fc9d9e467cc0167c7c2a9",
-      "post": "3a5626fcf268c56f232043f14d7674868e769cc4c50d43822266546fc209d726"
+      "post": "b61a00ed0ee3f9a18abfa0e190a232fcbbb6f098675e33ac3ddd39ddd07ca28d"
     },
     {
       "kind": "replace",
@@ -959,7 +959,7 @@
       "path": "res/xml/network_security_config.xml",
       "group": "安全",
       "why": "禁止明文流量，钉死信任锚（2026-08 审计修复：旧文件曾与此 why 逐字相反——全局明文 + 信任 user 证书，F-E-06；现已收紧为默认禁明文/只信系统 CA，仅给 aria2 进程内 RPC 的 127.0.0.1 留明文口）",
-      "post": "b706613af0cd65b291d0afa18fefa509c7184f3521604d493e7b846dc554cc3a",
+      "post": "205f5cb5a31f3f858936c8060db332e39e2de079e1435f7d90e9b39fcce51a25",
       "from": "repo"
     },
     {
@@ -975,7 +975,7 @@
       "path": "assets/magia/localstate.js",
       "group": "本地状态",
       "why": "本地状态覆盖层的前端脚本，由 CNDeckState 在 onPageStarted 注入。做成 asset 而不是 Java 字符串常量，是为了让它能被 diff、被 node --check、被 tools/localstate-js-test.js 覆盖",
-      "post": "62464b859eb7adb4416a2aa6e7dc61bc086a1e48773079d654e94f084b20b632",
+      "post": "8a771a6a8d344e8998e57fd1e77542a36d56859e0db05673372489a890784aae",
       "from": "repo"
     },
     {
