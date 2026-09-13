@@ -196,6 +196,11 @@ SOFTWARE.
 
 ---
 
+
+## Font route carriers used by the client
+
+- **`assets/fonts/TTDaYuanGB3.ttf`** — the original TTDaYuanGB3 story/subtitle carrier used by the routed story and board text paths. The file is shipped unchanged; attribution and licensing remain with the original package copyright holder.
+- **`assets/fonts/TTZhiHeiGB3-W4.ttf`** — the original TTZhiHeiGB3-W4 UI/dialog carrier used by the MTF4a5kp.ttf native route. The file is shipped unchanged; attribution and licensing remain with the original package copyright holder.
 ## 不在此列的（说明，免得下次又搞混）
 
 - **`assets/magia/logo.png`** —— 下载浮层的 logo，**原样取自国服官方包**，一个字节
