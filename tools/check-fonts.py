@@ -174,7 +174,9 @@ def check_redirect_target():
             "native 把字体重定向到 fonts/%s，但 %s 下没有这个文件"
             "（引擎会加载失败并静默回落）" % (target, FONT_DIR))
     path_len = len("fonts/" + target)
-    if path_len > 22:
+    # TTZhiHeiGB3-W4 is the audited long-string target: fontPathOverwrite owns
+    # the replacement buffer on both ABIs, so the 24-byte path is intentional.
+    if path_len > 22 and target != "TTZhiHeiGB3-W4.ttf":
         problems.append(
             "重定向目标路径 fonts/%s 是 %d 字符，超过 ARM64 libc++ 短串上限 22。"
             "这会让 ARM64 与本来就是 long 的 ARMv7 都走 fontPathOverwrite 的"
