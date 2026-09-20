@@ -14,8 +14,9 @@ import java.net.HttpURLConnection;
  * <p>UA 形如：
  * <pre>magireco-cn-legacy/1.0.86 (Android 13; SDK 33)</pre>
  *
- * <p>版本号<b>只有 native 一份</b>（native 侧 {@code CLIENT_VERSION}，CI 出包时
- * 由 build-apk.yml 注入 1.0.&lt;run_number&gt;）。这里不再存字面量：
+ * <p>版本号<b>只有 native 一份</b>（native 侧 {@code CLIENT_VERSION}，由源码显式声明）。
+ * CI 出包时只读取这个值作为客户端语义版本；GitHub Run ID/Number 只进入构建旁注，
+ * 不参与版本号生成。这里不再存字面量：
  * {@code static final String} 会被 javac <b>内联到每一个引用处</b>，等于把版本号
  * 明文撒进整个 dex，而拿 APK 管理器改包的人第一步就是全局搜这个串。
  * 理由与 native 侧的编译期混淆是同一条，详见那边的注释。

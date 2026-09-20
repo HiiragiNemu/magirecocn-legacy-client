@@ -1410,9 +1410,10 @@ struct Hidden {
 
 }  // namespace verobf
 
-// ⚠ CI 与本地构建按 `CLIENT_VERSION = "…"` 这个**形状**做 sed 注入，改写法要同步
-//   改 build-apk.yml 与 tools/build-local.sh 两处。它是 constexpr、从不取地址，
-//   只在编译期喂给下面的 Hidden，因此不会有一份明文留在产物里。
+// ⚠ CLIENT_VERSION 是客户端语义版本的唯一事实来源。CI 只读取它写入构建环境与
+//   版本旁注，不得用 GITHUB_RUN_NUMBER 等构建编号覆盖；本地构建也直接使用该值。
+//   它是 constexpr、从不取地址，只在编译期喂给下面的 Hidden，因此不会有一份
+//   明文留在产物里。
 static constexpr char CLIENT_VERSION[] = "1.0.178";
 
 // 真正进二进制的是这一份：异或之后的字节。

@@ -18,8 +18,8 @@ name: 🏗️ 构建 APK
 # ║ ───────                                                            ║
 # ║   0. 从Totentanz 公开 Release 取整包、经构建链重建出工程树                ║
 # ║      （仓库里不存派生文件）                                        ║
-# ║   0'. 注入客户端版本号 1.0.<run_number>（强制更新通道的本端版本，     ║
-# ║      与 APK 自身 versionName/versionCode 无关）                     ║
+# ║   0'. 从 native 源码读取 CLIENT_VERSION（强制更新通道的本端版本，   ║
+# ║      GitHub Run 编号只作追踪，不参与语义版本）                      ║
 # ║   1. 编译 patch/src/main/java/ 下的 Java 补丁源码                   ║
 # ║   2. d8 转成 dex 后合入补丁                                        ║
 # ║   3. Java 源码是唯一事实来源，编译产物覆盖对应补丁                  ║
@@ -408,27 +408,32 @@ jobs:
       - name: 📝 native 语法预检（桩头文件）
         run: tools/check-native-syntax.sh
 
-      - name: 🔢 注入客户端版本号（构建号）
+      - name: 🔢 读取客户端版本号（源码）
         run: |
           set -euo pipefail
-          # 客户端版本通道的「本端版本」在这里定：1.0.<run_number>，每个构建
-          # 单调递增，可回溯到具体 workflow run。config.json 的 client.version
-          # 抬过它，旧包启动时就会弹强制更新框。
-          # 注意这与 APK 的 versionName/versionCode 无关——那是 Totentanz 包的身份，
-          # 不能动。cpp 里的字面量只是本地构建（build-local.sh）的兜底。
-          VER="1.0.${GITHUB_RUN_NUMBER}"
-          echo "客户端版本号: ${VER}"
-          sed -i -E "s/CLIENT_VERSION = \"[^\"]+\"/CLIENT_VERSION = \"${VER}\"/" \
-            magia-native/src/MagiaLegacy.cpp
-          grep -q "CLIENT_VERSION = \"${VER}\"" magia-native/src/MagiaLegacy.cpp \
-            || { echo "::error::版本号注入失败（CLIENT_VERSION 常量没匹配上）"; exit 1; }
-          # 同一版本号也注入 Java 侧统一 UA 常量（CNUserAgent.CLIENT_VERSION），
-          # CDN 日志里的 magireco-cn-legacy/<ver> 与强制更新通道的版本一致。
-          sed -i -E "s/CLIENT_VERSION = \"[^\"]+\"/CLIENT_VERSION = \"${VER}\"/" \
-            patch/src/main/java/io/kamihama/magianative/CNUserAgent.java
-          grep -q "CLIENT_VERSION = \"${VER}\"" \
-            patch/src/main/java/io/kamihama/magianative/CNUserAgent.java \
-            || { echo "::error::版本号注入失败（CNUserAgent.CLIENT_VERSION 常量没匹配上）"; exit 1; }
+          # native CLIENT_VERSION 是客户端语义版本的唯一事实来源。
+          # CI 只读取，不再用 GITHUB_RUN_NUMBER 改写；Run ID/Number 只进旁注，
+          # 用于追踪具体构建。APK 自身 versionName/versionCode 仍保持 Totentanz 身份不变。
+          VER="$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          src = Path("magia-native/src/MagiaLegacy.cpp").read_text(encoding="utf-8")
+          matches = re.findall(
+              r'static constexpr char CLIENT_VERSION\[\]\s*=\s*"([^"]+)";',
+              src,
+          )
+          if len(matches) != 1:
+              raise SystemExit(
+                  f"期望恰好一个 native CLIENT_VERSION，实际找到 {len(matches)} 个"
+              )
+          version = matches[0]
+          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+              raise SystemExit(f"CLIENT_VERSION 不是 x.y.z 语义版本：{version!r}")
+          print(version)
+          PY
+          )"
+          echo "客户端版本号（源码）: ${VER}"
           echo "CLIENT_VERSION=${VER}" >> "$GITHUB_ENV"
 
       # 主机名是部署参数：源码里 CNEndpoints 的两个常量恒为空串，取值在这里
@@ -902,7 +907,9 @@ jobs:
               "apk":      os.environ["APK_NAME"],
               "sha256":   os.environ["APK_SHA"],
               "size":     int(os.environ["APK_SIZE"]),
-              "built_at": os.environ["BUILT_AT"],
+              "built_at":   os.environ["BUILT_AT"],
+              "run_id":     int(os.environ.get("GITHUB_RUN_ID", "0") or 0),
+              "run_number": int(os.environ.get("GITHUB_RUN_NUMBER", "0") or 0),
               "run": "%s/%s/actions/runs/%s" % (
                   os.environ.get("GITHUB_SERVER_URL", ""),
                   os.environ.get("GITHUB_REPOSITORY", ""),
