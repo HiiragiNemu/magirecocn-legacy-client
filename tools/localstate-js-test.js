@@ -34,12 +34,13 @@ function eq(name, actual, expected) {
 }
 
 /* 假的 Java 桥。store 在多次 boot 之间共享，用来模拟「落盘活过重启」。 */
-function makeBridge(store) {
+function makeBridge(store, clientVersion) {
   return {
     get: (ns) => (Object.prototype.hasOwnProperty.call(store, ns) ? store[ns] : null),
     set: (ns, json) => { store[ns] = json; return true; },
     remove: (ns) => { delete store[ns]; return true; },
     list: () => JSON.stringify(Object.keys(store)),
+    clientVersion: () => clientVersion || "1.0.177",
   };
 }
 
@@ -52,7 +53,22 @@ function boot(store, opts) {
   const sandbox = {};
   sandbox.window = sandbox;
   sandbox.console = { log() {}, warn() {}, error() {} };
-  if (!opts.noBridge) sandbox.CNLocalState = makeBridge(store);
+  if (!opts.noBridge) sandbox.CNLocalState = makeBridge(store, opts.clientVersion);
+
+  // 1.0.178 媒体默认迁移使用 require(["command"])。普通测试默认按 1.0.177
+  // 跑，不碰它；专门的媒体测试传 mediaCommand=true。
+  sandbox.__mediaCommands = [];
+  if (opts.mediaCommand) {
+    sandbox.app_ver = "3.13.0";
+    const fakeCommand = {
+      DATA_SET_DOWNLOAD_CONFIG: 26,
+      SCENE_SET_CONF_DELETE_DATA: 223,
+      sendCommand: (s) => sandbox.__mediaCommands.push(String(s)),
+      setDownloadDeleteConfig: (v) =>
+        sandbox.__mediaCommands.push("223," + JSON.stringify(v)),
+    };
+    sandbox.require = function (deps, cb) { cb(fakeCommand); };
+  }
 
   // __sent 记「真的发出去了没有」：answer 路由的全部意义就是让它保持 false。
   function FakeXHR() { this.__l = []; this.__fired = []; this.responseType = ""; this.__sent = false; }
@@ -91,6 +107,28 @@ function boot(store, opts) {
       return JSON.parse(x.responseText);
     },
   };
+}
+
+// ── 0. 1.0.178 媒体播放默认迁移 ───────────────────────────────
+console.log("== 1.0.178 媒体播放默认迁移 ==");
+{
+  const oldStore = {};
+  const oldPage = boot(oldStore, { clientVersion: "1.0.177", mediaCommand: true });
+  eq("1.0.177 不触发媒体设置迁移", oldPage.sandbox.__mediaCommands, []);
+  check("1.0.177 不写迁移标记", !oldStore.media_defaults_v178);
+
+  const store = {};
+  const page = boot(store, { clientVersion: "1.0.178", mediaCommand: true });
+  check("1.0.178 下发 voice=1 / movie=2",
+        page.sandbox.__mediaCommands.indexOf('26,{"voice":1,"movie":2}') >= 0);
+  check("1.0.178 下发保留 voice/movie",
+        page.sandbox.__mediaCommands.indexOf('223,{"voice":0,"movie":0}') >= 0);
+  const mark = JSON.parse(store.media_defaults_v178 || "{}");
+  eq("迁移标记记录最终媒体默认", [mark.applied, mark.voice, mark.movie, mark.deleteVoice, mark.deleteMovie],
+     [1, 1, 2, 0, 0]);
+
+  const again = boot(store, { clientVersion: "1.0.178", mediaCommand: true });
+  eq("同一安装只迁一次，之后尊重玩家手动设置", again.sandbox.__mediaCommands, []);
 }
 
 // ── 素材：与抓包归档里的样本同形 ────────────────────────────────

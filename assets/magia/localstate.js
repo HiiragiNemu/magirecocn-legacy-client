@@ -54,6 +54,7 @@
 
   var NS_DECK = "deck";     // 编队：deckType -> savePrm
   var NS_SHEET = "sheet";   // 阵形：formationSheetId -> formationSheet 对象
+  var NS_MEDIA178 = "media_defaults_v178"; // 1.0.178 一次性媒体播放默认迁移
 
   var bridge = null;
   try { bridge = window.CNLocalState || null; } catch (e) { bridge = null; }
@@ -73,6 +74,84 @@
   function save(ns, obj) {
     try { return !!bridge.set(ns, JSON.stringify(obj)); } catch (e) { return false; }
   }
+
+  // ── 1.0.178 一次性媒体默认迁移 ─────────────────────────────────
+  //
+  // 中文版会在独立安装器里一次性铺完语音和影片，不再依赖原游戏的选择性下载。
+  // 旧原生配置却可能仍是 voice=0 / movie=0|1，结果就是「文件明明都在，游戏却
+  // 主动不播」。1.0.178 第一次启动时把这两个开关统一迁到产品默认：
+  //   voice=1  播放语音
+  //   movie=2  高画质影片
+  //   deleteVoice/deleteMovie=0  使用后保留
+  //
+  // 只迁一次。玩家之后在设置页主动改回去，绝不每次启动强行覆盖。
+  // 版本门来自 APK native CLIENT_VERSION；1.0.177 没有 clientVersion() 这个桥
+  // 方法，因此即使未来提前拿到同一份前端资源，也不会误触发。
+  function mediaVersion178OrNewer() {
+    try {
+      if (typeof bridge.clientVersion !== "function") return false;
+      var p = String(bridge.clientVersion() || "").split(".");
+      if (p.length !== 3) return false;
+      var a = Number(p[0]), b = Number(p[1]), c = Number(p[2]);
+      if (!isFinite(a) || !isFinite(b) || !isFinite(c)) return false;
+      return a > 1 || (a === 1 && (b > 0 || (b === 0 && c >= 178)));
+    } catch (e) { return false; }
+  }
+
+  function applyMediaDefaults178() {
+    if (!mediaVersion178OrNewer()) return;
+    var prior = load(NS_MEDIA178);
+    if (prior && prior.applied === 1) return;
+
+    var tries = 0;
+    function attempt() {
+      // command.sendCommand 在 Android 上要求 app_ver 已就位；requirejs 也比本脚本晚。
+      if (!window.app_ver || typeof window.require !== "function") {
+        if (tries++ < 60 && typeof setTimeout === "function") setTimeout(attempt, 500);
+        return;
+      }
+      try {
+        window.require(["command"], function (command) {
+          try {
+            if (!command || typeof command.sendCommand !== "function"
+                || command.DATA_SET_DOWNLOAD_CONFIG === undefined) {
+              if (tries++ < 60 && typeof setTimeout === "function") setTimeout(attempt, 500);
+              return;
+            }
+
+            command.sendCommand(command.DATA_SET_DOWNLOAD_CONFIG + ","
+                + JSON.stringify({ voice: 1, movie: 2 }));
+
+            if (typeof command.setDownloadDeleteConfig === "function") {
+              command.setDownloadDeleteConfig({ voice: 0, movie: 0 });
+            } else if (command.SCENE_SET_CONF_DELETE_DATA !== undefined) {
+              command.sendCommand(command.SCENE_SET_CONF_DELETE_DATA + ","
+                  + JSON.stringify({ voice: 0, movie: 0 }));
+            } else {
+              if (tries++ < 60 && typeof setTimeout === "function") setTimeout(attempt, 500);
+              return;
+            }
+
+            save(NS_MEDIA178, {
+              applied: 1,
+              voice: 1,
+              movie: 2,
+              deleteVoice: 0,
+              deleteMovie: 0,
+              clientVersion: String(bridge.clientVersion() || "")
+            });
+          } catch (e) {
+            if (tries++ < 60 && typeof setTimeout === "function") setTimeout(attempt, 500);
+          }
+        });
+      } catch (e) {
+        if (tries++ < 60 && typeof setTimeout === "function") setTimeout(attempt, 500);
+      }
+    }
+    if (typeof setTimeout === "function") setTimeout(attempt, 0); else attempt();
+  }
+
+  applyMediaDefaults178();
 
   // 内存镜像：每个响应都要读，不缓存就是每个响应打一次 JNI。
   var decks = load(NS_DECK);
