@@ -66,9 +66,8 @@ check("patch 的补丁文件不存在",
 
 # 删掉原包树之后最容易慢慢退化回去的一条：把清单里某个 keeper 摘掉，
 # 它在仓库里的那份就成了「patchset 之外的入库文件」，必须被点名。
-# 选择器用 from==repo 而不是 assets/ 前缀——曾以 assets/aria2 二进制为样本，
-# 2026-08-17 移除后 assets/ 下不再有 from:repo 的 add 条目（余下都是
-# overlay/baseline 来源、不在 git 跟踪里），摘了也不会产生孤儿文件。
+# 选择器用 from==repo 而不是写死某个资产名：这些文件由源码仓 commit 钉死，
+# 但仍必须登记在 patchset，防止有人把 APK 路径下的入库文件绕过重建清单。
 check("原包路径下混进了 patchset 之外的入库文件",
       lambda c: c["ops"].remove(next(o for o in c["ops"]
                                      if o["kind"] == "add"
