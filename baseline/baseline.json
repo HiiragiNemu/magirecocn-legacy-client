@@ -204,8 +204,7 @@
       "from": "repo",
       "group": "字体",
       "why": "换成能覆盖简体中文字形的字体（引擎硬编码这个文件名）",
-      "pre": "37f266883643ca3e3168049a130396a4993b981747f73c4f5068afec2412f5c5",
-      "post": "51383ac04bf0835445a0de382c07e6467f43991c6a51cf13a4327cad51f58b03"
+      "pre": "37f266883643ca3e3168049a130396a4993b981747f73c4f5068afec2412f5c5"
     },
     {
       "kind": "replace",
@@ -959,7 +958,6 @@
       "path": "res/xml/network_security_config.xml",
       "group": "安全",
       "why": "禁止明文流量，钉死信任锚（2026-08 审计修复：旧文件曾与此 why 逐字相反——全局明文 + 信任 user 证书，F-E-06；现已收紧为默认禁明文/只信系统 CA，仅给 aria2 进程内 RPC 的 127.0.0.1 留明文口）",
-      "post": "205f5cb5a31f3f858936c8060db332e39e2de079e1435f7d90e9b39fcce51a25",
       "from": "repo"
     },
     {
@@ -967,7 +965,6 @@
       "path": "assets/magia/tlsprobe.p12",
       "group": "调试",
       "why": "TLS 探针的自签名证书（PKCS#12）。仅在调试开关 tlsProbe 打开时被读；它保护的是一张故意谁都能用的测试证书，不承载任何机密",
-      "post": "50e86f799221b8b5547ee92c2cffa994a3c910aab7f102ad7a772b66f7522337",
       "from": "repo"
     },
     {
@@ -975,7 +972,6 @@
       "path": "assets/magia/localstate.js",
       "group": "本地状态",
       "why": "本地状态覆盖层的前端脚本，由 CNDeckState 在 onPageStarted 注入。做成 asset 而不是 Java 字符串常量，是为了让它能被 diff、被 node --check、被 tools/localstate-js-test.js 覆盖",
-      "post": "333a97c48c8f65b11d4f9805f3f23c7e638d8f10d4274b5d7a41d4511682a085",
       "from": "repo"
     },
     {
@@ -983,7 +979,6 @@
       "path": "lib/armeabi-v7a/libshadowhook.so",
       "group": "第三方",
       "why": "shadowhook 预编译库",
-      "post": "0d3ae156122429ab6f95951df39c8061f999b124af2ba306b504152be1547c4b",
       "from": "repo"
     },
     {
@@ -991,7 +986,6 @@
       "path": "lib/arm64-v8a/libshadowhook.so",
       "group": "第三方",
       "why": "shadowhook 预编译库",
-      "post": "85e2307347d248f01f3761257e774ece26b7cb833b59b484cc206bf678539852",
       "from": "repo"
     },
     {
@@ -1104,7 +1098,6 @@
       "path": "lib/armeabi-v7a/libarchive.so",
       "group": "第三方",
       "why": "libarchive 3.7.4 JNI 封装（CI 重建版，含补丁 01/02/03，armeabi-v7a）",
-      "post": "6e7966634e70cd1cfb8d15bdc26b9e06931af2c77c78c8ffe74b6afeac297a42",
       "from": "repo"
     },
     {
@@ -1112,7 +1105,6 @@
       "path": "lib/arm64-v8a/libarchive.so",
       "group": "第三方",
       "why": "libarchive 3.7.4 JNI 封装（CI 重建版，含补丁 01/02/03，arm64-v8a）",
-      "post": "10b479e8715114df758eb0a6722bf52c96d2d75ffe80bb7039378bea63ee5071",
       "from": "repo"
     },
     {
@@ -1120,7 +1112,6 @@
       "path": "lib/armeabi-v7a/libaria2c_ossl.so",
       "group": "第三方",
       "why": "aria2 进程内引擎库·OpenSSL 后端（1.37.0，OpenSSL 1.1.1w 静态链入，armeabi-v7a）",
-      "post": "6bc1c7ee37ddc9bc234711176f2a689db9e03d48678f9ede953a072247418d56",
       "from": "repo"
     },
     {
@@ -1128,7 +1119,6 @@
       "path": "lib/arm64-v8a/libaria2c_ossl.so",
       "group": "第三方",
       "why": "aria2 进程内引擎库·OpenSSL 后端（1.37.0，OpenSSL 1.1.1w 静态链入，arm64-v8a）",
-      "post": "e4047d89be1bd289ae55e5a3fd65c5fe561d0e947b09d0dfa8aca49a9d50e189",
       "from": "repo"
     },
     {
@@ -1136,7 +1126,6 @@
       "path": "lib/armeabi-v7a/libaria2c_gnutls.so",
       "group": "第三方",
       "why": "aria2 进程内引擎库·GnuTLS 后端（1.37.0，GnuTLS 3.8.3 静态链入，armeabi-v7a）",
-      "post": "ec4c3e404bcfa2bbb36c971609c9e4c27dd99a4a2224627d59fe80662996aa41",
       "from": "repo"
     },
     {
@@ -1144,15 +1133,6 @@
       "path": "lib/arm64-v8a/libaria2c_gnutls.so",
       "group": "第三方",
       "why": "aria2 进程内引擎库·GnuTLS 后端（1.37.0，GnuTLS 3.8.3 静态链入，arm64-v8a）",
-      "post": "95457b62411b9d736f70463b296c0e64e28350c40c2fa294c1c3c6adcc7db96a",
-      "from": "repo"
-    },
-    {
-      "kind": "add",
-      "path": "assets/fonts/TTDaYuanGB3.ttf",
-      "group": "font-route-restore",
-      "why": "1.0.178 restores the pre-43821ec MTF4a5kp -> TTDaYuanGB3 route",
-      "post": "01bbb65b3b21f8d445fe15412fc3b5864425033f534464be26de0aa7ed8150c0",
       "from": "repo"
     }
   ]
