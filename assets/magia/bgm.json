@@ -1,0 +1,25 @@
+{
+  "_comment": "由 tools/convert-bgm.py 生成，勿手改。loop_* 单位为采样帧。",
+  "tracks": [
+    {
+      "id": 1,
+      "file": "magia/bgm1.ogg",
+      "source": "bgm00_system01_hca.hca",
+      "sample_rate": 44100,
+      "channels": 2,
+      "loop_start": 0,
+      "loop_end": 3968999,
+      "total": 3969234
+    },
+    {
+      "id": 2,
+      "file": "magia/bgm2.ogg",
+      "source": "bgm00_system02_hca.hca",
+      "sample_rate": 44100,
+      "channels": 2,
+      "loop_start": 0,
+      "loop_end": 3924900,
+      "total": 3925135
+    }
+  ]
+}

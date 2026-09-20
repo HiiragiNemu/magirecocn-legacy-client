@@ -1088,12 +1088,6 @@
       "why": "构建期由 magia-native/ 用 NDK 编译"
     },
     {
-      "kind": "generated",
-      "path": "assets/magia/bgm",
-      "group": "构建期产物",
-      "why": "构建期由 tools/convert-bgm.py 从 .hca 转出（bgm*.ogg / bgm.json）"
-    },
-    {
       "kind": "add",
       "path": "lib/armeabi-v7a/libarchive.so",
       "group": "第三方",
@@ -1133,6 +1127,27 @@
       "path": "lib/arm64-v8a/libaria2c_gnutls.so",
       "group": "第三方",
       "why": "aria2 进程内引擎库·GnuTLS 后端（1.37.0，GnuTLS 3.8.3 静态链入，arm64-v8a）",
+      "from": "repo"
+    },
+    {
+      "kind": "add",
+      "path": "assets/magia/bgm1.ogg",
+      "group": "浮层 BGM",
+      "why": "预转码浮层 BGM1；来自已验证 1.0.178 APK，日常构建直接打包，不再重复 HCA 解密/转码",
+      "from": "repo"
+    },
+    {
+      "kind": "add",
+      "path": "assets/magia/bgm2.ogg",
+      "group": "浮层 BGM",
+      "why": "预转码浮层 BGM2；来自已验证 1.0.178 APK，日常构建直接打包，不再重复 HCA 解密/转码",
+      "from": "repo"
+    },
+    {
+      "kind": "add",
+      "path": "assets/magia/bgm.json",
+      "group": "浮层 BGM",
+      "why": "浮层 BGM 循环点与元数据；与固定 OGG 同一已验证产物来源",
       "from": "repo"
     }
   ]
