@@ -27,12 +27,20 @@
     国服 v2.2.1：TTZhiHeiGB3-W4 / TTDaYuanGB3
 
 上传的国服 v2.2.1 离线包经双 ABI native 字符串/xref 复核：
-通用 UI 大量引用 TTZhiHei，StoryMessage/StoryNarration/RaidScrollView 等剧情路径
-引用 TTDaYuan。因此 1.0.178 把 Totentanz 的两条请求名分别映射到国服两条字体。
+通用 UI 大量引用 TTZhiHei，StoryMessage/StoryNarration/StoryLog/RaidScrollView::showMessage
+等剧情路径引用 TTDaYuan。
+
+1.0.178 曾把 Totentanz 的两个原始请求名机械地一一对应：
+MTF4a5kp→TTZhiHei、mbm_20160902→TTDaYuan。实机角色详情证明这个假设错误：
+普通 UI 同样会请求 mbm，结果被错误送进大圆体。
+
+1.0.179 起判据改为**调用语义**：MTF4a5kp 与 mbm 在普通 UI 中都默认重定向到
+TTZhiHei；只有确认来自 StoryMessageUnit / StoryNarrationUnit / StoryLogUnit /
+RaidScrollView::showMessage 的剧情创建上下文才改用 TTDaYuan。
 
 `MTF4a5kp.ttf` 仍从重建树删除，因为请求会在 native hook 中改写；
-`mbm_20160902.ttf` 保留基线文件以兼容其它非 hook 消费者，但走 Label TTF 钩子的
-剧情请求会重定向到 TTDaYuan。TTZhiHei / TTDaYuan 的 reviewed carrier 在重建后覆盖/加入。
+`mbm_20160902.ttf` 保留基线文件以兼容其它非 hook 消费者。TTZhiHei / TTDaYuan
+的 reviewed carrier 在重建后覆盖/加入。
 
 > 这两件事是配套的，别只做一半：先撤开关再删文件才安全，反过来则会给
 > `noFontHook` 留下一条必然失败的路径。
@@ -70,7 +78,7 @@ EXPECTED = {
         9070328,
         "sha256:51383ac04bf0835445a0de382c07e6467f43991c6a51cf13a4327cad51f58b03",
         "MagiReco CN Medium",
-        "基线兼容载体；Label TTF 剧情路径会重定向到 TTDaYuan",
+        "基线兼容载体；Label TTF 普通 UI 默认转 TTZhiHei，剧情上下文才转 TTDaYuan",
     ),
     "witchText-export.fnt": (
         4525,
@@ -257,9 +265,9 @@ def check_redirect_target():
     text = open(NATIVE_SRC, encoding="utf-8").read()
     problems = []
     expected_routes = {
-        "kUiFrom": "MTF4a5kp.ttf",
+        "kFromMtf": "MTF4a5kp.ttf",
+        "kFromMbm": "mbm_20160902.ttf",
         "kUiTo": "TTZhiHeiGB3-W4.ttf",
-        "kStoryFrom": "mbm_20160902.ttf",
         "kStoryTo": "TTDaYuanGB3.ttf",
     }
     found = {}
@@ -284,6 +292,31 @@ def check_redirect_target():
             problems.append(
                 "native 把字体重定向到 fonts/%s，但 %s 下没有登记该文件"
                 % (target, FONT_DIR))
+
+    # 1.0.179 的关键守卫：不能再退回“mbm == story”的文件名一一映射。
+    required_semantics = (
+        "enum class CnFontRole",
+        "g_storyFontDepth",
+        "isCnStoryFontCaller",
+        "StoryMessageUnit",
+        "StoryNarrationUnit",
+        "StoryLogUnit",
+        "RaidScrollView",
+        "showMessage",
+        "fontRoleForCaller",
+    )
+    for token in required_semantics:
+        if token not in text:
+            problems.append("缺少 1.0.179 调用语义字体路由标记: %s" % token)
+
+    if "kStoryFrom" in text:
+        problems.append("仍存在 kStoryFrom：禁止再把 mbm 文件名本身等同于剧情字体")
+    if not re.search(r'bool\s+mbm\s*=.*kFromMbm', text, re.S):
+        problems.append("找不到 mbm 作为普通候选请求名的判定")
+    if not re.search(r'role\s*==\s*CnFontRole::Story.*kStoryTo', text, re.S):
+        problems.append("剧情上下文没有明确落到 TTDaYuan")
+    if not re.search(r'else\s*\{.*kUiTo', text, re.S):
+        problems.append("普通 UI 默认分支没有明确落到 TTZhiHei")
     return problems
 
 
