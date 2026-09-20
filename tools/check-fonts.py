@@ -156,6 +156,87 @@ def family_name(path):
     return None
 
 
+# 玩家实际文本里会出现的音乐符号。旧国服原始 TTZhiHei / TTDaYuan 两个文件
+# 都缺 U+266A/U+266F；2026-09-19 reviewed carrier 必须把它们补回来。
+# U+F6DB 仍是独立未闭合问题，不在这里伪装成已解决。
+REQUIRED_GLYPHS = {
+    "TTDaYuanGB3.ttf": {0x266A: "♪", 0x266F: "♯"},
+    "TTZhiHeiGB3-W4.ttf": {0x266A: "♪", 0x266F: "♯"},
+}
+
+
+def font_has_codepoint(path, cp):
+    """只解析构建所需的 cmap format 4/12，判断 cp 是否映射到非零 glyph。"""
+    data = open(path, "rb").read()
+    if len(data) < 12:
+        return False
+    num_tables = struct.unpack(">H", data[4:6])[0]
+    tables = {}
+    off = 12
+    for _ in range(num_tables):
+        if off + 16 > len(data):
+            return False
+        tag, _cs, t_off, t_len = struct.unpack(">4sIII", data[off:off + 16])
+        off += 16
+        tables[tag] = (t_off, t_len)
+    if b"cmap" not in tables:
+        return False
+    c_off, c_len = tables[b"cmap"]
+    if c_off + 4 > len(data):
+        return False
+    _version, count = struct.unpack(">HH", data[c_off:c_off + 4])
+    for i in range(count):
+        rec = c_off + 4 + i * 8
+        if rec + 8 > len(data):
+            continue
+        platform, encoding, rel = struct.unpack(">HHI", data[rec:rec + 8])
+        if platform not in (0, 3):
+            continue
+        sub = c_off + rel
+        if sub + 2 > len(data):
+            continue
+        fmt = struct.unpack(">H", data[sub:sub + 2])[0]
+
+        if fmt == 12 and sub + 16 <= len(data):
+            n_groups = struct.unpack(">I", data[sub + 12:sub + 16])[0]
+            pos = sub + 16
+            for _ in range(n_groups):
+                if pos + 12 > len(data):
+                    break
+                start, end, glyph0 = struct.unpack(">III", data[pos:pos + 12])
+                pos += 12
+                if start <= cp <= end:
+                    return glyph0 + (cp - start) != 0
+
+        if fmt == 4 and cp <= 0xFFFF and sub + 14 <= len(data):
+            length = struct.unpack(">H", data[sub + 2:sub + 4])[0]
+            end_sub = min(len(data), sub + length)
+            seg_count = struct.unpack(">H", data[sub + 6:sub + 8])[0] // 2
+            end_base = sub + 14
+            start_base = end_base + 2 * seg_count + 2
+            delta_base = start_base + 2 * seg_count
+            range_base = delta_base + 2 * seg_count
+            if range_base + 2 * seg_count > end_sub:
+                continue
+            for seg in range(seg_count):
+                end_code = struct.unpack(">H", data[end_base + 2*seg:end_base + 2*seg + 2])[0]
+                start_code = struct.unpack(">H", data[start_base + 2*seg:start_base + 2*seg + 2])[0]
+                if not (start_code <= cp <= end_code):
+                    continue
+                delta = struct.unpack(">h", data[delta_base + 2*seg:delta_base + 2*seg + 2])[0]
+                ro = struct.unpack(">H", data[range_base + 2*seg:range_base + 2*seg + 2])[0]
+                if ro == 0:
+                    return ((cp + delta) & 0xFFFF) != 0
+                glyph_pos = range_base + 2*seg + ro + 2*(cp - start_code)
+                if glyph_pos + 2 > end_sub:
+                    return False
+                glyph = struct.unpack(">H", data[glyph_pos:glyph_pos + 2])[0]
+                if glyph == 0:
+                    return False
+                return ((glyph + delta) & 0xFFFF) != 0
+    return False
+
+
 NATIVE_SRC = "magia-native/src/MagiaLegacy.cpp"
 
 
@@ -253,6 +334,11 @@ def main():
                 problems.append(
                     "%s 的内部家族名是「%s」，应为「%s」\n    用途：%s"
                     % (name, real_family, family, purpose))
+        for cp, glyph in REQUIRED_GLYPHS.get(name, {}).items():
+            if not font_has_codepoint(path, cp):
+                problems.append(
+                    "%s 缺少 U+%04X「%s」——这是产品文本实际使用的符号"
+                    % (name, cp, glyph))
 
     if problems:
         print("✘ 字体守卫未通过：", file=sys.stderr)
