@@ -582,7 +582,7 @@ def cmd_verify(args):
     tree = args.tree
     if not tree:
         n = sum(1 for _ in walk_files(out))
-        print("\n重建完成：%d 个文件；每条 op 的 pre/post hash 均已核对。" % n)
+        print("\n重建完成：%d 个文件；基线 pre 与非 repo 来源的 post hash 均已核对，repo 来源由 Git commit 钉死。" % n)
         print("（没给 --tree，不做逐文件比对——仓库里已经没有第二棵树可比了）")
         return 0
     roots = tuple(conf["compare_roots"])
