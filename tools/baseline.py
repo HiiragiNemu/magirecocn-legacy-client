@@ -438,10 +438,16 @@ def cmd_regen(args):
         elif kind == "add":
             if os.path.isfile(b):
                 raise SystemExit("标为新增的文件基线里已有：%s" % rel)
-            op["post"] = sha256_file(content_src(op, rel))
+            if op.get("from", "store") == "repo":
+                op.pop("post", None)
+            else:
+                op["post"] = sha256_file(content_src(op, rel))
         elif kind == "replace":
             op["pre"] = sha256_file(b)
-            op["post"] = sha256_file(content_src(op, rel) if op.get("from") else t)
+            if op.get("from", "store") == "repo":
+                op.pop("post", None)
+            else:
+                op["post"] = sha256_file(content_src(op, rel) if op.get("from") else t)
             if op.get("from", "store") == "store":
                 dst = os.path.join(REPLACE_DIR, rel)
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -503,7 +509,9 @@ def cmd_apply(args):
             result = apply_unified(orig, patch_text, rel)
             write_lines(dst, result, op.get("no_final_newline", False))
         got = sha256_file(dst)
-        if op.get("post") and got != op["post"]:
+        # from=repo 的字节身份由被显式选择的 Git source commit 保证；不再用
+        # baseline.json 里的重复 post hash 二次钉死，避免两份事实来源互相漂移。
+        if op.get("from", "store") != "repo" and op.get("post") and got != op["post"]:
             raise SystemExit("%s：打完补丁 hash 不符\n  期望 %s\n  实得 %s" % (rel, op["post"], got))
     print("patchset 已应用：%d 条操作" % len(conf["ops"]))
     return 0
@@ -560,7 +568,7 @@ def cmd_verify(args):
         fetch   APK sha256 + apktool 版本 + JDK 大版本 + 整棵重建树的指纹
                 ⇒ 基线树逐字节确定
         apply   每条 op 的 pre hash（打的是不是我们以为的那份文件）
-                + post hash（打完是不是我们要的那份）
+                + 非 repo 来源的 post hash（打完是不是我们要的那份；repo 来源由 Git commit 钉死）
                 ⇒ 输出树逐字节确定
 
     所以不带 `--tree` 时这里只跑 apply 并报告；带 `--tree` 时才做逐文件比对，
