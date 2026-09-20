@@ -1150,17 +1150,9 @@
     {
       "kind": "add",
       "path": "assets/fonts/TTDaYuanGB3.ttf",
-      "group": "font-route-fix",
-      "why": "TTDaYuanGB3 story carrier added for explicit story/subtitle routing",
+      "group": "font-route-restore",
+      "why": "1.0.178 restores the pre-43821ec MTF4a5kp -> TTDaYuanGB3 route",
       "post": "01bbb65b3b21f8d445fe15412fc3b5864425033f534464be26de0aa7ed8150c0",
-      "from": "repo"
-    },
-    {
-      "kind": "add",
-      "path": "assets/fonts/TTZhiHeiGB3-W4.ttf",
-      "group": "font-route-fix",
-      "why": "TTZhiHeiGB3-W4 UI/dialog carrier added for MTF4a5kp route",
-      "post": "01a4be2e5fca489c30219b3bec5edac0b7c98128c5fa629c34a0208ed5b0ba34",
       "from": "repo"
     }
   ]

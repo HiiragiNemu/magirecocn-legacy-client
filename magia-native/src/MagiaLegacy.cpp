@@ -2797,22 +2797,18 @@ static void fontPathOverwrite(void* strObj, const char* nv, size_t n) {
     if (oldLongData) ::operator delete(oldLongData);
 }
 
-// 国服原生路由（对 origin_apktool_decoded 的 libmadomagi_native.so 做过字符串/xref
-// 核对）：TTZhiHeiGB3-W4 是 MainScene/对话框 UI 的默认 TTF；
-// TTDaYuanGB3 由剧情/看板/字幕场景（RaidScrollView 等）显式请求；
+// 1.0.178 按维护者要求恢复到 43821ec 之前的字体路由：
+// MTF4a5kp 统一重定向到 TTDaYuanGB3。只恢复路由本身，不回滚此后的下载/UI/安全修复。
 // witchText-export.fnt 是魔女文字位图字体，另一套机制，不动。
-// MTF4a5kp 是旧 UI 请求名，必须只重定向到 TTZhiHei，不能把所有 UI 改成大圆体。
-// 显式请求 TTDaYuan 的剧情路径保持原样，因此剧情与 UI 两条路由不会互相覆盖。
 static void fontPathFix(void* strObj, const char* tag) {
-    static const char kFrom[] = "fonts/MTF4a5kp.ttf";        // 18 字符
-    static const char kTo[]   = "fonts/TTZhiHeiGB3-W4.ttf"; // 24 字符
-    // ⚠ ARM64 的短串上限是 22，kFrom=18；kTo=24 超出上限，两个 ABI 都会
-    // 走 fontPathOverwrite 的独立分配路径。该函数按对象分配并由引擎 string
-    // 接管，避免历史上的共享 static 缓冲双 free。
+    static const char kFrom[] = "fonts/MTF4a5kp.ttf";       // 18 字符
+    static const char kTo[]   = "fonts/TTDaYuanGB3.ttf";   // 21 字符
+    // ARM64 下源/目标都可走短串；ARMv7 仍由 fontPathOverwrite 覆盖 long string。
+    // 保留已修好的按对象缓冲所有权处理，不恢复任何历史堆破坏路径。
     NdkStrView v = ndkStrRead(strObj);
     if (v.size == sizeof(kFrom) - 1 && memcmp(v.data, kFrom, sizeof(kFrom) - 1) == 0) {
         fontPathOverwrite(strObj, kTo, sizeof(kTo) - 1);
-        LOGI("[font] %s: MTF4a5kp → TTZhiHeiGB3-W4 (UI)", tag);
+        LOGI("[font] %s: MTF4a5kp → TTDaYuanGB3", tag);
     }
 }
 
@@ -3284,7 +3280,7 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
           (void*)initLabelNew, (void**)&initLabelOld, "i18n: LbUtility::initLabel");
     }
 
-    // ── 引擎 UI 字体路径重定向（MTF4a5kp → TTZhiHeiGB3-W4）──
+    // ── 引擎字体路径重定向（MTF4a5kp → TTDaYuanGB3；恢复 43821ec 之前路由）──
     if (g_dbgNoTtfHooks) {
         LOGE("[DEBUG] noTtfHooks 生效：**不安装** createWithTTF/setTTFConfig 三个钩子");
     } else {

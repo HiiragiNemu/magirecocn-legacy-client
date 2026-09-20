@@ -189,8 +189,9 @@ SOFTWARE.
 **Apache-2.0 第 4(b) 条要求注明改动**：本文件**不是** Adobe 原始 Source Han 字形集，
 而是国服（MagiReco CN）在其基础上改制的版本——重命名家族为 `MagiReco CN Medium`、
 按国服需要调整了字形覆盖（格式 12 cmap、30823 码位）。本项目**未再对字体本身做任何
-修改**，只在 native 层把引擎请求的字体路径重定向到它
-（`magia-native/src/MagiaLegacy.cpp` 的 `fontPathFix`）。
+修改**。1.0.178 按维护者要求恢复 43821ec 之前的路由：native 的
+`fontPathFix` 将 `MTF4a5kp.ttf` 重定向到 `TTDaYuanGB3.ttf`；
+`mbm_20160902.ttf` 保留原包自身直接引用。
 
 > 文件名 `mbm_20160902.ttf` 是**引擎硬编码的路径**，与字体内容无关，改不得。
 
@@ -199,8 +200,7 @@ SOFTWARE.
 
 ## Font route carriers used by the client
 
-- **`assets/fonts/TTDaYuanGB3.ttf`** — the original TTDaYuanGB3 story/subtitle carrier used by the routed story and board text paths. The file is shipped unchanged; attribution and licensing remain with the original package copyright holder.
-- **`assets/fonts/TTZhiHeiGB3-W4.ttf`** — the original TTZhiHeiGB3-W4 UI/dialog carrier used by the MTF4a5kp.ttf native route. The file is shipped unchanged; attribution and licensing remain with the original package copyright holder.
+- **`assets/fonts/TTDaYuanGB3.ttf`** — the original TTDaYuanGB3 carrier. In 1.0.178 the pre-43821ec route is restored, so `MTF4a5kp.ttf` is redirected here as well as the existing story/subtitle use. The file is shipped unchanged; attribution and licensing remain with the original package copyright holder.
 ## 不在此列的（说明，免得下次又搞混）
 
 - **`assets/magia/logo.png`** —— 下载浮层的 logo，**原样取自国服官方包**，一个字节

@@ -34,7 +34,7 @@
 其中 33.4 MB 还是同一个字体存了三份。
 
 `MTF4a5kp.ttf` 也删了（2B）。引擎确实会按这个名字请求，但 `fontPathFix` 无条件把它
-改指 `TTZhiHeiGB3-W4.ttf`——**而且 `noFontHook` 那个能绕过重定向的调试开关已经一并撤除**，
+改指 `TTDaYuanGB3.ttf`——**而且 `noFontHook` 那个能绕过重定向的调试开关已经一并撤除**，
 所以重定向成了唯一路径，不存在"绕过后找不到文件"的情形。留着一个永远不被打开的
 16.7 MB 商业字体没有意义。
 
@@ -44,7 +44,7 @@
 > 历史提醒：`koruri-semibold.ttf` 这个文件名是**误导性**的。Koruri 是 Apache-2.0
 > 的日文开源字体，而那个文件的内容是腾祥嘉丽大圆——按文件名做合规审计会看走眼。
 > 这不是本仓库造成的（根提交就这样，是国服官方汉化时替换文件内容留下的），
-> 但清理时正好把这个雷一起拆了。同理，现行的 `MTF4a5kp → TTZhiHeiGB3-W4` 重定向
+> 但清理时正好把这个雷一起拆了。同理，现行的 `MTF4a5kp → TTDaYuanGB3` 重定向
 > 并不是「日文换中文」——后者国服早就做完了——而是把 UI 汇到覆盖最好的字体上。
 
 ## 判据
@@ -87,13 +87,7 @@ EXPECTED = {
         17507340,
         "01bbb65b3b21f8d445fe15412fc3b5864425033f534464be26de0aa7ed8150c0",
         "Tensentype JiaLiDaYuanGB18030",
-        "剧情内对话、角色看板字幕与字幕场景字体",
-    ),
-    "TTZhiHeiGB3-W4.ttf": (
-        8367096,
-        "01a4be2e5fca489c30219b3bec5edac0b7c98128c5fa629c34a0208ed5b0ba34",
-        "Tensentype ZhiHeiGB18030-W4",
-        "对话框及原生 UI 字体；MTF4a5kp 路由目标",
+        "1.0.178 恢复路由目标：MTF4a5kp UI + 剧情/看板/字幕使用的大圆体",
     ),
     "witchText-export.png": (
         2065782,
@@ -174,9 +168,7 @@ def check_redirect_target():
             "native 把字体重定向到 fonts/%s，但 %s 下没有这个文件"
             "（引擎会加载失败并静默回落）" % (target, FONT_DIR))
     path_len = len("fonts/" + target)
-    # TTZhiHeiGB3-W4 is the audited long-string target: fontPathOverwrite owns
-    # the replacement buffer on both ABIs, so the 24-byte path is intentional.
-    if path_len > 22 and target != "TTZhiHeiGB3-W4.ttf":
+    if path_len > 22:
         problems.append(
             "重定向目标路径 fonts/%s 是 %d 字符，超过 ARM64 libc++ 短串上限 22。"
             "这会让 ARM64 与本来就是 long 的 ARMv7 都走 fontPathOverwrite 的"
@@ -243,7 +235,7 @@ def main():
         print("要换界面字体，改 magia-native/src/MagiaLegacy.cpp 里那对常量：",
               file=sys.stderr)
         print('    static const char kFrom[] = "fonts/MTF4a5kp.ttf";', file=sys.stderr)
-        print('    static const char kTo[]   = "fonts/TTZhiHeiGB3-W4.ttf";',
+        print('    static const char kTo[]   = "fonts/TTDaYuanGB3.ttf";',
               file=sys.stderr)
         print("这样随时能热回滚；直接替换文件内容做不到，而且历史上已经回滚过一次"
               "（702ebbf3 → 703cb30f）。", file=sys.stderr)
