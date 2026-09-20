@@ -74,6 +74,8 @@ ALLOWED_ABS = (
     "https://afdian.com/",
     "https://ifdian.net/",
     "https://magireco.moe",           # Circle Record/Wiki public homepage, not a deployment endpoint
+    "https://magiaexedralive2dviewer.pages.dev/", # Fixed MadeInMagius public project site
+    "https://madeinmagius-site.pages.dev/",       # Fixed MadeInMagius public download/tutorial site
     "https://github.com/MagirecoCN-Revival-Project",
     "https://totentanz-",          # 游戏后端，上游原包里就有
     "http://127.0.0.1:",           # 本机回环（调试桥）
