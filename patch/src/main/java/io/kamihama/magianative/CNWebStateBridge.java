@@ -89,6 +89,21 @@ public final class CNWebStateBridge {
     // ── 页面侧可见的方法 ────────────────────────────────────────────
 
     /**
+     * 返回当前中文客户端语义版本。前端只用它给一次性迁移做版本门控，
+     * 不参与在线版本判断；真正的唯一事实来源仍是 native CLIENT_VERSION。
+     */
+    @android.webkit.JavascriptInterface
+    public String clientVersion() {
+        try {
+            String v = CNVersionCheck.nativeClientVersion();
+            return v == null ? "" : v;
+        } catch (Throwable t) {
+            CNLog.w(TAG, "clientVersion 失败: " + t);
+            return "";
+        }
+    }
+
+    /**
      * 读一个命名空间。
      *
      * @return JSON 文本；不存在或被拒时返回 {@code null}（JS 侧看到的是 {@code null}）
