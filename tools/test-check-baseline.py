@@ -75,8 +75,10 @@ check("原包路径下混进了 patchset 之外的入库文件",
                                      and o.get("from") == "repo")),
       "patchset 里没有它")
 
-check("add 的内容与 post hash 对不上",
-      lambda c: first(c, "add").__setitem__("post", "0" * 64),
+check("store replace 的内容与 post hash 对不上",
+      lambda c: next(o for o in c["ops"]
+                     if o["kind"] == "replace"
+                     and o.get("from", "store") == "store").__setitem__("post", "0" * 64),
       "post hash 对不上")
 
 check("replace 少填 pre（换包时就不会报错了）",
