@@ -132,7 +132,11 @@ checks = {
     "不再向 decorView 添加独立显示控件": "decor.addView(dock" not in assist and "decor.addView(panel" not in assist,
     "不再平移整个下载浮层": "setTranslationX((panX" not in assist and "setTranslationY((panY" not in assist,
     "中央内容有底部横向滚动容器": "TAG_H_SCROLL" in ui and "HorizontalScrollView mainScroll" in ui,
-    "文件列表有右侧纵向滚动条": "TAG_V_SCROLL" in ui and "setScrollbarFadingEnabled(false)" in ui,
+    "文件列表默认8+7双列，纵向滚动只作小屏兜底":
+        "SLOT_COLUMN_LIMIT = 8" in ui
+        and "slotContainer.setOrientation(LinearLayout.HORIZONTAL)" in ui
+        and "LinearLayout targetColumn = d < SLOT_COLUMN_LIMIT ? firstColumn : secondColumn;" in ui
+        and "ScrollView slotScroll" in ui,
     "顶部胶囊在窄屏使用独立横向视口": "HorizontalScrollView topLeftScroll" in ui and "LinearLayout topBar" in ui,
     "确认框宽度按当前屏幕收缩": "adaptiveDialogWidth(panel)" in assist and "widthPixels - dp(v, 40)" in assist,
     "关闭浮层会清理显示控件状态": "CNDownloadUiAssist.onOverlayDetached()" in ui,
@@ -185,6 +189,11 @@ checks = {
     #
     # 现在的模型：**读视口（hScroll）、写内容（contentRoot）**。父子关系，父宽由
     # 再上一层决定，不受子节点影响 —— 既没有反馈环，读的又是真实测量值。
+    "首次默认显示大小固定100%":
+        "SCALE_DEFAULT = 100" in assist
+        and "saved < 0 ? SCALE_DEFAULT" in assist,
+    "左右默认等宽50/50":
+        "SPLIT_DEFAULT = 50" in assist,
     "默认100%内容宽度交给视口而不是算出来的像素":
         "mainScroll.setFillViewport(true)" in ui
         and "mainScroll.addView(mainRow, new FrameLayout.LayoutParams(\n"
@@ -250,9 +259,10 @@ checks = {
     # 2026-08-27 起这个角色从「文字进度」换成了那颗按钮（玩家要求：重下/重试与
     # 进度条右对齐）。锚点换人，2026-08-13 那条教训（真机连报两次：按钮一出现
     # 就把右边界顶歪）也跟着换到了文字进度头上，所以下面三条缺一不可。
-    "按钮是资源行最后一个孩子（右边界锚点）":
+    "按钮是资源行标题行最后一个孩子（右边界锚点）":
         "info.setTag(CNDownloadUiAssist.TAG_SLOT_INFO)" in ui
-        and before(ui, "headRow.addView(info, infoLp);",
+        and "row.addView(info, infoLp);" in ui
+        and before(ui, "headRow.addView(name, new LinearLayout.LayoutParams(",
                        "headRow.addView(action, actionLp);"),
     # 宽度必须恒定，否则换文案时左边的文字进度跟着晃。用 em 不用 dp：字号会被
     # CNDownloadUiAssist 缩放改，em 跟着字号走。

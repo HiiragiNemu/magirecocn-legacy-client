@@ -117,21 +117,21 @@ public final class CNDownloadUiAssist {
     private static final String PREF_SPLIT = "split_left_pct";
     private static final String PREF_SPLIT_HINT = "split_hint_shown";
 
-    /** 玩家可手动调到的字号范围。 */
+    /** 玩家可手动调到的字号范围；首次显示固定从 100% 开始。 */
     private static final int SCALE_MIN = 75;
     private static final int SCALE_MAX = 150;
+    private static final int SCALE_DEFAULT = 100;
 
     /**
      * 左右分界线可拖到的范围与默认值（左列占比 %）。
      *
-     * <p>默认 38 = {@code CNCNDownloadUI} 原本写死的 0.38f / 0.62f，不改原设计，
-     * 只是让它可调。上下限留得紧：两边都还要放得下东西——左列是 Logo + 署名，
-     * 右列是 15 个槽位行，谁被压到 20% 以下都只剩省略号，那种「调得动但没法用」
-     * 的自由度不如不给。
+     * <p>默认改为 50/50：左侧版本与贡献信息不再被长期压缩，右侧资源槽位已经
+     * 改成 8 + 7 双列，等宽更利于两边同时阅读。玩家手动拖过分界线时仍保留选择。
+     * 上下限留得紧：两边都还要放得下东西。
      */
     private static final int SPLIT_MIN = 20;
     private static final int SPLIT_MAX = 70;
-    private static final int SPLIT_DEFAULT = 38;
+    private static final int SPLIT_DEFAULT = 50;
 
     /** 把手宽度，以及静止/调节两态下可见线的内缩量。 */
     private static final int HANDLE_DP = 18;
@@ -284,11 +284,10 @@ public final class CNDownloadUiAssist {
             prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         }
         if (prefs == null) return;
-        // 没调过时用按分辨率算的建议值；调过一次之后一律以玩家的选择为准。
-        // 用 -1 而不是 100 当「没调过」的哨兵：100 是合法选择，分不出
-        // 「玩家特意选了 100%」和「从没动过」。
+        // 首次固定使用 100%。设备建议值仍保留在“推荐”按钮里，但不再静默改变默认。
+        // 玩家调过一次之后一律以自己的选择为准。
         int saved = prefs.getInt(PREF_SCALE, -1);
-        scalePct = saved < 0 ? suggestedScale(context) : clamp(saved, SCALE_MIN, SCALE_MAX);
+        scalePct = saved < 0 ? SCALE_DEFAULT : clamp(saved, SCALE_MIN, SCALE_MAX);
         splitPct = clamp(prefs.getInt(PREF_SPLIT, SPLIT_DEFAULT), SPLIT_MIN, SPLIT_MAX);
     }
 

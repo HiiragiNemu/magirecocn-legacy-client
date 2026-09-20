@@ -164,6 +164,8 @@ public class CNCNDownloadUI {
 
     /** 文件数量。与原实现一致地固定为 15。 */
     private static final int FILE_COUNT = 15;
+    /** 资源槽位改为双列显示；每列最多 8 项，15 项按 8 + 7 分配。 */
+    private static final int SLOT_COLUMN_LIMIT = 8;
 
     /**
      * 浮层根视图的标记 tag。hide() 用它把 decorView 上**所有**本类浮层摘除，
@@ -417,7 +419,7 @@ public class CNCNDownloadUI {
     private static final int[] CREDIT_KINDS = {
         KIND_TITLE, KIND_ITEM, KIND_HEAD, KIND_ITEM, KIND_SUB, KIND_ITEM,
         KIND_SUB, KIND_HEAD, KIND_ITEM, KIND_ITEM, KIND_SUB, KIND_ITEM, KIND_HEAD, KIND_ITEM,
-        KIND_ITEM, KIND_ITEM
+        KIND_ITEM, KIND_ITEM, KIND_ITEM, KIND_ITEM
     };
 
     private static final String[] CREDIT_TEXTS = {
@@ -433,10 +435,12 @@ public class CNCNDownloadUI {
         "【圆环记录汉化组】国服外剧情翻译",
         "可核验贡献统计：MadeInMagius 2,692 条；剧情字段 2 条；战斗技能 2,374 条；语音字幕 0 条；Wiki 1,096 条",
         "【国服数据留存】segfault（点击个人主页）",
-        "友情链接",
+        "MadeInMagius的其他网站作品链接",
         CNEndpoints.site(0) + "【魔法纪录剧情中日双语阅读网站】",
         CNEndpoints.site(1) + "【MagiaExedra和魔法纪录Live2D网站】",
-        CNEndpoints.site(2) + "【魔法少女称呼关系搜索与身高对比网站】"
+        CNEndpoints.site(2) + "【魔法少女称呼关系搜索与身高对比网站】",
+        "magiaexedralive2dviewer.pages.dev【魔法纪录 MagiaExedra Live2D 和战斗小人网站（有剧情播放功能）】",
+        "madeinmagius-site.pages.dev【MadeInMagius 下载中心和教程网站】"
     };
 
     /**
@@ -461,7 +465,9 @@ public class CNCNDownloadUI {
         "",                                                     // 「友情链接」小标题
         CNEndpoints.siteUrl(0),
         CNEndpoints.siteUrl(1),
-        CNEndpoints.siteUrl(2)
+        CNEndpoints.siteUrl(2),
+        "https://magiaexedralive2dviewer.pages.dev/",
+        "https://madeinmagius-site.pages.dev/"
     };
 
     /**
@@ -487,7 +493,9 @@ public class CNCNDownloadUI {
         "",
         CNEndpoints.site(0),
         CNEndpoints.site(1),
-        CNEndpoints.site(2)
+        CNEndpoints.site(2),
+        "magiaexedralive2dviewer.pages.dev",
+        "madeinmagius-site.pages.dev"
     };
 
     /**
@@ -588,6 +596,39 @@ public class CNCNDownloadUI {
         return URL_GITHUB;
     }
 
+    /**
+     * 把“MadeInMagius 的其他网站作品链接”整段提到左栏最上方。
+     * 贡献人员及统计内部顺序完全不动；这里只改变一个独立链接区块的展示位置。
+     */
+    private static int[] contributorRenderOrder(CreditsModel credits) {
+        int n = credits == null || credits.texts == null ? 0 : credits.texts.length;
+        int[] identity = new int[n];
+        for (int i = 0; i < n; i++) identity[i] = i;
+        int head = -1;
+        for (int i = 0; i < n; i++) {
+            String text = credits.texts[i] == null ? "" : credits.texts[i];
+            if (credits.kinds[i] == KIND_HEAD
+                    && (text.contains("其他网站作品链接") || "友情链接".equals(text))) {
+                head = i;
+                break;
+            }
+        }
+        if (head < 0) return identity;
+        int end = n;
+        for (int i = head + 1; i < n; i++) {
+            if (credits.kinds[i] == KIND_HEAD) {
+                end = i;
+                break;
+            }
+        }
+        int[] out = new int[n];
+        int k = 0;
+        for (int i = head; i < end; i++) out[k++] = i;
+        for (int i = 0; i < head; i++) out[k++] = i;
+        for (int i = end; i < n; i++) out[k++] = i;
+        return out;
+    }
+
     /** 底部署名是否无限滚动。ui_credits.footer_marquee=false 可远程关闭。 */
     private static boolean footerMarquee() {
         JSONObject cfg = CNMirrors.uiCredits();
@@ -622,8 +663,9 @@ public class CNCNDownloadUI {
     private static TextView     vOverallText;
     private static LinearLayout slotContainer;
     private static LinearLayout vContribList;
-    /** 左侧版本状态面板：显示本端、资源侧（GitHub/Cloudflare）、EdgeOne 及热更版本。 */
+    /** 左侧版本状态标题；具体状态拆成双列单元，减少无效纵向占用。 */
     private static TextView     vVersionInfo;
+    private static TextView[]   vVersionCells = new TextView[5];
     private static TextView     vThemeChip;
     private static TextView     vGitHubChip;
     /** 右上角胶囊行（主题 / GitHub / 字号）。assist 把字号胶囊挂进来。 */
@@ -965,12 +1007,49 @@ public class CNCNDownloadUI {
         leftCol.addView(divider, divLp);
 
         vVersionInfo = new TextView(act);
-        vVersionInfo.setText(versionPanelText());
+        vVersionInfo.setText("版本状态");
         vVersionInfo.setTextColor(COLOR_SUB);
         vVersionInfo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f);
         vVersionInfo.setGravity(Gravity.START);
-        vVersionInfo.setPadding(dp(act, 6), 0, dp(act, 4), dp(act, 6));
+        vVersionInfo.setPadding(dp(act, 6), 0, dp(act, 4), dp(act, 1));
         leftCol.addView(vVersionInfo, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        // 版本状态从纵向 5 行改成双列 3 行：本端/资源、EdgeOne/JS、Scenario/留白。
+        // 左列宽度现在默认 50%，足够容纳完整状态，不再为了几条短文本浪费高度。
+        LinearLayout versionGrid = new LinearLayout(act);
+        versionGrid.setOrientation(LinearLayout.VERTICAL);
+        versionGrid.setPadding(dp(act, 6), 0, dp(act, 4), dp(act, 4));
+        String[] versionCells = versionPanelCells();
+        vVersionCells = new TextView[5];
+        int versionCellIndex = 0;
+        for (int r = 0; r < 3; r++) {
+            LinearLayout versionRow = new LinearLayout(act);
+            versionRow.setOrientation(LinearLayout.HORIZONTAL);
+            versionRow.setGravity(Gravity.CENTER_VERTICAL);
+            versionGrid.addView(versionRow, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            for (int c = 0; c < 2; c++) {
+                TextView cell = new TextView(act);
+                cell.setTextColor(COLOR_SUB);
+                cell.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f);
+                cell.setSingleLine(true);
+                cell.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                if (versionCellIndex < versionCells.length) {
+                    cell.setText(versionCells[versionCellIndex]);
+                    vVersionCells[versionCellIndex] = cell;
+                    versionCellIndex++;
+                } else {
+                    cell.setText("");
+                    cell.setVisibility(View.INVISIBLE);
+                }
+                LinearLayout.LayoutParams cellLp = new LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                if (c == 0) cellLp.rightMargin = dp(act, 8);
+                versionRow.addView(cell, cellLp);
+            }
+        }
+        leftCol.addView(versionGrid, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         ScrollView contribScroll = new ScrollView(act);
@@ -1043,15 +1122,14 @@ public class CNCNDownloadUI {
         ScrollView slotScroll = new ScrollView(act);
         slotScroll.setTag(CNDownloadUiAssist.TAG_V_SCROLL);
         slotScroll.setVerticalScrollBarEnabled(true);
-        // 文件列表滚动条**常显**：这是 UI 契约（check-download-ui-contract.py 的
-        // 「文件列表有右侧纵向滚动条」），长列表要让人一眼看到还能滚。浮层现在
-        // 整体走内建样式，所有滚动区都是非淡出的。
+        // 15 个资源槽位在正常横屏中按 8 + 7 双列完整显示；ScrollView 只保留为
+        // 极窄分屏/超大系统字体下的安全兜底，不再把“必须上下滚动”当成主交互。
         slotScroll.setScrollbarFadingEnabled(false);
         slotScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
         slotScroll.setClipToPadding(false);
         slotScroll.setPadding(0, 0, dp(act, CNDownloadUiAssist.SCROLLBAR_GUTTER_DP), 0);
         slotContainer = new LinearLayout(act);
-        slotContainer.setOrientation(LinearLayout.VERTICAL);
+        slotContainer.setOrientation(LinearLayout.HORIZONTAL);
         slotScroll.addView(slotContainer, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -1785,7 +1863,9 @@ public class CNCNDownloadUI {
         CreditsModel credits = creditsModel();
         int itemIndex = 0;
         int renderCount = 0;
-        for (int i = 0; i < credits.texts.length; i++) {
+        int[] renderOrder = contributorRenderOrder(credits);
+        for (int orderIndex = 0; orderIndex < renderOrder.length; orderIndex++) {
+            int i = renderOrder[orderIndex];
             int kind = credits.kinds[i];
             String creditText = credits.texts[i] == null ? "" : credits.texts[i];
             if (creditText.contains("魔法纪录Totentanz中文化")
@@ -1866,7 +1946,7 @@ public class CNCNDownloadUI {
             @Override public void run() {
                 try {
                     populateContributors(act);
-                    if (vVersionInfo != null) vVersionInfo.setText(versionPanelText());
+                    refreshVersionPanel();
                     applyRightPill(act);   // GitHub 胶囊可变: config 下发 right_pill 则替换文案/动作
                     if (vFooter != null) {
                         vFooter.setText(footerText());
@@ -1884,11 +1964,24 @@ public class CNCNDownloadUI {
         if (slotContainer == null) return;
         slotContainer.removeAllViews();
         slotList.clear();
+
+        LinearLayout firstColumn = new LinearLayout(act);
+        firstColumn.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout secondColumn = new LinearLayout(act);
+        secondColumn.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams firstColumnLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        firstColumnLp.rightMargin = dp(act, 8);
+        slotContainer.addView(firstColumn, firstColumnLp);
+        slotContainer.addView(secondColumn, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
         for (int d = 0; d < FILE_COUNT; d++) {
             int fileIdx = DISPLAY_ORDER[d];   // 显示序 → FILE_NAMES 下标
             LinearLayout row = new LinearLayout(act);
             row.setOrientation(LinearLayout.VERTICAL);
-            slotContainer.addView(row, new LinearLayout.LayoutParams(
+            LinearLayout targetColumn = d < SLOT_COLUMN_LIMIT ? firstColumn : secondColumn;
+            targetColumn.addView(row, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -1918,10 +2011,8 @@ public class CNCNDownloadUI {
             info.setGravity(Gravity.END);
             info.setTag(CNDownloadUiAssist.TAG_SLOT_INFO);
             LinearLayout.LayoutParams infoLp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT);
-            infoLp.leftMargin = dp(act, 8);
-            headRow.addView(info, infoLp);
 
             // 行右侧那颗按钮：失败时红色「重试」，其余时候紫色「重下」。
             //
@@ -1956,6 +2047,12 @@ public class CNCNDownloadUI {
                     ViewGroup.LayoutParams.WRAP_CONTENT);
             actionLp.leftMargin = dp(act, 8);
             headRow.addView(action, actionLp);
+
+            // 双列后单槽只有右栏的一半宽度：把“大小/速度/百分比”独占第二行，
+            // 避免它与文件名和按钮三方争宽；贡献区与其它交互不受影响。
+            info.setSingleLine(true);
+            info.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            row.addView(info, infoLp);
 
             ProgressBar bar = new ProgressBar(
                     act, null, android.R.attr.progressBarStyleHorizontal);
@@ -4244,15 +4341,32 @@ public class CNCNDownloadUI {
         return (aria2 ? "aria2c" : "自建引擎") + " · " + CNDownloadMode.describe();
     }
 
+    private static String[] versionPanelCells() {
+        return new String[] {
+            "本端客户端：v" + CNVersionCheck.lastLocalVersion,
+            "资源侧 GitHub/Cloudflare：v" + CNVersionCheck.lastBestVersion,
+            "EdgeOne：v" + CNVersionCheck.lastEdgeOneVersion,
+            "JS：" + hotVersion(CNHotUpdateCheck.latestJsVersion)
+                    + " / EdgeOne " + hotVersion(CNHotUpdateCheck.edgeJsVersion),
+            "Scenario：" + hotVersion(CNHotUpdateCheck.latestScenarioVersion)
+                    + " / EdgeOne " + hotVersion(CNHotUpdateCheck.edgeScenarioVersion)
+        };
+    }
+
     private static String versionPanelText() {
-        return "版本状态"
-                + "\n本端客户端：v" + CNVersionCheck.lastLocalVersion
-                + "\n资源侧 GitHub/Cloudflare：v" + CNVersionCheck.lastBestVersion
-                + "\nEdgeOne：v" + CNVersionCheck.lastEdgeOneVersion
-                + "\nJS：" + hotVersion(CNHotUpdateCheck.latestJsVersion)
-                + " / EdgeOne " + hotVersion(CNHotUpdateCheck.edgeJsVersion)
-                + "\nScenario：" + hotVersion(CNHotUpdateCheck.latestScenarioVersion)
-                + " / EdgeOne " + hotVersion(CNHotUpdateCheck.edgeScenarioVersion);
+        StringBuilder out = new StringBuilder("版本状态");
+        String[] cells = versionPanelCells();
+        for (String cell : cells) out.append('\n').append(cell);
+        return out.toString();
+    }
+
+    private static void refreshVersionPanel() {
+        String[] values = versionPanelCells();
+        TextView[] cells = vVersionCells;
+        if (cells == null) return;
+        for (int i = 0; i < values.length && i < cells.length; i++) {
+            if (cells[i] != null) cells[i].setText(values[i]);
+        }
     }
 
     private static String hotVersion(int value) {
@@ -4265,7 +4379,7 @@ public class CNCNDownloadUI {
         // 会把刚拼进去的日志段整段抹掉，而 renderAll 每 500ms 就跑一次——
         // 表现就是日志行刚打印出来就转瞬即逝。
         scheduleLogRefresh();
-        if (vVersionInfo != null) vVersionInfo.setText(versionPanelText());
+        refreshVersionPanel();
 
         int[]   status     = fileStatus;
         int[]   progress   = fileProgress;
@@ -4582,6 +4696,7 @@ public class CNCNDownloadUI {
                 slotContainer = null;
                 vContribList  = null;
                 vVersionInfo  = null;
+                vVersionCells = new TextView[5];
                 vThemeChip    = null;
                 vLogPill      = null;
                 logModal      = null;
