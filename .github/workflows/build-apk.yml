@@ -116,6 +116,19 @@ jobs:
       - name: 📦 检出仓库
         uses: actions/checkout@v4
 
+      - name: 🔤 取回已审阅的国服补字形字体
+        uses: actions/checkout@v4
+        with:
+          repository: HiiragiNemu/magireco-cn-patch
+          ref: 71d3278ea246b58b4a3bc6808a01c96a4e65bdcd
+          token: ${{ secrets.GH_TOKEN || github.token }}
+          persist-credentials: false
+          sparse-checkout: |
+            magica/fonts/TTDaYuanGB3.ttf
+            magica/fonts/TTZhiHeiGB3-W4.ttf
+          sparse-checkout-cone-mode: false
+          path: .reviewed-fonts
+
       - name: ☕ 设置 JDK 17
         uses: actions/setup-java@v4
         with:
@@ -286,6 +299,14 @@ jobs:
           java -version
           python3 tools/baseline.py fetch --java "$J21/bin/java"
           python3 tools/baseline.py apply --out "${TREE}"
+
+          # 1.0.178 字体取自 71d3278e… 已审阅的“各补齐缺失字形”版本。
+          # 先用 Git blob SHA 对拍，避免分支后来改字体却悄悄进入 APK。
+          test "$(git -C .reviewed-fonts hash-object magica/fonts/TTDaYuanGB3.ttf)" =             "b121abca3ef624104c84adf2a25de2ea2bea7cf0"
+          test "$(git -C .reviewed-fonts hash-object magica/fonts/TTZhiHeiGB3-W4.ttf)" =             "e588b7ddb4b5a1761bf94d73d732b3330d292413"
+          install -m 0644 .reviewed-fonts/magica/fonts/TTDaYuanGB3.ttf             "${TREE}/assets/fonts/TTDaYuanGB3.ttf"
+          install -m 0644 .reviewed-fonts/magica/fonts/TTZhiHeiGB3-W4.ttf             "${TREE}/assets/fonts/TTZhiHeiGB3-W4.ttf"
+
           echo "重建树：$(find "${TREE}" -type f | wc -l) 个文件"
 
       # F-043：正式包（debug_overlay=false）不声明 SYSTEM_ALERT_WINDOW——

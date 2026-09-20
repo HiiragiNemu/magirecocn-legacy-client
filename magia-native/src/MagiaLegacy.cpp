@@ -2797,18 +2797,32 @@ static void fontPathOverwrite(void* strObj, const char* nv, size_t n) {
     if (oldLongData) ::operator delete(oldLongData);
 }
 
-// 1.0.178 按维护者要求恢复到 43821ec 之前的字体路由：
-// MTF4a5kp 统一重定向到 TTDaYuanGB3。只恢复路由本身，不回滚此后的下载/UI/安全修复。
-// witchText-export.fnt 是魔女文字位图字体，另一套机制，不动。
+// 1.0.178 按国服 v2.2.1 离线包的 native 路由恢复“双字体”语义：
+//   · 通用原生 UI / 对话框：TTZhiHeiGB3-W4
+//   · ADV/剧情/叙事文本：TTDaYuanGB3
+//
+// 国服 libmadomagi_native.so 本身直接引用 TTZhiHeiGB3-W4 / TTDaYuanGB3；
+// Totentanz 基线仍以 MTF4a5kp / mbm_20160902 作为两条原始请求名，所以这里
+// 将两条旧请求分别映射到国服对应字体。witchText-export.fnt 是另一套位图机制。
 static void fontPathFix(void* strObj, const char* tag) {
-    static const char kFrom[] = "fonts/MTF4a5kp.ttf";       // 18 字符
-    static const char kTo[]   = "fonts/TTDaYuanGB3.ttf";   // 21 字符
-    // ARM64 下源/目标都可走短串；ARMv7 仍由 fontPathOverwrite 覆盖 long string。
-    // 保留已修好的按对象缓冲所有权处理，不恢复任何历史堆破坏路径。
+    static const char kUiFrom[]    = "fonts/MTF4a5kp.ttf";        // 18 字符
+    static const char kUiTo[]      = "fonts/TTZhiHeiGB3-W4.ttf"; // 24 字符
+    static const char kStoryFrom[] = "fonts/mbm_20160902.ttf";   // 21 字符
+    static const char kStoryTo[]   = "fonts/TTDaYuanGB3.ttf";    // 21 字符
+
     NdkStrView v = ndkStrRead(strObj);
-    if (v.size == sizeof(kFrom) - 1 && memcmp(v.data, kFrom, sizeof(kFrom) - 1) == 0) {
-        fontPathOverwrite(strObj, kTo, sizeof(kTo) - 1);
-        LOGI("[font] %s: MTF4a5kp → TTDaYuanGB3", tag);
+    if (v.size == sizeof(kUiFrom) - 1
+            && memcmp(v.data, kUiFrom, sizeof(kUiFrom) - 1) == 0) {
+        // kUiTo 超过 ARM64 short-string 上限；fontPathOverwrite 已按对象独立
+        // 分配并移交所有权，避免历史上的共享缓冲 double-free。
+        fontPathOverwrite(strObj, kUiTo, sizeof(kUiTo) - 1);
+        LOGI("[font] %s: MTF4a5kp → TTZhiHeiGB3-W4 (UI)", tag);
+        return;
+    }
+    if (v.size == sizeof(kStoryFrom) - 1
+            && memcmp(v.data, kStoryFrom, sizeof(kStoryFrom) - 1) == 0) {
+        fontPathOverwrite(strObj, kStoryTo, sizeof(kStoryTo) - 1);
+        LOGI("[font] %s: mbm_20160902 → TTDaYuanGB3 (story)", tag);
     }
 }
 
@@ -3280,7 +3294,7 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
           (void*)initLabelNew, (void**)&initLabelOld, "i18n: LbUtility::initLabel");
     }
 
-    // ── 引擎字体路径重定向（MTF4a5kp → TTDaYuanGB3；恢复 43821ec 之前路由）──
+    // ── 国服双字体路由：MTF4a5kp→TTZhiHei(UI)，mbm→TTDaYuan(剧情) ──
     if (g_dbgNoTtfHooks) {
         LOGE("[DEBUG] noTtfHooks 生效：**不安装** createWithTTF/setTTFConfig 三个钩子");
     } else {

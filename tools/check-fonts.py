@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""字体守卫：钉死 assets/fonts/ 下每个文件的哈希，并校验内容与文件名相符。
+"""字体守卫：钉死 assets/fonts/ 下每个文件的内容身份，并校验国服双字体路由。
 
 ## 为什么需要它
 
@@ -12,9 +12,9 @@
     f7f41ce6  引擎 UI 字体路径重定向（最终方案：只改加载路径，不碰文件）
     dd06a6b6  修复字体重定向堆破坏
 
-维护者最后定的路线是**只重定向加载路径，绝不改文件内容**——可热回滚、
-出问题改一行常量就退回去。但这个约定只写在提交信息里，没有任何机制拦着
-下一个人再来一次「直替更省事」。本脚本就是那个机制。
+维护者最后定的路线是**只重定向加载路径，不用“把别的字体内容塞进旧文件名”来改路由**。
+1.0.178 另外使用 2026-09-19 已审阅、补齐缺失字形的 TTDaYuan / TTZhiHei 两个
+载体；构建时从固定提交取回，并以 Git blob SHA 精确钉死字节。
 
 ## 一个必须写下来的事实：国服自己就是直替做的
 
@@ -23,20 +23,16 @@
 清理判据是「引擎到底请不请求它」，不是观感也不是许可偏好——在
 `libmadomagi_native.so` 里查字符串：
 
-    MTF4a5kp        有 —— 引擎按这个路径请求
-    mbm_20160902    有 —— 重定向的目标
-    TTDaYuanGB3     无
-    koruri-semibold 无
-    TTZhiHeiGB3-W4  无（只在 MagiaLegacy.cpp 的两行注释里，是废弃的旧重定向目标）
+    Totentanz 基线：MTF4a5kp / mbm_20160902
+    国服 v2.2.1：TTZhiHeiGB3-W4 / TTDaYuanGB3
 
-后三个引擎一次都不会请求，代码也不引用（只出现在 `original/META-INF/` 的原包
-签名清单里，那是文件列表不是运行时引用），于是直接删掉 —— 41.4 MB 死重量，
-其中 33.4 MB 还是同一个字体存了三份。
+上传的国服 v2.2.1 离线包经双 ABI native 字符串/xref 复核：
+通用 UI 大量引用 TTZhiHei，StoryMessage/StoryNarration/RaidScrollView 等剧情路径
+引用 TTDaYuan。因此 1.0.178 把 Totentanz 的两条请求名分别映射到国服两条字体。
 
-`MTF4a5kp.ttf` 也删了（2B）。引擎确实会按这个名字请求，但 `fontPathFix` 无条件把它
-改指 `TTDaYuanGB3.ttf`——**而且 `noFontHook` 那个能绕过重定向的调试开关已经一并撤除**，
-所以重定向成了唯一路径，不存在"绕过后找不到文件"的情形。留着一个永远不被打开的
-16.7 MB 商业字体没有意义。
+`MTF4a5kp.ttf` 仍从重建树删除，因为请求会在 native hook 中改写；
+`mbm_20160902.ttf` 保留基线文件以兼容其它非 hook 消费者，但走 Label TTF 钩子的
+剧情请求会重定向到 TTDaYuan。TTZhiHei / TTDaYuan 的 reviewed carrier 在重建后覆盖/加入。
 
 > 这两件事是配套的，别只做一半：先撤开关再删文件才安全，反过来则会给
 > `noFontHook` 留下一条必然失败的路径。
@@ -44,14 +40,14 @@
 > 历史提醒：`koruri-semibold.ttf` 这个文件名是**误导性**的。Koruri 是 Apache-2.0
 > 的日文开源字体，而那个文件的内容是腾祥嘉丽大圆——按文件名做合规审计会看走眼。
 > 这不是本仓库造成的（根提交就这样，是国服官方汉化时替换文件内容留下的），
-> 但清理时正好把这个雷一起拆了。同理，现行的 `MTF4a5kp → TTDaYuanGB3` 重定向
-> 并不是「日文换中文」——后者国服早就做完了——而是把 UI 汇到覆盖最好的字体上。
+> 但清理时正好把这个雷一起拆了。同理，1.0.178 的路由目标不是“选一个覆盖率最大的字体统一全站”，而是恢复国服的
+> UI=TTZhiHei、剧情=TTDaYuan 分工。
 
 ## 判据
 
 1. 文件集合不多不少（多出来的字体不会被引用，少了会让引擎加载失败）；
-2. 每个文件的 SHA-256 与下表一致；
-3. 每个文件内部的字体家族名与下表一致——哈希能挡住「换内容」，
+2. 每个文件的内容身份与下表一致（原基线文件用 SHA-256；reviewed 字体用 Git blob SHA-1）；
+3. 每个文件内部的字体家族名与下表一致；
    这一条额外挡住「换成同尺寸的另一个字体」，同时充当活文档：
    下一个人不必像我一样先解析一遍 name 表才知道每个文件到底是什么。
 
@@ -67,31 +63,36 @@ import sys
 
 FONT_DIR = "assets/fonts"
 
-# 文件名 -> (大小, SHA-256, 内部家族名, 这个文件是干什么的)
-# 家族名为 None 表示不是 TTF（位图字体的 .fnt/.png），只校验哈希。
+# 文件名 -> (大小, 内容标识, 内部家族名, 这个文件是干什么的)
+# 内容标识支持 sha256:<hex> 或 gitblob:<sha1>；Git blob 同样精确绑定全部字节。
 EXPECTED = {
     "mbm_20160902.ttf": (
         9070328,
-        "51383ac04bf0835445a0de382c07e6467f43991c6a51cf13a4327cad51f58b03",
+        "sha256:51383ac04bf0835445a0de382c07e6467f43991c6a51cf13a4327cad51f58b03",
         "MagiReco CN Medium",
-        "国服自制字体。剧情/台词本来就用它，现在 UI 也重定向到这里——"
-        "它是几个字体里覆盖最好的（格式 12 cmap、30823 码位）",
+        "基线兼容载体；Label TTF 剧情路径会重定向到 TTDaYuan",
     ),
     "witchText-export.fnt": (
         4525,
-        "1ab05592922270fe52792431f7843a9f767aa50efbfbcbb22f65ea90a78a8118",
+        "sha256:1ab05592922270fe52792431f7843a9f767aa50efbfbcbb22f65ea90a78a8118",
         None,
         "魔女文字的位图字体描述",
     ),
     "TTDaYuanGB3.ttf": (
-        17507340,
-        "01bbb65b3b21f8d445fe15412fc3b5864425033f534464be26de0aa7ed8150c0",
+        17571336,
+        "gitblob:b121abca3ef624104c84adf2a25de2ea2bea7cf0",
         "Tensentype JiaLiDaYuanGB18030",
-        "1.0.178 恢复路由目标：MTF4a5kp UI + 剧情/看板/字幕使用的大圆体",
+        "reviewed 剧情/ADV/叙事字体；2026-09-19 补齐缺失字形版",
+    ),
+    "TTZhiHeiGB3-W4.ttf": (
+        8431292,
+        "gitblob:e588b7ddb4b5a1761bf94d73d732b3330d292413",
+        "Tensentype ZhiHeiGB18030-W4",
+        "reviewed 通用 UI/对话框字体；2026-09-19 补齐缺失字形版",
     ),
     "witchText-export.png": (
         2065782,
-        "43cd69d857986ce393fea96e2ebedd2fe8282df2a7eff4c1d036fb9accdd5d7f",
+        "sha256:43cd69d857986ce393fea96e2ebedd2fe8282df2a7eff4c1d036fb9accdd5d7f",
         None,
         "魔女文字的字形图集",
     ),
@@ -104,6 +105,22 @@ def sha256(path):
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def git_blob_sha1(path):
+    data = open(path, "rb").read()
+    h = hashlib.sha1()
+    h.update(("blob %d\0" % len(data)).encode("ascii"))
+    h.update(data)
+    return h.hexdigest()
+
+
+def content_id(path, spec):
+    if spec.startswith("sha256:"):
+        return sha256(path), spec[7:], "sha256"
+    if spec.startswith("gitblob:"):
+        return git_blob_sha1(path), spec[8:], "git blob"
+    raise ValueError("未知内容标识：" + spec)
 
 
 def family_name(path):
@@ -158,22 +175,34 @@ def check_redirect_target():
         return ["找不到 " + NATIVE_SRC]
     text = open(NATIVE_SRC, encoding="utf-8").read()
     problems = []
-    m = re.search(r'static\s+const\s+char\s+kTo\[\]\s*=\s*"fonts/([^"]+)"', text)
-    if not m:
-        return ["在 %s 里找不到字体重定向目标 kTo，重定向可能被删了或改了写法"
-                % NATIVE_SRC]
-    target = m.group(1)
-    if target not in EXPECTED:
-        problems.append(
-            "native 把字体重定向到 fonts/%s，但 %s 下没有这个文件"
-            "（引擎会加载失败并静默回落）" % (target, FONT_DIR))
-    path_len = len("fonts/" + target)
-    if path_len > 22:
-        problems.append(
-            "重定向目标路径 fonts/%s 是 %d 字符，超过 ARM64 libc++ 短串上限 22。"
-            "这会让 ARM64 与本来就是 long 的 ARMv7 都走 fontPathOverwrite 的"
-            "独立分配路径。确认过两个 ABI 的所有权约定再放行。"
-            % (target, path_len))
+    expected_routes = {
+        "kUiFrom": "MTF4a5kp.ttf",
+        "kUiTo": "TTZhiHeiGB3-W4.ttf",
+        "kStoryFrom": "mbm_20160902.ttf",
+        "kStoryTo": "TTDaYuanGB3.ttf",
+    }
+    found = {}
+    for var, want in expected_routes.items():
+        m = re.search(
+            r'static\s+const\s+char\s+' + re.escape(var)
+            + r'\[\]\s*=\s*"fonts/([^"]+)"',
+            text,
+        )
+        if not m:
+            problems.append("在 %s 里找不到字体路由常量 %s" % (NATIVE_SRC, var))
+            continue
+        found[var] = m.group(1)
+        if found[var] != want:
+            problems.append("%s 路由是 %s，应为 %s" % (var, found[var], want))
+
+    for var in ("kUiTo", "kStoryTo"):
+        target = found.get(var)
+        if not target:
+            continue
+        if target not in EXPECTED:
+            problems.append(
+                "native 把字体重定向到 fonts/%s，但 %s 下没有登记该文件"
+                % (target, FONT_DIR))
     return problems
 
 
@@ -212,11 +241,11 @@ def main():
                 "%s 大小不符：%d，应为 %d\n    用途：%s"
                 % (name, real_size, size, purpose))
             continue
-        real_digest = sha256(path)
-        if real_digest != digest:
+        real_digest, expected_digest, digest_kind = content_id(path, digest)
+        if real_digest != expected_digest:
             problems.append(
-                "%s 内容被改过\n    实际 sha256 %s\n    应为      %s\n    用途：%s"
-                % (name, real_digest, digest, purpose))
+                "%s 内容被改过\n    实际 %s %s\n    应为      %s\n    用途：%s"
+                % (name, digest_kind, real_digest, expected_digest, purpose))
             continue
         if family is not None:
             real_family = family_name(path)
@@ -230,21 +259,15 @@ def main():
         for p in problems:
             print("  · " + p, file=sys.stderr)
         print("", file=sys.stderr)
-        print("字体问题**不通过换字体文件解决**——这是 6ad7aa23 定下的路线。",
+        print("字体路由按国服双字体分工：UI→TTZhiHei，剧情→TTDaYuan。", file=sys.stderr)
+        print("reviewed 字体内容来自固定提交 71d3278e…，不得临时换回原始缺字形版本。",
               file=sys.stderr)
-        print("要换界面字体，改 magia-native/src/MagiaLegacy.cpp 里那对常量：",
-              file=sys.stderr)
-        print('    static const char kFrom[] = "fonts/MTF4a5kp.ttf";', file=sys.stderr)
-        print('    static const char kTo[]   = "fonts/TTDaYuanGB3.ttf";',
-              file=sys.stderr)
-        print("这样随时能热回滚；直接替换文件内容做不到，而且历史上已经回滚过一次"
-              "（702ebbf3 → 703cb30f）。", file=sys.stderr)
         print("", file=sys.stderr)
         print("确实要改基线（例如换了新的授权字体），就更新本脚本的 EXPECTED 表，"
               "并在提交信息里写明来源与授权。", file=sys.stderr)
         return 1
 
-    print("✔ 字体守卫通过（%d 个文件，哈希与内部家族名均相符）" % len(expected))
+    print("✔ 字体守卫通过（%d 个文件，内容身份/家族名/双字体路由均相符）" % len(expected))
     for name in sorted(expected):
         size, _d, family, _p = EXPECTED[name]
         print("    %-22s %9d B  %s" % (name, size, family or "（位图字体）"))

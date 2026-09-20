@@ -188,19 +188,29 @@ SOFTWARE.
 
 **Apache-2.0 第 4(b) 条要求注明改动**：本文件**不是** Adobe 原始 Source Han 字形集，
 而是国服（MagiReco CN）在其基础上改制的版本——重命名家族为 `MagiReco CN Medium`、
-按国服需要调整了字形覆盖（格式 12 cmap、30823 码位）。本项目**未再对字体本身做任何
-修改**。1.0.178 按维护者要求恢复 43821ec 之前的路由：native 的
-`fontPathFix` 将 `MTF4a5kp.ttf` 重定向到 `TTDaYuanGB3.ttf`；
-`mbm_20160902.ttf` 保留原包自身直接引用。
+按国服需要调整了字形覆盖（格式 12 cmap、30823 码位）。该基线文件继续随重建树保留，
+但 1.0.178 的 Label TTF 剧情路径会重定向到 TTDaYuan。
 
-> 文件名 `mbm_20160902.ttf` 是**引擎硬编码的路径**，与字体内容无关，改不得。
+> 文件名 `mbm_20160902.ttf` 是 Totentanz 基线的硬编码请求名，不能靠重命名解决路由。
 
 ---
 
+## Reviewed CN font route carriers used by 1.0.178
 
-## Font route carriers used by the client
+上传的国服 v2.2.1 离线包经 arm64/armeabi-v7a native 字符串与 xref 复核后，
+1.0.178 恢复国服的双字体职责：
 
-- **`assets/fonts/TTDaYuanGB3.ttf`** — the original TTDaYuanGB3 carrier. In 1.0.178 the pre-43821ec route is restored, so `MTF4a5kp.ttf` is redirected here as well as the existing story/subtitle use. The file is shipped unchanged; attribution and licensing remain with the original package copyright holder.
+- **`TTZhiHeiGB3-W4.ttf`** — 通用原生 UI、对话框、设置、下载窗口等；
+- **`TTDaYuanGB3.ttf`** — ADV/剧情消息、叙事、StoryLog/RaidScrollView 等剧情文本。
+
+Totentanz 基线仍请求 `MTF4a5kp.ttf` 与 `mbm_20160902.ttf`，所以
+`MagiaLegacy.cpp::fontPathFix` 分别映射：
+
+`MTF4a5kp → TTZhiHeiGB3-W4`，`mbm_20160902 → TTDaYuanGB3`。
+
+构建实际使用的两个载体不是旧国服原始缺字形文件，而是
+`HiiragiNemu/magireco-cn-patch@71d3278e…` 中 2026-09-19 已审阅补字形版本；
+构建链以 Git blob SHA 精确钉死字节。原字体的版权与许可仍归原包权利人。
 ## 不在此列的（说明，免得下次又搞混）
 
 - **`assets/magia/logo.png`** —— 下载浮层的 logo，**原样取自国服官方包**，一个字节
