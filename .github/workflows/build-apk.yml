@@ -355,6 +355,12 @@ jobs:
       - name: 🔤 校验字体基线与重定向目标
         run: python3 tools/check-fonts.py --tree "${TREE}"
 
+      - name: 🧪 1.0.178 本地状态 / 媒体默认回归
+        run: node tools/localstate-js-test.js
+
+      - name: 🧪 下载页布局契约
+        run: python3 tools/check-download-ui-contract.py
+
       - name: 🕸 核对 WebView 拦截链的假设
         run: python3 tools/check-webview-interceptor.py
 
