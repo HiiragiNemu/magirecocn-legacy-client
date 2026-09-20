@@ -1414,7 +1414,7 @@ struct Hidden {
 //   版本旁注，不得用 GITHUB_RUN_NUMBER 等构建编号覆盖；本地构建也直接使用该值。
 //   它是 constexpr、从不取地址，只在编译期喂给下面的 Hidden，因此不会有一份
 //   明文留在产物里。
-static constexpr char CLIENT_VERSION[] = "1.0.178";
+static constexpr char CLIENT_VERSION[] = "1.0.179";
 
 // 真正进二进制的是这一份：异或之后的字节。
 static constexpr auto kVersionHidden =
@@ -2721,6 +2721,13 @@ static InitLabelFn initLabelOld = nullptr;
 static void initLabelNew(void* node, void* label, const char* text, float f,
                          CNVec2 v2, int i1, CNSizeAbiArg sizeArg,
                          CNColor4B c4b, int i2) {
+    const char* fontCaller = nullptr;
+    bool storyFont = isCnStoryFontCaller(currentCallerAddress(), &fontCaller);
+    StoryFontScope storyFontScope(storyFont);
+    if (storyFont) {
+        LOGI("[font] initLabel story scope caller=%s",
+             fontCaller ? fontCaller : "(unknown)");
+    }
     if (g_dbgNoI18nLabel) {            // 调试开关：原样转发，不做任何替换
         initLabelOld(node, label, text, f, v2, i1, sizeArg, c4b, i2);
         return;
@@ -2760,6 +2767,65 @@ static void initLabelNew(void* node, void* label, const char* text, float f,
 
 
 
+// 国服字体不是按 Totentanz 的“原字体文件名”一一对应，而是按调用语义分工。
+// 178 曾错误地把 mbm_20160902 全局当作剧情字体；角色详情等普通 UI 同样会请求 mbm，
+// 结果被送进 TTDaYuan，正是 178 实机截图里那套圆体。
+// 正确规则：普通 UI 无论请求 MTF4a5kp 还是 mbm，默认都走 TTZhiHei；只有国服
+// 明确使用大圆体的剧情调用链才走 TTDaYuan。
+//
+// 这里不用硬编码绝对地址：libmadomagi_native.so 的这些 C++ 符号本来就在动态
+// 符号表里，dladdr 按调用点解析类/方法名，跨 ABI、ASLR、重新链接都稳定。
+// LbUtility::initLabel 会再进入 Label::createWithTTF，所以用 thread_local depth
+// 把“上层剧情调用”传到下层字体创建；直接调用 createWithTTF 的剧情路径则在
+// createWithTTF hook 自己按 caller 再判一次。
+static thread_local unsigned g_storyFontDepth = 0;
+
+static bool isCnStoryFontCaller(void* returnAddr, const char** symbolOut = nullptr) {
+    if (symbolOut) *symbolOut = nullptr;
+    if (!returnAddr) return false;
+    Dl_info info{};
+    if (!dladdr(returnAddr, &info) || !info.dli_sname) return false;
+    if (symbolOut) *symbolOut = info.dli_sname;
+    const char* s = info.dli_sname;
+    if (strstr(s, "StoryMessageUnit") != nullptr) return true;
+    if (strstr(s, "StoryNarrationUnit") != nullptr) return true;
+    if (strstr(s, "StoryLogUnit") != nullptr) return true;
+    // 旧国服确认只有 RaidScrollView::showMessage 这条消息文本走大圆体；
+    // RaidScrollView 其它地图/UI 标签仍按普通 UI 处理。
+    if (strstr(s, "RaidScrollView") != nullptr
+            && strstr(s, "showMessage") != nullptr) return true;
+    return false;
+}
+
+static void* currentCallerAddress() {
+#if defined(__GNUC__) || defined(__clang__)
+    return __builtin_extract_return_addr(__builtin_return_address(0));
+#else
+    return nullptr;
+#endif
+}
+
+struct StoryFontScope {
+    bool active;
+    explicit StoryFontScope(bool on) : active(on) {
+        if (active) ++g_storyFontDepth;
+    }
+    ~StoryFontScope() {
+        if (active && g_storyFontDepth) --g_storyFontDepth;
+    }
+};
+
+enum class CnFontRole { Ui, Story };
+
+static CnFontRole fontRoleForCaller(void* returnAddr, const char** symbolOut = nullptr) {
+    if (g_storyFontDepth) {
+        if (symbolOut) *symbolOut = "story-scope";
+        return CnFontRole::Story;
+    }
+    return isCnStoryFontCaller(returnAddr, symbolOut)
+        ? CnFontRole::Story : CnFontRole::Ui;
+}
+
 // NDK libc++ std::string 原地改写（font 段复用 i18n 段的 NdkStrView）
 static void fontPathOverwrite(void* strObj, const char* nv, size_t n) {
     unsigned char* s = (unsigned char*)strObj;
@@ -2797,32 +2863,35 @@ static void fontPathOverwrite(void* strObj, const char* nv, size_t n) {
     if (oldLongData) ::operator delete(oldLongData);
 }
 
-// 1.0.178 按国服 v2.2.1 离线包的 native 路由恢复“双字体”语义：
-//   · 通用原生 UI / 对话框：TTZhiHeiGB3-W4
-//   · ADV/剧情/叙事文本：TTDaYuanGB3
-//
-// 国服 libmadomagi_native.so 本身直接引用 TTZhiHeiGB3-W4 / TTDaYuanGB3；
-// Totentanz 基线仍以 MTF4a5kp / mbm_20160902 作为两条原始请求名，所以这里
-// 将两条旧请求分别映射到国服对应字体。witchText-export.fnt 是另一套位图机制。
-static void fontPathFix(void* strObj, const char* tag) {
-    static const char kUiFrom[]    = "fonts/MTF4a5kp.ttf";        // 18 字符
-    static const char kUiTo[]      = "fonts/TTZhiHeiGB3-W4.ttf"; // 24 字符
-    static const char kStoryFrom[] = "fonts/mbm_20160902.ttf";   // 21 字符
-    static const char kStoryTo[]   = "fonts/TTDaYuanGB3.ttf";    // 21 字符
+// 1.0.179：按旧国服的“调用语义”而不是 Totentanz 的原字体文件名恢复双字体。
+// 两个 Totentanz TTF 请求名都可能出现在普通 UI，因此默认都必须落到智黑；
+// 只有 StoryMessage / StoryNarration / StoryLog / RaidScrollView::showMessage 的
+// 已确认剧情上下文才切到大圆。witchText-export.fnt 仍是独立位图字体机制。
+static void fontPathFix(void* strObj, const char* tag, CnFontRole role,
+                        const char* callerSymbol) {
+    static const char kFromMtf[]   = "fonts/MTF4a5kp.ttf";
+    static const char kFromMbm[]   = "fonts/mbm_20160902.ttf";
+    static const char kUiTo[]      = "fonts/TTZhiHeiGB3-W4.ttf";
+    static const char kStoryTo[]   = "fonts/TTDaYuanGB3.ttf";
 
     NdkStrView v = ndkStrRead(strObj);
-    if (v.size == sizeof(kUiFrom) - 1
-            && memcmp(v.data, kUiFrom, sizeof(kUiFrom) - 1) == 0) {
-        // kUiTo 超过 ARM64 short-string 上限；fontPathOverwrite 已按对象独立
-        // 分配并移交所有权，避免历史上的共享缓冲 double-free。
-        fontPathOverwrite(strObj, kUiTo, sizeof(kUiTo) - 1);
-        LOGI("[font] %s: MTF4a5kp → TTZhiHeiGB3-W4 (UI)", tag);
-        return;
-    }
-    if (v.size == sizeof(kStoryFrom) - 1
-            && memcmp(v.data, kStoryFrom, sizeof(kStoryFrom) - 1) == 0) {
+    bool mtf = v.size == sizeof(kFromMtf) - 1
+        && memcmp(v.data, kFromMtf, sizeof(kFromMtf) - 1) == 0;
+    bool mbm = v.size == sizeof(kFromMbm) - 1
+        && memcmp(v.data, kFromMbm, sizeof(kFromMbm) - 1) == 0;
+    if (!mtf && !mbm) return;
+
+    const char* from = mtf ? "MTF4a5kp" : "mbm_20160902";
+    if (role == CnFontRole::Story) {
         fontPathOverwrite(strObj, kStoryTo, sizeof(kStoryTo) - 1);
-        LOGI("[font] %s: mbm_20160902 → TTDaYuanGB3 (story)", tag);
+        LOGI("[font] %s: %s → TTDaYuanGB3 (story, caller=%s)",
+             tag, from, callerSymbol ? callerSymbol : "(scope/unknown)");
+    } else {
+        // TTZhiHei 路径超过 ARM64 short-string 上限；fontPathOverwrite 会为每个
+        // string 独立分配并移交所有权，避免历史上的共享缓冲 double-free。
+        fontPathOverwrite(strObj, kUiTo, sizeof(kUiTo) - 1);
+        LOGI("[font] %s: %s → TTZhiHeiGB3-W4 (UI, caller=%s)",
+             tag, from, callerSymbol ? callerSymbol : "(unknown)");
     }
 }
 
@@ -2852,7 +2921,9 @@ static bool translateTtfInitialText(const void* text, const char* label,
 
 // createWithTTF(const _ttfConfig& cfg, ...)：fontFilePath 在 cfg 偏移 0
 static void* createWithTtfCfgNew(void* cfg, const void* text, int h, int i) {
-    fontPathFix(cfg, "createWithTTF(cfg)");
+    const char* caller = nullptr;
+    CnFontRole role = fontRoleForCaller(currentCallerAddress(), &caller);
+    fontPathFix(cfg, "createWithTTF(cfg)", role, caller);
     std::string translated;
     if (translateTtfInitialText(text, "Label::createWithTTF(cfg)", translated)) {
         FakeNdkStr fk;
@@ -2864,7 +2935,9 @@ static void* createWithTtfCfgNew(void* cfg, const void* text, int h, int i) {
 // createWithTTF(const std::string& text, const std::string& fontFile, float, ...)
 static void* createWithTtfStrNew(void* text, const void* font, float size,
                                  void* dims, int h, int v) {
-    fontPathFix((void*)font, "createWithTTF(str)");
+    const char* caller = nullptr;
+    CnFontRole role = fontRoleForCaller(currentCallerAddress(), &caller);
+    fontPathFix((void*)font, "createWithTTF(str)", role, caller);
     std::string translated;
     if (translateTtfInitialText(text, "Label::createWithTTF(str)", translated)) {
         FakeNdkStr fk;
@@ -2875,7 +2948,9 @@ static void* createWithTtfStrNew(void* text, const void* font, float size,
 }
 // Label::setTTFConfigInternal(const _ttfConfig&)
 static void setTtfCfgInternalNew(void* self, const void* cfg) {
-    fontPathFix((void*)cfg, "setTTFConfigInternal");
+    const char* caller = nullptr;
+    CnFontRole role = fontRoleForCaller(currentCallerAddress(), &caller);
+    fontPathFix((void*)cfg, "setTTFConfigInternal", role, caller);
     setTtfCfgInternalOld(self, cfg);
 }
 
@@ -3294,7 +3369,7 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
           (void*)initLabelNew, (void**)&initLabelOld, "i18n: LbUtility::initLabel");
     }
 
-    // ── 国服双字体路由：MTF4a5kp→TTZhiHei(UI)，mbm→TTDaYuan(剧情) ──
+    // ── 国服双字体路由：普通 UI 两种旧请求都→TTZhiHei；剧情上下文→TTDaYuan ──
     if (g_dbgNoTtfHooks) {
         LOGE("[DEBUG] noTtfHooks 生效：**不安装** createWithTTF/setTTFConfig 三个钩子");
     } else {
