@@ -304,6 +304,7 @@ def check_redirect_target():
         "RaidScrollView",
         "showMessage",
         "fontRoleForCaller",
+        "CN_FONT_CALLER_ADDRESS",
     )
     for token in required_semantics:
         if token not in text:
@@ -311,6 +312,10 @@ def check_redirect_target():
 
     if "kStoryFrom" in text:
         problems.append("仍存在 kStoryFrom：禁止再把 mbm 文件名本身等同于剧情字体")
+    if "currentCallerAddress()" in text:
+        problems.append("禁止用普通 helper 包 __builtin_return_address(0)：会拿到 hook 自己而不是真实引擎 caller")
+    if text.count("CN_FONT_CALLER_ADDRESS()") < 4:
+        problems.append("字体 hook 没有在各入口直接捕获真实 caller")
     if not re.search(r'bool\s+mbm\s*=.*kFromMbm', text, re.S):
         problems.append("找不到 mbm 作为普通候选请求名的判定")
     if not re.search(r'role\s*==\s*CnFontRole::Story.*kStoryTo', text, re.S):
