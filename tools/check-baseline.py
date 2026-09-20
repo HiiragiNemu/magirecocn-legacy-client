@@ -181,7 +181,11 @@ def run(conf_path=None, quiet=False):
         elif kind in ("replace", "add"):
             if kind == "replace" and not HEX64.match(str(op.get("pre", ""))):
                 bad("%s：pre hash 没填（replace 也要认基线，否则换包时不报错）" % rel)
-            if not HEX64.match(str(op.get("post", ""))):
+            # from=repo 的内容已经由本次构建显式钉住的 Git commit 逐字节确定。
+            # baseline.json 再存一份 post hash 会制造第二事实来源：正常改源码却忘了
+            # 同步 JSON，就会在真正构建前产生假失败。外部/store 来源仍必须有 post。
+            where = op.get("from", "store")
+            if where != "repo" and not HEX64.match(str(op.get("post", ""))):
                 bad("%s：post hash 没填或形状不对" % rel)
             src = content_src(op, rel)
             if src is None:
@@ -197,7 +201,7 @@ def run(conf_path=None, quiet=False):
                         "否则构建时不知道去哪拷" % rel)
             elif not os.path.isfile(src):
                 bad("%s：内容文件缺失 %s" % (rel, os.path.relpath(src, REPO)))
-            elif sha256_file(src) != op["post"]:
+            elif where != "repo" and sha256_file(src) != op["post"]:
                 bad("%s：内容与 post hash 对不上——改了文件没跑 baseline.py regen？" % rel)
 
         elif kind == "remove":
