@@ -2685,6 +2685,65 @@ static void loadingSetTitleNew(void* self, const void* text) {
     setStringTrampoline(loadingSetTitleOld, self, text, "LoadingSceneLayerInfo::setTitle");
 }
 
+// 国服字体不是按 Totentanz 的“原字体文件名”一一对应，而是按调用语义分工。
+// 178 曾错误地把 mbm_20160902 全局当作剧情字体；角色详情等普通 UI 同样会请求 mbm，
+// 结果被送进 TTDaYuan，正是 178 实机截图里那套圆体。
+// 正确规则：普通 UI 无论请求 MTF4a5kp 还是 mbm，默认都走 TTZhiHei；只有国服
+// 明确使用大圆体的剧情调用链才走 TTDaYuan。
+//
+// 这里不用硬编码绝对地址：libmadomagi_native.so 的这些 C++ 符号本来就在动态
+// 符号表里，dladdr 按调用点解析类/方法名，跨 ABI、ASLR、重新链接都稳定。
+// LbUtility::initLabel 会再进入 Label::createWithTTF，所以用 thread_local depth
+// 把“上层剧情调用”传到下层字体创建；直接调用 createWithTTF 的剧情路径则在
+// createWithTTF hook 自己按 caller 再判一次。
+static thread_local unsigned g_storyFontDepth = 0;
+
+static bool isCnStoryFontCaller(void* returnAddr, const char** symbolOut = nullptr) {
+    if (symbolOut) *symbolOut = nullptr;
+    if (!returnAddr) return false;
+    Dl_info info{};
+    if (!dladdr(returnAddr, &info) || !info.dli_sname) return false;
+    if (symbolOut) *symbolOut = info.dli_sname;
+    const char* s = info.dli_sname;
+    if (strstr(s, "StoryMessageUnit") != nullptr) return true;
+    if (strstr(s, "StoryNarrationUnit") != nullptr) return true;
+    if (strstr(s, "StoryLogUnit") != nullptr) return true;
+    // 旧国服确认只有 RaidScrollView::showMessage 这条消息文本走大圆体；
+    // RaidScrollView 其它地图/UI 标签仍按普通 UI 处理。
+    if (strstr(s, "RaidScrollView") != nullptr
+            && strstr(s, "showMessage") != nullptr) return true;
+    return false;
+}
+
+static void* currentCallerAddress() {
+#if defined(__GNUC__) || defined(__clang__)
+    return __builtin_extract_return_addr(__builtin_return_address(0));
+#else
+    return nullptr;
+#endif
+}
+
+struct StoryFontScope {
+    bool active;
+    explicit StoryFontScope(bool on) : active(on) {
+        if (active) ++g_storyFontDepth;
+    }
+    ~StoryFontScope() {
+        if (active && g_storyFontDepth) --g_storyFontDepth;
+    }
+};
+
+enum class CnFontRole { Ui, Story };
+
+static CnFontRole fontRoleForCaller(void* returnAddr, const char** symbolOut = nullptr) {
+    if (g_storyFontDepth) {
+        if (symbolOut) *symbolOut = "story-scope";
+        return CnFontRole::Story;
+    }
+    return isCnStoryFontCaller(returnAddr, symbolOut)
+        ? CnFontRole::Story : CnFontRole::Ui;
+}
+
 // LbUtility::initLabel(Node*, Label*&, const char* text, float, Vec2, int, Size, Color4B, int)
 // const char* 直传，命中就换指针。这里的替身原型必须复刻**编译器降级后的
 // 调用 ABI**，而不只是把每个类换成“尺寸一样”的 POD。
@@ -2766,65 +2825,6 @@ static void initLabelNew(void* node, void* label, const char* text, float f,
 }
 
 
-
-// 国服字体不是按 Totentanz 的“原字体文件名”一一对应，而是按调用语义分工。
-// 178 曾错误地把 mbm_20160902 全局当作剧情字体；角色详情等普通 UI 同样会请求 mbm，
-// 结果被送进 TTDaYuan，正是 178 实机截图里那套圆体。
-// 正确规则：普通 UI 无论请求 MTF4a5kp 还是 mbm，默认都走 TTZhiHei；只有国服
-// 明确使用大圆体的剧情调用链才走 TTDaYuan。
-//
-// 这里不用硬编码绝对地址：libmadomagi_native.so 的这些 C++ 符号本来就在动态
-// 符号表里，dladdr 按调用点解析类/方法名，跨 ABI、ASLR、重新链接都稳定。
-// LbUtility::initLabel 会再进入 Label::createWithTTF，所以用 thread_local depth
-// 把“上层剧情调用”传到下层字体创建；直接调用 createWithTTF 的剧情路径则在
-// createWithTTF hook 自己按 caller 再判一次。
-static thread_local unsigned g_storyFontDepth = 0;
-
-static bool isCnStoryFontCaller(void* returnAddr, const char** symbolOut = nullptr) {
-    if (symbolOut) *symbolOut = nullptr;
-    if (!returnAddr) return false;
-    Dl_info info{};
-    if (!dladdr(returnAddr, &info) || !info.dli_sname) return false;
-    if (symbolOut) *symbolOut = info.dli_sname;
-    const char* s = info.dli_sname;
-    if (strstr(s, "StoryMessageUnit") != nullptr) return true;
-    if (strstr(s, "StoryNarrationUnit") != nullptr) return true;
-    if (strstr(s, "StoryLogUnit") != nullptr) return true;
-    // 旧国服确认只有 RaidScrollView::showMessage 这条消息文本走大圆体；
-    // RaidScrollView 其它地图/UI 标签仍按普通 UI 处理。
-    if (strstr(s, "RaidScrollView") != nullptr
-            && strstr(s, "showMessage") != nullptr) return true;
-    return false;
-}
-
-static void* currentCallerAddress() {
-#if defined(__GNUC__) || defined(__clang__)
-    return __builtin_extract_return_addr(__builtin_return_address(0));
-#else
-    return nullptr;
-#endif
-}
-
-struct StoryFontScope {
-    bool active;
-    explicit StoryFontScope(bool on) : active(on) {
-        if (active) ++g_storyFontDepth;
-    }
-    ~StoryFontScope() {
-        if (active && g_storyFontDepth) --g_storyFontDepth;
-    }
-};
-
-enum class CnFontRole { Ui, Story };
-
-static CnFontRole fontRoleForCaller(void* returnAddr, const char** symbolOut = nullptr) {
-    if (g_storyFontDepth) {
-        if (symbolOut) *symbolOut = "story-scope";
-        return CnFontRole::Story;
-    }
-    return isCnStoryFontCaller(returnAddr, symbolOut)
-        ? CnFontRole::Story : CnFontRole::Ui;
-}
 
 // NDK libc++ std::string 原地改写（font 段复用 i18n 段的 NdkStrView）
 static void fontPathOverwrite(void* strObj, const char* nv, size_t n) {
