@@ -1414,7 +1414,7 @@ struct Hidden {
 //   版本旁注，不得用 GITHUB_RUN_NUMBER 等构建编号覆盖；本地构建也直接使用该值。
 //   它是 constexpr、从不取地址，只在编译期喂给下面的 Hidden，因此不会有一份
 //   明文留在产物里。
-static constexpr char CLIENT_VERSION[] = "1.0.179";
+static constexpr char CLIENT_VERSION[] = "1.0.180";
 
 // 真正进二进制的是这一份：异或之后的字节。
 static constexpr auto kVersionHidden =
@@ -2715,13 +2715,14 @@ static bool isCnStoryFontCaller(void* returnAddr, const char** symbolOut = nullp
     return false;
 }
 
-static void* currentCallerAddress() {
+// 必须在 hook 本体展开：若包成普通函数再取 level=0，只会得到“hook → helper”
+// 这层返回地址，而不是真正的游戏调用点。宏展开后 level=0 才是引擎 caller。
 #if defined(__GNUC__) || defined(__clang__)
-    return __builtin_extract_return_addr(__builtin_return_address(0));
+#define CN_FONT_CALLER_ADDRESS() \
+    __builtin_extract_return_addr(__builtin_return_address(0))
 #else
-    return nullptr;
+#define CN_FONT_CALLER_ADDRESS() nullptr
 #endif
-}
 
 struct StoryFontScope {
     bool active;
@@ -2781,7 +2782,7 @@ static void initLabelNew(void* node, void* label, const char* text, float f,
                          CNVec2 v2, int i1, CNSizeAbiArg sizeArg,
                          CNColor4B c4b, int i2) {
     const char* fontCaller = nullptr;
-    bool storyFont = isCnStoryFontCaller(currentCallerAddress(), &fontCaller);
+    bool storyFont = isCnStoryFontCaller(CN_FONT_CALLER_ADDRESS(), &fontCaller);
     StoryFontScope storyFontScope(storyFont);
     if (storyFont) {
         LOGI("[font] initLabel story scope caller=%s",
@@ -2922,7 +2923,7 @@ static bool translateTtfInitialText(const void* text, const char* label,
 // createWithTTF(const _ttfConfig& cfg, ...)：fontFilePath 在 cfg 偏移 0
 static void* createWithTtfCfgNew(void* cfg, const void* text, int h, int i) {
     const char* caller = nullptr;
-    CnFontRole role = fontRoleForCaller(currentCallerAddress(), &caller);
+    CnFontRole role = fontRoleForCaller(CN_FONT_CALLER_ADDRESS(), &caller);
     fontPathFix(cfg, "createWithTTF(cfg)", role, caller);
     std::string translated;
     if (translateTtfInitialText(text, "Label::createWithTTF(cfg)", translated)) {
@@ -2936,7 +2937,7 @@ static void* createWithTtfCfgNew(void* cfg, const void* text, int h, int i) {
 static void* createWithTtfStrNew(void* text, const void* font, float size,
                                  void* dims, int h, int v) {
     const char* caller = nullptr;
-    CnFontRole role = fontRoleForCaller(currentCallerAddress(), &caller);
+    CnFontRole role = fontRoleForCaller(CN_FONT_CALLER_ADDRESS(), &caller);
     fontPathFix((void*)font, "createWithTTF(str)", role, caller);
     std::string translated;
     if (translateTtfInitialText(text, "Label::createWithTTF(str)", translated)) {
@@ -2949,7 +2950,7 @@ static void* createWithTtfStrNew(void* text, const void* font, float size,
 // Label::setTTFConfigInternal(const _ttfConfig&)
 static void setTtfCfgInternalNew(void* self, const void* cfg) {
     const char* caller = nullptr;
-    CnFontRole role = fontRoleForCaller(currentCallerAddress(), &caller);
+    CnFontRole role = fontRoleForCaller(CN_FONT_CALLER_ADDRESS(), &caller);
     fontPathFix((void*)cfg, "setTTFConfigInternal", role, caller);
     setTtfCfgInternalOld(self, cfg);
 }
