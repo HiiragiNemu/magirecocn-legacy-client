@@ -12,9 +12,15 @@
     f7f41ce6  引擎 UI 字体路径重定向（最终方案：只改加载路径，不碰文件）
     dd06a6b6  修复字体重定向堆破坏
 
-维护者最后定的路线是**只重定向加载路径，不用“把别的字体内容塞进旧文件名”来改路由**。
-1.0.178 另外使用 2026-09-19 已审阅、补齐缺失字形的 TTDaYuan / TTZhiHei 两个
-载体；构建时从固定提交取回，并以 Git blob SHA 精确钉死字节。
+1.0.180 之前只靠 native 路由，仍存在“漏过某条加载入口就回到旧字体/系统 fallback”
+的单点风险。1.0.181 改为双保险：
+
+* 业务语义仍由 native 决定：普通 UI → TTZhiHei，确认的剧情上下文 → TTDaYuan；
+* MTF4a5kp / mbm_20160902 两个旧文件名只保留为 **TTZhiHei 的字节级兼容别名**，
+  不再携带任何旧美/日服字体内容；因此即便某条上层 hook 漏过，也只会回到国服 UI 字体。
+
+TTDaYuan / TTZhiHei 使用 2026-09-19 已审阅、补齐缺失字形的两份载体；
+构建时从固定提交取回，并以 Git blob SHA 精确钉死字节。
 
 ## 一个必须写下来的事实：国服自己就是直替做的
 
@@ -35,15 +41,14 @@ MTF4a5kp→TTZhiHei、mbm_20160902→TTDaYuan。实机角色详情证明这个�
 普通 UI 同样会请求 mbm，结果被错误送进大圆体。
 
 1.0.179 起判据改为**调用语义**：MTF4a5kp 与 mbm 在普通 UI 中都默认重定向到
-TTZhiHei；只有确认来自 StoryMessageUnit / StoryNarrationUnit / StoryLogUnit /
+TTZhiHei；只有确认来自 StoryMessageUnit / StoryFreeNarrationUnit /
+StoryNarrationUnit / StorySubtitleUnit / StoryLogUnit /
 RaidScrollView::showMessage 的剧情创建上下文才改用 TTDaYuan。
 
-`MTF4a5kp.ttf` 仍从重建树删除，因为请求会在 native hook 中改写；
-`mbm_20160902.ttf` 保留基线文件以兼容其它非 hook 消费者。TTZhiHei / TTDaYuan
-的 reviewed carrier 在重建后覆盖/加入。
-
-> 这两件事是配套的，别只做一半：先撤开关再删文件才安全，反过来则会给
-> `noFontHook` 留下一条必然失败的路径。
+1.0.181 再把最后的旧字体依赖拆掉：基线中的 MTF4a5kp / mbm 字体字节都删除，
+构建期用 reviewed TTZhiHei 生成两个同名字节别名；同时 FontAtlasCache 与
+FontFreeType 最终加载入口也加入兜底 hook。也就是说旧文件名可以继续被老引擎请求，
+但它们已经不再代表旧字体。
 
 > 历史提醒：`koruri-semibold.ttf` 这个文件名是**误导性**的。Koruri 是 Apache-2.0
 > 的日文开源字体，而那个文件的内容是腾祥嘉丽大圆——按文件名做合规审计会看走眼。
@@ -74,11 +79,17 @@ FONT_DIR = "assets/fonts"
 # 文件名 -> (大小, 内容标识, 内部家族名, 这个文件是干什么的)
 # 内容标识支持 sha256:<hex> 或 gitblob:<sha1>；Git blob 同样精确绑定全部字节。
 EXPECTED = {
+    "MTF4a5kp.ttf": (
+        8431292,
+        "gitblob:e588b7ddb4b5a1761bf94d73d732b3330d292413",
+        "Tensentype ZhiHeiGB18030-W4",
+        "1.0.181 兼容别名：旧 MTF 请求最终只能加载 reviewed TTZhiHei",
+    ),
     "mbm_20160902.ttf": (
-        9070328,
-        "sha256:51383ac04bf0835445a0de382c07e6467f43991c6a51cf13a4327cad51f58b03",
-        "MagiReco CN Medium",
-        "基线兼容载体；Label TTF 普通 UI 默认转 TTZhiHei，剧情上下文才转 TTDaYuan",
+        8431292,
+        "gitblob:e588b7ddb4b5a1761bf94d73d732b3330d292413",
+        "Tensentype ZhiHeiGB18030-W4",
+        "1.0.181 兼容别名：普通 UI 的旧 mbm 请求也只能加载 reviewed TTZhiHei；剧情由语义 hook 转 TTDaYuan",
     ),
     "witchText-export.fnt": (
         4525,
@@ -168,6 +179,8 @@ def family_name(path):
 # 都缺 U+266A/U+266F；2026-09-19 reviewed carrier 必须把它们补回来。
 # U+F6DB 仍是独立未闭合问题，不在这里伪装成已解决。
 REQUIRED_GLYPHS = {
+    "MTF4a5kp.ttf": {0x266A: "♪", 0x266F: "♯"},
+    "mbm_20160902.ttf": {0x266A: "♪", 0x266F: "♯"},
     "TTDaYuanGB3.ttf": {0x266A: "♪", 0x266F: "♯"},
     "TTZhiHeiGB3-W4.ttf": {0x266A: "♪", 0x266F: "♯"},
 }
@@ -299,9 +312,13 @@ def check_redirect_target():
         "g_storyFontDepth",
         "isCnStoryFontCaller",
         "StoryMessageUnit",
+        "StoryFreeNarrationUnit",
         "StoryNarrationUnit",
+        "StorySubtitleUnit",
         "StoryLogUnit",
         "RaidScrollView",
+        "FontAtlasCache::getFontAtlasTTF",
+        "FontFreeType::create",
         "showMessage",
         "fontRoleForCaller",
         "CN_FONT_CALLER_ADDRESS",
@@ -314,8 +331,10 @@ def check_redirect_target():
         problems.append("仍存在 kStoryFrom：禁止再把 mbm 文件名本身等同于剧情字体")
     if "currentCallerAddress()" in text:
         problems.append("禁止用普通 helper 包 __builtin_return_address(0)：会拿到 hook 自己而不是真实引擎 caller")
-    if text.count("CN_FONT_CALLER_ADDRESS()") < 4:
-        problems.append("字体 hook 没有在各入口直接捕获真实 caller")
+    if text.count("CN_FONT_CALLER_ADDRESS()") < 6:
+        problems.append("字体 hook 没有在 Label/FontAtlas/FreeType 各入口直接捕获真实 caller")
+    if "getFontAtlasTtfNew" not in text or "fontFreeTypeCreateNew" not in text:
+        problems.append("缺少 1.0.181 最终 TTF 加载兜底（FontAtlasCache / FontFreeType）")
     if not re.search(r'bool\s+mbm\s*=.*kFromMbm', text, re.S):
         problems.append("找不到 mbm 作为普通候选请求名的判定")
     if not re.search(r'role\s*==\s*CnFontRole::Story.*kStoryTo', text, re.S):
