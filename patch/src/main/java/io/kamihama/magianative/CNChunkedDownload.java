@@ -886,7 +886,7 @@ public final class CNChunkedDownload {
         long lowWindowNs = System.nanoTime();
         long lowWindowBytes = networkBytes.get();
         long stallNs = TimeUnit.SECONDS.toNanos(Math.max(1, CNMirrors.stallSeconds()));
-        long minBps = Math.max(0L, (long) CNMirrors.minSpeedKbps()) * 1000L / 8L;
+        long minBps = CNDownloadPresentation.kilobitsToBytesPerSecond(CNMirrors.minSpeedKbps());
         try {
             while (!latch.await(1L, TimeUnit.SECONDS)) {
                 long now = System.nanoTime();
@@ -909,7 +909,7 @@ public final class CNChunkedDownload {
                 if (speedDt >= TimeUnit.SECONDS.toNanos(3L)) {
                     long currentUseful = usefulBytes.get();
                     long moved = Math.max(0L, currentUseful - lastSpeedBytes);
-                    double instant = (moved * 1.0E9d / speedDt) / 1_000_000.0d;
+                    double instant = CNDownloadPresentation.megabytesPerSecond(moved, speedDt);
                     smoothedMbps = smoothedMbps <= 0.0d
                             ? instant : smoothedMbps * 0.70d + instant * 0.30d;
                     if (sink != null) sink.onSpeed((float) smoothedMbps);

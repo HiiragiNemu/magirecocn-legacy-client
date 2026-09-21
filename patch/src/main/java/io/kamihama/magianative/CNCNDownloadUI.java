@@ -156,7 +156,6 @@ public class CNCNDownloadUI {
     public static float[] fileSpeed      = new float[15];
     public static float[] fileDownloaded = new float[15];
     private static final Object PROGRESS_LOCK = new Object();
-    private static int overallProgressHighWater = 0;
 
     // ==================================================================
     // 以下为改版新增的内部状态（无外部引用）
@@ -175,7 +174,8 @@ public class CNCNDownloadUI {
     private static final int TAG_OVERLAY = 0x4C454700;   // "LEG\0"
 
     /** 资源目录内的背景图路径。 */
-    private static final String BG_ASSET   = "magia/background_light.png";
+    private static int backgroundPeriod = -1;
+    private static TextView vStorageChip;
     /** 资源目录内的游戏 Logo 路径。 */
     private static final String LOGO_ASSET = "magia/logo.png";
 
@@ -348,16 +348,19 @@ public class CNCNDownloadUI {
      */
     static void ensurePalette(Context ctx) {
         if (paletteReady || ctx == null) return;
-        try {
-            darkMode = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    .getBoolean(PREF_DARK_MODE, false);
-        } catch (Throwable ignore) {}
+        if (backgroundPeriod < 0) startLoginAppearance();
         loadPalette(darkMode);
         paletteReady = true;
     }
 
     /** 见 {@link #ensurePalette(Context)}：只按玩家偏好加载一次。 */
     private static volatile boolean paletteReady;
+
+    private static void startLoginAppearance() {
+        int hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
+        backgroundPeriod = CNDownloadPresentation.periodForHour(hour);
+        darkMode = backgroundPeriod == CNDownloadPresentation.NIGHT;
+    }
 
     private static void loadPalette(boolean dark) {
         if (dark) {
@@ -378,7 +381,8 @@ public class CNCNDownloadUI {
             COLOR_LOG_WARN         = 0xFFF2B45A;
             COLOR_LOG_ERROR        = 0xFFFF6B6B;
             COLOR_LINK           = 0xFF8FC6F0;   // 夜间：浅蓝
-            COLOR_GLASS          = 0xCC18112A;
+            COLOR_GLASS          = backgroundPeriod == CNDownloadPresentation.NIGHT
+                    ? 0x4418112A : 0xCC18112A;
             COLOR_GLASS_STK      = 0x44FF80C0;
         } else {
             COLOR_CARD_STK       = 0x33B53C8C;
@@ -916,8 +920,10 @@ public class CNCNDownloadUI {
         bgView.setScaleType(ImageView.ScaleType.CENTER_CROP);
         // 资源缺失时的兜底底色，保证浮层始终不透明、不漏出游戏画面
         bgView.setBackgroundColor(darkMode ? 0xFF150E22 : 0xFFF3E9F5);
-        loadBitmapFromAssets(act, BG_ASSET, bgView);
-        if (darkMode) bgView.setColorFilter(0xAA000000, PorterDuff.Mode.SRC_ATOP);
+        loadBitmapFromAssets(act, CNDownloadPresentation.backgroundForPeriod(backgroundPeriod), bgView);
+        // 原图夜景不叠加压暗；只有玩家手动把白天界面切成暗色时才使用滤镜。
+        if (darkMode && backgroundPeriod != CNDownloadPresentation.NIGHT)
+            bgView.setColorFilter(0xAA000000, PorterDuff.Mode.SRC_ATOP);
         root.addView(bgView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
@@ -997,7 +1003,17 @@ public class CNCNDownloadUI {
         LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 64));
         logoLp.bottomMargin = dp(act, 8);
-        leftCol.addView(logoView, logoLp);
+        LinearLayout logoRow = new LinearLayout(act);
+        logoRow.setGravity(Gravity.CENTER_VERTICAL);
+        logoRow.addView(logoView, new LinearLayout.LayoutParams(0, dp(act, 64), 1f));
+        vStorageChip = new TextView(act);
+        vStorageChip.setText(CNStorageAccess.status(act));
+        vStorageChip.setTextSize(12);
+        vStorageChip.setTextColor(COLOR_ACCENT2);
+        vStorageChip.setPadding(dp(act, 8), dp(act, 12), dp(act, 4), dp(act, 12));
+        vStorageChip.setOnClickListener(new StorageAccessClick(act));
+        logoRow.addView(vStorageChip);
+        leftCol.addView(logoRow, logoLp);
 
         View divider = new View(act);
         divider.setBackgroundColor(COLOR_CARD_STK);
@@ -1947,6 +1963,8 @@ public class CNCNDownloadUI {
                 try {
                     populateContributors(act);
                     refreshVersionPanel();
+        if (vStorageChip != null && hostActivity != null)
+            vStorageChip.setText(CNStorageAccess.status(hostActivity));
                     applyRightPill(act);   // GitHub 胶囊可变: config 下发 right_pill 则替换文案/动作
                     if (vFooter != null) {
                         vFooter.setText(footerText());
@@ -4321,9 +4339,8 @@ public class CNCNDownloadUI {
         return String.format(Locale.US, "%.2f GB", mb / 1024f);
     }
 
-    private static String formatMbps(float mbps) {
-        if (mbps <= 0f) return "";
-        return String.format(Locale.US, "%.2f MB/s", mbps);
+    private static String formatMBps(float mbPerSecond) {
+        return CNDownloadPresentation.formatMegabytesPerSecond(mbPerSecond);
     }
 
     /**
@@ -4373,6 +4390,12 @@ public class CNCNDownloadUI {
         return value < 0 ? "—" : String.valueOf(value);
     }
 
+    private static final class StorageAccessClick implements View.OnClickListener {
+        private final Activity activity;
+        StorageAccessClick(Activity activity) { this.activity = activity; }
+        @Override public void onClick(View view) { CNStorageAccess.open(activity); }
+    }
+
     private static void renderAll() {
         // 日志面板内容（安装状态 + 运行日志）。
         // 这里**必须**走 renderLogModal()：早先直接 setText(buildStatusText())
@@ -4380,6 +4403,8 @@ public class CNCNDownloadUI {
         // 表现就是日志行刚打印出来就转瞬即逝。
         scheduleLogRefresh();
         refreshVersionPanel();
+        if (vStorageChip != null && hostActivity != null)
+            vStorageChip.setText(CNStorageAccess.status(hostActivity));
 
         int[]   status     = fileStatus;
         int[]   progress   = fileProgress;
@@ -4387,46 +4412,11 @@ public class CNCNDownloadUI {
         float[] speed      = fileSpeed;
         float[] downloaded = fileDownloaded;
 
-        // ── 总进度 ──
-        // 优先按**体积加权**：已下字节数 / 总字节数。
-        // 改版前用的是「15 个文件百分比的算术平均」，那等于把 2MB 的小包和
-        // 1GB 的大包算作同等分量，进度条会随着小包秒完而猛冲、再被大包拖住，
-        // 观感就是来回跳。安装器开跑前已经把所有文件的大小探完（probeAllSizes），
-        // 所以这里的分母是定值。
-        //
-        // 万一尺寸探测整体失败（分母为 0），退回原来的算术平均，保证有进度可看。
-        {
-            float totalSize = 0f, totalDone = 0f;
-            if (size != null && downloaded != null && status != null) {
-                for (int i = 0; i < FILE_COUNT; i++) {
-                    // 本轮未检查的槽位**分子分母都不计**：把 13 个基础包（体积
-                    // 占绝大头）算进分母，热更那两个小包再怎么动，进度条也基本
-                    // 不动——玩家会以为卡住了。本轮进度就只该反映本轮的事。
-                    if (status[i] == 4) continue;
-                    if (size[i] <= 0f) continue;
-                    totalSize += size[i];
-                    // 已完成的文件按整包计入，避免它的 downloaded 被清零后
-                    // 总进度倒退
-                    totalDone += (status[i] == 2) ? size[i] : Math.min(downloaded[i], size[i]);
-                }
-            }
-            int overall;
-            if (totalSize > 0f) {
-                overall = (int) Math.min(100L, Math.max(0L, (long) (totalDone * 100f / totalSize)));
-            } else if (progress != null) {
-                int sum = 0;
-                for (int i = 0; i < FILE_COUNT; i++) sum += progress[i];
-                overall = sum / FILE_COUNT;
-            } else {
-                overall = 0;
-            }
-            synchronized (PROGRESS_LOCK) {
-                if (overall < overallProgressHighWater) overall = overallProgressHighWater;
-                else overallProgressHighWater = overall;
-            }
-            ProgressBar pb = progressBarOverall;
-            if (pb != null) pb.setProgress(overall);
-        }
+        // 进度条和字节文字使用同一份本轮统计，不继承已安装状态的 100%。
+        CNDownloadPresentation.Totals totals = CNDownloadPresentation.totals(
+                status, progress, size, downloaded);
+        ProgressBar overallBar = progressBarOverall;
+        if (overallBar != null) overallBar.setProgress(totals.percent);
 
         // 总速度：与改版前一致 —— 仅累加处于「下载中」状态的文件速度
         float totalSpeed = 0f;
@@ -4436,7 +4426,7 @@ public class CNCNDownloadUI {
             }
         }
         TextView sp = tvSpeed;
-        if (sp != null) sp.setText(formatMbps(totalSpeed));
+        if (sp != null) sp.setText(formatMBps(totalSpeed));
 
         // 下载模式（引擎 + 线程）：每 500ms 刷新，模式切换实时可见
         if (vMode != null) vMode.setText(downloadModeText());
@@ -4523,7 +4513,7 @@ public class CNCNDownloadUI {
                           .append(" / ").append(formatMb(size[idx]));
                     }
                     if (speed != null && speed[idx] > 0f) {
-                        sb.append("  ").append(formatMbps(speed[idx]));
+                        sb.append("  ").append(formatMBps(speed[idx]));
                     }
                     sv.infoView.setText(sb.toString());
                 } else {
@@ -4556,17 +4546,8 @@ public class CNCNDownloadUI {
         }
         if (vOverallText != null) {
             String text = "总进度";
-            if (size != null && downloaded != null && status != null) {
-                float totalSize = 0f, totalDone = 0f;
-                for (int i = 0; i < FILE_COUNT; i++) {
-                    if (status[i] == 4) continue;      // 同上：本轮未检查的不计
-                    if (size[i] <= 0f) continue;
-                    totalSize += size[i];
-                    totalDone += (status[i] == 2) ? size[i] : Math.min(downloaded[i], size[i]);
-                }
-                if (totalSize > 0f) {
-                    text += "  " + formatMb(totalDone) + " / " + formatMb(totalSize);
-                }
+            if (totals.sizeMb > 0f) {
+                text += "  " + formatMb(totals.doneMb) + " / " + formatMb(totals.sizeMb);
             }
             vOverallText.setText(text);
         }
@@ -4620,13 +4601,7 @@ public class CNCNDownloadUI {
                 // 以及任何 Java 异常栈都能在设备上直接看到，不必接电脑
                 CNLog.startLogcatCapture();
 
-                try {
-                    darkMode = activity
-                            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                            .getBoolean(PREF_DARK_MODE, false);
-                } catch (Throwable ignore) {
-                    darkMode = false;
-                }
+                startLoginAppearance();
                 loadPalette(darkMode);
                 CNLog.i("界面", "下载浮层已创建，主题=" + (darkMode ? "夜间" : "亮色"));
 
@@ -4955,7 +4930,6 @@ public class CNCNDownloadUI {
     }
 
     public static void resetOverallProgress() {
-        synchronized (PROGRESS_LOCK) { overallProgressHighWater = 0; }
         ProgressBar pb = progressBarOverall;
         if (pb != null) pb.setProgress(0);
     }

@@ -847,11 +847,9 @@ public final class CNDebugOverlay {
         return String.format(java.util.Locale.US, "%.1f MB", Math.max(0f, mb));
     }
 
-    private static String fmtSpeed(float kbps) {
-        if (kbps >= 1024f) {
-            return String.format(java.util.Locale.US, "%.1f MB/s", kbps / 1024f);
-        }
-        return String.format(java.util.Locale.US, "%.0f KB/s", Math.max(0f, kbps));
+    private static String fmtSpeed(float mbPerSecond) {
+        // fileSpeed 的输入本来就是 MB/s；不得再次按 KB/s 缩小。
+        return CNDownloadPresentation.formatMegabytesPerSecond(mbPerSecond);
     }
 
     private static View progressBar(Activity act, int pct) {

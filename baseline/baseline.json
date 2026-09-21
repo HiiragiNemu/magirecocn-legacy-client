@@ -1148,6 +1148,27 @@
       "group": "浮层 BGM",
       "why": "浮层 BGM 循环点与元数据；与固定 OGG 同一已验证产物来源",
       "from": "repo"
+    },
+    {
+      "kind": "add",
+      "path": "assets/magia/background_night.png",
+      "group": "美术",
+      "why": "用户提供并要求原样使用的分时下载背景；按设备当地时间选择，不改原图。",
+      "post": "6e806c2d4b48f324d293c308cab287dfe51975ba14fbbac28fd4f20b19582098"
+    },
+    {
+      "kind": "add",
+      "path": "assets/magia/background_day.png",
+      "group": "美术",
+      "why": "用户提供并要求原样使用的分时下载背景；按设备当地时间选择，不改原图。",
+      "post": "26886c441949b9c160e260f71bae5eda4a5f6cb51f72296066443857327bd724"
+    },
+    {
+      "kind": "add",
+      "path": "assets/magia/background_sunset.png",
+      "group": "美术",
+      "why": "用户提供并要求原样使用的分时下载背景；按设备当地时间选择，不改原图。",
+      "post": "d36c40198103dc237ec54cb60359d559538752b50704f71664a777015dfa46f8"
     }
   ]
 }

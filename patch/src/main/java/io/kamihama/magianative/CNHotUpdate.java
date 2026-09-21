@@ -341,7 +341,7 @@ public final class CNHotUpdate {
                 long dt = now - windowStart;
                 if (dt >= TimeUnit.SECONDS.toNanos(3L)) {
                     long windowBytes = written - speedBase;
-                    double instant = (windowBytes * 1.0E9d / dt) / 1000000.0d;
+                    double instant = CNDownloadPresentation.megabytesPerSecond(windowBytes, dt);
                     smoothedMbps = smoothedMbps <= 0.0d
                             ? instant : smoothedMbps * 0.70d + instant * 0.30d;
                     CNCNDownloadUI.setDownloadSpeed(index, (float) smoothedMbps);

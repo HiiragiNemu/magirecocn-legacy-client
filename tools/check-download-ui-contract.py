@@ -716,8 +716,11 @@ checks = {
     # 所以判据是「我们的补丁必须加上它」，不是「别把它删了」。
     "悬浮窗权限由我们的补丁加上":
         any("SYSTEM_ALERT_WINDOW" in l for l in manifest_added),
-    "不主动申请全盘存储权限":
-        not any("MANAGE_EXTERNAL_STORAGE" in l for l in manifest_added),
+    # 用户明确要求手动设置入口；没有启动时自动申请或以授权阻塞下载。
+    "提供手动文件权限入口且不自动请求":
+        "new StorageAccessClick(act)" in ui
+        and "CNStorageAccess.open(activity)" in body(ui, "private static final class StorageAccessClick")
+        and "CNStorageAccess.open" not in body(ui, "private static void renderAll()"),
     # ---- F-073 原子换入 ----
     # 下载/安装四条写入链路曾各写各的 rename，六处都是同一个错误形状：候选名固定成
     # <目标>.tmp（并发写同一目标会互相截断），换入前先 delete 目标（两步之间被杀，
