@@ -70,7 +70,7 @@ def validate_native_source(text: str) -> list[str]:
         if snippet not in text:
             problems.append(f"missing {label}: {snippet}")
 
-    for name in ("ndkStrRead", "fontPathOverwrite"):
+    for name in ("ndkStrRead", "fakeNdkStr"):
         body = _function_body(text, name)
         if not body:
             problems.append(f"cannot find function body: {name}")
@@ -86,16 +86,19 @@ def validate_native_source(text: str) -> list[str]:
         if name not in read_body:
             problems.append(f"ndkStrRead does not use {name}")
 
-    write_body = _function_body(text, "fontPathOverwrite")
-    for name in (
-        "kNdkStringLongSizeOffset",
-        "kNdkStringLongDataOffset",
-        "kNdkStringShortCapacity",
-    ):
-        if name not in write_body:
-            problems.append(f"fontPathOverwrite does not use {name}")
-    if "::operator delete(oldLongData)" not in write_body:
-        problems.append("fontPathOverwrite does not release a replaced long buffer")
+    # 字体路径原地改写已移除。仍在使用的汉化参数构造器借用调用期内的
+    # 中文缓冲区：检查其字段次序、字宽、long 标记与长度，而非要求旧函数回归。
+    if not re.search(r"struct\s+FakeNdkStr\s*\{\s*size_t\s+cap;\s*"
+                     r"size_t\s+size;\s*const\s+char\s*\*\s*data;\s*\}", text):
+        problems.append("FakeNdkStr fields must be cap/size/data in target-word layout")
+    write_body = _function_body(text, "fakeNdkStr")
+    for pattern in (r"fk\.cap\s*=\s*\(zh\.size\(\)\s*\+\s*1\)\s*\|\s*1\s*;",
+                    r"fk\.size\s*=\s*zh\.size\(\)\s*;",
+                    r"fk\.data\s*=\s*zh\.c_str\(\)\s*;"):
+        if not re.search(pattern, write_body):
+            problems.append("fakeNdkStr must preserve long tag, byte length and borrowed buffer")
+    if re.search(r"\b(?:delete|free)\b", write_body):
+        problems.append("fakeNdkStr must not free its borrowed translation buffer")
     return problems
 
 

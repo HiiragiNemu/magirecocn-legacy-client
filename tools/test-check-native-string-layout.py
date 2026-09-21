@@ -47,6 +47,20 @@ class LayoutTest(unittest.TestCase):
         workflow = "for ABI in arm64-v8a; do\n  echo $ABI\ndone\n"
         self.assertNotEqual(CHECK.validate_workflow(workflow), [])
 
+    def test_fake_string_layout_and_long_tag_are_guarded(self):
+        source = (ROOT / "magia-native/src/MagiaLegacy.cpp").read_text(encoding="utf-8")
+        for old, new in (("size_t cap; size_t size;", "unsigned int cap; size_t size;"),
+                         ("(zh.size() + 1) | 1", "zh.size() + 1"),
+                         ("fk.size = zh.size();", "fk.size = 0;"),
+                         ("fk.data = zh.c_str();", "fk.data = nullptr;")):
+            self.assertIn(old, source)
+            self.assertNotEqual(CHECK.validate_native_source(source.replace(old, new, 1)), [])
+
+    def test_borrowed_buffer_must_not_be_freed(self):
+        source = (ROOT / "magia-native/src/MagiaLegacy.cpp").read_text(encoding="utf-8")
+        source = source.replace("fk.data = zh.c_str();", "fk.data = zh.c_str(); free(fk.data);", 1)
+        self.assertTrue(any("must not free" in p for p in CHECK.validate_native_source(source)))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

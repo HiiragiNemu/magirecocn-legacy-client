@@ -31,7 +31,8 @@ def main():
         return 2
 
     begin = text.find("// LbUtility::initLabel(Node*")
-    end = text.find("// NDK libc++ std::string 原地改写", begin)
+    # 字体路径改写已删除；ABI 检查不应依赖那个无关 helper 的注释。
+    end = text.find("using CreateWithTtfCfgFn", begin)
     if begin < 0 or end < 0:
         print("✘ 找不到 initLabel ABI 段落边界", file=sys.stderr)
         return 1
