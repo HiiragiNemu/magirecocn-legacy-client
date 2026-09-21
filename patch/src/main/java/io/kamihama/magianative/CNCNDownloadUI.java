@@ -1003,14 +1003,18 @@ public class CNCNDownloadUI {
         logoView.setScaleType(ImageView.ScaleType.FIT_CENTER);
         loadBitmapFromAssets(act, LOGO_ASSET, logoView);
         LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 64));
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         logoLp.bottomMargin = dp(act, 8);
+        // 两个入口按实际文字高度测量，固定 64dp 会把第二行线路按钮裁掉。
         LinearLayout logoRow = new LinearLayout(act);
+        logoRow.setMinimumHeight(dp(act, 64));
         logoRow.setGravity(Gravity.CENTER_VERTICAL);
         logoRow.addView(logoView, new LinearLayout.LayoutParams(0, dp(act, 64), 1f));
         vStorageChip = new TextView(act);
         vStorageChip.setText(CNStorageAccess.status(act));
         vStorageChip.setTextSize(12);
+        vStorageChip.setMinHeight(dp(act, 48));
+        vStorageChip.setGravity(Gravity.CENTER_VERTICAL);
         vStorageChip.setTextColor(COLOR_ACCENT2);
         vStorageChip.setPadding(dp(act, 8), dp(act, 12), dp(act, 4), dp(act, 12));
         vStorageChip.setOnClickListener(new StorageAccessClick(act));
@@ -1020,6 +1024,8 @@ public class CNCNDownloadUI {
         vRouteChip = new TextView(act);
         vRouteChip.setText("线路：" + CNDownloadRoute.describe());
         vRouteChip.setTextSize(12);
+        vRouteChip.setMinHeight(dp(act, 48));
+        vRouteChip.setGravity(Gravity.CENTER_VERTICAL);
         vRouteChip.setTextColor(COLOR_ACCENT2);
         vRouteChip.setPadding(dp(act, 8), dp(act, 8), dp(act, 4), dp(act, 8));
         vRouteChip.setOnClickListener(new RouteMenuClick(act));

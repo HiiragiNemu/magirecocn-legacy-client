@@ -129,6 +129,12 @@ _m = re.search(r'String want = failed \? (".*?") : \(armed \? (".*?") : (".*?")\
 action_labels = [x.strip('"') for x in _m.groups()] if _m else []
 
 checks = {
+    "Logo 按钮父容器随内容撑高，禁止两行按钮固定到 64dp":
+        bool(re.search(r"LayoutParams logoLp = new LinearLayout.LayoutParams\(\s*"
+                       r"ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT\)", ui)),
+    "权限及线路入口保留最小 48dp 点击高度":
+        "vStorageChip.setMinHeight(dp(act, 48))" in ui
+        and "vRouteChip.setMinHeight(dp(act, 48))" in ui,
     "不再向 decorView 添加独立显示控件": "decor.addView(dock" not in assist and "decor.addView(panel" not in assist,
     "不再平移整个下载浮层": "setTranslationX((panX" not in assist and "setTranslationY((panY" not in assist,
     "中央内容有底部横向滚动容器": "TAG_H_SCROLL" in ui and "HorizontalScrollView mainScroll" in ui,
