@@ -199,11 +199,12 @@
       "post": "b61a00ed0ee3f9a18abfa0e190a232fcbbb6f098675e33ac3ddd39ddd07ca28d"
     },
     {
-      "kind": "remove",
+      "kind": "replace",
       "path": "assets/fonts/mbm_20160902.ttf",
       "group": "字体",
-      "why": "移除旧字体字节；构建期用 reviewed TTDaYuanGB3 生成原生 mbm 资源，保留引擎逐项字体选择",
-      "pre": "37f266883643ca3e3168049a130396a4993b981747f73c4f5068afec2412f5c5"
+      "why": "恢复 6095180 之前实际使用的原生 MagiReco CN Medium 字节；保留原排版与音乐符号，不用原始 TTZhiHei/TTDaYuan 代替原生载体",
+      "pre": "37f266883643ca3e3168049a130396a4993b981747f73c4f5068afec2412f5c5",
+      "from": "repo"
     },
     {
       "kind": "replace",

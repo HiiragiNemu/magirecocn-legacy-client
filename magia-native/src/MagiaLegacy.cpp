@@ -1414,7 +1414,7 @@ struct Hidden {
 //   版本旁注，不得用 GITHUB_RUN_NUMBER 等构建编号覆盖；本地构建也直接使用该值。
 //   它是 constexpr、从不取地址，只在编译期喂给下面的 Hidden，因此不会有一份
 //   明文留在产物里。
-static constexpr char CLIENT_VERSION[] = "1.0.185";
+static constexpr char CLIENT_VERSION[] = "1.0.186";
 
 // 真正进二进制的是这一份：异或之后的字节。
 static constexpr auto kVersionHidden =
@@ -2808,23 +2808,6 @@ static void* createWithTtfStrNew(void* text, const void* font, float size,
     }
     return createWithTtfStrOld(text, font, size, dims, h, v);
 }
-// BEGIN official-skill-label-box
-// 国服同一 setTitleToBone 调用点是 28 号字 + Size(768, 34)，日服基线却是
-// Size(768, 28)。智黑在 28 高的框里下缘被裁；仅替换字体没有带回国服的框高。
-// 只修这个技能浮字构造器的产出，保留骨骼位置/锚点、字号、字体和其他 Label。
-// shared_ptr 按值参数在 ARM32/64 都是非平凡对象的隐式指针，原样交给原函数。
-using SkillTitleFn = void (*)(void*, void*, const char*, void**, void**);
-using LabelDimensionsFn = void (*)(void*, float, float);
-static SkillTitleFn skillTitleOld = nullptr;
-static LabelDimensionsFn skillLabelSetDimensions = nullptr;
-static void skillTitleNew(void* self, void* art, const char* bone,
-                          void** nodeOut, void** labelOut) {
-    skillTitleOld(self, art, bone, nodeOut, labelOut);
-    if (labelOut && *labelOut && skillLabelSetDimensions) {
-        skillLabelSetDimensions(*labelOut, 768.0f, 34.0f);
-    }
-}
-// END official-skill-label-box
 
 // ─── JNI_OnLoad ──────────────────────────────────────────
 // ═══ TLS 探针：用**引擎自带的那份 OpenSSL** 去连一个端点 ═══════════
@@ -3250,17 +3233,6 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       (void*)createWithTtfCfgNew, (void**)&createWithTtfCfgOld, "i18n: createWithTTF(cfg)");
     H("_ZN7cocos2d5Label13createWithTTFERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEES9_fRKNS_4SizeENS_14TextHAlignmentENS_14TextVAlignmentE",
       (void*)createWithTtfStrNew, (void**)&createWithTtfStrOld, "i18n: createWithTTF(str)");
-    }
-
-    // 原版调用点的局部框高修正，不安装字体加载/场景分类/全局 Label 布局钩子。
-    skillLabelSetDimensions = reinterpret_cast<LabelDimensionsFn>(
-        dlsym(RTLD_DEFAULT, "_ZN7cocos2d5Label13setDimensionsEff"));
-    if (skillLabelSetDimensions) {
-        H("_ZN22QbEffectAnimeSkillName14setTitleToBoneENSt6__ndk110shared_ptrI9QbArtUnitEEPKcRPN7cocos2d4NodeERPNS6_5LabelE",
-          (void*)skillTitleNew, (void**)&skillTitleOld, "layout: official skill label 768x34");
-    } else {
-        LOGE("[layout] Label::setDimensions missing; skill label box unchanged");
-        hookFail++;
     }
 
     // ── 下载浮层期间挂起引擎 BGM（QbUtility::playBgmDirect）──

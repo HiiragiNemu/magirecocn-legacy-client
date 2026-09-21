@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""验证原生字体资源：保持引擎逐项选择，不再用调用者白名单重新分流。
+"""验证原生字体恢复及 reviewed 补字保留。
 
-已核对的国服/现行引擎调用点（包含同函数混用两种字体的 Raid cut-in）表明：
-MTF4a5kp 资源应承载 reviewed 智黑，mbm 资源应承载 reviewed 大圆。
-这是 APK 原生资源别名；不改变 JS 包/WebView 中 mbm 字体族的智黑路由。
-保留 reviewed 两种字体及音乐符号，Cocos 加载、缓存、字号与位置交回原引擎。
+6095180 的父版本把 MTF 请求映射到 MagiReco CN Medium (mbm)。
+原生两个旧请求名现在承载这份完全相同的旧字节，不再增加场景/加载/框高补丁。
+TTZhiHei / TTDaYuan 的 reviewed 补字资产保持原样；Web 字体路由独立且不回退。
 """
 
 import hashlib
@@ -20,16 +19,16 @@ FONT_DIR = "assets/fonts"
 # 内容标识支持 sha256:<hex> 或 gitblob:<sha1>；Git blob 同样精确绑定全部字节。
 EXPECTED = {
     "MTF4a5kp.ttf": (
-        8431292,
-        "gitblob:e588b7ddb4b5a1761bf94d73d732b3330d292413",
-        "Tensentype ZhiHeiGB18030-W4",
-        "原生 MTF 资源：保留引擎的智黑选择",
+        9070328,
+        "sha256:51383ac04bf0835445a0de382c07e6467f43991c6a51cf13a4327cad51f58b03",
+        "MagiReco CN Medium",
+        "恢复 6095180 之前 MTF 请求实际使用的原生字体字节",
     ),
     "mbm_20160902.ttf": (
-        17571336,
-        "gitblob:b121abca3ef624104c84adf2a25de2ea2bea7cf0",
-        "Tensentype JiaLiDaYuanGB18030",
-        "原生 mbm 资源：保留引擎的大圆选择，与 WebView 字体族分离",
+        9070328,
+        "sha256:51383ac04bf0835445a0de382c07e6467f43991c6a51cf13a4327cad51f58b03",
+        "MagiReco CN Medium",
+        "恢复改大圆之前的原生载体，含音乐符号，与 Web mbm 字体族分离",
     ),
     "witchText-export.fnt": (
         4525,
@@ -209,7 +208,7 @@ def check_redirect_target():
     problems = []
     for token in ("isCnStoryFontCaller", "g_storyFontDepth", "fontPathFix(",
                   "fontPathOverwrite(", "getFontAtlasTtfNew", "fontFreeTypeCreateNew",
-                  "setTtfCfgInternalNew"):
+                  "setTtfCfgInternalNew", "skillTitleNew", "skillLabelSetDimensions"):
         if token in text:
             problems.append("仍存在额外字体分流/改写: " + token)
     for token in ("translateTtfInitialText", "createWithTtfCfgOld(cfg, &fk, h, i)",
@@ -279,7 +278,7 @@ def main():
         for p in problems:
             print("  · " + p, file=sys.stderr)
         print("", file=sys.stderr)
-        print("字体路由按国服双字体分工：UI→TTZhiHei，剧情→TTDaYuan。", file=sys.stderr)
+        print("原生旧请求使用 6095180 前的 MagiReco CN Medium；Web 字体与 reviewed 补字保持不变。", file=sys.stderr)
         print("reviewed 字体内容来自固定提交 71d3278e…，不得临时换回原始缺字形版本。",
               file=sys.stderr)
         print("", file=sys.stderr)
@@ -287,7 +286,7 @@ def main():
               "并在提交信息里写明来源与授权。", file=sys.stderr)
         return 1
 
-    print("✔ 字体守卫通过（%d 个文件，内容身份/家族名/双字体路由均相符）" % len(expected))
+    print("✔ 字体守卫通过（%d 个文件，原生历史载体及 reviewed 补字内容身份均相符）" % len(expected))
     for name in sorted(expected):
         size, _d, family, _p = EXPECTED[name]
         print("    %-22s %9d B  %s" % (name, size, family or "（位图字体）"))
