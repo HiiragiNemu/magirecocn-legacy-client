@@ -83,7 +83,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <new>        // ::operator new（fontPathOverwrite 的独立缓冲分配）
+#include <new>        // ::operator new（NDK 字符串缓冲分配）
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -301,7 +301,7 @@ static const DebugFlagDef kDebugFlags[] = {
     { "noAdxSampleRate", &g_dbgNoAdxSampleRate, "不锁 ADX2 采样率 48000，用设备实际值" },
     // ── 「根本不装」，用来排除「钩子存在本身」（含原型声明错）──
     { "noInitLabelHook", &g_dbgNoInitLabelHook, "**不安装** LbUtility::initLabel 钩子（排除原型/ABI 问题）" },
-    { "noTtfHooks",      &g_dbgNoTtfHooks,      "**不安装** TTF 路由五个钩子（Label + FontAtlas/FreeType，排查字体路由）" },
+    { "noTtfHooks",      &g_dbgNoTtfHooks,      "不安装两个 TTF 构造文本翻译钩子（字体加载仍由原引擎执行）" },
     // ── 只记录，不改行为：把「流经钩子但没翻到」的串打出来 ──
     { "logI18nMiss",     &g_dbgLogI18nMiss,     "记录未命中翻译表的**含假名**串（tsv 行格式，去重）" },
     { "logI18nMissAll",  &g_dbgLogI18nMissAll,  "同上但不筛内容（含英文/数字，噪音大，用于确认某串走没走 native 标签）" },
@@ -1414,7 +1414,7 @@ struct Hidden {
 //   版本旁注，不得用 GITHUB_RUN_NUMBER 等构建编号覆盖；本地构建也直接使用该值。
 //   它是 constexpr、从不取地址，只在编译期喂给下面的 Hidden，因此不会有一份
 //   明文留在产物里。
-static constexpr char CLIENT_VERSION[] = "1.0.181";
+static constexpr char CLIENT_VERSION[] = "1.0.182";
 
 // 真正进二进制的是这一份：异或之后的字节。
 static constexpr auto kVersionHidden =
@@ -2685,67 +2685,9 @@ static void loadingSetTitleNew(void* self, const void* text) {
     setStringTrampoline(loadingSetTitleOld, self, text, "LoadingSceneLayerInfo::setTitle");
 }
 
-// 国服字体不是按 Totentanz 的“原字体文件名”一一对应，而是按调用语义分工。
-// 178 曾错误地把 mbm_20160902 全局当作剧情字体；角色详情等普通 UI 同样会请求 mbm，
-// 结果被送进 TTDaYuan，正是 178 实机截图里那套圆体。
-// 正确规则：普通 UI 无论请求 MTF4a5kp 还是 mbm，默认都走 TTZhiHei；只有国服
-// 明确使用大圆体的剧情调用链才走 TTDaYuan。
-//
-// 这里不用硬编码绝对地址：libmadomagi_native.so 的这些 C++ 符号本来就在动态
-// 符号表里，dladdr 按调用点解析类/方法名，跨 ABI、ASLR、重新链接都稳定。
-// LbUtility::initLabel 会再进入 Label::createWithTTF，所以用 thread_local depth
-// 把“上层剧情调用”传到下层字体创建；直接调用 createWithTTF 的剧情路径则在
-// createWithTTF hook 自己按 caller 再判一次。
-static thread_local unsigned g_storyFontDepth = 0;
-
-static bool isCnStoryFontCaller(void* returnAddr, const char** symbolOut = nullptr) {
-    if (symbolOut) *symbolOut = nullptr;
-    if (!returnAddr) return false;
-    Dl_info info{};
-    if (!dladdr(returnAddr, &info) || !info.dli_sname) return false;
-    if (symbolOut) *symbolOut = info.dli_sname;
-    const char* s = info.dli_sname;
-    if (strstr(s, "StoryMessageUnit") != nullptr) return true;
-    if (strstr(s, "StoryFreeNarrationUnit") != nullptr) return true;
-    if (strstr(s, "StoryNarrationUnit") != nullptr) return true;
-    if (strstr(s, "StorySubtitleUnit") != nullptr) return true;
-    if (strstr(s, "StoryLogUnit") != nullptr) return true;
-    // 旧国服确认只有 RaidScrollView::showMessage 这条消息文本走大圆体；
-    // RaidScrollView 其它地图/UI 标签仍按普通 UI 处理。
-    if (strstr(s, "RaidScrollView") != nullptr
-            && strstr(s, "showMessage") != nullptr) return true;
-    return false;
-}
-
-// 必须在 hook 本体展开：若包成普通函数再取 level=0，只会得到“hook → helper”
-// 这层返回地址，而不是真正的游戏调用点。宏展开后 level=0 才是引擎 caller。
-#if defined(__GNUC__) || defined(__clang__)
-#define CN_FONT_CALLER_ADDRESS() \
-    __builtin_extract_return_addr(__builtin_return_address(0))
-#else
-#define CN_FONT_CALLER_ADDRESS() nullptr
-#endif
-
-struct StoryFontScope {
-    bool active;
-    explicit StoryFontScope(bool on) : active(on) {
-        if (active) ++g_storyFontDepth;
-    }
-    ~StoryFontScope() {
-        if (active && g_storyFontDepth) --g_storyFontDepth;
-    }
-};
-
-enum class CnFontRole { Ui, Story };
-
-static CnFontRole fontRoleForCaller(void* returnAddr, const char** symbolOut = nullptr) {
-    if (g_storyFontDepth) {
-        if (symbolOut) *symbolOut = "story-scope";
-        return CnFontRole::Story;
-    }
-    return isCnStoryFontCaller(returnAddr, symbolOut)
-        ? CnFontRole::Story : CnFontRole::Ui;
-}
+// 字体由引擎原有的每个文本调用点选择，不再依据类名推断整段调用的字体。
+// APK 的 MTF4a5kp / mbm 资源分别承载 reviewed 智黑 / 大圆；Cocos 原样加载。
+// WebView 另由已修复的 CSS 选择智黑，不使用这里的原生资源别名。
 
 // LbUtility::initLabel(Node*, Label*&, const char* text, float, Vec2, int, Size, Color4B, int)
 // const char* 直传，命中就换指针。这里的替身原型必须复刻**编译器降级后的
@@ -2783,13 +2725,6 @@ static InitLabelFn initLabelOld = nullptr;
 static void initLabelNew(void* node, void* label, const char* text, float f,
                          CNVec2 v2, int i1, CNSizeAbiArg sizeArg,
                          CNColor4B c4b, int i2) {
-    const char* fontCaller = nullptr;
-    bool storyFont = isCnStoryFontCaller(CN_FONT_CALLER_ADDRESS(), &fontCaller);
-    StoryFontScope storyFontScope(storyFont);
-    if (storyFont) {
-        LOGI("[font] initLabel story scope caller=%s",
-             fontCaller ? fontCaller : "(unknown)");
-    }
     if (g_dbgNoI18nLabel) {            // 调试开关：原样转发，不做任何替换
         initLabelOld(node, label, text, f, v2, i1, sizeArg, c4b, i2);
         return;
@@ -2829,84 +2764,14 @@ static void initLabelNew(void* node, void* label, const char* text, float f,
 
 
 
-// NDK libc++ std::string 原地改写（font 段复用 i18n 段的 NdkStrView）
-static void fontPathOverwrite(void* strObj, const char* nv, size_t n) {
-    unsigned char* s = (unsigned char*)strObj;
-    if (s[0] & 1) {  // long：直接在原缓冲上改写（新路径不长于原路径才走这里）
-        size_t cap = (*(size_t*)s) & ~(size_t)1;
-        if (n + 1 <= cap) {   // 要写 n 个字符 + 结尾 NUL，共 n+1 字节
-            memcpy(*(char**)(s + kNdkStringLongDataOffset), nv, n + 1);
-            *(size_t*)(s + kNdkStringLongSizeOffset) = n;
-            return;
-        }
-    } else if (n <= kNdkStringShortCapacity) {  // short
-        s[0] = (unsigned char)(n << 1);
-        memcpy(s + 1, nv, n + 1);
-        return;
-    }
-    // 放不下：切 long，为这次重定向分配**独立**缓冲，交给引擎 string 持有。
-    // 引擎 string 析构时会释放它（libc++ 的 ::operator delete 与这里 ::operator
-    // new 匹配）。⚠ 绝不能用共享的 static std::string：多个引擎 string 被重定向
-    // 到同一块静态缓冲后，各自的析构都会 free 它 → 双 free / 写已释放内存
-    // （堆破坏，表现为「切换界面时不定时崩溃」）。一对象一缓冲，谁持有谁释放。
-    // nothrow + 判空：分配失败就干脆不重定向（引擎回落原字体），绝不把异常
-    // 抛过 hook 边界。
-    char* buf = static_cast<char*>(::operator new(n + 1, std::nothrow));
-    if (!buf) return;
-    memcpy(buf, nv, n);
-    buf[n] = '\0';
-    char* oldLongData = (s[0] & 1)
-        ? *(char**)(s + kNdkStringLongDataOffset)
-        : nullptr;
-    *(const char**)(s + kNdkStringLongDataOffset) = buf;
-    *(size_t*)(s + kNdkStringLongSizeOffset) = n;
-    *(size_t*)s        = (n + 1) | 1;
-    // ARMv7 的原路径（18B）本来就是 long。若它原有容量装不下新路径，换入
-    // 新缓冲后必须释放旧缓冲；只覆盖指针会在每次建 Label 时泄漏一块。
-    if (oldLongData) ::operator delete(oldLongData);
-}
-
-// 1.0.179：按旧国服的“调用语义”而不是 Totentanz 的原字体文件名恢复双字体。
-// 两个 Totentanz TTF 请求名都可能出现在普通 UI，因此默认都必须落到智黑；
-// 只有 StoryMessage / StoryNarration / StoryLog / RaidScrollView::showMessage 的
-// 已确认剧情上下文才切到大圆。witchText-export.fnt 仍是独立位图字体机制。
-static void fontPathFix(void* strObj, const char* tag, CnFontRole role,
-                        const char* callerSymbol) {
-    static const char kFromMtf[]   = "fonts/MTF4a5kp.ttf";
-    static const char kFromMbm[]   = "fonts/mbm_20160902.ttf";
-    static const char kUiTo[]      = "fonts/TTZhiHeiGB3-W4.ttf";
-    static const char kStoryTo[]   = "fonts/TTDaYuanGB3.ttf";
-
-    NdkStrView v = ndkStrRead(strObj);
-    bool mtf = v.size == sizeof(kFromMtf) - 1
-        && memcmp(v.data, kFromMtf, sizeof(kFromMtf) - 1) == 0;
-    bool mbm = v.size == sizeof(kFromMbm) - 1
-        && memcmp(v.data, kFromMbm, sizeof(kFromMbm) - 1) == 0;
-    if (!mtf && !mbm) return;
-
-    const char* from = mtf ? "MTF4a5kp" : "mbm_20160902";
-    if (role == CnFontRole::Story) {
-        fontPathOverwrite(strObj, kStoryTo, sizeof(kStoryTo) - 1);
-        LOGI("[font] %s: %s → TTDaYuanGB3 (story, caller=%s)",
-             tag, from, callerSymbol ? callerSymbol : "(scope/unknown)");
-    } else {
-        // TTZhiHei 路径超过 ARM64 short-string 上限；fontPathOverwrite 会为每个
-        // string 独立分配并移交所有权，避免历史上的共享缓冲 double-free。
-        fontPathOverwrite(strObj, kUiTo, sizeof(kUiTo) - 1);
-        LOGI("[font] %s: %s → TTZhiHeiGB3-W4 (UI, caller=%s)",
-             tag, from, callerSymbol ? callerSymbol : "(unknown)");
-    }
-}
-
+// 只保留构造时的文本汉化；字体参数及布局参数原样交回引擎。
 using CreateWithTtfCfgFn = void* (*)(void*, const void*, int, int);
 using CreateWithTtfStrFn = void* (*)(void*, const void*, float, void*, int, int);
-using SetTtfCfgFn = void (*)(void*, const void*);
 static CreateWithTtfCfgFn createWithTtfCfgOld = nullptr;
 static CreateWithTtfStrFn createWithTtfStrOld = nullptr;
-static SetTtfCfgFn        setTtfCfgInternalOld = nullptr;
 
 // 战斗中的技能浮字有一部分在 createWithTTF() 构造时一次性传入，之后不会再走
-// Label::setString。字体钩子已经覆盖这两个构造入口，因此在同一入口复用 engine 表，
+// Label::setString。这两个构造入口仍复用 engine 表，但不再改变任何字体参数，
 // 同时仍由 noI18nSetString 统一关闭这类动态 Label 文案替换。
 static bool translateTtfInitialText(const void* text, const char* label,
                                     std::string& translated) {
@@ -2924,9 +2789,6 @@ static bool translateTtfInitialText(const void* text, const char* label,
 
 // createWithTTF(const _ttfConfig& cfg, ...)：fontFilePath 在 cfg 偏移 0
 static void* createWithTtfCfgNew(void* cfg, const void* text, int h, int i) {
-    const char* caller = nullptr;
-    CnFontRole role = fontRoleForCaller(CN_FONT_CALLER_ADDRESS(), &caller);
-    fontPathFix(cfg, "createWithTTF(cfg)", role, caller);
     std::string translated;
     if (translateTtfInitialText(text, "Label::createWithTTF(cfg)", translated)) {
         FakeNdkStr fk;
@@ -2938,9 +2800,6 @@ static void* createWithTtfCfgNew(void* cfg, const void* text, int h, int i) {
 // createWithTTF(const std::string& text, const std::string& fontFile, float, ...)
 static void* createWithTtfStrNew(void* text, const void* font, float size,
                                  void* dims, int h, int v) {
-    const char* caller = nullptr;
-    CnFontRole role = fontRoleForCaller(CN_FONT_CALLER_ADDRESS(), &caller);
-    fontPathFix((void*)font, "createWithTTF(str)", role, caller);
     std::string translated;
     if (translateTtfInitialText(text, "Label::createWithTTF(str)", translated)) {
         FakeNdkStr fk;
@@ -2949,49 +2808,6 @@ static void* createWithTtfStrNew(void* text, const void* font, float size,
     }
     return createWithTtfStrOld(text, font, size, dims, h, v);
 }
-// Label::setTTFConfigInternal(const _ttfConfig&)
-static void setTtfCfgInternalNew(void* self, const void* cfg) {
-    const char* caller = nullptr;
-    CnFontRole role = fontRoleForCaller(CN_FONT_CALLER_ADDRESS(), &caller);
-    fontPathFix((void*)cfg, "setTTFConfigInternal", role, caller);
-    setTtfCfgInternalOld(self, cfg);
-}
-
-
-// 1.0.181 最终字体加载兜底。
-//
-// 上面三个 Label hook 负责“按业务语义”决定 UI / 剧情字体，但历史上已经证明：
-// 只守 Label 构造入口不够稳。引擎里还有直接走 FontAtlasCache / FontFreeType 的
-// 路径；一旦漏掉，旧文件名就会直接落到 Totentanz 的美/日服字体，或者在
-// MTF4a5kp 已不存在时触发系统 fallback。
-//
-// 因此在真正创建字体图集/FreeType 对象前再守两层：
-//   * 仍看见 MTF4a5kp / mbm_20160902 → 默认一律 TTZhiHei；
-//   * 若当前线程处于已确认的剧情 scope → TTDaYuan；
-//   * 已经被上层改成 TTZhiHei / TTDaYuan 的路径保持原样。
-// 这样旧字体名只是兼容入口，不再是可实际加载的字体身份。
-using GetFontAtlasTtfFn = void* (*)(const void*, void*);
-static GetFontAtlasTtfFn getFontAtlasTtfOld = nullptr;
-static void* getFontAtlasTtfNew(const void* cfg, void* distanceFieldEnabled) {
-    const char* caller = nullptr;
-    CnFontRole role = fontRoleForCaller(CN_FONT_CALLER_ADDRESS(), &caller);
-    fontPathFix((void*)cfg, "FontAtlasCache::getFontAtlasTTF", role, caller);
-    return getFontAtlasTtfOld(cfg, distanceFieldEnabled);
-}
-
-using FontFreeTypeCreateFn =
-    void* (*)(const void*, float, int, const char*, bool, float);
-static FontFreeTypeCreateFn fontFreeTypeCreateOld = nullptr;
-static void* fontFreeTypeCreateNew(const void* fontPath, float fontSize,
-                                   int glyphCollection, const char* customGlyphs,
-                                   bool distanceFieldEnabled, float outline) {
-    const char* caller = nullptr;
-    CnFontRole role = fontRoleForCaller(CN_FONT_CALLER_ADDRESS(), &caller);
-    fontPathFix((void*)fontPath, "FontFreeType::create", role, caller);
-    return fontFreeTypeCreateOld(fontPath, fontSize, glyphCollection, customGlyphs,
-                                 distanceFieldEnabled, outline);
-}
-
 // ─── JNI_OnLoad ──────────────────────────────────────────
 // ═══ TLS 探针：用**引擎自带的那份 OpenSSL** 去连一个端点 ═══════════
 //
@@ -3408,20 +3224,14 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     }
 
     // ── 国服双字体路由：普通 UI 两种旧请求都→TTZhiHei；剧情上下文→TTDaYuan ──
-    // 1.0.181 同时守住 Label 构造层与最终 FontAtlas/FreeType 加载层。
+    // 兼容已有 noTtfHooks 调试开关；这里只挂构造文本翻译，不改字体/字号/位置。
     if (g_dbgNoTtfHooks) {
-        LOGE("[DEBUG] noTtfHooks 生效：**不安装** TTF 路由五个钩子");
+        LOGE("[DEBUG] noTtfHooks: skip initial TTF label text translation");
     } else {
     H("_ZN7cocos2d5Label13createWithTTFERKNS_10_ttfConfigERKNSt6__ndk112basic_stringIcNS4_11char_traitsIcEENS4_9allocatorIcEEEENS_14TextHAlignmentEi",
-      (void*)createWithTtfCfgNew, (void**)&createWithTtfCfgOld, "font: createWithTTF(cfg)");
+      (void*)createWithTtfCfgNew, (void**)&createWithTtfCfgOld, "i18n: createWithTTF(cfg)");
     H("_ZN7cocos2d5Label13createWithTTFERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEES9_fRKNS_4SizeENS_14TextHAlignmentENS_14TextVAlignmentE",
-      (void*)createWithTtfStrNew, (void**)&createWithTtfStrOld, "font: createWithTTF(str)");
-    H("_ZN7cocos2d5Label20setTTFConfigInternalERKNS_10_ttfConfigE",
-      (void*)setTtfCfgInternalNew, (void**)&setTtfCfgInternalOld, "font: setTTFConfigInternal");
-    H("_ZN7cocos2d14FontAtlasCache15getFontAtlasTTFEPKNS_10_ttfConfigERb",
-      (void*)getFontAtlasTtfNew, (void**)&getFontAtlasTtfOld, "font: FontAtlasCache::getFontAtlasTTF");
-    H("_ZN7cocos2d12FontFreeType6createERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEEfNS_15GlyphCollectionEPKcbf",
-      (void*)fontFreeTypeCreateNew, (void**)&fontFreeTypeCreateOld, "font: FontFreeType::create");
+      (void*)createWithTtfStrNew, (void**)&createWithTtfStrOld, "i18n: createWithTTF(str)");
     }
 
     // ── 下载浮层期间挂起引擎 BGM（QbUtility::playBgmDirect）──

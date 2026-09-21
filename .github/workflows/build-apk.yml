@@ -307,6 +307,9 @@ jobs:
           install -m 0644 .reviewed-fonts/magica/fonts/TTDaYuanGB3.ttf             "${TREE}/assets/fonts/TTDaYuanGB3.ttf"
           install -m 0644 .reviewed-fonts/magica/fonts/TTZhiHeiGB3-W4.ttf             "${TREE}/assets/fonts/TTZhiHeiGB3-W4.ttf"
 
+          # 保留原生引擎逐项字体选择；Web 字体族由 JS 的 CSS 独立处理。
+          install -m 0644 .reviewed-fonts/magica/fonts/TTZhiHeiGB3-W4.ttf "${TREE}/assets/fonts/MTF4a5kp.ttf"
+          install -m 0644 .reviewed-fonts/magica/fonts/TTDaYuanGB3.ttf "${TREE}/assets/fonts/mbm_20160902.ttf"
           echo "重建树：$(find "${TREE}" -type f | wc -l) 个文件"
 
       # F-043：正式包（debug_overlay=false）不声明 SYSTEM_ALERT_WINDOW——

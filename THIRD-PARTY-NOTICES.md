@@ -188,25 +188,32 @@ SOFTWARE.
 
 **Apache-2.0 第 4(b) 条要求注明改动**：本文件**不是** Adobe 原始 Source Han 字形集，
 而是国服（MagiReco CN）在其基础上改制的版本——重命名家族为 `MagiReco CN Medium`、
-按国服需要调整了字形覆盖（格式 12 cmap、30823 码位）。该基线文件继续随重建树保留，
-但 1.0.178 的 Label TTF 剧情路径会重定向到 TTDaYuan。
+按国服需要调整了字形覆盖（格式 12 cmap、30823 码位）。这段许可说明保留为历史记录；1.0.181 起已移除该基线字体字节。
+1.0.182 的 APK 同名原生资源承载下述 reviewed 大圆，不再承载此历史文件。
 
 > 文件名 `mbm_20160902.ttf` 是 Totentanz 基线的硬编码请求名，不能靠重命名解决路由。
 
 ---
 
-## Reviewed CN font route carriers used by 1.0.178
+## Reviewed CN font resources used by 1.0.182
 
 上传的国服 v2.2.1 离线包经 arm64/armeabi-v7a native 字符串与 xref 复核后，
-1.0.178 恢复国服的双字体职责：
+1.0.182 保留引擎调用点原有的两种字体选择：
 
 - **`TTZhiHeiGB3-W4.ttf`** — 通用原生 UI、对话框、设置、下载窗口等；
 - **`TTDaYuanGB3.ttf`** — ADV/剧情消息、叙事、StoryLog/RaidScrollView 等剧情文本。
 
 Totentanz 基线仍请求 `MTF4a5kp.ttf` 与 `mbm_20160902.ttf`，所以
-`MagiaLegacy.cpp::fontPathFix` 分别映射：
+构建时分别放入对应 reviewed 字体字节，不修改 Cocos 的加载参数：
 
 `MTF4a5kp → TTZhiHeiGB3-W4`，`mbm_20160902 → TTDaYuanGB3`。
+
+已移除调用者白名单、剧情线程标记及 FontAtlas/FreeType 额外重定向；
+保留 Label 构造时的文本翻译，并原样转交字体、字号、尺寸和对齐参数。
+原生 `StoryRaidView::createPlayerCutIn` 在同一方法中分别选择这两种字体，
+而不是整个场景只用一种字体。此行为已对照国服及现行引擎的 arm64/armv7 调用点。
+WebView 的 `koruri`/`motoya`/`mbm` 字体族仍由 JS CSS 独立使用智黑。
+音乐符号补字不变；设备上的显示结果由维护者安装验证。
 
 构建实际使用的两个载体不是旧国服原始缺字形文件，而是
 `HiiragiNemu/magireco-cn-patch@71d3278e…` 中 2026-09-19 已审阅补字形版本；

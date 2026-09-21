@@ -1,70 +1,10 @@
 #!/usr/bin/env python3
-"""字体守卫：钉死 assets/fonts/ 下每个文件的内容身份，并校验国服双字体路由。
+"""验证原生字体资源：保持引擎逐项选择，不再用调用者白名单重新分流。
 
-## 为什么需要它
-
-字体这条线在本仓库绕了两圈才落地，两次都是**改字体文件本体**惹的祸：
-
-    702ebbf3  字体直替：MTF4a5kp/mbm 两个文件内容直接换成 TTZhiHeiGB3-W4
-    703cb30f  Revert 上面那条
-    e1c3bf6d  引擎字体替换 + 前缀规则
-    6ad7aa23  回滚字体路径钩子：字体问题不通过换字体解决
-    f7f41ce6  引擎 UI 字体路径重定向（最终方案：只改加载路径，不碰文件）
-    dd06a6b6  修复字体重定向堆破坏
-
-1.0.180 之前只靠 native 路由，仍存在“漏过某条加载入口就回到旧字体/系统 fallback”
-的单点风险。1.0.181 改为双保险：
-
-* 业务语义仍由 native 决定：普通 UI → TTZhiHei，确认的剧情上下文 → TTDaYuan；
-* MTF4a5kp / mbm_20160902 两个旧文件名只保留为 **TTZhiHei 的字节级兼容别名**，
-  不再携带任何旧美/日服字体内容；因此即便某条上层 hook 漏过，也只会回到国服 UI 字体。
-
-TTDaYuan / TTZhiHei 使用 2026-09-19 已审阅、补齐缺失字形的两份载体；
-构建时从固定提交取回，并以 Git blob SHA 精确钉死字节。
-
-## 一个必须写下来的事实：国服自己就是直替做的
-
-`assets/fonts/` 曾有四个**北京腾祥**的商业字体（约 58 MB），2026-08-14 清理掉了。
-
-清理判据是「引擎到底请不请求它」，不是观感也不是许可偏好——在
-`libmadomagi_native.so` 里查字符串：
-
-    Totentanz 基线：MTF4a5kp / mbm_20160902
-    国服 v2.2.1：TTZhiHeiGB3-W4 / TTDaYuanGB3
-
-上传的国服 v2.2.1 离线包经双 ABI native 字符串/xref 复核：
-通用 UI 大量引用 TTZhiHei，StoryMessage/StoryNarration/StoryLog/RaidScrollView::showMessage
-等剧情路径引用 TTDaYuan。
-
-1.0.178 曾把 Totentanz 的两个原始请求名机械地一一对应：
-MTF4a5kp→TTZhiHei、mbm_20160902→TTDaYuan。实机角色详情证明这个假设错误：
-普通 UI 同样会请求 mbm，结果被错误送进大圆体。
-
-1.0.179 起判据改为**调用语义**：MTF4a5kp 与 mbm 在普通 UI 中都默认重定向到
-TTZhiHei；只有确认来自 StoryMessageUnit / StoryFreeNarrationUnit /
-StoryNarrationUnit / StorySubtitleUnit / StoryLogUnit /
-RaidScrollView::showMessage 的剧情创建上下文才改用 TTDaYuan。
-
-1.0.181 再把最后的旧字体依赖拆掉：基线中的 MTF4a5kp / mbm 字体字节都删除，
-构建期用 reviewed TTZhiHei 生成两个同名字节别名；同时 FontAtlasCache 与
-FontFreeType 最终加载入口也加入兜底 hook。也就是说旧文件名可以继续被老引擎请求，
-但它们已经不再代表旧字体。
-
-> 历史提醒：`koruri-semibold.ttf` 这个文件名是**误导性**的。Koruri 是 Apache-2.0
-> 的日文开源字体，而那个文件的内容是腾祥嘉丽大圆——按文件名做合规审计会看走眼。
-> 这不是本仓库造成的（根提交就这样，是国服官方汉化时替换文件内容留下的），
-> 但清理时正好把这个雷一起拆了。同理，1.0.178 的路由目标不是“选一个覆盖率最大的字体统一全站”，而是恢复国服的
-> UI=TTZhiHei、剧情=TTDaYuan 分工。
-
-## 判据
-
-1. 文件集合不多不少（多出来的字体不会被引用，少了会让引擎加载失败）；
-2. 每个文件的内容身份与下表一致（原基线文件用 SHA-256；reviewed 字体用 Git blob SHA-1）；
-3. 每个文件内部的字体家族名与下表一致；
-   这一条额外挡住「换成同尺寸的另一个字体」，同时充当活文档：
-   下一个人不必像我一样先解析一遍 name 表才知道每个文件到底是什么。
-
-用法：python3 tools/check-fonts.py
+已核对的国服/现行引擎调用点（包含同函数混用两种字体的 Raid cut-in）表明：
+MTF4a5kp 资源应承载 reviewed 智黑，mbm 资源应承载 reviewed 大圆。
+这是 APK 原生资源别名；不改变 JS 包/WebView 中 mbm 字体族的智黑路由。
+保留 reviewed 两种字体及音乐符号，Cocos 加载、缓存、字号与位置交回原引擎。
 """
 
 import hashlib
@@ -83,13 +23,13 @@ EXPECTED = {
         8431292,
         "gitblob:e588b7ddb4b5a1761bf94d73d732b3330d292413",
         "Tensentype ZhiHeiGB18030-W4",
-        "1.0.181 兼容别名：旧 MTF 请求最终只能加载 reviewed TTZhiHei",
+        "原生 MTF 资源：保留引擎的智黑选择",
     ),
     "mbm_20160902.ttf": (
-        8431292,
-        "gitblob:e588b7ddb4b5a1761bf94d73d732b3330d292413",
-        "Tensentype ZhiHeiGB18030-W4",
-        "1.0.181 兼容别名：普通 UI 的旧 mbm 请求也只能加载 reviewed TTZhiHei；剧情由语义 hook 转 TTDaYuan",
+        17571336,
+        "gitblob:b121abca3ef624104c84adf2a25de2ea2bea7cf0",
+        "Tensentype JiaLiDaYuanGB18030",
+        "原生 mbm 资源：保留引擎的大圆选择，与 WebView 字体族分离",
     ),
     "witchText-export.fnt": (
         4525,
@@ -262,85 +202,22 @@ NATIVE_SRC = "magia-native/src/MagiaLegacy.cpp"
 
 
 def check_redirect_target():
-    """native 的重定向目标必须是确实随包发出去的字体。
-
-    这条是哈希校验之外的另一半：哈希保证「文件没被换掉」，这条保证
-    「代码指向的文件确实存在」。少了它，把 kTo 敲错一个字母不会有任何报错——
-    引擎加载失败后自己回落，界面看上去只是「字体没生效」，而这在真机上要
-    肉眼比对才发现，历史上字体这条线已经为类似的沉默失败来回过几轮。
-
-    顺带校验长度：libc++ classic string 的短串上限取决于 ABI——ARM64 是 22，
-    ARMv7 是 10。当前 22 字符目标在 ARM64 走短串、ARMv7 走 long；超过 22
-    才会让两个 ABI 都进入「另分配缓冲」路径。
-    """
+    """验证字体参数留给原引擎；文本翻译入口继续存在。"""
     if not os.path.isfile(NATIVE_SRC):
         return ["找不到 " + NATIVE_SRC]
     text = open(NATIVE_SRC, encoding="utf-8").read()
     problems = []
-    expected_routes = {
-        "kFromMtf": "MTF4a5kp.ttf",
-        "kFromMbm": "mbm_20160902.ttf",
-        "kUiTo": "TTZhiHeiGB3-W4.ttf",
-        "kStoryTo": "TTDaYuanGB3.ttf",
-    }
-    found = {}
-    for var, want in expected_routes.items():
-        m = re.search(
-            r'static\s+const\s+char\s+' + re.escape(var)
-            + r'\[\]\s*=\s*"fonts/([^"]+)"',
-            text,
-        )
-        if not m:
-            problems.append("在 %s 里找不到字体路由常量 %s" % (NATIVE_SRC, var))
-            continue
-        found[var] = m.group(1)
-        if found[var] != want:
-            problems.append("%s 路由是 %s，应为 %s" % (var, found[var], want))
-
-    for var in ("kUiTo", "kStoryTo"):
-        target = found.get(var)
-        if not target:
-            continue
-        if target not in EXPECTED:
-            problems.append(
-                "native 把字体重定向到 fonts/%s，但 %s 下没有登记该文件"
-                % (target, FONT_DIR))
-
-    # 1.0.179 的关键守卫：不能再退回“mbm == story”的文件名一一映射。
-    required_semantics = (
-        "enum class CnFontRole",
-        "g_storyFontDepth",
-        "isCnStoryFontCaller",
-        "StoryMessageUnit",
-        "StoryFreeNarrationUnit",
-        "StoryNarrationUnit",
-        "StorySubtitleUnit",
-        "StoryLogUnit",
-        "RaidScrollView",
-        "FontAtlasCache::getFontAtlasTTF",
-        "FontFreeType::create",
-        "showMessage",
-        "fontRoleForCaller",
-        "CN_FONT_CALLER_ADDRESS",
-    )
-    for token in required_semantics:
+    for token in ("isCnStoryFontCaller", "g_storyFontDepth", "fontPathFix(",
+                  "fontPathOverwrite(", "getFontAtlasTtfNew", "fontFreeTypeCreateNew",
+                  "setTtfCfgInternalNew"):
+        if token in text:
+            problems.append("仍存在额外字体分流/改写: " + token)
+    for token in ("translateTtfInitialText", "createWithTtfCfgOld(cfg, &fk, h, i)",
+                  "createWithTtfCfgOld(cfg, text, h, i)",
+                  "createWithTtfStrOld(&fk, font, size, dims, h, v)",
+                  "createWithTtfStrOld(text, font, size, dims, h, v)"):
         if token not in text:
-            problems.append("缺少 1.0.179 调用语义字体路由标记: %s" % token)
-
-    if "kStoryFrom" in text:
-        problems.append("仍存在 kStoryFrom：禁止再把 mbm 文件名本身等同于剧情字体")
-    if "currentCallerAddress()" in text:
-        problems.append("禁止用普通 helper 包 __builtin_return_address(0)：会拿到 hook 自己而不是真实引擎 caller")
-    if text.count("CN_FONT_CALLER_ADDRESS()") < 6:
-        problems.append("字体 hook 没有在 Label/FontAtlas/FreeType 各入口直接捕获真实 caller")
-    if "getFontAtlasTtfNew" not in text or "fontFreeTypeCreateNew" not in text:
-        problems.append("缺少 1.0.181 最终 TTF 加载兜底（FontAtlasCache / FontFreeType）")
-    if not re.search(r'bool\s+mbm\s*=.*kFromMbm', text, re.S):
-        problems.append("找不到 mbm 作为普通候选请求名的判定")
-    if not re.search(r'role\s*==\s*CnFontRole::Story.*kStoryTo', text, re.S):
-        problems.append("剧情上下文没有明确落到 TTDaYuan")
-    if not re.search(r'else\s*\{.*kUiTo', text, re.S):
-        problems.append("普通 UI 默认分支没有明确落到 TTZhiHei")
+            problems.append("构造文本翻译或字体/布局参数透传缺失: " + token)
     return problems
 
 

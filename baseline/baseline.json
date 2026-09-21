@@ -202,7 +202,7 @@
       "kind": "remove",
       "path": "assets/fonts/mbm_20160902.ttf",
       "group": "字体",
-      "why": "移除 Totentanz 旧字体字节；构建期用 reviewed TTZhiHeiGB3-W4 生成同名兼容别名，剧情路径由 native 语义路由到 TTDaYuan",
+      "why": "移除旧字体字节；构建期用 reviewed TTDaYuanGB3 生成原生 mbm 资源，保留引擎逐项字体选择",
       "pre": "37f266883643ca3e3168049a130396a4993b981747f73c4f5068afec2412f5c5"
     },
     {
