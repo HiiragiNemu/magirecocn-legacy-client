@@ -301,7 +301,7 @@ static const DebugFlagDef kDebugFlags[] = {
     { "noAdxSampleRate", &g_dbgNoAdxSampleRate, "不锁 ADX2 采样率 48000，用设备实际值" },
     // ── 「根本不装」，用来排除「钩子存在本身」（含原型声明错）──
     { "noInitLabelHook", &g_dbgNoInitLabelHook, "**不安装** LbUtility::initLabel 钩子（排除原型/ABI 问题）" },
-    { "noTtfHooks",      &g_dbgNoTtfHooks,      "**不安装** createWithTTF/setTTFConfig 三个钩子（同上）" },
+    { "noTtfHooks",      &g_dbgNoTtfHooks,      "**不安装** TTF 路由五个钩子（Label + FontAtlas/FreeType，排查字体路由）" },
     // ── 只记录，不改行为：把「流经钩子但没翻到」的串打出来 ──
     { "logI18nMiss",     &g_dbgLogI18nMiss,     "记录未命中翻译表的**含假名**串（tsv 行格式，去重）" },
     { "logI18nMissAll",  &g_dbgLogI18nMissAll,  "同上但不筛内容（含英文/数字，噪音大，用于确认某串走没走 native 标签）" },
@@ -1414,7 +1414,7 @@ struct Hidden {
 //   版本旁注，不得用 GITHUB_RUN_NUMBER 等构建编号覆盖；本地构建也直接使用该值。
 //   它是 constexpr、从不取地址，只在编译期喂给下面的 Hidden，因此不会有一份
 //   明文留在产物里。
-static constexpr char CLIENT_VERSION[] = "1.0.180";
+static constexpr char CLIENT_VERSION[] = "1.0.181";
 
 // 真正进二进制的是这一份：异或之后的字节。
 static constexpr auto kVersionHidden =
@@ -2706,7 +2706,9 @@ static bool isCnStoryFontCaller(void* returnAddr, const char** symbolOut = nullp
     if (symbolOut) *symbolOut = info.dli_sname;
     const char* s = info.dli_sname;
     if (strstr(s, "StoryMessageUnit") != nullptr) return true;
+    if (strstr(s, "StoryFreeNarrationUnit") != nullptr) return true;
     if (strstr(s, "StoryNarrationUnit") != nullptr) return true;
+    if (strstr(s, "StorySubtitleUnit") != nullptr) return true;
     if (strstr(s, "StoryLogUnit") != nullptr) return true;
     // 旧国服确认只有 RaidScrollView::showMessage 这条消息文本走大圆体；
     // RaidScrollView 其它地图/UI 标签仍按普通 UI 处理。
@@ -2953,6 +2955,41 @@ static void setTtfCfgInternalNew(void* self, const void* cfg) {
     CnFontRole role = fontRoleForCaller(CN_FONT_CALLER_ADDRESS(), &caller);
     fontPathFix((void*)cfg, "setTTFConfigInternal", role, caller);
     setTtfCfgInternalOld(self, cfg);
+}
+
+
+// 1.0.181 最终字体加载兜底。
+//
+// 上面三个 Label hook 负责“按业务语义”决定 UI / 剧情字体，但历史上已经证明：
+// 只守 Label 构造入口不够稳。引擎里还有直接走 FontAtlasCache / FontFreeType 的
+// 路径；一旦漏掉，旧文件名就会直接落到 Totentanz 的美/日服字体，或者在
+// MTF4a5kp 已不存在时触发系统 fallback。
+//
+// 因此在真正创建字体图集/FreeType 对象前再守两层：
+//   * 仍看见 MTF4a5kp / mbm_20160902 → 默认一律 TTZhiHei；
+//   * 若当前线程处于已确认的剧情 scope → TTDaYuan；
+//   * 已经被上层改成 TTZhiHei / TTDaYuan 的路径保持原样。
+// 这样旧字体名只是兼容入口，不再是可实际加载的字体身份。
+using GetFontAtlasTtfFn = void* (*)(const void*, void*);
+static GetFontAtlasTtfFn getFontAtlasTtfOld = nullptr;
+static void* getFontAtlasTtfNew(const void* cfg, void* distanceFieldEnabled) {
+    const char* caller = nullptr;
+    CnFontRole role = fontRoleForCaller(CN_FONT_CALLER_ADDRESS(), &caller);
+    fontPathFix((void*)cfg, "FontAtlasCache::getFontAtlasTTF", role, caller);
+    return getFontAtlasTtfOld(cfg, distanceFieldEnabled);
+}
+
+using FontFreeTypeCreateFn =
+    void* (*)(const void*, float, int, const char*, bool, float);
+static FontFreeTypeCreateFn fontFreeTypeCreateOld = nullptr;
+static void* fontFreeTypeCreateNew(const void* fontPath, float fontSize,
+                                   int glyphCollection, const char* customGlyphs,
+                                   bool distanceFieldEnabled, float outline) {
+    const char* caller = nullptr;
+    CnFontRole role = fontRoleForCaller(CN_FONT_CALLER_ADDRESS(), &caller);
+    fontPathFix((void*)fontPath, "FontFreeType::create", role, caller);
+    return fontFreeTypeCreateOld(fontPath, fontSize, glyphCollection, customGlyphs,
+                                 distanceFieldEnabled, outline);
 }
 
 // ─── JNI_OnLoad ──────────────────────────────────────────
@@ -3371,8 +3408,9 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     }
 
     // ── 国服双字体路由：普通 UI 两种旧请求都→TTZhiHei；剧情上下文→TTDaYuan ──
+    // 1.0.181 同时守住 Label 构造层与最终 FontAtlas/FreeType 加载层。
     if (g_dbgNoTtfHooks) {
-        LOGE("[DEBUG] noTtfHooks 生效：**不安装** createWithTTF/setTTFConfig 三个钩子");
+        LOGE("[DEBUG] noTtfHooks 生效：**不安装** TTF 路由五个钩子");
     } else {
     H("_ZN7cocos2d5Label13createWithTTFERKNS_10_ttfConfigERKNSt6__ndk112basic_stringIcNS4_11char_traitsIcEENS4_9allocatorIcEEEENS_14TextHAlignmentEi",
       (void*)createWithTtfCfgNew, (void**)&createWithTtfCfgOld, "font: createWithTTF(cfg)");
@@ -3380,6 +3418,10 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       (void*)createWithTtfStrNew, (void**)&createWithTtfStrOld, "font: createWithTTF(str)");
     H("_ZN7cocos2d5Label20setTTFConfigInternalERKNS_10_ttfConfigE",
       (void*)setTtfCfgInternalNew, (void**)&setTtfCfgInternalOld, "font: setTTFConfigInternal");
+    H("_ZN7cocos2d14FontAtlasCache15getFontAtlasTTFEPKNS_10_ttfConfigERb",
+      (void*)getFontAtlasTtfNew, (void**)&getFontAtlasTtfOld, "font: FontAtlasCache::getFontAtlasTTF");
+    H("_ZN7cocos2d12FontFreeType6createERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEEfNS_15GlyphCollectionEPKcbf",
+      (void*)fontFreeTypeCreateNew, (void**)&fontFreeTypeCreateOld, "font: FontFreeType::create");
     }
 
     // ── 下载浮层期间挂起引擎 BGM（QbUtility::playBgmDirect）──
