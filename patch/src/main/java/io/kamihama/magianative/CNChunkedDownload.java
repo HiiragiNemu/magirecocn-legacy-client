@@ -74,6 +74,11 @@ public final class CNChunkedDownload {
         boolean isCancelled();
     }
 
+    /** Optional non-blocking advice. Existing Sink implementations keep their ABI. */
+    public interface SlowSink extends Sink {
+        void onSlowTransfer();
+    }
+
     public static final class Probe {
         public final long total;
         public final String etag;
@@ -218,6 +223,16 @@ public final class CNChunkedDownload {
                                   boolean direct, Probe probe, Sink sink,
                                   CNMirrors.Mirror mirror, String remoteName,
                                   boolean verifyZip, ChunkHashes hashes) throws IOException {
+        return download(url, target, requestedChunks, direct, probe, sink,
+                mirror, remoteName, verifyZip, hashes, null);
+    }
+
+    /** Pinned dynamic content is checked by the caller's whole-file size/MD5 gate before install. */
+    static Result download(String url, File target, int requestedChunks,
+                           boolean direct, Probe probe, Sink sink,
+                           CNMirrors.Mirror mirror, String remoteName,
+                           boolean verifyZip, ChunkHashes hashes,
+                           CNHotUpdateValidate.VerMeta identity) throws IOException {
         try {
             CNDownloadUiAssist.ensureInstalled();
         } catch (Throwable t) {
@@ -229,6 +244,8 @@ public final class CNChunkedDownload {
             throw new IOException("下载参数为空");
         }
         if (probe.total <= 0) throw new IOException("未知的文件长度");
+        if (identity != null && (!CNUpdateSources.validHot(identity) || identity.size != probe.total))
+            throw new IOException("动态包续传身份与响应长度不符");
         ensureParent(target);
 
         ChunkHashes valid = validateManifest(hashes, probe.total);
@@ -243,7 +260,7 @@ public final class CNChunkedDownload {
                     sink, remoteName, verifyZip, valid);
         }
         return downloadByteSegments(url, target, requestedChunks, direct, probe,
-                sink, verifyZip);
+                sink, verifyZip, CNDownloadRoute.hotResumeKey(identity));
     }
 
     // -----------------------------------------------------------------
@@ -587,14 +604,16 @@ public final class CNChunkedDownload {
 
     private static Result downloadByteSegments(String url, File target, int requestedSegments,
                                                boolean direct, Probe probe, Sink sink,
-                                               boolean verifyZip) throws IOException {
+                                               boolean verifyZip, String resumeKey) throws IOException {
+        if (resumeKey == null) CNDownloadRoute.deferUnidentifiedTransfer();
         final File part = partFileFor(target);
         final File meta = metaFileFor(target);
         ByteResume resume = readByteResume(meta);
         int segments = Math.max(1, Math.min(maxSegments(), requestedSegments));
         if (probe.total < segments) segments = (int) Math.max(1L, probe.total);
         long segmentSize = ceilDiv(probe.total, segments);
-        // 无 manifest 时没有内容指纹，断点只能在**同一完整 URL**上复用。
+        // 无块 manifest 时，完整 version + size + MD5 可固定内容身份并跨线路复用。
+        // 没有这个身份的旧格式仍要求同一完整 URL + ETag。
         // 旧逻辑只在同 URL 比 ETag、换 URL 时无条件接受，等于允许把不同镜像的
         // 未认证字节继续拼进同一文件，正是 03 历史 corrupt-zip 的入口。
         boolean accepted = resume != null
@@ -602,8 +621,8 @@ public final class CNChunkedDownload {
                 && resume.segments >= 1 && resume.segments <= MAX_BYTE_SEGMENTS
                 && resume.segmentSize > 0
                 && part.isFile() && part.length() == probe.total
-                && url.equals(resume.url)
-                && etagCompatible(resume.url, resume.etag, url, probe.etag)
+                && ((resumeKey != null && resumeKey.equals(resume.url))
+                    || (url.equals(resume.url) && etagCompatible(resume.url, resume.etag, url, probe.etag)))
                 && byteResumeBoundsValid(resume);
         long[] resumed = null;
         if (accepted) {
@@ -656,6 +675,7 @@ public final class CNChunkedDownload {
         if (incomplete > 0) {
             ByteContext ctx = new ByteContext();
             ctx.url = url;
+            ctx.resumeKey = resumeKey == null ? url : resumeKey;
             ctx.part = part;
             ctx.meta = meta;
             ctx.total = probe.total;
@@ -682,6 +702,13 @@ public final class CNChunkedDownload {
             monitor(latch, pool, abort, open, firstErr, lastMoveNs, networkBytes,
                     totalDone, probe.total, sink);
             IOException err = firstErr.get();
+            if (err instanceof CNDownloadRoute.Changed) {
+                // monitor 已关写门；即便网络 read 尚在退出，也不会再修改 done 或主文件。
+                RandomAccessFile checkpoint = new RandomAccessFile(part, "rw");
+                try { checkpoint.getFD().sync(); }
+                finally { checkpoint.close(); }
+                saveByteMeta(meta, probe.total, segments, segmentSize, probe.etag, ctx.resumeKey, done);
+            }
             if (err != null) {
                 if (rangeIgnored.get()) {
                     deleteQuietly(meta);
@@ -702,6 +729,7 @@ public final class CNChunkedDownload {
 
     private static final class ByteContext {
         String url;
+        String resumeKey;
         File part;
         File meta;
         long total;
@@ -839,7 +867,7 @@ public final class CNChunkedDownload {
                             throw new IOException("分段数据同步失败: " + index, e);
                         }
                         saveByteMeta(ctx.meta, ctx.total, ctx.starts.length, ctx.segmentSize,
-                                ctx.etag, ctx.url, ctx.done);
+                                ctx.etag, ctx.resumeKey, ctx.done);
                         lastSave = now;
                     }
                 }
@@ -858,7 +886,7 @@ public final class CNChunkedDownload {
                         try { raf.getFD().sync(); } catch (Throwable ignore) {}
                     }
                     saveByteMeta(ctx.meta, ctx.total, ctx.starts.length, ctx.segmentSize,
-                            ctx.etag, ctx.url, ctx.done);
+                            ctx.etag, ctx.resumeKey, ctx.done);
                 }
             }
             CNIo.closeQuietly(raf);
@@ -887,11 +915,17 @@ public final class CNChunkedDownload {
         long lowWindowBytes = networkBytes.get();
         long stallNs = TimeUnit.SECONDS.toNanos(Math.max(1, CNMirrors.stallSeconds()));
         long minBps = CNDownloadPresentation.kilobitsToBytesPerSecond(CNMirrors.minSpeedKbps());
+        CNDownloadSlowNotice slowNotice = new CNDownloadSlowNotice(minBps, 0L);
         try {
             while (!latch.await(1L, TimeUnit.SECONDS)) {
                 long now = System.nanoTime();
                 if (sink != null && sink.isCancelled()) {
                     firstErr.compareAndSet(null, new IOException("已取消"));
+                    abort.set(true);
+                    break;
+                }
+                if (CNDownloadRoute.changed()) {
+                    firstErr.compareAndSet(null, new CNDownloadRoute.Changed());
                     abort.set(true);
                     break;
                 }
@@ -926,13 +960,10 @@ public final class CNChunkedDownload {
                         lowWindowBytes = networkBytes.get();
                         continue;
                     }
-                    long bps = (long) (moved / (lowDt / 1.0E9d));
-                    if (bps < minBps) {
-                        firstErr.compareAndSet(null, new IOException("线路过慢："
-                                + (bps * 8L / 1000L) + " kbps < "
-                                + CNMirrors.minSpeedKbps() + " kbps"));
-                        abort.set(true);
-                        break;
+                    // 收到数据就继续。提示不等待用户，也不撤销 worker 或已保存断点。
+                    if (slowNotice.observe(moved, lowDt, now) && sink instanceof SlowSink) {
+                        try { ((SlowSink) sink).onSlowTransfer(); }
+                        catch (Throwable ignored) { /* Presentation must not abort I/O. */ }
                     }
                     lowWindowNs = now;
                     lowWindowBytes = networkBytes.get();

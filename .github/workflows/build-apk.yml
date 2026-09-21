@@ -389,6 +389,7 @@ jobs:
         run: |
           python3 tools/check-download-ui-contract.py
           python3 tools/test-download-presentation.py
+          python3 tools/test-slow-download.py
 
       - name: 🕸 核对 WebView 拦截链的假设
         run: python3 tools/check-webview-interceptor.py
@@ -642,6 +643,7 @@ jobs:
           # R8 内部的 NullPointerException，没有行号也没有别的线索。在这里先拦一道，
           # 把它换成能照着改的话。判据与实测记录见脚本头部。
           python3 tools/check-d8-pitfalls.py .build/classes
+          python3 tools/test-manual-route.py --classes .build/classes --classpath "${CP}"
 
           # ── 分两组出 dex：UI 类进 classes2，其余补丁类进 classes3 ──
           # 这个划分必须与仓库里 smali_classes2/ 和 smali_classes3/ 的现状一致，

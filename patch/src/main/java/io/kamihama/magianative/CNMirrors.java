@@ -1044,6 +1044,12 @@ public final class CNMirrors {
      * 返回当前可用（已启用且不在冷却期）的线路，优先级从高到低。
      * 若全部处于冷却期，则忽略冷却返回全部已启用线路——宁可重试也不要无线路可用。
      */
+    public static List<Mirror> selectable() {
+        List<Mirror> out = new ArrayList<Mirror>();
+        for (Mirror m : mirrors) if (m.enabled) out.add(m);
+        return out;
+    }
+
     public static List<Mirror> healthy() {
         List<Mirror> all = mirrors;
         long now = System.nanoTime();

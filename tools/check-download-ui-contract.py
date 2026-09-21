@@ -787,7 +787,7 @@ checks = {
     "主引擎与热更的取线路都有受控出口":
         "pickMirrorOrNull(attempt, index, name)" in code(downloader)
         and "markFailed(index);" in body(downloader,
-                "private static CNMirrors.Mirror pickMirrorOrNull(int attempt, int index, String name)")
+                "private static CNDownloadRoute.Plan pickMirrorOrNull(int attempt, int index, String name)")
         and "catch (IllegalStateException noMirror)" in code(hot),
     # aria2 那处**不能** markFailed：它的合同是让位主引擎，而主引擎马上会撞上同一张
     # 空表并走自己那道出口。两边都记一次，同一个空表会报两遍失败。

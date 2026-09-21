@@ -92,6 +92,7 @@ public final class CNDownloaderFix {
     private static final int A2_MAIN      = 0;
     /** {@link #tryAria2Download} 的返回：玩家选改用离线包，跳过主引擎重试。 */
     private static final int A2_OFFLINE   = -1;
+    private static final int A2_CLOSED    = -5;
     /**
      * {@link #tryAria2Download} 的返回：磁盘满。与 A2_OFFLINE 分开是因为
      * 调用方对 OFFLINE 的语义是「玩家不要这个包了」，会清掉半截产物——
@@ -125,10 +126,9 @@ public final class CNDownloaderFix {
     private static final int    MIN_SNAA_VERSION = 128;
     private static final String NO_RESTART_FLAG = FILE_ROOT + "/madomagi/magica/.cn_installer/r128-downloader-v1/no_restart";
     private static final int    READ_TIMEOUT_MS = 30000;
-    // 低速看门狗：read timeout 管的是「完全没字节」，管不了「每秒几十 KB 的滴速」。
-    // 窗口速度持续低于 MIN_OK_BPS 超过 SLOW_FAIL_NS 就抛异常走换线。
+    // 低速只提示，持续有数据时不强制换线。完全停滞仍由 read timeout 处理。
     private static final long   MIN_OK_BPS  = 100L * 1024L;                      // 100 KB/s
-    private static final long   SLOW_FAIL_NS = TimeUnit.SECONDS.toNanos(15L);
+    private static final long   SLOW_NOTICE_NS = TimeUnit.SECONDS.toNanos(15L);
     /**
      * 规范资源地址：仅用于生成完成标记里的 {@code url} 字段，<b>不代表实际下载线路</b>。
      *
@@ -1228,7 +1228,7 @@ public final class CNDownloaderFix {
             int a2 = tryAria2Download(name, archive, index, marker, canonicalUrl);
             if (a2 == A2_INSTALLED) return true;
             if (a2 == A2_YIELD) return yieldToOfflineInstall(index, name, "aria2");
-            if (a2 == A2_OFFLINE) {
+            if (a2 == A2_OFFLINE || a2 == A2_CLOSED) {
                 // 玩家选改用离线包：清掉 aria2 半截产物，跳过主引擎重试，交给
                 // 玩家手动导入（导入写 marker 后，全局重试那一轮自然转正）。
                 deleteQuietly(archive);
@@ -1277,8 +1277,9 @@ public final class CNDownloaderFix {
             // try 之外，异常会越过本轮全部 catch/finally 直接冲出下载状态机：
             // ArchiveTask 以异常收场，这个槽位可能连 markFailed 都没走到——UI 上
             // 是「失败 0 项」却卡在等待重试页，日志里也和普通下载失败长得不一样。
-            CNMirrors.Mirror mirror = pickMirrorOrNull(attempt, index, name);
-            if (mirror == null) return false;
+            CNDownloadRoute.Plan route = pickMirrorOrNull(attempt, index, name);
+            if (route == null) return false;
+            CNMirrors.Mirror mirror = route.mirror;
             // 资源下载一律直连（Proxy.NO_PROXY）：系统代理会劫持 CDN 大文件传输，
             // 损坏分片拼出的 zip 导致「完工校验失败」。曾按 attempt 奇偶交替走代理，
             // 玩家开着 VPN/抓包工具时奇数尝试必被劫持（cn_base_03 连败四次的根因），
@@ -1288,8 +1289,12 @@ public final class CNDownloaderFix {
             setActive(index, true);
             CNCNDownloadUI.setDownloadSpeed(index, 0.0f);
             try {
-                DownloadMetadata meta = fetchArchive(
-                        mirror, name, archive, index, direct, restartToken);
+                DownloadMetadata meta;
+                CNDownloadRoute.enter(route);
+                try {
+                    CNDownloadRoute.check();
+                    meta = fetchArchive(mirror, name, archive, index, direct, restartToken);
+                } finally { CNDownloadRoute.leave(); }
                 CNCNDownloadUI.setDownloadSpeed(index, 0.0f);
                 CNCNDownloadUI.updateFileProgress(index, 100);
                 CNCNDownloadUI.updateSimple("正在安装资源",
@@ -1422,6 +1427,11 @@ public final class CNDownloaderFix {
                 }
                 // ENOSPC 也可能从写 .cpart 的中途冒出来，这时它长得就是一个
                 // 普通 IOException。先认出来，别当成线路故障处理。
+                if (e instanceof CNDownloadRoute.Changed) {
+                    CNLog.i(TAG, "manual-route file=" + name + "：保留断点，重连所选线路");
+                    attempt = 0;
+                    continue;
+                }
                 if (CNDiskSpace.isOutOfSpace(e)) {
                     reportNoSpace(index, name, CNDiskSpace.shortfall(
                             name, 0L, CNDiskSpace.usableBytes(archive)));
@@ -1459,6 +1469,7 @@ public final class CNDownloaderFix {
                 askedFallback = true;
                 boolean canAria2 = CNAria2.isAvailable();
                 int choice = awaitDownloadFallbackChoice(name, canAria2);
+                if (choice == CNCNDownloadUI.DL_CLOSE) { markFailed(index); return false; }
                 if (choice == CNCNDownloadUI.ARIA2_OFFLINE) {
                     CNCNDownloadUI.showOfflineImportDialog(RestClient.getCurrentActivity());
                     markFailed(index);
@@ -1470,7 +1481,7 @@ public final class CNDownloaderFix {
                                               marker, canonicalUrl);
                     if (a2 == A2_INSTALLED) return true;
                     if (a2 == A2_YIELD) return yieldToOfflineInstall(index, name, "aria2-fallback");
-                    if (a2 == A2_OFFLINE) {
+                    if (a2 == A2_OFFLINE || a2 == A2_CLOSED) {
                         markFailed(index);
                         return false;
                     }
@@ -1527,13 +1538,13 @@ public final class CNDownloaderFix {
         try {
             Activity act = RestClient.getCurrentActivity();
             if (act == null) {
-                CNLog.w(TAG, "取不到 Activity，下载失败询问按「继续」: " + name);
-                return CNCNDownloadUI.ARIA2_CONTINUE;
+                CNLog.w(TAG, "取不到 Activity，下载失败询问按「关闭并保留断点」: " + name);
+                return CNCNDownloadUI.DL_CLOSE;
             }
             return CNCNDownloadUI.askDownloadFallback(act, name, canAria2, false, offerOffline);
         } catch (Throwable t) {
-            CNLog.e(TAG, "下载失败询问出错，按「继续」: " + name, t);
-            return CNCNDownloadUI.ARIA2_CONTINUE;
+            CNLog.e(TAG, "下载失败询问出错，按「关闭并保留断点」: " + name, t);
+            return CNCNDownloadUI.DL_CLOSE;
         }
     }
 
@@ -1577,7 +1588,7 @@ public final class CNDownloaderFix {
             // 在这里先记一次失败，会让同一个空表在两条路径上各报一次。
             CNMirrors.Mirror mirror;
             try {
-                mirror = CNMirrors.pick(attempt);
+                mirror = CNDownloadRoute.plan(CNMirrors.healthy(), attempt).mirror;
             } catch (IllegalStateException noMirror) {
                 CNLog.e(TAG, "no-mirror(aria2) file=" + name + " attempt=" + attempt, noMirror);
                 return A2_MAIN;
@@ -1775,6 +1786,7 @@ public final class CNDownloaderFix {
                 // 三条线路要问三遍——而他能给的信息，前两遍就已经给完了。
                 if (attempt < A2_MAX_ATTEMPTS) continue;
                 int choice = awaitAria2FallbackChoice(name, false);
+                if (choice == CNCNDownloadUI.DL_CLOSE) return A2_CLOSED;
                 if (choice == CNCNDownloadUI.ARIA2_RETRY) continue;
                 if (choice == CNCNDownloadUI.ARIA2_OFFLINE) {
                     CNCNDownloadUI.showOfflineImportDialog(RestClient.getCurrentActivity());
@@ -1826,6 +1838,7 @@ public final class CNDownloaderFix {
                 // 同上：保留半截产物 + 控制文件供续传，换线/回退时由顶部与 fetchArchive 清理
                 if (attempt < A2_MAX_ATTEMPTS) continue;
                 int choice = awaitAria2FallbackChoice(name, false);
+                if (choice == CNCNDownloadUI.DL_CLOSE) return A2_CLOSED;
                 if (choice == CNCNDownloadUI.ARIA2_RETRY) continue;
                 if (choice == CNCNDownloadUI.ARIA2_OFFLINE) {
                     CNCNDownloadUI.showOfflineImportDialog(RestClient.getCurrentActivity());
@@ -1872,13 +1885,13 @@ public final class CNDownloaderFix {
         try {
             Activity act = RestClient.getCurrentActivity();
             if (act == null) {
-                CNLog.w(TAG, "取不到 Activity，aria2 失败询问按「继续主引擎」: " + name);
-                return CNCNDownloadUI.ARIA2_CONTINUE;
+                CNLog.w(TAG, "取不到 Activity，aria2 失败询问按「关闭且保留断点」: " + name);
+                return CNCNDownloadUI.DL_CLOSE;
             }
             return CNCNDownloadUI.askAria2Fallback(act, name, canRetry);
         } catch (Throwable t) {
-            CNLog.e(TAG, "aria2 失败询问出错，按「继续主引擎」: " + name, t);
-            return CNCNDownloadUI.ARIA2_CONTINUE;
+            CNLog.e(TAG, "aria2 失败询问出错，按「关闭且保留断点」: " + name, t);
+            return CNCNDownloadUI.DL_CLOSE;
         }
     }
 
@@ -2030,7 +2043,7 @@ public final class CNDownloaderFix {
                     CNChunkedDownload.Result r = CNChunkedDownload.download(
                             url, archive, chunks, direct, probe,
                             new ArchiveSink(index, restartToken),
-                            mirror, name, true, hashes);
+                            mirror, name, true, hashes, hotMeta);
                     verifyHotIdentity(name, archive, hotMeta);
                     return new DownloadMetadata(r.totalBytes, r.etag);
                 }
@@ -2038,7 +2051,10 @@ public final class CNDownloaderFix {
             CNLog.i(TAG, "range-unsupported-or-small file=" + name + " mirror=" + mirror.name
                     + " → 单线程续传");
         }
-        DownloadMetadata single = downloadOnce(url, archive, index, direct, restartToken);
+        CNChunkedDownload.ChunkHashes singleHashes = useManifest ? ChunkManifest.forFile(name) : null;
+        long pinnedTotal = CNUpdateSources.validHot(hotMeta) ? hotMeta.size
+                : (singleHashes == null ? -1L : singleHashes.total);
+        DownloadMetadata single = downloadOnce(url, archive, index, direct, restartToken, pinnedTotal);
         // F-013：单线程路径此前只做长度/结构校验，补分块身份校验（基础包）。
         verifyStaticArchiveIdentity(name, archive);
         verifyHotIdentity(name, archive, hotMeta);
@@ -2181,7 +2197,7 @@ public final class CNDownloaderFix {
     }
 
     /** 把分片下载的进度接到既有的 UI/看门狗上。 */
-    private static final class ArchiveSink implements CNChunkedDownload.Sink {
+    private static final class ArchiveSink implements CNChunkedDownload.SlowSink {
         private final int index;
         private final int restartToken;
         ArchiveSink(int index, int restartToken) {
@@ -2202,6 +2218,9 @@ public final class CNDownloaderFix {
         @Override public boolean isCancelled() {
             return CNDownloadRestart.cancelled(index, restartToken);
         }
+        @Override public void onSlowTransfer() {
+            CNCNDownloadUI.offerSlowTransferNotice();
+        }
     }
 
     /**
@@ -2212,6 +2231,14 @@ public final class CNDownloaderFix {
                                                  int index, boolean direct,
                                                  int restartToken)
             throws IOException {
+        return downloadOnce(url, archive, index, direct, restartToken, -1L);
+    }
+
+    private static DownloadMetadata downloadOnce(String url, File archive,
+                                                 int index, boolean direct,
+                                                 int restartToken, long pinnedTotal)
+            throws IOException {
+        if (pinnedTotal <= 0) CNDownloadRoute.deferUnidentifiedTransfer();
         if (archive.isFile()) {
             long len = archive.length();
             updateSize(index, len);
@@ -2256,7 +2283,7 @@ public final class CNDownloaderFix {
         String localEtag = readSidecarEtag(archive);
         if (offset > 0) {
             c.setRequestProperty("Range", "bytes=" + offset + "-");
-            if (localEtag.length() > 0) {
+            if (localEtag.length() > 0 && pinnedTotal <= 0) {
                 c.setRequestProperty("If-Range", localEtag);
             }
         }
@@ -2272,6 +2299,8 @@ public final class CNDownloaderFix {
             boolean append;
 
             if (offset > 0 && code == 200) {
+                if (pinnedTotal > 0)
+                    throw new IOException("所选线路未按 Range 续传，保留已下载数据");
                 // 服务端忽略了 Range：本地残片作废，重来
                 truncate(part);
                 deleteQuietly(sidecar);
@@ -2285,7 +2314,9 @@ public final class CNDownloaderFix {
                     resetProgress(index);
                     throw new ResetRequired("invalid Content-Range for offset " + offset);
                 }
-                if (localEtag.length() > 0 && etag.length() > 0 && !localEtag.equals(etag)) {
+                if (pinnedTotal > 0 && cr.total != pinnedTotal)
+                    throw new IOException("线路响应与固定文件身份长度不符，保留原断点");
+                if (pinnedTotal <= 0 && localEtag.length() > 0 && etag.length() > 0 && !localEtag.equals(etag)) {
                     truncate(part);
                     deleteQuietly(sidecar);
                     resetProgress(index);
@@ -2336,13 +2367,14 @@ public final class CNDownloaderFix {
             long windowStart   = System.nanoTime();
             long written       = 0L;
             long speedBaseline = 0L;
-            long slowSinceNs   = 0L;  // 低速看门狗：半死镜像滴速下载时主动换线
+            CNDownloadSlowNotice slowNotice = new CNDownloadSlowNotice(MIN_OK_BPS, SLOW_NOTICE_NS);
             int  n;
             double smoothedMbps = 0.0d;
             while ((n = in.read(buf)) >= 0) {
                 if (CNDownloadRestart.cancelled(index, restartToken)) {
                     throw new ResetRequired("manual restart during single-stream download");
                 }
+                CNDownloadRoute.check();
                 fos.write(buf, 0, n);
                 written += n;
                 long now = System.nanoTime();
@@ -2355,17 +2387,8 @@ public final class CNDownloaderFix {
                     smoothedMbps = smoothedMbps <= 0.0d
                             ? instant : smoothedMbps * 0.70d + instant * 0.30d;
                     CNCNDownloadUI.setDownloadSpeed(index, (float) smoothedMbps);
-                    // 持续低速（<100KB/s 超过 15s）视为镜像半死：
-                    // read timeout 只在完全无字节时触发，滴速线路会永远卡在这里
-                    if (windowBytes * 1000000000L / dt < MIN_OK_BPS) {
-                        if (slowSinceNs == 0L) slowSinceNs = now;
-                        else if (now - slowSinceNs >= SLOW_FAIL_NS) {
-                            throw new IOException("镜像速度过慢（持续低于 "
-                                    + (MIN_OK_BPS / 1024) + "KB/s），换线");
-                        }
-                    } else {
-                        slowSinceNs = 0L;
-                    }
+                    if (slowNotice.observe(windowBytes, dt, now))
+                        CNCNDownloadUI.offerSlowTransferNotice();
                     speedBaseline = written;
                     windowStart   = now;
                 }
@@ -3228,9 +3251,9 @@ public final class CNDownloaderFix {
      *
      * @return 线路；空表时返回 {@code null}，此时该槽位已经 markFailed。
      */
-    private static CNMirrors.Mirror pickMirrorOrNull(int attempt, int index, String name) {
+    private static CNDownloadRoute.Plan pickMirrorOrNull(int attempt, int index, String name) {
         try {
-            return CNMirrors.pick(attempt);
+            return CNDownloadRoute.plan(CNMirrors.healthy(), attempt);
         } catch (IllegalStateException noMirror) {
             // 保留原异常：空表的成因（端点没注入、远端把线路全禁了、快照为空）
             // 全在它的栈里，那正是这条日志唯一的用处。

@@ -528,7 +528,7 @@ public final class CNHotUpdateCheck {
                         askedHotFallback = true;
                         int choice = CNDownloaderFix.awaitDownloadFallbackChoice(
                                 pkg.label, CNAria2.isAvailable(), false);
-                        if (choice != CNCNDownloadUI.ARIA2_OFFLINE) {
+                        if (choice != CNCNDownloadUI.ARIA2_OFFLINE && choice != CNCNDownloadUI.DL_CLOSE) {
                             CNLog.w(TAG, "[" + pkg.label + "] 玩家选择重试，模式="
                                     + CNDownloadMode.describe());
                             CNCNDownloadUI.updateSimple("下载热更新",

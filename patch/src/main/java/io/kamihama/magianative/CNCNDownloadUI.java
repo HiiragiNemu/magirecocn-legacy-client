@@ -176,6 +176,8 @@ public class CNCNDownloadUI {
     /** 资源目录内的背景图路径。 */
     private static int backgroundPeriod = -1;
     private static TextView vStorageChip;
+    private static TextView vRouteChip;
+    private static FrameLayout routeModal;
     /** 资源目录内的游戏 Logo 路径。 */
     private static final String LOGO_ASSET = "magia/logo.png";
 
@@ -1012,7 +1014,17 @@ public class CNCNDownloadUI {
         vStorageChip.setTextColor(COLOR_ACCENT2);
         vStorageChip.setPadding(dp(act, 8), dp(act, 12), dp(act, 4), dp(act, 12));
         vStorageChip.setOnClickListener(new StorageAccessClick(act));
-        logoRow.addView(vStorageChip);
+        LinearLayout logoActions = new LinearLayout(act);
+        logoActions.setOrientation(LinearLayout.VERTICAL);
+        logoActions.addView(vStorageChip);
+        vRouteChip = new TextView(act);
+        vRouteChip.setText("线路：" + CNDownloadRoute.describe());
+        vRouteChip.setTextSize(12);
+        vRouteChip.setTextColor(COLOR_ACCENT2);
+        vRouteChip.setPadding(dp(act, 8), dp(act, 8), dp(act, 4), dp(act, 8));
+        vRouteChip.setOnClickListener(new RouteMenuClick(act));
+        logoActions.addView(vRouteChip);
+        logoRow.addView(logoActions);
         leftCol.addView(logoRow, logoLp);
 
         View divider = new View(act);
@@ -3058,6 +3070,130 @@ public class CNCNDownloadUI {
     // 网络慢时的「你来定」询问框
     // ==================================================================
 
+    private static final class RouteMenuClick implements View.OnClickListener {
+        private final Activity act;
+        RouteMenuClick(Activity act) { this.act=act; }
+        @Override public void onClick(View v) {
+            FrameLayout host=overlayView;
+            if (host==null) return;
+            closeRouteMenu();
+            FrameLayout modal=new FrameLayout(act);
+            modal.setBackgroundColor(COLOR_DIM); modal.setClickable(true);
+            LinearLayout panel=new LinearLayout(act);
+            panel.setOrientation(LinearLayout.VERTICAL);
+            panel.setPadding(dp(act,18),dp(act,14),dp(act,18),dp(act,14));
+            GradientDrawable bg=new GradientDrawable();
+            bg.setColor(COLOR_LOG_PANEL_BG); bg.setCornerRadius(dp(act,16)); panel.setBackground(bg);
+            TextView title=new TextView(act);
+            title.setText("手动切换下载线路"); title.setTextColor(COLOR_ACCENT);
+            title.setTextSize(16); panel.addView(title,lpRow(0,dp(act,10)));
+            TextView tip=new TextView(act);
+            tip.setText("主下载引擎会保留同版本进度并重新连接，不执行从头重下。旧格式文件会在本文件完成后使用新线路。备用引擎将在下次连接时使用所选线路。\n关闭窗口不暂停下载。");
+            tip.setTextColor(COLOR_LOG_PANEL_TEXT); tip.setTextSize(12);
+            panel.addView(tip,lpRow(0,dp(act,10)));
+            ScrollView scroll=new ScrollView(act);
+            LinearLayout choices=new LinearLayout(act); choices.setOrientation(LinearLayout.VERTICAL);
+            addRouteButton(act,choices,"自动选择","",false);
+            java.util.List<CNMirrors.Mirror> mirrors=CNMirrors.selectable();
+            for (CNMirrors.Mirror mirror : mirrors) addRouteButton(act,choices,mirror.name,mirror.base,false);
+            scroll.addView(choices);
+            panel.addView(scroll,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                    Math.min(dp(act,150),dp(act,44)*(mirrors.size()+1))));
+            LinearLayout actions=new LinearLayout(act); actions.setGravity(Gravity.END);
+            addRouteButton(act,actions,"关闭",null,true);
+            addRouteButton(act,actions,"继续下载",null,true);
+            panel.addView(actions,lpRow(dp(act,10),0));
+            int width=Math.min(dp(act,360),Math.max(dp(act,220),host.getWidth()-dp(act,24)));
+            modal.addView(panel,new FrameLayout.LayoutParams(width,ViewGroup.LayoutParams.WRAP_CONTENT,Gravity.CENTER));
+            host.addView(modal,new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT));
+            routeModal=modal;
+        }
+    }
+    private static void addRouteButton(Activity act, LinearLayout parent, String label, String base, boolean dismiss) {
+        boolean selected=base!=null && base.equals(CNDownloadRoute.selectedBase());
+        TextView button=dialogButton(act,(selected?"✓ ":"")+label,COLOR_LOG_PANEL_TEXT,0x00000000,true);
+        button.setOnClickListener(new RouteChoice(base,dismiss)); parent.addView(button);
+    }
+    private static final class RouteChoice implements View.OnClickListener {
+        private final String base; private final boolean dismiss;
+        RouteChoice(String base, boolean dismiss) { this.base=base; this.dismiss=dismiss; }
+        @Override public void onClick(View view) {
+            if (!dismiss && !CNDownloadRoute.select(base)) {
+                android.widget.Toast.makeText(view.getContext(),"线路配置已变化，请重新打开选择",android.widget.Toast.LENGTH_SHORT).show(); return;
+            }
+            if (vRouteChip!=null) vRouteChip.setText("线路："+CNDownloadRoute.describe());
+            closeRouteMenu();
+        }
+    }
+    private static void closeRouteMenu() {
+        FrameLayout modal=routeModal; routeModal=null;
+        if (modal!=null && modal.getParent() instanceof ViewGroup)
+            ((ViewGroup)modal.getParent()).removeView(modal);
+    }
+
+    // 与元数据查询失败的阻塞询问分开：资源仍有字节时，提示绝不控制下载线程。
+    private static boolean slowTransferNoticeOffered;
+
+    public static void offerSlowTransferNotice() {
+        try {
+            Handler handler = uiHandler;
+            if (handler != null) handler.post(new SlowTransferNoticeBuild());
+        } catch (Throwable ignored) { /* A missing UI never interrupts a transfer. */ }
+    }
+
+    private static final class SlowTransferNoticeBuild implements Runnable {
+        @Override public void run() {
+            try {
+                Activity act = hostActivity;
+                FrameLayout host = overlayView;
+                if (slowTransferNoticeOffered || act == null || host == null
+                        || act.isFinishing() || !isShowing) return;
+                LinearLayout panel = new LinearLayout(act);
+                panel.setOrientation(LinearLayout.VERTICAL);
+                panel.setPadding(dp(act, 18), dp(act, 14), dp(act, 18), dp(act, 12));
+                GradientDrawable bg = new GradientDrawable();
+                bg.setColor(COLOR_LOG_PANEL_BG);
+                bg.setCornerRadius(dp(act, 16));
+                bg.setStroke(dp(act, 1), COLOR_CARD_STK);
+                panel.setBackground(bg);
+                // Only this card receives touches; no full-screen dim layer or input trap.
+                panel.setClickable(true);
+                TextView message = new TextView(act);
+                message.setText("当前速度较慢，文件仍在下载。\n关闭提示或继续下载都不会暂停，也不会从头重下。");
+                message.setTextColor(COLOR_LOG_PANEL_TEXT);
+                message.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
+                panel.addView(message, lpRow(0, dp(act, 10)));
+                LinearLayout buttons = new LinearLayout(act);
+                buttons.setGravity(Gravity.END);
+                TextView close = dialogButton(act, "关闭", COLOR_LOG_PANEL_TEXT, 0x00000000, true);
+                TextView keep = dialogButton(act, "继续下载", 0xFFFFFFFF, COLOR_ACCENT, false);
+                close.setOnClickListener(new DismissTransferNotice(panel));
+                keep.setOnClickListener(new DismissTransferNotice(panel));
+                buttons.addView(close);
+                LinearLayout.LayoutParams keepLp = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                keepLp.leftMargin = dp(act, 10);
+                buttons.addView(keep, keepLp);
+                panel.addView(buttons, lpRow(0, 0));
+                FrameLayout.LayoutParams pos = new FrameLayout.LayoutParams(
+                        dp(act, 360), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+                pos.topMargin = dp(act, 50);
+                host.addView(panel, pos);
+                slowTransferNoticeOffered = true;
+            } catch (Throwable t) { CNLog.w(TAG, "低速提示显示失败，下载继续", t); }
+        }
+    }
+
+    /** Both actions dismiss presentation only. No reset, retry, latch or engine switch. */
+    private static final class DismissTransferNotice implements View.OnClickListener {
+        private final View panel;
+        DismissTransferNotice(View panel) { this.panel = panel; }
+        @Override public void onClick(View v) {
+            android.view.ViewParent parent = panel.getParent();
+            if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(panel);
+        }
+    }
+
     /** {@link #askSlowNetwork} 的返回值：玩家选了「再来一次」（继续等 / 重试）。 */
     public static final int SLOW_WAIT = 1;
     /** {@link #askSlowNetwork} 的返回值：玩家选了「算了」，或者根本没条件问。 */
@@ -3206,8 +3342,8 @@ public class CNCNDownloadUI {
         }
         final FrameLayout modal = new FrameLayout(act);
         modal.setBackgroundColor(COLOR_DIM);
-        modal.setClickable(true);        // 吃掉点击：这是必须做出的选择，
-        modal.setFocusable(true);        // 不许点框外糊弄过去
+        modal.setClickable(true);        // 避免误触下层；玩家可明确关闭且保留进度
+        modal.setFocusable(true);
 
         LinearLayout panel = new LinearLayout(act);
         panel.setOrientation(LinearLayout.VERTICAL);
@@ -3304,7 +3440,7 @@ public class CNCNDownloadUI {
 
     /** {@link #askAria2Fallback} 的返回值：玩家选了「重试备用引擎」。 */
     public static final int ARIA2_RETRY    = 1;
-    /** 返回值：玩家选了「继续用主引擎下载」，或询问没条件进行（默认）。 */
+    /** 返回值：玩家明确选了「继续用主引擎下载」。 */
     public static final int ARIA2_CONTINUE = 2;
     /** 返回值：玩家选了「改用离线包」。 */
     public static final int ARIA2_OFFLINE  = 3;
@@ -3315,12 +3451,27 @@ public class CNCNDownloadUI {
     public static final int DL_SINGLE      = 4;
     /** 返回值：玩家选了「改回多线程下载」。同样已切好，调用方只管重试。 */
     public static final int DL_MULTI       = 5;
+    /** Leave a genuinely failed download stopped without clearing retained partial files. */
+    public static final int DL_CLOSE       = 6;
+    private static volatile Aria2Answer pendingAriaAnswer;
 
     /** 询问结果的信箱。用数组是为了让具名内部类能写回去（不能捕获非 final 局部量）。 */
     private static final class Aria2Answer {
-        final int[] choice = new int[]{ ARIA2_CONTINUE };
+        final int[] choice = new int[]{ DL_CLOSE };
+        volatile boolean resolved;
         final java.util.concurrent.CountDownLatch latch =
                 new java.util.concurrent.CountDownLatch(1);
+        synchronized boolean choose(int selected) {
+            if (resolved) return false;
+            resolved = true;
+            choice[0] = selected;
+            try {
+                if (selected == DL_SINGLE) CNDownloadMode.setPlayerChoice(true);
+                else if (selected == DL_MULTI) CNDownloadMode.setPlayerChoice(false);
+            } catch (Throwable t) { choice[0] = DL_CLOSE; }
+            finally { latch.countDown(); }
+            return true;
+        }
     }
 
     /**
@@ -3332,13 +3483,13 @@ public class CNCNDownloadUI {
      * 台面上仍是对的——玩家是唯一知道「现在该不该继续等网络」的人。
      *
      * <p><b>阻塞调用，只能在后台线程上用。</b>内部切到 UI 线程建框，然后在调用线程
-     * 上等玩家点；超时 60 秒按「继续用主引擎」兜底，免得询问框出问题时安装线程
-     * 永远卡住。在 UI 线程上调会死锁，直接返回 {@link #ARIA2_CONTINUE}。
+     * 上等玩家点；超时 60 秒按「关闭且保留断点」处理，避免没有答复却自动重试。
+     * 在 UI 线程上调会死锁，直接返回 {@link #DL_CLOSE}。
      *
      * @param act      宿主 Activity
      * @param fileName 失败的资源包名（展示给玩家看）
      * @param canRetry 是否还能给「重试备用引擎」这一项（重试次数用尽时传 false）
-     * @return {@link #ARIA2_RETRY} / {@link #ARIA2_CONTINUE} / {@link #ARIA2_OFFLINE}
+     * @return 玩家明确选择的重试/离线选项，或 {@link #DL_CLOSE}
      */
     public static int askAria2Fallback(final Activity act, final String fileName,
                                        final boolean canRetry) {
@@ -3370,27 +3521,27 @@ public class CNCNDownloadUI {
                                           final boolean aria2Failed,
                                           final boolean offerOffline) {
         if (act == null || overlayView == null) {
-            CNLog.w(TAG, "[下载询问] 浮层不在，按「继续用主引擎」处理：" + fileName);
-            return ARIA2_CONTINUE;
+            CNLog.w(TAG, "[下载询问] 浮层不在，按「关闭且保留断点」处理：" + fileName);
+            return DL_CLOSE;
         }
         if (Looper.myLooper() == Looper.getMainLooper()) {
-            CNLog.e(TAG, "[下载询问] 被在 UI 线程上调用，会死锁；按「继续用主引擎」处理");
-            return ARIA2_CONTINUE;
+            CNLog.e(TAG, "[下载询问] 被在 UI 线程上调用，会死锁；按「关闭且保留断点」处理");
+            return DL_CLOSE;
         }
         final Aria2Answer ans = new Aria2Answer();
         try {
             act.runOnUiThread(new Aria2Build(act, fileName, canRetry, aria2Failed,
                     offerOffline, ans));
             if (!ans.latch.await(60, java.util.concurrent.TimeUnit.SECONDS)) {
-                CNLog.w(TAG, "[aria2询问] 60 秒未选择，按「继续用主引擎」处理：" + fileName);
+                CNLog.w(TAG, "[aria2询问] 60 秒未选择，按「关闭且保留断点」处理：" + fileName);
             }
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
-            return ARIA2_CONTINUE;
         } catch (Throwable t) {
-            CNLog.e(TAG, "[aria2询问] 建框失败，按「继续用主引擎」处理", t);
-            return ARIA2_CONTINUE;
+            CNLog.e(TAG, "[aria2询问] 建框失败，按「关闭且保留断点」处理", t);
         }
+        ans.choose(DL_CLOSE);
+        act.runOnUiThread(new CloseAriaAnswer(ans));
         return ans.choice[0];
     }
 
@@ -3410,7 +3561,7 @@ public class CNCNDownloadUI {
         @Override public void run() {
             try { buildAria2Dialog(act, fileName, canRetry, aria2Failed, offerOffline, ans); }
             catch (Throwable t) {
-                CNLog.e(TAG, "[aria2询问] 构建失败，按「继续用主引擎」处理", t);
+                CNLog.e(TAG, "[aria2询问] 构建失败，按「关闭且保留断点」处理", t);
                 ans.latch.countDown();
             }
         }
@@ -3421,14 +3572,14 @@ public class CNCNDownloadUI {
                                          boolean canRetry, boolean aria2Failed,
                                          boolean offerOffline, Aria2Answer ans) {
         FrameLayout host = overlayView;
-        if (host == null || aria2AskModal != null) {   // 浮层没了 / 已开着一个询问
+        if (ans.resolved || !isShowing || host == null || aria2AskModal != null) {   // 浮层没了 / 已开着一个询问
             ans.latch.countDown();
             return;
         }
         final FrameLayout modal = new FrameLayout(act);
         modal.setBackgroundColor(COLOR_DIM);
-        modal.setClickable(true);        // 吃掉点击：这是必须做出的选择，
-        modal.setFocusable(true);        // 不许点框外糊弄过去
+        modal.setClickable(true);        // 避免误触下层；玩家可明确关闭且保留进度
+        modal.setFocusable(true);
 
         LinearLayout panel = new LinearLayout(act);
         panel.setOrientation(LinearLayout.VERTICAL);
@@ -3441,7 +3592,9 @@ public class CNCNDownloadUI {
         FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
                 dp(act, 330), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
         panelLp.leftMargin = panelLp.rightMargin = dp(act, 20);
-        modal.addView(panel, panelLp);
+        ScrollView panelScroll = new ScrollView(act);
+        panelScroll.addView(panel);
+        modal.addView(panelScroll, panelLp);
 
         // 单线程已经开着（或被调试开关/云端强制）时不再给这一项——给了也没用，
         // 只会让人点完发现「还是一样失败」，然后不再相信这个框里的任何按钮。
@@ -3462,7 +3615,7 @@ public class CNCNDownloadUI {
         body.append(aria2Failed
                 ? "备用下载引擎（aria2）下载「" + fileName + "」失败。\n\n"
                 : "「" + fileName + "」多次下载失败。\n\n");
-        body.append("接下来怎么办：\n");
+        body.append("关闭窗口可暂不重试，保留现有下载状态。\n接下来怎么办：\n");
         body.append(aria2Failed
                 ? "· 「继续用主引擎下载」：改用分块下载引擎重新下载。\n"
                 : "· 「再试一次」：换条线路重新下载。\n");
@@ -3548,10 +3701,15 @@ public class CNCNDownloadUI {
             offline.setOnClickListener(new Aria2Choice(ARIA2_OFFLINE, ans));
         }
 
+        TextView close = dialogButton(act, "关闭（暂不重试）",
+                COLOR_LOG_PANEL_TEXT, 0x00000000, true);
+        close.setOnClickListener(new Aria2Choice(DL_CLOSE, ans));
+        panel.addView(close, lpRow(dp(act, 10), 0));
         host.addView(modal, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
         aria2AskModal = modal;
+        pendingAriaAnswer = ans;
     }
 
     /** 记下选择 → 关框 → 放行等在后台线程上的调用方。 */
@@ -3560,16 +3718,14 @@ public class CNCNDownloadUI {
         Aria2Choice(int choice, Aria2Answer ans) { this.choice = choice; this.ans = ans; }
         @Override public void onClick(View v) {
             try {
-                ans.choice[0] = choice;
+                if (!ans.choose(choice)) return;
                 CNLog.i(TAG, "[下载询问] 玩家选择："
                         + (choice == ARIA2_RETRY ? "备用引擎"
                            : choice == ARIA2_OFFLINE ? "改用离线包"
                            : choice == DL_SINGLE ? "改用单线程下载"
-                           : choice == DL_MULTI ? "改回多线程下载" : "继续用主引擎"));
-                // 模式在**这里**切，不留给每个调用方各切一次：三个失败点都要用
-                // 这一项，分散写迟早会漏掉一个，而漏掉的表现是「点了没反应」。
-                if (choice == DL_SINGLE) CNDownloadMode.setPlayerChoice(true);
-                else if (choice == DL_MULTI) CNDownloadMode.setPlayerChoice(false);
+                           : choice == DL_MULTI ? "改回多线程下载"
+                           : choice == DL_CLOSE ? "关闭且保留断点" : "继续用主引擎"));
+                // choose() 原子记录模式和答复，晚到的按钮事件不触发第二次动作。
                 closeAria2AskDialog();
             } catch (Throwable t) {
                 CNLog.e(TAG, "[aria2询问] 处理选择失败", t);
@@ -3579,7 +3735,17 @@ public class CNCNDownloadUI {
         }
     }
 
+    private static final class CloseAriaAnswer implements Runnable {
+        private final Aria2Answer answer;
+        CloseAriaAnswer(Aria2Answer answer) { this.answer=answer; }
+        public void run() {
+            if (pendingAriaAnswer == answer) closeAria2AskDialog();
+        }
+    }
+
     private static void closeAria2AskDialog() {
+        Aria2Answer answer=pendingAriaAnswer; pendingAriaAnswer=null;
+        if (answer!=null) answer.choose(DL_CLOSE);
         FrameLayout m = aria2AskModal;
         aria2AskModal = null;
         if (m != null && m.getParent() instanceof ViewGroup) {
@@ -4218,6 +4384,7 @@ public class CNCNDownloadUI {
                 // 永不续期，native 闸门永久 fail-open（不卡死但闸不住）。
                 hostActivity = act;
                 loadPalette(darkMode);
+                closeRouteMenu();
                 FrameLayout fresh = buildOverlay(act);
                 dv.addView(fresh, new ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -4271,6 +4438,7 @@ public class CNCNDownloadUI {
                     CNLog.w("界面", "主题切换：下载询问框摘离旧树失败: " + t); }
             }
 
+            closeRouteMenu();
             FrameLayout fresh = buildOverlay(act);
             if (old != null) dv.removeView(old);
             dv.addView(fresh, new ViewGroup.LayoutParams(
@@ -4681,6 +4849,10 @@ public class CNCNDownloadUI {
                 // hide() 入口处已放过一次；这里是第二道——覆盖「SlowBuild 在
                 // hide() 之后、本 Runnable 之前才建好框」的竞态窗口。
                 releasePendingSlowAnswer("浮层拆除");
+                closeAria2AskDialog();
+                closeRouteMenu();
+                vRouteChip = null;
+                vStorageChip = null;
                 slowModal     = null;
                 vLogScroll    = null;
                 themeChipBg   = null;
@@ -4827,6 +4999,8 @@ public class CNCNDownloadUI {
         // latch.await() 上没有超时，框没了就再也等不到回答，线程永久挂起。
         // 必须在 isShowing 早退判断之前做：早退路径同样可能留着一封未答的信。
         releasePendingSlowAnswer("浮层收起");
+        Aria2Answer pendingFailure = pendingAriaAnswer;
+        if (pendingFailure != null) pendingFailure.choose(DL_CLOSE);
         stopOverlayFlag();  // 先撤引擎闸门标记，引擎才能继续推进
         try { CNBgm.stop(); } catch (Throwable ignore) {}
         try { CNDownloadUiAssist.onOverlayDetached(); } catch (Throwable ignore) {}
