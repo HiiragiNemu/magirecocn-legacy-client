@@ -723,8 +723,9 @@ checks = {
     "悬浮窗权限由我们的补丁加上":
         any("SYSTEM_ALERT_WINDOW" in l for l in manifest_added),
     # 用户明确要求手动设置入口；没有启动时自动申请或以授权阻塞下载。
-    "提供手动文件权限入口且不自动请求":
+    "共享文件权限入口由构建开关控制且不自动请求":
         "new StorageAccessClick(act)" in ui
+        and "if (CNBuildConfig.ALL_FILES_ACCESS) {" in ui
         and "CNStorageAccess.open(activity)" in body(ui, "private static final class StorageAccessClick")
         and "CNStorageAccess.open" not in body(ui, "private static void renderAll()"),
     # ---- F-073 原子换入 ----

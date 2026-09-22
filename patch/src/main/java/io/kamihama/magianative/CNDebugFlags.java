@@ -123,7 +123,7 @@ public final class CNDebugFlags {
     public static final String SKIP_INSTALLER      = "skipInstaller";
     /** `CNCNDownloadUI.show()` 不显示浮层，连带不下发 native 的引擎闸门标记。 */
     public static final String SKIP_OVERLAY        = "skipOverlay";
-    /** `CNVersionCheck` 不查客户端版本，不弹强制更新框。 */
+    /** `CNVersionCheck` 不查客户端版本，不弹客户端更新提示。 */
     public static final String SKIP_VERSION_CHECK  = "skipVersionCheck";
     /** `CNMirrors` 不拉 config.json，全程用内置默认线路（代理配置也不下发）。 */
     public static final String SKIP_MIRROR_CONFIG  = "skipMirrorConfig";
@@ -192,7 +192,7 @@ public final class CNDebugFlags {
         { SKIP_WEB_PROXY,       "不装 WebView 拦截层代理，一律透传直连" },
         { SKIP_INSTALLER,       "不跑首次安装（资源缺失时会停在浮层）" },
         { SKIP_OVERLAY,         "不显示浮层（连带不下发 native 引擎闸门标记）" },
-        { SKIP_VERSION_CHECK,   "不查客户端版本，不弹强制更新框" },
+        { SKIP_VERSION_CHECK,   "不查客户端版本，不弹客户端更新提示" },
         { SKIP_MIRROR_CONFIG,   "不拉 config.json，全程用内置默认线路" },
         { SKIP_HOT_UPDATE,      "跳过热更检查，直接进游戏" },
         { SKIP_TUTORIAL_PROMPT, "不弹「是否播放序章」询问框" },

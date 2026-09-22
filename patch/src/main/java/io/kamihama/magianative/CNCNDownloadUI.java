@@ -1010,17 +1010,20 @@ public class CNCNDownloadUI {
         logoRow.setMinimumHeight(dp(act, 64));
         logoRow.setGravity(Gravity.CENTER_VERTICAL);
         logoRow.addView(logoView, new LinearLayout.LayoutParams(0, dp(act, 64), 1f));
-        vStorageChip = new TextView(act);
-        vStorageChip.setText(CNStorageAccess.status(act));
-        vStorageChip.setTextSize(12);
-        vStorageChip.setMinHeight(dp(act, 48));
-        vStorageChip.setGravity(Gravity.CENTER_VERTICAL);
-        vStorageChip.setTextColor(COLOR_ACCENT2);
-        vStorageChip.setPadding(dp(act, 8), dp(act, 12), dp(act, 4), dp(act, 12));
-        vStorageChip.setOnClickListener(new StorageAccessClick(act));
         LinearLayout logoActions = new LinearLayout(act);
         logoActions.setOrientation(LinearLayout.VERTICAL);
-        logoActions.addView(vStorageChip);
+        vStorageChip = null;
+        if (CNBuildConfig.ALL_FILES_ACCESS) {
+            vStorageChip = new TextView(act);
+            vStorageChip.setText(CNStorageAccess.status(act));
+            vStorageChip.setTextSize(12);
+            vStorageChip.setMinHeight(dp(act, 48));
+            vStorageChip.setGravity(Gravity.CENTER_VERTICAL);
+            vStorageChip.setTextColor(COLOR_ACCENT2);
+            vStorageChip.setPadding(dp(act, 8), dp(act, 12), dp(act, 4), dp(act, 12));
+            vStorageChip.setOnClickListener(new StorageAccessClick(act));
+            logoActions.addView(vStorageChip);
+        }
         vRouteChip = new TextView(act);
         vRouteChip.setText("线路：" + CNDownloadRoute.describe());
         vRouteChip.setTextSize(12);
@@ -1981,7 +1984,7 @@ public class CNCNDownloadUI {
                 try {
                     populateContributors(act);
                     refreshVersionPanel();
-        if (vStorageChip != null && hostActivity != null)
+        if (CNBuildConfig.ALL_FILES_ACCESS && vStorageChip != null && hostActivity != null)
             vStorageChip.setText(CNStorageAccess.status(hostActivity));
                     applyRightPill(act);   // GitHub 胶囊可变: config 下发 right_pill 则替换文案/动作
                     if (vFooter != null) {
@@ -3761,45 +3764,55 @@ public class CNCNDownloadUI {
     }
 
     // ==================================================================
-    // 强制更新弹窗（客户端版本检查）
+    // 可选更新弹窗（客户端版本检查）
     // ==================================================================
 
-    /** 强制更新弹窗的模态框。非空即表示正在显示，用于防重入。 */
+    /** 可选更新弹窗的模态框。非空即表示正在显示，用于防重入。 */
     private static FrameLayout versionModal;
 
-    /**
-     * 强制更新弹窗：云端客户端版本高于本端时由 {@link CNVersionCheck} 调用。
-     * 模态、不可点框外关闭——玩家的去路只有「前往更新」（调起系统浏览器）和
-     * 「退出游戏」两条；下次启动还会再查再拦，这就是「强制」的含义。
-     *
-     * <p>用浮层自己的调色板与圆角，与教程询问框同一套模态框样式；宿主是引擎的
-     * Activity，系统 AlertDialog 在上面格格不入。
-     *
-     * <p>可在任意线程调用，内部会切到 UI 线程。浮层没建起来时无处可挂，记日志
-     * 了事（版本检查的日志里已有完整的版本与地址信息）。
-     *
-     * @param local  本端版本（native 内置）
-     * @param cloud  云端版本（config.json 的 client.version）
-     * @param url    新包下载地址（client.apk_url）
-     * @param note   云端附言（client.note，可为空串）
-     */
+    /** 可选 APK 更新；继续按钮、框外点击或返回键都接回原启动流程。 */
     public static void showVersionUpdateDialog(final Activity act, final String local,
                                                final String cloud, final String url,
                                                final String note, final org.json.JSONObject metadata) {
         final FrameLayout host = overlayView;
         if (act == null || host == null) {
-            CNLog.w("界面", "浮层不在，无法显示强制更新框");
+            CNLog.w("界面", "浮层不在，无法显示可选更新框");
+            CNVersionCheck.continueWithCurrentVersion();
             return;
         }
-        act.runOnUiThread(new Runnable() {
+        try { act.runOnUiThread(new Runnable() {
             @Override public void run() {
-                try { buildVersionUpdateDialog(act, host, local, cloud, url, note, metadata); }
-                catch (Throwable t) { CNLog.e("界面", "构建强制更新框失败", t); }
+                try {
+                    if (host != overlayView || act.isFinishing()) {
+                        continueWithCurrentVersion();
+                        return;
+                    }
+                    buildVersionUpdateDialog(act, host, local, cloud, url, note, metadata);
+                } catch (Throwable t) {
+                    CNLog.e("界面", "构建可选更新框失败", t);
+                    continueWithCurrentVersion();
+                }
             }
-        });
+        }); } catch (Throwable t) {
+            CNLog.e("界面", "更新提示调度失败，继续启动", t);
+            CNVersionCheck.continueWithCurrentVersion();
+        }
     }
 
-    /** 在 UI 线程上真正把强制更新框建出来。 */
+    /** 先拆提示，再接力；版本检查侧以原子标记保证后续流程只执行一次。 */
+    private static void continueWithCurrentVersion() {
+        FrameLayout modal = versionModal;
+        versionModal = null;
+        try {
+            if (modal != null && modal.getParent() instanceof ViewGroup) {
+                ((ViewGroup) modal.getParent()).removeView(modal);
+            }
+        } finally {
+            CNVersionCheck.continueWithCurrentVersion();
+        }
+    }
+
+    /** 在 UI 线程上真正把可选更新框建出来。 */
     private static void buildVersionUpdateDialog(final Activity act, FrameLayout host,
                                                  String local, String cloud,
                                                  final String url, String note, final org.json.JSONObject metadata) {
@@ -3807,11 +3820,26 @@ public class CNCNDownloadUI {
 
         final FrameLayout modal = new FrameLayout(act);
         modal.setBackgroundColor(COLOR_DIM);
-        modal.setClickable(true);              // 吃掉点击，不许点框外关掉
-        modal.setFocusable(true);
+        modal.setClickable(true);
+        modal.setFocusableInTouchMode(true);
+        final View.OnClickListener keepCurrent = new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                CNLog.i("界面", "玩家选择继续用旧版");
+                continueWithCurrentVersion();
+            }
+        };
+        modal.setOnClickListener(keepCurrent);
+        modal.setOnKeyListener(new View.OnKeyListener() {
+            @Override public boolean onKey(View v, int keyCode, android.view.KeyEvent event) {
+                if (keyCode != android.view.KeyEvent.KEYCODE_BACK) return false;
+                if (event.getAction() == android.view.KeyEvent.ACTION_UP) continueWithCurrentVersion();
+                return true;
+            }
+        });
 
         LinearLayout panel = new LinearLayout(act);
         panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setClickable(true);
         panel.setPadding(dp(act, 22), dp(act, 20), dp(act, 22), dp(act, 18));
         GradientDrawable panelBg = new GradientDrawable();
         panelBg.setColor(COLOR_LOG_PANEL_BG);
@@ -3832,9 +3860,9 @@ public class CNCNDownloadUI {
 
         TextView msg = new TextView(act);
         String text = "发现新版本客户端：v" + cloud + "（当前 v" + local + "）\n\n"
-                + "客户端版本过旧，继续游戏可能无法正常运行，请下载并安装最新版本。\n\n"
+                + "可选择现在更新，也可继续使用当前客户端。\n\n"
                 + "· 「立即更新」：应用内下载并校验，随后确认覆盖安装，保留存档与资源\n"
-                + "· 「退出游戏」：本次不玩，下次启动会再次提醒";
+                + "· 「继续用旧版」：跳过本次 APK 更新，继续原启动流程";
         if (note != null && !note.isEmpty()) text += "\n\n" + note;
         msg.setText(text);
         msg.setTextColor(COLOR_LOG_PANEL_TEXT);
@@ -3884,7 +3912,7 @@ public class CNCNDownloadUI {
         row.setGravity(Gravity.END);
         panel.addView(row, lpRow(0, 0));
 
-        TextView quit = dialogButton(act, "退出游戏", COLOR_LOG_PANEL_TEXT, 0x00000000, true);
+        TextView stay = dialogButton(act, "继续用旧版", COLOR_LOG_PANEL_TEXT, 0x00000000, true);
         TextView go   = dialogButton(act, "立即更新", 0xFFFFFFFF, COLOR_ACCENT, false);
         if (fontScale >= 1.2f) {
             LinearLayout.LayoutParams qLp = new LinearLayout.LayoutParams(
@@ -3893,26 +3921,18 @@ public class CNCNDownloadUI {
             LinearLayout.LayoutParams gLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             gLp.topMargin = dp(act, 10);
-            row.addView(quit, qLp);
+            row.addView(stay, qLp);
             row.addView(go, gLp);
         } else {
             LinearLayout.LayoutParams goLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             goLp.leftMargin = dp(act, 10);
-            row.addView(quit, new LinearLayout.LayoutParams(
+            row.addView(stay, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             row.addView(go, goLp);
         }
 
-        quit.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                CNLog.i("界面", "玩家在强制更新框选择退出游戏");
-                try { act.finishAffinity(); }
-                catch (Throwable t) {
-                    try { act.finish(); } catch (Throwable ignore) {}
-                }
-            }
-        });
+        stay.setOnClickListener(keepCurrent);
         go.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
                 CNLog.i("界面", "玩家选择应用内更新");
@@ -3924,7 +3944,8 @@ public class CNCNDownloadUI {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
         versionModal = modal;
-        CNLog.i("界面", "强制更新框已显示：本端 v" + local + " → 云端 v" + cloud);
+        modal.requestFocus();
+        CNLog.i("界面", "可选更新框已显示：本端 v" + local + " → 云端 v" + cloud);
     }
 
     /**
@@ -4422,7 +4443,7 @@ public class CNCNDownloadUI {
 
             // X-C8：主题切换 = 重建整棵 overlay 树。三类「等玩家回答 /
             // 强阻断」的 modal 必须随树迁移，不能丢：
-            //  · versionModal  强更框——丢了玩家就能绕过强制更新进游戏；
+            //  · versionModal  更新提示——保留玩家尚未完成的选择；
             //  · slowModal     慢网询问——latch 无超时，丢框又没放行的话
             //                  后台下载线程永卡（releasePendingSlowAnswer
             //                  的拆窗兜底只走 hide()/HideRunnable 路径）；
@@ -4437,7 +4458,7 @@ public class CNCNDownloadUI {
                     && logModal.getVisibility() == View.VISIBLE;
             if (old != null) {
                 try { if (vm != null) old.removeView(vm); } catch (Throwable t) {
-                    CNLog.w("界面", "主题切换：强更框摘离旧树失败: " + t); }
+                    CNLog.w("界面", "主题切换：更新提示框摘离旧树失败: " + t); }
                 try { if (sm != null) old.removeView(sm); } catch (Throwable t) {
                     CNLog.w("界面", "主题切换：慢网询问框摘离旧树失败: " + t); }
                 try { if (am != null) old.removeView(am); } catch (Throwable t) {
@@ -4459,7 +4480,7 @@ public class CNCNDownloadUI {
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT);
             try { if (vm != null) fresh.addView(vm, full); } catch (Throwable t) {
-                CNLog.e("界面", "主题切换：强更框迁移失败: " + t); }
+                CNLog.e("界面", "主题切换：更新提示框迁移失败: " + t); }
             boolean slowMigrated = true;
             try { if (sm != null) fresh.addView(sm, full); } catch (Throwable t) {
                 slowMigrated = false;
@@ -4577,7 +4598,7 @@ public class CNCNDownloadUI {
         // 表现就是日志行刚打印出来就转瞬即逝。
         scheduleLogRefresh();
         refreshVersionPanel();
-        if (vStorageChip != null && hostActivity != null)
+        if (CNBuildConfig.ALL_FILES_ACCESS && vStorageChip != null && hostActivity != null)
             vStorageChip.setText(CNStorageAccess.status(hostActivity));
 
         int[]   status     = fileStatus;
@@ -4875,7 +4896,7 @@ public class CNCNDownloadUI {
                 // ↓ 以下 9 个字段原先漏清——README 🔴规则「漏一个就把
                 // Activity 钉住」的事故形态。热更路径 hide() 后不重启进程，
                 // 这些 static 引用会把宿主 Activity 整场会话钉在内存里；
-                // versionModal 不置 null 还会让强更框「同进程只弹一次」、
+                // versionModal 不置 null 还会让更新提示框「同进程只弹一次」、
                 // aria2AskModal 残留会让后续询问被静默替玩家做决定。
                 headRightRow          = null;
                 vOfflinePill          = null;

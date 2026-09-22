@@ -18,4 +18,6 @@ assert 'darkMode = backgroundPeriod == CNDownloadPresentation.NIGHT;' in ui
 assert 'if (darkMode && backgroundPeriod != CNDownloadPresentation.NIGHT)' in ui
 assert '? 0x4418112A : 0xCC18112A' in ui
 assert 'new StorageAccessClick(act)' in ui
-print('PASS: UI consumes shared totals, night assets have no dim filter, optional manual storage entry')
+assert 'if (CNBuildConfig.ALL_FILES_ACCESS) {' in ui
+assert 'boolean ALL_FILES_ACCESS = false;' in (ROOT / 'patch/src/main/java/io/kamihama/magianative/CNBuildConfig.java').read_text(encoding='utf-8')
+print('PASS: UI consumes shared totals, night assets have no dim filter, manual storage implementation retained but disabled by default')

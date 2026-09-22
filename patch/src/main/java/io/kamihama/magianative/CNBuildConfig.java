@@ -29,4 +29,7 @@ public final class CNBuildConfig {
      * 所以注入必须发生在 javac 之前（build-apk.yml 的注入步骤就在编译前）。
      */
     public static final String MAIN_ENGINE = "self";
+
+    /** 当前发布关闭所有文件访问；源码保留，只有显式构建启用才显示入口并声明权限。 */
+    public static final boolean ALL_FILES_ACCESS = false;
 }

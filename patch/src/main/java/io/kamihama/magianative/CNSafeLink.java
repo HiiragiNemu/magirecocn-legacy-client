@@ -19,7 +19,7 @@ import java.util.Locale;
  *       {@code ui_credits} / {@code github_url} 覆盖；</li>
  *   <li>右上角可变按钮的弹窗跳转 —— {@code config.json} 的
  *       {@code right_pill.url}；</li>
- *   <li>强制更新框的「前往更新」 —— {@code config.json} 的 {@code client.apk_url}。</li>
+ *   <li>客户端更新提示的「立即更新」 —— {@code config.json} 的 {@code client.apk_url}。</li>
  * </ul>
  *
  * 原先三处都是直接 {@code new Intent(ACTION_VIEW, Uri.parse(url))} 就发出去，

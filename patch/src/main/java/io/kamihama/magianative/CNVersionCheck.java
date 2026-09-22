@@ -11,35 +11,10 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 
 /**
- * 客户端版本检查：每次启动、<b>热更检查之前</b>跑。云端版本高于本端内置版本时，
- * 弹强制更新框（调起浏览器下载新包），并<b>不再</b>接力热更检查。
- *
- * <h3>版本号在哪儿</h3>
- *
- * 本端版本硬编码在 native 侧（magia-native/src/MagiaLegacy.cpp 的
- * {@code CLIENT_VERSION}），经 JNI 的 {@link #nativeClientVersion()} 取回。
- * 刻意不读也不改 APK 的 versionName / versionCode——那是上游包的身份，
- * 动了会影响覆盖安装；客户端更新通道的版本号是我们自己的一套。
- *
- * <p>云端版本与下载地址记在 {@code config.json} 的 {@code client} 段
- * （{@code version} / {@code apk_url}），并兼容正式 APK 旁注。独立来源并行核对，
- * 采用完整元数据中的最高版本，不因首个旧版本响应而停止。
- *
- * <h3>失败放行</h3>
- *
- * 拉不到 config.json、解析不了、读不到 native 版本——任何一种异常都<b>放行</b>
- * （日志照记），绝不让玩家因为一次网络抖动进不了游戏。强制更新拦的是
- * 「明确知道云端更新了」这一种情况，其余一律当作没有更新。
- *
- * <h3>调用方</h3>
- *
- * {@link CNDownloaderFix#triggerInstaller} 在确认安装完成标记存在后调用本类，
- * 原先那里直接调 {@code CNHotUpdateCheck.start()}；是否需要更新由本类判断，
- * 不需要时才接力 {@code CNHotUpdateCheck.start()}。
- *
- * <p><b>首次安装未完成时同样会先过本检查</b>（接力动作换成启动安装器）——
- * 最需要强更的恰恰是装不上资源的玩家（下载器本身有 bug 的那批），
- * 如果只在安装完成后才查版本，他们永远收不到「去下修复包」的提示。
+ * 客户端版本检查，在热更检查与首次资源安装之前运行。
+ * 云端更高时提示更新，玩家可继续用当前客户端；检查失败也继续原启动流程。
+ * 更新提示仅影响 APK 更新选择，不改动资源校验、下载或安装标记。
+ * 本端版本由 nativeClientVersion() 读取；云端取各完整来源中的最高版本。
  */
 public final class CNVersionCheck {
 
@@ -52,7 +27,7 @@ public final class CNVersionCheck {
     public static volatile String lastEdgeOneVersion = "—";
 
     // config 是可选控制面：失败必须快速放行。**原先是 15s + 15s**，落在启动关键
-    // 路径上就是最多白等半分钟，而这一步失败本来就只意味着「本次不弹强更框」。
+    // 路径上就是最多白等半分钟，而这一步失败本来就只意味着「本次不弹更新提示」。
     // 所以收到下面这两个值——不是「随手调紧」，是这一步的失败代价本来就近乎为零。
     private static final int CONNECT_TIMEOUT_MS = 1800;
     private static final int READ_TIMEOUT_MS = 2200;
@@ -64,7 +39,7 @@ public final class CNVersionCheck {
     private static final java.util.concurrent.atomic.AtomicBoolean STARTED =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
-    /** 「不需要更新」时的接力动作；每条放行路径调一次且仅一次。 */
+    /** 不更新 APK 时的接力动作；每条放行路径调一次且仅一次。 */
     private static volatile Runnable afterPass;
     private static final java.util.concurrent.atomic.AtomicBoolean PROCEEDED =
             new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -82,9 +57,8 @@ public final class CNVersionCheck {
      * 启动版本检查。不抛异常、不阻塞调用方：内部另起守护线程；
      * 重复调用只有第一次生效。
      *
-     * @param cont 「不需要更新」时要接力的动作（热更检查，或首次安装的安装器）。
-     *             每条放行路径都会执行且只执行一次；唯有「确认云端更高、
-     *             弹出强制更新框」时不执行——那条路模态等玩家抉择。
+     * @param cont 不更新 APK 时要接力的动作（热更检查，或首次安装的安装器）。
+     *             选择继续、检查失败等放行路径都会执行且只执行一次。
      */
     public static void start(Runnable cont) {
         // F-031：先原子取得唯一启动权，再把 continuation 绑定给赢家。旧实现
@@ -148,7 +122,7 @@ public final class CNVersionCheck {
             if (overlayReady) {
                 CNCNDownloadUI.updateSimple("检查客户端版本", "正在检查客户端版本…", 0);
             } else {
-                CNLog.w(TAG, "Activity 存活但浮层未能挂载；若需要强更，本次将 fail-open");
+                CNLog.w(TAG, "Activity 存活但浮层未能挂载；本次继续原启动流程");
             }
         } else {
             CNLog.w(TAG, "等不到可用的 Activity，本次版本检查将无浮层运行");
@@ -188,9 +162,7 @@ public final class CNVersionCheck {
             return;
         }
 
-        // F-040：强更必须指向可下载的合法地址。apk_url 空/非 https/不在允许列表
-        // 时是服务端误配置——强更会让所有客户端永久停在更新框且拿不到包，安装器/
-        // 热更/游戏入口都接不上。校验不过放行进游戏（fail-open），日志告警。
+        // 更新地址不符合既有准入规则时跳过提示，继续原来的资源检查。
         String urlErr = CNSafeLink.reject(apkUrl);
         if (urlErr != null) {
             CNLog.e(TAG, "云端 client.apk_url 不合法（" + urlErr + "），本次不强制更新，放行进游戏");
@@ -198,20 +170,31 @@ public final class CNVersionCheck {
             return;
         }
 
-        // 云端明确更高：强制更新。弹窗模态挂在浮层上，不接后续流程——玩家要么去
-        // 更新，要么退出游戏；下次启动还会再查再拦。
-        CNLog.w(TAG, "云端版本更高（" + local + " → " + cloud + "），弹强制更新框");
+        // 是否安装较新 APK 由玩家决定；继续入口接回同一条一次性 continuation。
+        CNLog.i(TAG, "云端版本更高（" + local + " → " + cloud + "），提示可选更新");
         if (act != null && overlayReady) {
-            CNCNDownloadUI.updateSimple("客户端更新", "发现新版本 v" + cloud + "，需要更新客户端", 0);
+            CNCNDownloadUI.updateSimple("客户端更新", "发现新版本 v" + cloud + "，也可继续使用当前版本", 0);
             CNCNDownloadUI.showVersionUpdateDialog(act, local, cloud, apkUrl, note, client);
         } else {
-            // F-064：强更的唯一阻断依据是「玩家确实看得到更新模态」。无 Activity 或
-            // 浮层创建失败时继续吞掉 continuation，会形成既没对话框也不启动后续流程
-            // 的黑屏死路。与本类所有不确定失败一致，保守放行。
-            CNLog.e(TAG, "无可见浮层可弹强制更新框（云端 " + cloud + "，地址 " + apkUrl
-                    + "），本次 fail-open 接力后续流程");
+            CNLog.w(TAG, "更新提示缺少可见浮层，继续原启动流程");
             proceed();
         }
+    }
+
+    /** UI 关闭提示后的首次安装可能涉及 I/O，仍在后台接力，不阻塞主线程。 */
+    static void continueWithCurrentVersion() {
+        try {
+            Thread t = new Thread(new ContinueCurrentVersion(), "cnv-version-continue");
+            t.setDaemon(true);
+            t.start();
+        } catch (Throwable t) {
+            CNLog.e(TAG, "继续启动线程创建失败，直接接力", t);
+            proceed();
+        }
+    }
+
+    private static final class ContinueCurrentVersion implements Runnable {
+        @Override public void run() { proceed(); }
     }
 
     // ==================================================================
@@ -391,7 +374,7 @@ public final class CNVersionCheck {
             sleep(ACTIVITY_WAIT_STEP_MS);
         }
         // F-064：`last` 从未通过 decorView 判据，不能冒充 usable——返回它会让调用方
-        // 误以为可以硬阻断强更，最终 UI 不存在且 continuation 被吞掉。超时返回 null。
+        // 误以为可以等待更新选择，最终 UI 不存在且 continuation 被吞掉。超时返回 null。
         return null;
     }
 

@@ -15,6 +15,7 @@ public final class CNStorageAccess {
     private CNStorageAccess() {}
 
     public static boolean granted(Activity act) {
+        if (!CNBuildConfig.ALL_FILES_ACCESS) return false;
         if (Build.VERSION.SDK_INT >= 30) return Environment.isExternalStorageManager();
         return Build.VERSION.SDK_INT < 23 || act.checkSelfPermission(
                 Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
@@ -25,6 +26,7 @@ public final class CNStorageAccess {
     }
 
     public static void open(Activity act) {
+        if (!CNBuildConfig.ALL_FILES_ACCESS) return;
         try {
             if (Build.VERSION.SDK_INT >= 30) {
                 Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,

@@ -159,7 +159,7 @@ python3 tools/baseline.py apply --out <目录>   # 只重建，不比对
 | `CNWebProxy` | WebView 拦截层代理：把原 `WebViewClient` 包一层，本地文件没命中的 GET 可改走 `/stream/`。默认纯透传，模式由 `config.json` 的 `proxy.web_mode`（`off` / `measure` / `on`）下发，切换不用重打 APK。端点级代理在真机上五次会话零命中（见「网络出口」一节），这是替代路线 |
 | `CNWebLocalFiles` | WebView 本地资源拦截的**全部判据**。基线的 `WebViewClientImpl.shouldInterceptRequest` 经补丁改写后只剩一行调它。判据收进 Java 而不是留在 smali，是因为这里每一行都是**安全边界**：旧 smali 版按「URL 任意位置 contains("/magica/")、只剥查询串」拼路径，把 `..` 放进查询串就能穿越出去（F-E-01）。守卫 `check-webview-interceptor.py` 同时钉两侧的形状 |
 | `CNSafeLink` | 外链统一出口：只放行 HTTPS 且域名在**写死在客户端**的允许列表内（自有域与那三个站的主机名由 `CNEndpoints` 构建期注入——注入发生在编译前，进包后同样是常量池里的死串，配置改不动它，性质不变）。挡的是「服务端被攻破后靠改配置把玩家导去任意地址」与配置写错，**不是**中间人——那一层已由 DNSSEC + 完整 TLS 验证覆盖 |
-| `CNVersionCheck` | 客户端版本检查，跑在热更检查与首次安装**两者之前**（装不上资源的玩家最需要强更提示）。本端版本硬编码在 native（`CLIENT_VERSION`，与 APK 的 versionName/versionCode 无关），云端版本在 `config.json` 的 `client` 段。任何异常一律放行，绝不因网络抖动挡住进游戏 |
+| `CNVersionCheck` | 客户端版本检查，跑在热更检查与首次安装**两者之前**（装不上资源的玩家也能收到可选更新提示）。本端版本硬编码在 native（`CLIENT_VERSION`，与 APK 的 versionName/versionCode 无关），云端版本在 `config.json` 的 `client` 段。任何异常一律放行，绝不因网络抖动挡住进游戏 |
 | `CNUserAgent` | 补丁侧统一 User-Agent（`magireco-cn-legacy/<ver> (Android …; SDK …)`），CDN/服务端日志据此识别客户端与版本。版本号与 native `CLIENT_VERSION` 同源，CI 直接读取该值，不再用 GitHub Run Number 改写客户端语义版本。补丁发起的请求全覆盖；**WebView 转发的游戏流量不动**，仍透传原始 UA |
 | `CNRestart` | 重启本进程。原包的 `RestClient.restartApp()` 是坏的——它开头会重跑旧热更（浮层再现），且新 Activity 起在同进程里，被随后那一刀连带砍掉。**做法换过两版**：先是用 `AlarmManager` 把启动 Intent 排到 ~300ms 后再自杀，但部分机型上仍会退回桌面；现在改走独立进程的可见跳板（见下一行），确认跳板真的到了前台才杀旧进程 |
 | `CNRestartActivity` | 重启跳板，跑在独立进程 `:cnrestart` 里的透明 Activity。`onResume` 里确认自己已在前台后写就绪标记，`CNRestart` 轮询到该标记才敢杀旧进程；随后延迟拉起主 Activity，失败还会重试一次并把跳板留在前台，而不是悄悄消失。 |
@@ -749,6 +749,8 @@ WebView 调试回调仍由主线程执行，编译形状使用静态回调类，
 
 
 ### 应用内客户端更新
+
+发现较新 APK 时提供「立即更新」和「继续用旧版」。点击框外或返回键也视为继续；后续首次资源安装或热更检查只接力一次。打开更新页面后取消下载或安装，可返回选择继续，不清理资源或存档。关闭提示只跳过本次 APK 更新，下一次启动仍可提醒。
 
 客户端分别查询各有效发布来源的 APK、脚本与剧情版本，采用最高有效版本。
 点击「立即更新」后在应用内显示下载进度与速度；只在同版本、同大小、同 SHA-256 的来源间换线。
