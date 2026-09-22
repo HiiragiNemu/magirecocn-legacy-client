@@ -79,6 +79,11 @@ public final class CNChunkedDownload {
         void onSlowTransfer();
     }
 
+    /** Reports the actual successful byte source, including per-block failover. */
+    public interface RouteSink extends Sink {
+        void onRoute(String url);
+    }
+
     public static final class Probe {
         public final long total;
         public final String etag;
@@ -531,6 +536,7 @@ public final class CNChunkedDownload {
 
             in = new BufferedInputStream(c.getInputStream(), 1 << 16);
             out = new FileOutputStream(temp, false);
+            if (sink instanceof RouteSink) ((RouteSink) sink).onRoute(url);
             byte[] buf = new byte[1 << 16];
             long written = 0L;
             while (true) {
@@ -828,6 +834,7 @@ public final class CNChunkedDownload {
 
             in = new BufferedInputStream(c.getInputStream(), 1 << 16);
             raf = new RandomAccessFile(ctx.part, "rw");
+            if (ctx.sink instanceof RouteSink) ((RouteSink) ctx.sink).onRoute(ctx.url);
             raf.seek(start);
             byte[] buf = new byte[1 << 16];
             long received = 0L;

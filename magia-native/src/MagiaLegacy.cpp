@@ -537,7 +537,7 @@ static bool fileExists(const std::string& p) {
 // native 就是第二份会漂的实现。native 读到不合格的标记只报「没装好」，方向是
 // 安全的：引擎放行原版下载场景（我们的浮层盖在上面），安装器随之被叫起。
 static const size_t FINAL_FLAG_MAX_BYTES = 16384;
-static const long   FINAL_FLAG_ARCHIVES  = 15;
+static const long   FINAL_FLAG_ARCHIVES  = 16;
 
 // 纯函数：正文里必须同时出现 schema=<正整数> 与 archives=15。
 // schema 只要求「解析得出且 >= 1」——将来格式升级时，新版写下的标记不该被这一版
@@ -574,7 +574,7 @@ static bool parseFinalFlag(const std::string& body) {
             if (n < 1) return false;
             schemaOk = true;
         } else {
-            if (n != FINAL_FLAG_ARCHIVES) return false;
+            if (n != FINAL_FLAG_ARCHIVES && n != 15) return false;
             archivesOk = true;
         }
     }
@@ -1414,7 +1414,7 @@ struct Hidden {
 //   版本旁注，不得用 GITHUB_RUN_NUMBER 等构建编号覆盖；本地构建也直接使用该值。
 //   它是 constexpr、从不取地址，只在编译期喂给下面的 Hidden，因此不会有一份
 //   明文留在产物里。
-static constexpr char CLIENT_VERSION[] = "1.0.187";
+static constexpr char CLIENT_VERSION[] = "1.0.188";
 
 // 真正进二进制的是这一份：异或之后的字节。
 static constexpr auto kVersionHidden =

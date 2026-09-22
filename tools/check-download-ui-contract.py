@@ -64,7 +64,7 @@ def file_name_table(text):
 
 UI_ORDER = file_name_table(ui)
 DL_ORDER = file_name_table(downloader)
-HOT_PACKS = ("cn_scenario_update.zip", "cn_js_update.zip")
+HOT_PACKS = ("cn_scenario_update.zip", "cn_js_update.zip", "cn_js_delta.zip")
 
 
 def hot_last(order):
@@ -171,7 +171,7 @@ checks = {
     # 那正是「下完了却是旧台词」。
     "热更两包按 version json 身份完工校验":
         "verifyHotIdentity" in downloader
-        and "CNHotUpdateCheck.metaForSlot(indexOfArchive(name))" in downloader
+        and "CNHotUpdateCheck.metaForSlot(index)" in downloader
         and "CNHotUpdateValidate.verifyZip(archive, meta)" in downloader
         and "static CNHotUpdateValidate.VerMeta metaForSlot(int slot)" in hot_check,
     "动态热更新绑定 version-size-md5": "cnv_hot=" in hot and "hotIdentity" in hot and "verifyZip(dest, expected)" in hot,
@@ -388,7 +388,8 @@ checks = {
     # 表现为「刚下完就说身份不对」。
     "取包与校验复用同一份身份":
         "verifyHotIdentity(name, archive, hotMeta)" in downloader
-        and "CNHotUpdateValidate.VerMeta hotMeta = useManifest ? null" in downloader,
+        and "CNHotUpdateValidate.VerMeta pinnedHot = usesChunkManifest(name) ? null" in downloader
+        and "restartToken, pinnedHot)" in downloader,
     # 维护者决定（2026-08-13）：aria2 模式下不叠加额外内容校验，判据是 ZIP 自带的
     # 完整性。所以这里是**反向**断言——这条路上不许再冒出 manifest 块指纹或热更
     # version json 的比对。代价写在代码注释里：拦得住「没下全」，拦不住「下全了但
@@ -396,7 +397,7 @@ checks = {
     # 反向断言：aria2 那条路上不许出现 verifyHotIdentity。两处调用都在 fetchArchive
     # （主引擎的分片路径与单线程路径各一处），aria2 分支一处都不该有。
     "aria2 模式旁路额外内容校验":
-        downloader.count("verifyHotIdentity(name, archive, hotMeta)") == 2
+        downloader.count("verifyHotIdentity(name, archive, hotMeta)") == 3
         and "verifyHotIdentity(name, archive, a2Meta)" not in downloader
         and "isAria2ArchiveUsable(archive, name)" in downloader,
     # 上一条与这一条是一对，必须一起读。
@@ -579,8 +580,8 @@ checks = {
     # 两道都要：表序保证「轮到热更包时其余包早已全部开工」（线程池按提交序取
     # 任务，这也是那道闸不会死锁的依据），闸门保证「装」真的在后面。只有表序
     # 是不够的——15 个包一次性提交给 4 线程池，几十 MB 的热更包必然先装完。
-    "热更两包排在表尾": hot_last(DL_ORDER) and hot_last(UI_ORDER),
-    "两张文件表逐项对齐": UI_ORDER == DL_ORDER and len(DL_ORDER) == 15,
+    "热更三包排在表尾，累计补充包最后": hot_last(DL_ORDER) and hot_last(UI_ORDER) and DL_ORDER[-1] == "cn_js_delta.zip",
+    "两张文件表逐项对齐": UI_ORDER == DL_ORDER and len(DL_ORDER) == 16,
     # 前置集合必须是补集。按前缀或用途挑一部分「应该不会撞文件」的放行，判断
     # 下错了是静默的，而挑对了的收益不过是让汉化早到一会儿。
     "前置集合是热更两包的补集":
@@ -792,9 +793,9 @@ checks = {
     # 问题在调用方：异常落在受控 try 之外就会冲出下载状态机，同一种故障在三个入口
     # 分别表现成「worker 崩了」「Future false」「顶层异常」，槽位甚至没 markFailed。
     "主引擎与热更的取线路都有受控出口":
-        "pickMirrorOrNull(attempt, index, name)" in code(downloader)
+        "pickMirrorOrNull(attempt, index, name, pinnedHot)" in code(downloader)
         and "markFailed(index);" in body(downloader,
-                "private static CNDownloadRoute.Plan pickMirrorOrNull(int attempt, int index, String name)")
+                "private static CNDownloadRoute.Plan pickMirrorOrNull(int attempt, int index, String name,")
         and "catch (IllegalStateException noMirror)" in code(hot),
     # aria2 那处**不能** markFailed：它的合同是让位主引擎，而主引擎马上会撞上同一张
     # 空表并走自己那道出口。两边都记一次，同一个空表会报两遍失败。

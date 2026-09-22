@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  */
 final class CNDownloadRestart {
     private static final String TAG = "CNDownloadRestart";
-    private static final int COUNT = 15;
+    private static final int COUNT = 16;
 
     /**
      * generation 与 reason 必须作为一个不可变状态原子发布（F-087）。

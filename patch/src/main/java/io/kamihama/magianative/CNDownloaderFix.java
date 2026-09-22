@@ -186,10 +186,10 @@ public final class CNDownloaderFix {
         "cn_base_06.zip", "cn_magica_resource.zip", "cn_scenario_img.zip",
         "cn_voice_01.zip", "cn_voice_02_done.zip",
         "movie.zip", "movie2.zip",
-        "cn_scenario_update.zip", "cn_js_update.zip"
+        "cn_scenario_update.zip", "cn_js_update.zip", "cn_js_delta.zip"
     };
 
-    private static final int ARCHIVE_COUNT = 15;
+    private static final int ARCHIVE_COUNT = 16;
 
     /**
      * 热更那一轮真正检查的两个槽位，与 {@code CNHotUpdateCheck.PACKAGES} 的 slot 对应。
@@ -200,6 +200,7 @@ public final class CNDownloaderFix {
      */
     static final int HOT_SLOT_SCENARIO = slotOf("cn_scenario_update.zip");
     static final int HOT_SLOT_JS       = slotOf("cn_js_update.zip");
+    static final int HOT_SLOT_DELTA    = slotOf("cn_js_delta.zip");
 
     /**
      * 前置包槽位：<b>热更两包的补集</b>——其余 13 个包，一个不落。
@@ -232,7 +233,7 @@ public final class CNDownloaderFix {
 
     /** 这个下标是不是热更两包之一。五处判断都读这里，别再各写一份下标比较。 */
     static boolean isHotSlot(int index) {
-        return index == HOT_SLOT_SCENARIO || index == HOT_SLOT_JS;
+        return index == HOT_SLOT_SCENARIO || index == HOT_SLOT_JS || index == HOT_SLOT_DELTA;
     }
 
     /** 补集的另一半，写成函数只是为了让 countDown 那处读起来是一句话。 */
@@ -876,7 +877,7 @@ public final class CNDownloaderFix {
             prereqGate = new CountDownLatch(PREREQ_SLOTS.length);
             ExecutorService pool = Executors.newFixedThreadPool(CNMirrors.maxDownloads());
             List<Future<Boolean>> futures = new ArrayList<Future<Boolean>>(ARCHIVE_COUNT);
-            for (int i = 0; i < ARCHIVE_COUNT; i++) {
+            for (int i = 0; i < HOT_SLOT_DELTA; i++) {
                 futures.add(pool.submit(new ArchiveTask(i)));
             }
             pool.shutdown();
@@ -897,6 +898,11 @@ public final class CNDownloaderFix {
                 }
             }
             pool.shutdownNow();
+            // The 16th package starts only after all original 15 packages have finished.
+            if (allOk) {
+                try { allOk = new ArchiveTask(HOT_SLOT_DELTA).call().booleanValue(); }
+                catch (Exception deltaFailure) { allOk = false; markFailed(HOT_SLOT_DELTA); }
+            }
             zeroAllSpeeds();
 
             if (allOk && allMarkersValid()) break;
@@ -1138,6 +1144,7 @@ public final class CNDownloaderFix {
     }
 
     private static boolean installArchive(int index) {
+        if (index == HOT_SLOT_DELTA) return CNHotUpdateCheck.redownloadPackage(index);
         String name         = FILE_NAMES[index];
         String canonicalUrl = RESOURCE_BASE_URL + name;
         File   archive      = new File(FILE_ROOT, name);
@@ -1172,6 +1179,7 @@ public final class CNDownloaderFix {
                     CNArchiveInstallTx.extract(offline, new File(INSTALL_ROOT),
                             offState, null, null);
                 }
+                CNHotUpdateCheck.afterInstallerPackage(index, null);
                 CNArchiveInstallTx.clearState(offState);
                 writeMarker(marker, name, canonicalUrl,
                         new DownloadMetadata(offlineBytes, "offline"));
@@ -1220,12 +1228,19 @@ public final class CNDownloaderFix {
         //
         // 线路不在这里挑：交给 tryAria2Download 按 attempt 逐轮换（原先固定
         // pick(1)，三次尝试全钉在同一条线路上）。
+        final CNHotUpdateValidate.VerMeta pinnedHot = usesChunkManifest(name) ? null
+                : CNHotUpdateCheck.metaForSlot(index);
+        if (!usesChunkManifest(name) && !CNUpdateSources.validHot(pinnedHot)) {
+            markFailed(index);
+            CNLog.w(TAG, "热更包未取得有效版本，保留断点: " + name);
+            return false;
+        }
         boolean aria2Forced = "aria2c".equals(CNBuildConfig.MAIN_ENGINE)
                 || CNMirrors.forceAria2()
                 || CNDebugFlags.isOn(CNDebugFlags.USE_ARIA2);
         if (aria2Forced && FORCE_REDOWNLOAD.get(index) == 0
                 && CNAria2.isAvailable()) {
-            int a2 = tryAria2Download(name, archive, index, marker, canonicalUrl);
+            int a2 = tryAria2Download(name, archive, index, marker, canonicalUrl, pinnedHot);
             if (a2 == A2_INSTALLED) return true;
             if (a2 == A2_YIELD) return yieldToOfflineInstall(index, name, "aria2");
             if (a2 == A2_OFFLINE || a2 == A2_CLOSED) {
@@ -1277,7 +1292,7 @@ public final class CNDownloaderFix {
             // try 之外，异常会越过本轮全部 catch/finally 直接冲出下载状态机：
             // ArchiveTask 以异常收场，这个槽位可能连 markFailed 都没走到——UI 上
             // 是「失败 0 项」却卡在等待重试页，日志里也和普通下载失败长得不一样。
-            CNDownloadRoute.Plan route = pickMirrorOrNull(attempt, index, name);
+            CNDownloadRoute.Plan route = pickMirrorOrNull(attempt, index, name, pinnedHot);
             if (route == null) return false;
             CNMirrors.Mirror mirror = route.mirror;
             // 资源下载一律直连（Proxy.NO_PROXY）：系统代理会劫持 CDN 大文件传输，
@@ -1293,7 +1308,7 @@ public final class CNDownloaderFix {
                 CNDownloadRoute.enter(route);
                 try {
                     CNDownloadRoute.check();
-                    meta = fetchArchive(mirror, name, archive, index, direct, restartToken);
+                    meta = fetchArchive(mirror, name, archive, index, direct, restartToken, pinnedHot);
                 } finally { CNDownloadRoute.leave(); }
                 CNCNDownloadUI.setDownloadSpeed(index, 0.0f);
                 CNCNDownloadUI.updateFileProgress(index, 100);
@@ -1334,6 +1349,7 @@ public final class CNDownloaderFix {
                 } catch (CNArchiveInstallTx.InstallIOException e) {
                     throw new ExtractionPaused(e.getMessage(), e);
                 }
+                CNHotUpdateCheck.afterInstallerPackage(index, pinnedHot);
                 writeMarker(marker, name, canonicalUrl, meta);
                 if (!archive.delete() && archive.exists()) {
                     CNLog.w(TAG, "Installed archive retained because delete failed: " + archive);
@@ -1478,7 +1494,7 @@ public final class CNDownloaderFix {
                 }
                 if (choice == CNCNDownloadUI.ARIA2_RETRY && canAria2) {
                     int a2 = tryAria2Download(name, archive, index,
-                                              marker, canonicalUrl);
+                                              marker, canonicalUrl, pinnedHot);
                     if (a2 == A2_INSTALLED) return true;
                     if (a2 == A2_YIELD) return yieldToOfflineInstall(index, name, "aria2-fallback");
                     if (a2 == A2_OFFLINE || a2 == A2_CLOSED) {
@@ -1562,7 +1578,7 @@ public final class CNDownloaderFix {
      *         {@link #A2_NOSPACE} 磁盘满（产物与断点保留，不续主引擎轮）。
      */
     private static int tryAria2Download(String name, File archive, int index,
-                                        File marker, String canonicalUrl) {
+                                        File marker, String canonicalUrl, CNHotUpdateValidate.VerMeta pinnedHot) {
         // 完整的包直接复用，别让 aria2 的 --allow-overwrite 把它重下一遍。场景是进程
         // 在下到 100% 之后、解压之前被杀（.aria2 控制文件在 = 没下完，不在此列）。
         // 交回主引擎，fetchArchive 按同一判据复用它。force_aria2 开着时这正是
@@ -1588,7 +1604,8 @@ public final class CNDownloaderFix {
             // 在这里先记一次失败，会让同一个空表在两条路径上各报一次。
             CNMirrors.Mirror mirror;
             try {
-                mirror = CNDownloadRoute.plan(CNMirrors.healthy(), attempt).mirror;
+                mirror = CNDownloadRoute.plan(CNUpdateSources.downloadMirrors(pinnedHot), attempt).mirror;
+                CNDownloadRoute.recordFile(index, CNDownloadRoute.shortName(mirror));
             } catch (IllegalStateException noMirror) {
                 CNLog.e(TAG, "no-mirror(aria2) file=" + name + " attempt=" + attempt, noMirror);
                 return A2_MAIN;
@@ -1622,8 +1639,7 @@ public final class CNDownloaderFix {
                 // 从 CDN 拿到一份结构完好的旧副本，装上去玩家看到的是上一版台词，
                 // 直到随后的热更轮按版本号发现并重下——白下 185 MiB。取不到身份
                 // 就用裸 URL，不因此让下载失败。
-                CNHotUpdateValidate.VerMeta a2Meta = usesChunkManifest(name) ? null
-                        : CNHotUpdateCheck.metaForSlot(index);
+                CNHotUpdateValidate.VerMeta a2Meta = pinnedHot;
                 String url = CNHotUpdate.withIdentity(mirror.urlFor(name), a2Meta);
                 File aria2Ctrl = new File(archive.getPath() + ".aria2");
                 File urlTag = new File(archive.getPath() + ".aria2.url");
@@ -1757,6 +1773,7 @@ public final class CNDownloaderFix {
                                 }, null);
                     }
                     CNMirrors.reportSuccess(mirror);
+                    CNHotUpdateCheck.afterInstallerPackage(index, pinnedHot);
                     writeMarker(marker, name, canonicalUrl,
                             new DownloadMetadata(archive.length(), "aria2"));
                     deleteQuietly(urlTag);   // 装好了，身份凭据随产物一起清
@@ -1924,7 +1941,7 @@ public final class CNDownloaderFix {
      */
     private static DownloadMetadata fetchArchive(CNMirrors.Mirror mirror, String name,
                                                  File archive, int index, boolean direct,
-                                                 int restartToken)
+                                                 int restartToken, CNHotUpdateValidate.VerMeta hotMeta)
             throws IOException {
         if (archive.isFile() && !new File(archive.getPath() + ".aria2").isFile()) {
             // 复用「已完整下载」的包。.aria2 控制文件在 = aria2 没下完（aria2 在下到
@@ -1944,8 +1961,8 @@ public final class CNDownloaderFix {
                 // F-013：复用路径此前只做结构校验，内容错误/陈旧/被替换的包
                 // 会一路进解压。补分块身份校验（基础包）。
                 verifyStaticArchiveIdentity(name, archive);
-                verifyHotIdentity(name, archive, usesChunkManifest(name) ? null
-                        : CNHotUpdateCheck.metaForSlot(index));
+                verifyHotIdentity(name, archive, hotMeta);
+                CNDownloadRoute.recordFile(index, "本地已下载");
                 long len = archive.length();
                 updateSize(index, len);
                 return new DownloadMetadata(len, readSidecarEtag(archive));
@@ -1969,8 +1986,6 @@ public final class CNDownloaderFix {
         // 同一份 meta 既决定下哪个、又决定校验哪个——两者必须是同一个版本，
         // 分两次取会在重发的瞬间撞上不一致。取不到就退回裸 URL 并跳过校验，
         // 由随后的热更轮按版本号补齐。
-        CNHotUpdateValidate.VerMeta hotMeta = useManifest ? null
-                : CNHotUpdateCheck.metaForSlot(indexOfArchive(name));
         String url = CNHotUpdate.withIdentity(mirror.urlFor(name), hotMeta);
         if (hotMeta != null) {
             CNLog.i(TAG, "热更包按本轮身份取: " + name + " version=" + hotMeta.version);
@@ -2197,7 +2212,8 @@ public final class CNDownloaderFix {
     }
 
     /** 把分片下载的进度接到既有的 UI/看门狗上。 */
-    private static final class ArchiveSink implements CNChunkedDownload.SlowSink {
+    private static final class ArchiveSink implements CNChunkedDownload.SlowSink, CNChunkedDownload.RouteSink {
+        public void onRoute(String url) { CNDownloadRoute.recordUrl(index, url); }
         private final int index;
         private final int restartToken;
         ArchiveSink(int index, int restartToken) {
@@ -3093,7 +3109,8 @@ public final class CNDownloaderFix {
                 if (n < 1) return false;
                 schemaOk = true;
             } else if ("archives".equals(key)) {
-                if (parseIntOr(value, -1) != ARCHIVE_COUNT) return false;
+                int count = parseIntOr(value, -1);
+                if (count != ARCHIVE_COUNT && count != 15) return false;
                 archivesOk = true;
             }
         }
@@ -3251,9 +3268,12 @@ public final class CNDownloaderFix {
      *
      * @return 线路；空表时返回 {@code null}，此时该槽位已经 markFailed。
      */
-    private static CNDownloadRoute.Plan pickMirrorOrNull(int attempt, int index, String name) {
+    private static CNDownloadRoute.Plan pickMirrorOrNull(int attempt, int index, String name,
+                                                        CNHotUpdateValidate.VerMeta hotMeta) {
         try {
-            return CNDownloadRoute.plan(CNMirrors.healthy(), attempt);
+            CNDownloadRoute.Plan route = CNDownloadRoute.plan(CNUpdateSources.downloadMirrors(hotMeta), attempt);
+            CNDownloadRoute.recordFile(index, CNDownloadRoute.shortName(route.mirror));
+            return route;
         } catch (IllegalStateException noMirror) {
             // 保留原异常：空表的成因（端点没注入、远端把线路全禁了、快照为空）
             // 全在它的栈里，那正是这条日志唯一的用处。

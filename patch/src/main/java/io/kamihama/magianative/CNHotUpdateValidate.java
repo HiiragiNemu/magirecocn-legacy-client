@@ -27,9 +27,16 @@ public final class CNHotUpdateValidate {
         public final long   size;
         public final String md5;
         public final String sourceBase;
+        /** Only publishers that returned this exact version/size/digest this round. */
+        public final java.util.List<String> sourceBases;
         public VerMeta(int v, long s, String m) { this(v,s,m,null); }
         public VerMeta(int v, long s, String m, String source) {
+            this(v,s,m,source,source==null ? null : java.util.Collections.singletonList(source));
+        }
+        public VerMeta(int v, long s, String m, String source, java.util.List<String> sources) {
             version=v; size=s; md5=m; sourceBase=source;
+            sourceBases=sources==null ? null : java.util.Collections.unmodifiableList(
+                    new java.util.ArrayList<String>(sources));
         }
     }
 

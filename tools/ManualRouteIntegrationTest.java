@@ -11,7 +11,9 @@ public class ManualRouteIntegrationTest {
     static File out,fixture;
     static long size;
     static void check(boolean ok,String text) { if(!ok)throw new AssertionError(text);System.out.println("PASS "+text); }
-    static final class Sink implements CNChunkedDownload.SlowSink {
+    static final class Sink implements CNChunkedDownload.SlowSink, CNChunkedDownload.RouteSink {
+        String lastRoute;
+        public void onRoute(String url){lastRoute=url;CNDownloadRoute.recordUrl(3,url);}
         long first=-1,last; boolean switched; String switchTo;
         Sink(String to){switchTo=to;}
         public void onTotal(long n){}
@@ -52,6 +54,7 @@ public class ManualRouteIntegrationTest {
     static void sameIdentity()throws Exception{
         File target=new File(out,"same-version.zip");interrupted(target,meta(1),null);
         Sink next=new Sink(null);fetch(target,next,meta(1),null);
+        check(next.lastRoute.startsWith(b),"byte segment reports actual resumed mirror B");
         check(next.first>0,"same version resumes across different URLs and ETags, retained="+next.first);
         check(CNHotUpdateValidate.verifyZip(target,meta(1))==null,"resumed dynamic ZIP passes full size, MD5 and ZIP validation");
     }
@@ -64,6 +67,7 @@ public class ManualRouteIntegrationTest {
     static void verifiedBlocks()throws Exception{
         File target=new File(out,"verified-base.zip");CNChunkedDownload.ChunkHashes hashes=hashes();
         interrupted(target,null,hashes);Sink next=new Sink(null);fetch(target,next,null,hashes);
+        check(next.lastRoute.startsWith(b),"verified base block reports actual resumed mirror B");
         check(next.first>=65536,"verified base blocks survive manual mirror switch, retained="+next.first);
         check(CNHotUpdateValidate.verifyZip(target,meta(1))==null,"base bytes remain correct after resumed block download");
     }
@@ -95,7 +99,7 @@ public class ManualRouteIntegrationTest {
         Field loaded=CNMirrors.class.getDeclaredField("loaded");loaded.setAccessible(true);loaded.setBoolean(null,true);
         CNDownloadMode.setPlayerChoice(true);
         CNDownloadRoute.select(a);File target=new File(out,"full-hot-single.zip");
-        CNHotUpdateValidate.VerMeta pinned=new CNHotUpdateValidate.VerMeta(73,size,md5,a);
+        CNHotUpdateValidate.VerMeta pinned=new CNHotUpdateValidate.VerMeta(73,size,md5,a,Arrays.asList(a,b));
         Thread switcher=new Thread(new SwitchAfter());switcher.start();
         boolean ok=CNHotUpdate.download(CNMirrors.CANONICAL_BASE+"fixture.zip",target.getPath(),"测试热更新",0,pinned);
         switcher.join();

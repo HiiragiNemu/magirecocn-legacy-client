@@ -257,6 +257,9 @@ public final class CNHotUpdateCheck {
                 "cn_js_update.zip",
                 "cn_js_update_hot.zip", "js",
                 CNDownloaderFix.HOT_SLOT_JS),
+        new Pkg("累计补充包", "version_js_delta.json", "js_delta_version",
+                "cn_js_delta.zip", "cn_js_delta_hot.zip", "js_delta",
+                CNDownloaderFix.HOT_SLOT_DELTA),
     };
 
     // ==================================================================
@@ -356,14 +359,17 @@ public final class CNHotUpdateCheck {
             CNCNDownloadUI.updateSimple("检查热更新", "正在查询台词与前端脚本的版本…", 0);
             // 版本号并行查：串行时首条线路的慢/挂会在两个包上各吃一轮超时
             final java.util.concurrent.ExecutorService pool =
-                    java.util.concurrent.Executors.newFixedThreadPool(2);
+                    java.util.concurrent.Executors.newFixedThreadPool(PACKAGES.length);
             java.util.concurrent.Future<CNHotUpdateValidate.VerMeta> fScenario =
                     pool.submit(new java.util.concurrent.Callable<CNHotUpdateValidate.VerMeta>() {
                         @Override public CNHotUpdateValidate.VerMeta call() { return fetchMetaSafe(PACKAGES[0]); }});
             java.util.concurrent.Future<CNHotUpdateValidate.VerMeta> fJs =
                     pool.submit(new java.util.concurrent.Callable<CNHotUpdateValidate.VerMeta>() {
                         @Override public CNHotUpdateValidate.VerMeta call() { return fetchMetaSafe(PACKAGES[1]); }});
-            final CNHotUpdateValidate.VerMeta[] metas = new CNHotUpdateValidate.VerMeta[2];
+            java.util.concurrent.Future<CNHotUpdateValidate.VerMeta> fDelta =
+                    pool.submit(new java.util.concurrent.Callable<CNHotUpdateValidate.VerMeta>() {
+                        @Override public CNHotUpdateValidate.VerMeta call() { return fetchMetaSafe(PACKAGES[2]); }});
+            final CNHotUpdateValidate.VerMeta[] metas = new CNHotUpdateValidate.VerMeta[PACKAGES.length];
             // 预算用完不再替玩家决定，而是问他（见 askVersionSlow 的说明）。
             final long startedMs = android.os.SystemClock.uptimeMillis();
             long budgetMs = VERSION_QUERY_DEADLINE_MS;
@@ -380,7 +386,9 @@ public final class CNHotUpdateCheck {
                             metas[1] = fJs.get(deadlineNs - System.nanoTime(),
                                     java.util.concurrent.TimeUnit.NANOSECONDS);
                         }
-                        break;                       // 两份都拿到了
+                        if (metas[2] == null) metas[2] = fDelta.get(deadlineNs - System.nanoTime(),
+                                java.util.concurrent.TimeUnit.NANOSECONDS);
+                        break;                       // 三份都拿到了
                     } catch (java.util.concurrent.TimeoutException te) {
                         long waited = android.os.SystemClock.uptimeMillis() - startedMs;
                         if (askVersionSlow(act, waited) != CNCNDownloadUI.SLOW_WAIT) {
@@ -389,6 +397,7 @@ public final class CNHotUpdateCheck {
                                     + "ms 后按「跳过」处理，未完成项本次不更新");
                             fScenario.cancel(true);
                             fJs.cancel(true);
+                            fDelta.cancel(true);
                             break;
                         }
                         budgetMs = VERSION_QUERY_EXTEND_MS;   // 玩家说再等，就再给一段
@@ -403,6 +412,7 @@ public final class CNHotUpdateCheck {
                 CNLog.w(TAG, "并行版本查询异常: " + t);
                 fScenario.cancel(true);
                 fJs.cancel(true);
+                            fDelta.cancel(true);
             } finally {
                 pool.shutdownNow();
             }
@@ -427,7 +437,10 @@ public final class CNHotUpdateCheck {
                 int local = readLocalVersion(pkg.versionKey);
                 locals[i] = local;
                 CNLog.i(TAG, "[" + pkg.label + "] server=" + meta.version + " local=" + local);
-                if (meta.version <= local) {
+                boolean deltaNeedsRepair = pkg.slot == CNDownloaderFix.HOT_SLOT_DELTA
+                        && (needs[0] || needs[1] || !CNJsDelta.installedMatches(
+                                new File(FILES_DIR), readLocalVersion("js_version"), local));
+                if (meta.version <= local && !deltaNeedsRepair) {
                     // 这一支是**本轮真的查过**的，标完成名副其实。
                     CNCNDownloadUI.updateSimple("检查热更新",
                             pkg.label + "：已是最新（v" + local + "）", 0);
@@ -480,7 +493,7 @@ public final class CNHotUpdateCheck {
             for (int i = 0; i < PACKAGES.length; i++) if (needs[i]) needCount++;
             if (anyNeed) {
                 final java.util.concurrent.ExecutorService dlPool =
-                        java.util.concurrent.Executors.newFixedThreadPool(2);
+                        java.util.concurrent.Executors.newFixedThreadPool(PACKAGES.length);
                 // 并行下载时文案统一，不再按包互相覆盖——各包进度走槽位
                 CNCNDownloadUI.updateSimple("下载热更新",
                         "正在下载更新包（共 " + needCount + " 个）…", 0);
@@ -490,11 +503,15 @@ public final class CNHotUpdateCheck {
                     final File tmp = tmpFiles[i];
                     final CNHotUpdateValidate.VerMeta meta = metas[i];
                     final int idx = i;
-                    dls.put(idx, dlPool.submit(new java.util.concurrent.Callable<Boolean>() {
+                    java.util.concurrent.FutureTask<Boolean> task = new java.util.concurrent.FutureTask<Boolean>(
+                            new java.util.concurrent.Callable<Boolean>() {
                         @Override public Boolean call() {
                             return CNHotUpdate.download(pkg.zipUrl, tmp.getAbsolutePath(),
                                                         pkg.tmpName, pkg.slot, meta);
-                        }}));
+                        }});
+                    dls.put(idx, task);
+                    // Delta stays lazy until earlier downloads AND commits have completed.
+                    if (pkg.slot != CNDownloaderFix.HOT_SLOT_DELTA) dlPool.execute(task);
                 }
                 dlPool.shutdown();
             }
@@ -510,6 +527,8 @@ public final class CNHotUpdateCheck {
                 int local = locals[i];
                 boolean ok;
                 try {
+                    if (pkg.slot == CNDownloaderFix.HOT_SLOT_DELTA)
+                        ((java.util.concurrent.FutureTask<Boolean>) e.getValue()).run();
                     ok = e.getValue().get();
                 } catch (Throwable t) {
                     ok = false;
@@ -918,7 +937,7 @@ public final class CNHotUpdateCheck {
             else if (CNUpdateSources.validHot(reply.value)) {
                 values.add(reply.value);
                 boolean edge = isEdgeOneSource(reply.url);
-                if (name.contains("js")) {
+                if ("version_js.json".equals(name)) {
                     if (edge) edgeJsVersion = Math.max(edgeJsVersion, reply.value.version);
                     else latestJsVersion = Math.max(latestJsVersion, reply.value.version);
                 } else if (name.contains("scenario")) {
@@ -1047,14 +1066,40 @@ public final class CNHotUpdateCheck {
                             + " candidate=" + meta.version + " current=" + current);
                     return HOT_COMMIT_STALE;
                 }
-                CNHotUpdateTx.apply(tmp, new File(FILES_DIR), pkg.txTag);
+                if (pkg.slot == CNDownloaderFix.HOT_SLOT_DELTA) {
+                    CNJsDelta.apply(tmp, new File(FILES_DIR), readLocalVersion("js_version"), meta.version);
+                } else {
+                    CNHotUpdateTx.apply(tmp, new File(FILES_DIR), pkg.txTag);
+                }
                 // F-067：内容事务成功不等于版本状态已持久化，必须同步 commit
                 // 并把失败如实上报，不能伪报完整成功。
                 if (!saveLocalVersion(pkg.versionKey, meta.version)) {
                     return HOT_COMMIT_STATE_FAILED;
                 }
+                if (pkg.slot != CNDownloaderFix.HOT_SLOT_DELTA) reapplyDeltaAfterBase();
                 return HOT_COMMIT_APPLIED;
             }
+        }
+    }
+
+    /** Called after a successful first-install or manual base ZIP extraction, before its marker. */
+    static void afterInstallerPackage(int slot, CNHotUpdateValidate.VerMeta meta) throws java.io.IOException {
+        synchronized (CNDownloaderFix.extractCommitLock()) {
+            if (slot == CNDownloaderFix.HOT_SLOT_JS || slot == CNDownloaderFix.HOT_SLOT_SCENARIO) {
+                String key = slot == CNDownloaderFix.HOT_SLOT_JS ? "js_version" : "scenario_version";
+                if (!CNUpdateSources.validHot(meta) || !saveLocalVersion(key, meta.version))
+                    throw new java.io.IOException("安装完成，但热更版本记录未保存");
+            }
+            reapplyDeltaAfterBase();
+        }
+    }
+
+    private static void reapplyDeltaAfterBase() {
+        try { CNJsDelta.reapplyCached(new File(FILES_DIR), readLocalVersion("js_version")); }
+        catch (Exception e) {
+            // Preserve the successful base install; next check repairs a missing/incompatible layer.
+            saveLocalVersion("js_delta_version", 0);
+            CNLog.w(TAG, "补充层等待重新应用", e);
         }
     }
 

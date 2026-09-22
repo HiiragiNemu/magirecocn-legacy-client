@@ -79,7 +79,8 @@ public final class CNOfflineImport {
     public static boolean isHotUpdateFile(String name) {
         if (name == null) return false;
         return "cn_scenario_update.zip".equals(name)
-                || "cn_js_update.zip".equals(name);
+                || "cn_js_update.zip".equals(name)
+                || "cn_js_delta.zip".equals(name);
     }
 
     /**

@@ -98,7 +98,7 @@ public class CNCNDownloadUI {
         "cn_base_06.zip", "cn_magica_resource.zip", "cn_scenario_img.zip",
         "cn_voice_01.zip", "cn_voice_02_done.zip",
         "movie.zip", "movie2.zip",
-        "cn_scenario_update.zip", "cn_js_update.zip"
+        "cn_scenario_update.zip", "cn_js_update.zip", "cn_js_delta.zip"
     };
 
     /**
@@ -111,7 +111,7 @@ public class CNCNDownloadUI {
      */
     private static final int[] DISPLAY_ORDER = {
         13, 14,
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15
     };
 
     /**
@@ -148,13 +148,13 @@ public class CNCNDownloadUI {
     public static final int ST_ERROR     = 3;   // 失败（红 ✗）
     public static final int ST_UNCHECKED = 4;   // **本轮未检查**（中性色，不打勾）
 
-    public static int[]   fileStatus     = new int[15];
+    public static int[]   fileStatus     = new int[FILE_NAMES.length];
     /** {@link #ST_UNCHECKED} 时显示的说明（如「已装」「版本查询失败」）。 */
-    public static String[] fileNote      = new String[15];
-    public static int[]   fileProgress   = new int[15];
-    public static float[] fileSize       = new float[15];
-    public static float[] fileSpeed      = new float[15];
-    public static float[] fileDownloaded = new float[15];
+    public static String[] fileNote      = new String[FILE_NAMES.length];
+    public static int[]   fileProgress   = new int[FILE_NAMES.length];
+    public static float[] fileSize       = new float[FILE_NAMES.length];
+    public static float[] fileSpeed      = new float[FILE_NAMES.length];
+    public static float[] fileDownloaded = new float[FILE_NAMES.length];
     private static final Object PROGRESS_LOCK = new Object();
 
     // ==================================================================
@@ -162,7 +162,7 @@ public class CNCNDownloadUI {
     // ==================================================================
 
     /** 文件数量。与原实现一致地固定为 15。 */
-    private static final int FILE_COUNT = 15;
+    private static final int FILE_COUNT = FILE_NAMES.length;
     /** 资源槽位改为双列显示；每列最多 8 项，15 项按 8 + 7 分配。 */
     private static final int SLOT_COLUMN_LIMIT = 8;
 
@@ -202,7 +202,7 @@ public class CNCNDownloadUI {
      * 只会觉得莫名其妙。
      */
     private static volatile String detailText =
-            "正在初始化下载器…\n台词与前端脚本（热更新）显示在最前，下载按依赖顺序仍在最后";
+            "正在初始化下载器…\n台词与前端脚本显示在最前；第 16 项累计补充包最后下载、最后覆盖";
 
     /**
      * 热更完成后自动进游戏的倒计时截止时刻（{@code uptimeMillis}；0 = 不在倒计时）。
@@ -716,6 +716,7 @@ public class CNCNDownloadUI {
         final int         fileIdx;
         final TextView    nameView;
         final TextView    infoView;
+        TextView routeView;
         /**
          * 行右侧那颗按钮。<b>一颗按钮两个身份</b>：该文件失败时是红色「重试」，
          * 其余时候是紫色「重下」。
@@ -2042,6 +2043,15 @@ public class CNCNDownloadUI {
             headRow.addView(name, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
+            TextView route = new TextView(act);
+            route.setText(CNDownloadRoute.fileLabel(fileIdx, fileStatus[fileIdx]));
+            route.setTextColor(COLOR_SUB);
+            route.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
+            route.setSingleLine(true);
+            route.setPadding(dp(act, 4), 0, 0, 0);
+            headRow.addView(route, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
             // 文字进度。打上 TAG_SLOT_INFO 作为槽位标记。
             TextView info = new TextView(act);
             info.setText("");
@@ -2118,6 +2128,7 @@ public class CNCNDownloadUI {
 
             // 监听器要拿到 SlotViews（两击状态存在里面），所以先建槽再挂监听。
             SlotViews sv = new SlotViews(fileIdx, name, info, action, actionBg, bar, div);
+            sv.routeView = route;
             sv.actionLabel = "重下";
             action.setOnClickListener(new SlotActionClick(act, sv));
             slotList.add(sv);
@@ -3097,7 +3108,7 @@ public class CNCNDownloadUI {
             title.setText("手动切换下载线路"); title.setTextColor(COLOR_ACCENT);
             title.setTextSize(16); panel.addView(title,lpRow(0,dp(act,10)));
             TextView tip=new TextView(act);
-            tip.setText("主下载引擎会保留同版本进度并重新连接，不执行从头重下。旧格式文件会在本文件完成后使用新线路。备用引擎将在下次连接时使用所选线路。\n关闭窗口不暂停下载。");
+            tip.setText("主下载引擎会保留同版本进度并重新连接，不执行从头重下。旧格式文件会在本文件完成后使用新线路。备用引擎将在下次连接时使用所选线路。\n关闭窗口不暂停下载。\n基础包自动优先 EdgeOne／ESA；热更只使用本包最新版本且内容一致的线路，落后线路会跳过。");
             tip.setTextColor(COLOR_LOG_PANEL_TEXT); tip.setTextSize(12);
             panel.addView(tip,lpRow(0,dp(act,10)));
             ScrollView scroll=new ScrollView(act);
@@ -4659,6 +4670,8 @@ public class CNCNDownloadUI {
                 int idx = sv.fileIdx;
                 int st  = status[idx];
                 int pct = progress[idx];
+                sv.routeView.setText(CNDownloadRoute.fileLabel(idx, st));
+                sv.routeView.setTextColor(COLOR_SUB);
                 sv.bar.setProgress(pct);
 
                 int color;
@@ -5120,6 +5133,7 @@ public class CNCNDownloadUI {
     /** Deliberate user restart/run reset. Normal callbacks are monotonic. */
     public static void resetFileProgress(int i) {
         if (i < 0 || i >= FILE_COUNT) return;
+        CNDownloadRoute.clearFile(i);
         synchronized (PROGRESS_LOCK) {
             if (fileStatus != null) fileStatus[i] = ST_WAIT;
             if (fileProgress != null) fileProgress[i] = 0;

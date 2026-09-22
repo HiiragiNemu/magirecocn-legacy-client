@@ -270,15 +270,19 @@ public final class CNMirrors {
      * 顺序即优先级，{@code CNMirrors} 会按权重从高到低试。
      */
     private static List<Mirror> defaultList() {
-        List<Mirror> l = new ArrayList<Mirror>(2);
+        List<Mirror> l = new ArrayList<Mirror>(4);
+        if (!CNEndpoints.LEGACY_EDGEONE_BASE.isEmpty())
+            l.add(new Mirror("EdgeOne 加速", CNEndpoints.LEGACY_EDGEONE_BASE, 140, 8, true));
+        if (!CNEndpoints.LEGACY_ESA_BASE.isEmpty())
+            l.add(new Mirror("阿里 ESA 加速", CNEndpoints.LEGACY_ESA_BASE, 120, 8, true));
         // 权重只决定内置表内部的先后，config.json 到位后整张表会被替换。
         // 注入缺失时两条前缀都是空串——此时**一条都不加**，返回空表。空表比
         // 「以空串为前缀的线路」好：后者会去请求 "cn_base_02.zip" 这种相对
         // 地址，报出来的错莫名其妙；空表则直接走「没有可用线路」那条既有分支。
-        if (!DEFAULT_BASE.isEmpty()) {
+        if (!DEFAULT_BASE.isEmpty() && !DEFAULT_BASE.equals(CNEndpoints.LEGACY_EDGEONE_BASE)) {
             l.add(new Mirror(CNEndpoints.PRIMARY_BASE_OVERRIDE.isEmpty() ? "内置兜底 • edge" : "Cloudflare 中转", DEFAULT_BASE, 100, 0, true));
         }
-        if (!CNEndpoints.ESA_BASE.isEmpty()) {
+        if (!CNEndpoints.ESA_BASE.isEmpty() && !CNEndpoints.ESA_BASE.equals(CNEndpoints.LEGACY_ESA_BASE)) {
             l.add(new Mirror(CNEndpoints.SECONDARY_BASE_OVERRIDE.isEmpty() ? "内置兜底 • 阿里ESA" : "个人 GitHub 直连", CNEndpoints.ESA_BASE, 80, 0, true));
         }
         return l;

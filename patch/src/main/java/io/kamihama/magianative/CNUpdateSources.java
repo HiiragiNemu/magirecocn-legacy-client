@@ -21,6 +21,24 @@ public final class CNUpdateSources {
 
     private CNUpdateSources() {}
 
+    /** Base packages use the CDN directory; hot packages use matching publisher identities only. */
+    static List<CNMirrors.Mirror> downloadMirrors(CNHotUpdateValidate.VerMeta expected) {
+        LinkedHashMap<String,CNMirrors.Mirror> available = new LinkedHashMap<String,CNMirrors.Mirror>();
+        for (CNMirrors.Mirror m : CNMirrors.selectable()) available.put(m.base,m);
+        if (expected != null) for (CNMirrors.Mirror m : mirrors(expected.sourceBase)) {
+            if (!available.containsKey(m.base)) available.put(m.base,m);
+        }
+        List<CNMirrors.Mirror> fast = new ArrayList<CNMirrors.Mirror>();
+        List<CNMirrors.Mirror> fallback = new ArrayList<CNMirrors.Mirror>();
+        for (CNMirrors.Mirror m : available.values()) {
+            if (!m.enabled) continue;
+            if (expected != null && expected.sourceBases != null && !expected.sourceBases.contains(m.base)) continue;
+            (CNDownloadRoute.accelerated(m) ? fast : fallback).add(m);
+        }
+        fast.addAll(fallback);
+        return fast;
+    }
+
     /** Built-in publishers survive replacement of the remote mirror list by an old config. */
     public static List<CNMirrors.Mirror> mirrors(String preferredBase) {
         LinkedHashMap<String,CNMirrors.Mirror> out = new LinkedHashMap<String,CNMirrors.Mirror>();
@@ -138,6 +156,13 @@ public final class CNUpdateSources {
             else if (m.version==best.version && (m.size!=best.size || !m.md5.equalsIgnoreCase(best.md5))) conflict=true;
         }
         if (conflict) throw new java.io.IOException("同一最高版本的文件身份冲突，保留已安装内容");
-        return best;
+        if (best == null) return null;
+        LinkedHashSet<String> sources = new LinkedHashSet<String>();
+        for (CNHotUpdateValidate.VerMeta m : values) {
+            if (validHot(m) && m.version==best.version && m.size==best.size
+                    && m.md5.equalsIgnoreCase(best.md5) && m.sourceBases!=null) sources.addAll(m.sourceBases);
+        }
+        return new CNHotUpdateValidate.VerMeta(best.version,best.size,best.md5,best.sourceBase,
+                sources.isEmpty() ? null : new ArrayList<String>(sources));
     }
 }

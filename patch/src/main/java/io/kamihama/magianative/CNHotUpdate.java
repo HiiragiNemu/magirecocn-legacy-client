@@ -101,7 +101,7 @@ public final class CNHotUpdate {
 
         if (!CNMirrors.isLoaded()) CNMirrors.ensureLoadedAsync();
         final java.util.List<CNMirrors.Mirror> updateMirrors =
-                CNUpdateSources.mirrors(expected == null ? null : expected.sourceBase);
+                CNUpdateSources.downloadMirrors(expected);
         CNLog.i(TAG, "开始下载 " + displayName + " file=" + remoteName
                 + " identity=" + hotIdentity(expected)
                 + " 可用线路=" + updateMirrors.size());
@@ -132,6 +132,7 @@ public final class CNHotUpdate {
             boolean direct = true;
             CNCNDownloadUI.setDownloadSpeed(index, 0.0f);
             try {
+                CNDownloadRoute.recordFile(index, CNDownloadRoute.shortName(mirror));
                 CNDownloadRoute.enter(route);
                 try {
                     CNDownloadRoute.check();
@@ -237,7 +238,8 @@ public final class CNHotUpdate {
         singleStream(url, dest, index, direct, expected, restartToken);
     }
 
-    private static final class HotSink implements CNChunkedDownload.SlowSink {
+    private static final class HotSink implements CNChunkedDownload.SlowSink, CNChunkedDownload.RouteSink {
+        public void onRoute(String url) { CNDownloadRoute.recordUrl(index, url); }
         private final int index;
         private final int restartToken;
         HotSink(int index, int restartToken) {
