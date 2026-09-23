@@ -9,3 +9,5 @@
 - 本次发布恢复手动文件权限入口和对应声明；普通下载不依赖开启此项，不改变资源写入目录。移除此权限的已发布版本仍被手机提示风险，当前尚无证据定位或消除厂商的具体判定，因此此恢复不是“已解决风险告警”的声明。
 
 验证：`tools/test-mobile-download-ui.py` 检查布局约束及底栏对比度；`PackageRoutingTest.java` 验证线路与署名；`SafeLinkTest.java` 验证已展示链接和反例。编译与上述检查不替代手机显示验收。
+
+构建检查：`tools/test-download-presentation.py` 默认验证源码关闭文件权限入口；发布构建显式传入 `--all-files-access enabled --tree "${TREE}"`，同时核对入口开关和最终清单权限一致。两种配置均保留检查，配置或权限错配会使构建失败。
