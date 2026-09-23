@@ -120,8 +120,11 @@ public final class CNSafeLink {
         java.util.LinkedHashSet<String> hosts = new java.util.LinkedHashSet<String>();
         for (String host : CNEndpoints.pagesHosts()) hosts.add(host);
 
-        // MadeInMagius 的两个固定公共站点。它们不是可下发的任意 pages.dev 域，
+        // 下载页展示的五个固定公共站点。它们不是可下发的任意 pages.dev 域，
         // 只按精确主机名放行；这样新增署名链接不需要扩大到整个公共后缀。
+        hosts.add("magireader.pages.dev");
+        hosts.add("magireco-call-search-cn.pages.dev");
+        hosts.add("magius3dviewer.pages.dev");
         hosts.add("magiaexedralive2dviewer.pages.dev");
         hosts.add("madeinmagius-site.pages.dev");
 

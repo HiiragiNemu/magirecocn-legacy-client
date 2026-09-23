@@ -67,6 +67,8 @@ public class SafeLinkTest {
         ok("https://github.com/example-org/example-repo");
         // right_pill 的「支持我们」跳爱发电；两个域名是同一个站
         ok("https://afdian.com/a/example");
+        ok("https://afdian.com/a/madeinmagius");
+        ok("https://afdian.com/a/cybernova");
         ok("https://ifdian.net/a/example");
 
         // 2026-08-14：下载线路不再经任何公共 GitHub 代理，白名单里也拿掉了。
@@ -76,6 +78,14 @@ public class SafeLinkTest {
            "公共 GitHub 代理");
         no("https://v4.gh-proxy.org/https://github.com/example/repo/releases/download/latest/x.apk",
            "公共 GitHub 代理");
+
+        for (String host : new String[] {"magireader.pages.dev", "magireco-call-search-cn.pages.dev", "magius3dviewer.pages.dev", "magiaexedralive2dviewer.pages.dev", "madeinmagius-site.pages.dev"}) {
+            ok("https://"+host+"/");
+            no("https://evil."+host+"/", "未批准的子域");
+            no("https://"+host+".evil.example/", "相似域名");
+            no("https://"+host+"@evil.example/", "用户名伪装");
+        }
+        no("https://someone-else.pages.dev/", "同平台的其他站点");
 
         System.out.println("\n[2] 协议：只放行 https");
         no("http://www." + ROOT, "明文 http");

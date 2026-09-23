@@ -58,14 +58,20 @@ public final class PackageRoutingTest {
             check(conflict,"equal_version_different_content_is_not_interchangeable");
             latest=CNUpdateSources.highestHot(Arrays.asList(meta(102,github)));
             check(pick(latest,1).equals(github),"unanswered_or_failed_sources_not_assumed_current");
+            String[] labels={"CyberNova EdgeOne 加速","CyberNova ESA 加速","MadeInMagius Cloudflare 中转","MadeInMagius GitHub 直连"};
+            for(int i=0;i<routes.size();i++) {
+                check(CNDownloadRoute.displayName(routes.get(i)).equals(labels[i]),"credited_manual_label_"+i);
+                CNDownloadRoute.select(routes.get(i).base);
+                check(CNDownloadRoute.describe().equals(labels[i]),"credited_selected_label_"+i);
+            }
             CNDownloadRoute.clearFile(2);CNDownloadRoute.clearFile(14);
             CNDownloadRoute.recordUrl(2,edge+"cn_base_00_db.zip");
             CNDownloadRoute.recordUrl(14,cf+"cn_js_update.zip");
-            check(CNDownloadRoute.fileLabel(2,1).equals("EdgeOne")&&CNDownloadRoute.fileLabel(14,1).equals("Cloudflare"),"parallel_files_have_independent_actual_route_labels");
+            check(CNDownloadRoute.fileLabel(2,1).equals("CyberNova EdgeOne")&&CNDownloadRoute.fileLabel(14,1).equals("MadeInMagius Cloudflare"),"parallel_files_have_independent_actual_route_labels");
             CNDownloadRoute.select(github);
-            check(CNDownloadRoute.fileLabel(2,1).equals("EdgeOne"),"manual_preference_does_not_falsify_actual_route_label");
+            check(CNDownloadRoute.fileLabel(2,1).equals("CyberNova EdgeOne"),"manual_preference_does_not_falsify_actual_route_label");
             CNDownloadRoute.recordUrl(2,esa+"cn_base_00_db.zip");
-            check(CNDownloadRoute.fileLabel(2,1).equals("ESA"),"block_failover_updates_only_its_file_label");
+            check(CNDownloadRoute.fileLabel(2,1).equals("CyberNova ESA"),"block_failover_updates_only_its_file_label");
             check(CNDownloadRoute.fileLabel(2,4).equals("本轮未下载"),"installed_unchecked_file_does_not_claim_network_activity");
             CNDownloadRoute.clearFile(2);
             check(CNDownloadRoute.fileLabel(2,0).equals("待连接"),"new_round_clears_previous_route_label");

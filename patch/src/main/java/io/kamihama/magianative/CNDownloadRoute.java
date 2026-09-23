@@ -30,11 +30,19 @@ public final class CNDownloadRoute {
         }
     }
     static String shortName(CNMirrors.Mirror m) {
-        if (m.base.equals(CNEndpoints.LEGACY_EDGEONE_BASE)) return "EdgeOne";
-        if (m.base.equals(CNEndpoints.LEGACY_ESA_BASE)) return "ESA";
-        if (!CNEndpoints.PRIMARY_BASE_OVERRIDE.isEmpty() && m.base.equals(CNEndpoints.PRIMARY_BASE_OVERRIDE)) return "Cloudflare";
-        if (!CNEndpoints.SECONDARY_BASE_OVERRIDE.isEmpty() && m.base.equals(CNEndpoints.SECONDARY_BASE_OVERRIDE)) return "GitHub";
+        if (m.base.equals(CNEndpoints.LEGACY_EDGEONE_BASE)) return "CyberNova EdgeOne";
+        if (m.base.equals(CNEndpoints.LEGACY_ESA_BASE)) return "CyberNova ESA";
+        if (!CNEndpoints.PRIMARY_BASE_OVERRIDE.isEmpty() && m.base.equals(CNEndpoints.PRIMARY_BASE_OVERRIDE)) return "MadeInMagius Cloudflare";
+        if (!CNEndpoints.SECONDARY_BASE_OVERRIDE.isEmpty() && m.base.equals(CNEndpoints.SECONDARY_BASE_OVERRIDE)) return "MadeInMagius GitHub";
         return m.name;
+    }
+    /** Display ownership without changing mirror identity, priority or version eligibility. */
+    public static String displayName(CNMirrors.Mirror m) {
+        String label=shortName(m);
+        if (accelerated(m)) return label+" 加速";
+        if (!CNEndpoints.PRIMARY_BASE_OVERRIDE.isEmpty() && m.base.equals(CNEndpoints.PRIMARY_BASE_OVERRIDE)) return label+" 中转";
+        if (!CNEndpoints.SECONDARY_BASE_OVERRIDE.isEmpty() && m.base.equals(CNEndpoints.SECONDARY_BASE_OVERRIDE)) return label+" 直连";
+        return label;
     }
     public static String fileLabel(int index, int status) {
         if (status==4) return "本轮未下载";
@@ -66,7 +74,7 @@ public final class CNDownloadRoute {
     public static String selectedBase() { return choice.base; }
     public static String describe() {
         String base=choice.base;
-        for (CNMirrors.Mirror m : CNMirrors.selectable()) if (m.base.equals(base)) return m.name;
+        for (CNMirrors.Mirror m : CNMirrors.selectable()) if (m.base.equals(base)) return displayName(m);
         return "自动选择";
     }
 

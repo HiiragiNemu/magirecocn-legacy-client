@@ -424,7 +424,7 @@ public class CNCNDownloadUI {
 
     private static final int[] CREDIT_KINDS = {
         KIND_TITLE, KIND_ITEM, KIND_HEAD, KIND_ITEM, KIND_SUB, KIND_ITEM,
-        KIND_SUB, KIND_HEAD, KIND_ITEM, KIND_ITEM, KIND_SUB, KIND_ITEM, KIND_HEAD, KIND_ITEM,
+        KIND_SUB, KIND_HEAD, KIND_ITEM, KIND_ITEM, KIND_ITEM, KIND_ITEM, KIND_HEAD, KIND_SUB, KIND_ITEM, KIND_HEAD, KIND_ITEM,
         KIND_ITEM, KIND_ITEM, KIND_ITEM, KIND_ITEM
     };
 
@@ -439,6 +439,9 @@ public class CNCNDownloadUI {
         "其他协助者",
         "【国服与圆环记录汉化组外剧情翻译及部分校对】水银h2oag（点击个人主页）",
         "【圆环记录汉化组】国服外剧情翻译",
+        "赞助支持 MADE IN MAGIUS",
+        "赞助支持 CyberNova",
+        "统计说明",
         "可核验贡献统计：MadeInMagius 2,692 条；剧情字段 2 条；战斗技能 2,374 条；语音字幕 0 条；Wiki 1,096 条",
         "【国服数据留存】segfault（点击个人主页）",
         "MadeInMagius的其他网站作品链接",
@@ -466,6 +469,9 @@ public class CNCNDownloadUI {
         "",                                                     // 「其他协助者」小标题
         "https://b23.tv/ovvbrNw",                               // 水银h2oag
         "https://magireco.moe",                              // 圆环记录汉化组
+        "https://afdian.com/a/madeinmagius",                    // 统计说明前：先本人
+        "https://afdian.com/a/cybernova",                       // 再加速协助者
+        "",                                                     // 统计说明标题
         "",                                                     // 统计
         "https://b23.tv/xjXW9DI",                               // segfault
         "",                                                     // 「友情链接」小标题
@@ -494,6 +500,9 @@ public class CNCNDownloadUI {
         "",
         "水银h2oag",
         "圆环记录汉化组",
+        "MADE IN MAGIUS",
+        "CyberNova",
+        "",
         "",
         "segfault",
         "",
@@ -846,6 +855,29 @@ public class CNCNDownloadUI {
         return lp;
     }
 
+    /** Let measured toolbar/footer text, including system font scaling, determine the viewport. */
+    private static final class ChromeBounds implements View.OnLayoutChangeListener {
+        private final View glass, content;
+        private final boolean top;
+        ChromeBounds(View glass, View content, boolean top) {
+            this.glass=glass; this.content=content; this.top=top;
+        }
+        @Override public void onLayoutChange(View v, int l, int t, int r, int b,
+                int oldL, int oldT, int oldR, int oldB) {
+            if (!(v.getParent() instanceof View)) return;
+            int edge=top ? b : ((View)v.getParent()).getHeight()-t;
+            int margin=Math.max(0,edge)+dp(v.getContext(),6);
+            setMargin(glass,margin);
+            setMargin(content,margin+dp(v.getContext(),8));
+        }
+        private void setMargin(View view, int margin) {
+            FrameLayout.LayoutParams lp=(FrameLayout.LayoutParams)view.getLayoutParams();
+            if ((top ? lp.topMargin : lp.bottomMargin)==margin) return;
+            if (top) lp.topMargin=margin; else lp.bottomMargin=margin;
+            view.setLayoutParams(lp);
+        }
+    }
+
     /** 把已解码的 Bitmap 设置到 ImageView（主线程执行）。 */
     private static final class ApplyBitmap implements Runnable {
         private final ImageView target;
@@ -939,8 +971,8 @@ public class CNCNDownloadUI {
                 ViewGroup.LayoutParams.MATCH_PARENT);
         glassLp.leftMargin   = dp(act, 14);
         glassLp.rightMargin  = dp(act, 14);
-        glassLp.topMargin    = dp(act, 52);
-        glassLp.bottomMargin = dp(act, 40);
+        glassLp.topMargin    = dp(act, 44);
+        glassLp.bottomMargin = dp(act, 28);
         root.addView(glass, glassLp);
 
         // ── 第 2 层：主内容区（固定视口 + 底部横向滚动条） ──
@@ -949,8 +981,8 @@ public class CNCNDownloadUI {
                 ViewGroup.LayoutParams.MATCH_PARENT);
         mainLp.leftMargin   = dp(act, 14) + dp(act, 14);
         mainLp.rightMargin  = dp(act, 14) + dp(act, 14);
-        mainLp.topMargin    = dp(act, 52) + dp(act, 12);
-        mainLp.bottomMargin = dp(act, 40) + dp(act, 12);
+        mainLp.topMargin    = dp(act, 44) + dp(act, 8);
+        mainLp.bottomMargin = dp(act, 28) + dp(act, 8);
 
         HorizontalScrollView mainScroll = new HorizontalScrollView(act);
         mainScroll.setTag(CNDownloadUiAssist.TAG_H_SCROLL);
@@ -1005,7 +1037,7 @@ public class CNCNDownloadUI {
         loadBitmapFromAssets(act, LOGO_ASSET, logoView);
         LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        logoLp.bottomMargin = dp(act, 8);
+        logoLp.bottomMargin = dp(act, 3);
         // 两个入口按实际文字高度测量，固定 64dp 会把第二行线路按钮裁掉。
         LinearLayout logoRow = new LinearLayout(act);
         logoRow.setMinimumHeight(dp(act, 64));
@@ -1034,15 +1066,10 @@ public class CNCNDownloadUI {
         vRouteChip.setPadding(dp(act, 8), dp(act, 8), dp(act, 4), dp(act, 8));
         vRouteChip.setOnClickListener(new RouteMenuClick(act));
         logoActions.addView(vRouteChip);
-        logoRow.addView(logoActions);
+        // The longer credited route name wraps inside its half rather than shrinking the logo away.
+        logoRow.addView(logoActions, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         leftCol.addView(logoRow, logoLp);
-
-        View divider = new View(act);
-        divider.setBackgroundColor(COLOR_CARD_STK);
-        LinearLayout.LayoutParams divLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(act, 1));
-        divLp.bottomMargin = dp(act, 8);
-        leftCol.addView(divider, divLp);
 
         vVersionInfo = new TextView(act);
         vVersionInfo.setText("版本状态");
@@ -1224,7 +1251,7 @@ public class CNCNDownloadUI {
         vLogPill.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
         vLogPill.setTypeface(vLogPill.getTypeface(), Typeface.BOLD);
         vLogPill.setGravity(Gravity.CENTER);
-        vLogPill.setPadding(dp(act, 12), dp(act, 6), dp(act, 12), dp(act, 6));
+        vLogPill.setPadding(dp(act, 12), dp(act, 3), dp(act, 12), dp(act, 3));
         vLogPill.setBackground(logPillBg);
         vLogPill.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { openLogModal(); }
@@ -1236,6 +1263,11 @@ public class CNCNDownloadUI {
         // 左侧胶囊放进自己的横向视口；窄屏/高 DPI 时滚动，不再与右侧主题栏重叠。
         HorizontalScrollView topLeftScroll = new HorizontalScrollView(act);
         CNDownloadUiAssist.applyBuiltinScrollbar(topLeftScroll, true);
+        // The generic scrollbar reserves a bottom gutter; only the left group had it,
+        // which shifted these buttons above the right group on phones.
+        topLeftScroll.setPadding(0, 0, 0, 0);
+        topLeftScroll.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+        topLeftScroll.setScrollbarFadingEnabled(true);
         topLeftScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
         topLeftScroll.setFillViewport(false);
         topLeftScroll.addView(topLeft, new HorizontalScrollView.LayoutParams(
@@ -1252,7 +1284,7 @@ public class CNCNDownloadUI {
             vBgmPill.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
             vBgmPill.setTypeface(vBgmPill.getTypeface(), Typeface.BOLD);
             vBgmPill.setGravity(Gravity.CENTER);
-            vBgmPill.setPadding(dp(act, 12), dp(act, 6), dp(act, 12), dp(act, 6));
+            vBgmPill.setPadding(dp(act, 12), dp(act, 3), dp(act, 12), dp(act, 3));
             vBgmPill.setOnClickListener(new BgmPillClick(act));
             LinearLayout.LayoutParams bgmLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -1271,7 +1303,7 @@ public class CNCNDownloadUI {
         vTutorialPill.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
         vTutorialPill.setTypeface(vTutorialPill.getTypeface(), Typeface.BOLD);
         vTutorialPill.setGravity(Gravity.CENTER);
-        vTutorialPill.setPadding(dp(act, 12), dp(act, 6), dp(act, 12), dp(act, 6));
+        vTutorialPill.setPadding(dp(act, 12), dp(act, 3), dp(act, 12), dp(act, 3));
         vTutorialPill.setOnClickListener(new TutorialPillClick(act));
         LinearLayout.LayoutParams tutLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -1285,7 +1317,7 @@ public class CNCNDownloadUI {
         vOfflinePill.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
         vOfflinePill.setTypeface(vOfflinePill.getTypeface(), Typeface.BOLD);
         vOfflinePill.setGravity(Gravity.CENTER);
-        vOfflinePill.setPadding(dp(act, 12), dp(act, 6), dp(act, 12), dp(act, 6));
+        vOfflinePill.setPadding(dp(act, 12), dp(act, 3), dp(act, 12), dp(act, 3));
         vOfflinePill.setText("导入离线包");
         vOfflinePill.setOnClickListener(new OfflinePillClick(act));
         LinearLayout.LayoutParams offLp = new LinearLayout.LayoutParams(
@@ -1305,7 +1337,7 @@ public class CNCNDownloadUI {
         vThemeChip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
         vThemeChip.setTypeface(vThemeChip.getTypeface(), Typeface.BOLD);
         vThemeChip.setGravity(Gravity.CENTER);
-        vThemeChip.setPadding(dp(act, 12), dp(act, 6), dp(act, 12), dp(act, 6));
+        vThemeChip.setPadding(dp(act, 12), dp(act, 3), dp(act, 12), dp(act, 3));
         vThemeChip.setBackground(themeChipBg);
         vThemeChip.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { toggleTheme(act); }
@@ -1320,7 +1352,7 @@ public class CNCNDownloadUI {
         vGitHubChip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
         vGitHubChip.setTypeface(vGitHubChip.getTypeface(), Typeface.BOLD);
         vGitHubChip.setGravity(Gravity.CENTER);
-        vGitHubChip.setPadding(dp(act, 12), dp(act, 6), dp(act, 12), dp(act, 6));
+        vGitHubChip.setPadding(dp(act, 12), dp(act, 3), dp(act, 12), dp(act, 3));
         vGitHubChip.setBackground(githubChipBg);
         vGitHubChip.setOnClickListener(new CreditLinkClick(act, githubUrl()));
 
@@ -1355,10 +1387,11 @@ public class CNCNDownloadUI {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         topBarLp.gravity = Gravity.TOP | Gravity.START;
-        topBarLp.topMargin = dp(act, 10);
+        topBarLp.topMargin = dp(act, 6);
         topBarLp.leftMargin = dp(act, 14);
         topBarLp.rightMargin = dp(act, 14);
         root.addView(topBar, topBarLp);
+        topBar.addOnLayoutChangeListener(new ChromeBounds(glass, mainScroll, true));
 
         // ── 第 4 层：底部常驻署名条 ──
         // marquee 可经 ui_credits.footer_marquee=false 远程关闭：
@@ -1366,16 +1399,18 @@ public class CNCNDownloadUI {
         // 在部分 Adreno 驱动上会放大 vkDestroyFramebuffer 崩溃的触发面。
         vFooter = new TextView(act);
         vFooter.setText(footerText());
-        vFooter.setTextColor(COLOR_SUB);
+        vFooter.setTextColor(darkMode ? 0xFFF6EDF9 : 0xFF30223E);
+        vFooter.setBackgroundColor(darkMode ? 0xE61B1428 : 0xF2FFFFFF);
         vFooter.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
         vFooter.setSingleLine(true);
         applyFooterMode();
-        vFooter.setPadding(dp(act, 16), 0, dp(act, 16), dp(act, 8));
+        vFooter.setPadding(dp(act, 16), dp(act, 4), dp(act, 16), dp(act, 4));
         FrameLayout.LayoutParams footerLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         footerLp.gravity = Gravity.BOTTOM | Gravity.START;
         root.addView(vFooter, footerLp);
+        vFooter.addOnLayoutChangeListener(new ChromeBounds(glass, mainScroll, false));
 
         // ── 第 5 层：日志模态面板（默认隐藏） ──
         logModal = new FrameLayout(act);
@@ -2047,10 +2082,10 @@ public class CNCNDownloadUI {
             route.setText(CNDownloadRoute.fileLabel(fileIdx, fileStatus[fileIdx]));
             route.setTextColor(COLOR_SUB);
             route.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
-            route.setSingleLine(true);
-            route.setPadding(dp(act, 4), 0, 0, 0);
-            headRow.addView(route, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            // A full credited route needs its own width; do not steal space from the ZIP name.
+            route.setSingleLine(false);
+            row.addView(route, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
             // 文字进度。打上 TAG_SLOT_INFO 作为槽位标记。
             TextView info = new TextView(act);
@@ -3110,21 +3145,24 @@ public class CNCNDownloadUI {
             TextView tip=new TextView(act);
             tip.setText("主下载引擎会保留同版本进度并重新连接，不执行从头重下。旧格式文件会在本文件完成后使用新线路。备用引擎将在下次连接时使用所选线路。\n关闭窗口不暂停下载。\n基础包自动优先 EdgeOne／ESA；热更只使用本包最新版本且内容一致的线路，落后线路会跳过。");
             tip.setTextColor(COLOR_LOG_PANEL_TEXT); tip.setTextSize(12);
-            panel.addView(tip,lpRow(0,dp(act,10)));
             ScrollView scroll=new ScrollView(act);
             LinearLayout choices=new LinearLayout(act); choices.setOrientation(LinearLayout.VERTICAL);
+            // Both the explanatory text and the route list scroll. The footer never does.
+            choices.addView(tip,lpRow(0,dp(act,10)));
             addRouteButton(act,choices,"自动选择","",false);
             java.util.List<CNMirrors.Mirror> mirrors=CNMirrors.selectable();
-            for (CNMirrors.Mirror mirror : mirrors) addRouteButton(act,choices,mirror.name,mirror.base,false);
+            for (CNMirrors.Mirror mirror : mirrors) addRouteButton(act,choices,CNDownloadRoute.displayName(mirror),mirror.base,false);
             scroll.addView(choices);
             panel.addView(scroll,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                    Math.min(dp(act,150),dp(act,44)*(mirrors.size()+1))));
+                    0,1f));
             LinearLayout actions=new LinearLayout(act); actions.setGravity(Gravity.END);
+            actions.setBaselineAligned(false);
             addRouteButton(act,actions,"关闭",null,true);
             addRouteButton(act,actions,"继续下载",null,true);
             panel.addView(actions,lpRow(dp(act,10),0));
-            int width=Math.min(dp(act,360),Math.max(dp(act,220),host.getWidth()-dp(act,24)));
-            modal.addView(panel,new FrameLayout.LayoutParams(width,ViewGroup.LayoutParams.WRAP_CONTENT,Gravity.CENTER));
+            int width=Math.min(dp(act,420),Math.max(1,host.getWidth()-dp(act,24)));
+            int height=Math.min(dp(act,520),Math.max(1,host.getHeight()-dp(act,24)));
+            modal.addView(panel,new FrameLayout.LayoutParams(width,height,Gravity.CENTER));
             host.addView(modal,new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT));
             routeModal=modal;
         }
@@ -3132,7 +3170,16 @@ public class CNCNDownloadUI {
     private static void addRouteButton(Activity act, LinearLayout parent, String label, String base, boolean dismiss) {
         boolean selected=base!=null && base.equals(CNDownloadRoute.selectedBase());
         TextView button=dialogButton(act,(selected?"✓ ":"")+label,COLOR_LOG_PANEL_TEXT,0x00000000,true);
-        button.setOnClickListener(new RouteChoice(base,dismiss)); parent.addView(button);
+        button.setMinHeight(dp(act,48));
+        button.setIncludeFontPadding(true);
+        button.setSingleLine(false);
+        button.setPadding(dp(act,10),dp(act,8),dp(act,10),dp(act,8));
+        button.setOnClickListener(new RouteChoice(base,dismiss));
+        LinearLayout.LayoutParams lp=dismiss
+                ? new LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1f)
+                : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);
+        if (dismiss && parent.getChildCount()>0) lp.leftMargin=dp(act,8);
+        parent.addView(button,lp);
     }
     private static final class RouteChoice implements View.OnClickListener {
         private final String base; private final boolean dismiss;

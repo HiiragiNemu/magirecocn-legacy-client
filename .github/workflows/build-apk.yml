@@ -376,8 +376,8 @@ jobs:
       # 这两道守卫读的是**工程树**里的文件（字体、引擎 web 那几个 smali），
       # 所以必须排在重建之后。原先它们在 last-green.yml 里跑，那边没有树了，
       # 已迁到这里——守卫得待在它要检查的东西旁边。
-      - name: 📁 关闭当前发布的所有文件访问权限与入口
-        run: python3 tools/enable-storage-access.py --disable --self-test --tree "${TREE}"
+      - name: 📁 恢复玩家手动文件访问入口（不作为下载条件）
+        run: python3 tools/enable-storage-access.py --enable --self-test --tree "${TREE}"
 
       - name: 🔤 校验字体基线与重定向目标
         run: python3 tools/check-fonts.py --tree "${TREE}"
