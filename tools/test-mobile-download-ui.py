@@ -8,6 +8,7 @@ p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--source-root',type=Path,default=Path(__file__).resolve().parents[1])
 a=p.parse_args()
 s=(a.source_root/'patch/src/main/java/io/kamihama/magianative/CNCNDownloadUI.java').read_text('utf8')
+assist=(a.source_root/'patch/src/main/java/io/kamihama/magianative/CNDownloadUiAssist.java').read_text('utf8')
 route=s[s.index('private static final class RouteMenuClick'):s.index('private static final class RouteChoice')]
 checks={
     'dialog bounded by host height':'host.getHeight()-dp(act,24)' in route and 'new FrameLayout.LayoutParams(width,height,Gravity.CENTER)' in route,
@@ -23,6 +24,12 @@ checks={
     'routes do not squeeze file names':'row.addView(route, new LinearLayout.LayoutParams(' in s and 'headRow.addView(route,' not in s,
     'chooser uses credited labels':'CNDownloadRoute.displayName(mirror)' in route,
     'support links immediately above statistics':'"赞助支持 MADE IN MAGIUS",\n        "赞助支持 CyberNova",\n        "统计说明",' in s,
+    'version panel fixed above scroll':all(x in s for x in ['leftCol.addView(versionPanel, versionLp)', 'versionPanel.addView(vVersionInfo,', 'versionPanel.addView(versionGrid,', 'versionBg.setStroke(']) and s.index('leftCol.addView(versionPanel,') < s.index('leftCol.addView(contribScroll,'),
+    'compact header options':all(x in s for x in ['styleCompactOption(act, vStorageChip)', 'styleCompactOption(act, vRouteChip)', 'view.setMinHeight(dp(act, 32))', 'logoLp.bottomMargin = dp(act, 2)']),
+    'option pills retain click actions':all(x in s for x in ['view.setBackground(optionBackground(act))', 'new StorageAccessClick(act)', 'new RouteMenuClick(act)']),
+    'enter bubble matches real click bounds':'vStatus.setBackground(actionVisible ? optionBackground(vStatus.getContext()) : null)' in s and s.count('vStatus.setOnClickListener(STAY_TOGGLE)')==2 and 'vStatus.setClickable(false)' in s,
+    'top outline controls separated from backdrop':s.count('bg.setColor(controlSurfaceColor())')>=3 and 'bg.setColor(CNCNDownloadUI.controlSurfaceColor())' in assist and 'v.setTextColor(color("COLOR_TEXT",' in assist,
+    'day footer black with subdued fill':'0xFF000000' in s and 'vFooter.setBackgroundColor(darkMode ? 0xC01B1428 : 0x99FFFFFF)' in s,
 }
 
 def luminance(c):

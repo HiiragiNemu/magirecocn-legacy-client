@@ -423,31 +423,93 @@ public class CNCNDownloadUI {
     private static final int KIND_SUB   = 3;
 
     private static final int[] CREDIT_KINDS = {
-        KIND_TITLE, KIND_ITEM, KIND_HEAD, KIND_ITEM, KIND_SUB, KIND_ITEM,
-        KIND_SUB, KIND_HEAD, KIND_ITEM, KIND_ITEM, KIND_ITEM, KIND_ITEM, KIND_HEAD, KIND_SUB, KIND_ITEM, KIND_HEAD, KIND_ITEM,
-        KIND_ITEM, KIND_ITEM, KIND_ITEM, KIND_ITEM
+        KIND_HEAD,
+        KIND_ITEM,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_ITEM,
+        KIND_SUB,
+        KIND_HEAD,
+        KIND_ITEM,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_ITEM,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_ITEM,
+        KIND_SUB,
+        KIND_ITEM,
+        KIND_ITEM,
+        KIND_HEAD,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_SUB,
+        KIND_HEAD,
+        KIND_ITEM,
+        KIND_ITEM,
+        KIND_ITEM,
+        KIND_ITEM,
+        KIND_ITEM
     };
 
     private static final String[] CREDIT_TEXTS = {
-        "魔法纪录Totentanz中文化",
-        "项目官网：" + CNEndpoints.HOME_HOST,
         "主力人员",
-        "【总体规划、路线设计与核心实现】MadeInMagius（点击赞助）",
-        "bilibili个人主页",
-        "【国内加速与下载协助】CyberNova/PhotonFlow（点击赞助）",
-        "bilibili个人主页",
+        "MadeInMagius",
+        "总体规划、路线设计、核心实现与汉化整合。",
+        "剧情翻译与校订：完成 344 个剧情汉化。",
+        "选关对话：汉化 735 条文字内容。",
+        "角色语音文本翻译与校订：共 1,588 条。其中语音字幕 1,335 条、看板语音 784 条，两类重合 531 条。",
+        "战斗技能文本翻译与修订：4,209 项。",
+        "前端界面文本汉化：1,470 项。",
+        "游戏图像资源汉化：258 个图像，包括 162 个 PNG 和 96 个 .vfxt 特效图像文件。已恢复的 22 张国服原图不计入个人汉化数量。",
+        "称号名称与解锁条件汉化整合：967 项，共 1,934 个字段。",
+        "剧情逐句校对：复核 264 条独立文本，修正 245 条；含复刻剧情共覆盖 339 处载体，实际修正 313 处。",
+        "CyberNova／PhotonFlow",
+        "国内加速、现代化下载界面与部分下载技术协助，发现了非 Web 页面外战斗场景 Cocos 引擎部分汉化的可能性和早期实现技术，提供了美服 API 抓包资源。",
         "其他协助者",
-        "【国服与圆环记录汉化组外剧情翻译及部分校对】水银h2oag（点击个人主页）",
-        "【圆环记录汉化组】国服外剧情翻译",
+        "圆环记录攻略组",
+        "提供剧情、角色语音及战斗技能相关的权威汉化文本。",
+        "剧情翻译与校订：参与 52 个剧情。",
+        "角色语音文本：共 703 条。其中语音字幕 109 条、看板语音 641 条，两类重合 47 条。",
+        "战斗技能文本：4,114 项。",
+        "其运营的魔法纪录中文 Wiki 编辑者提供称号译名资料：545 项直接采用，420 项结合现有规范人名与称号格式整理。此项为资料来源贡献，不重复计数。",
+        "水银 h2oag",
+        "剧情翻译与部分校订：汉化 144 个剧情。",
+        "巡逻区域汉化：22 个区域名称、3 条解锁条件，共 25 个字段。",
+        "阵型技能汉化：40 个名称、39 条效果说明，共 79 个字段。",
+        "Connect 技能汉化：524 个名称、525 条效果说明，共 1,049 个字段。",
+        "segfault",
+        "国服数据留存。",
         "赞助支持 MADE IN MAGIUS",
         "赞助支持 CyberNova",
         "统计说明",
-        "可核验贡献统计：MadeInMagius 2,692 条；剧情字段 2 条；战斗技能 2,374 条；语音字幕 0 条；Wiki 1,096 条",
-        "【国服数据留存】segfault（点击个人主页）",
+        "水银的三个 JSON 按类型、ID 和汉化字段统计，共 1,153 个字段；不与技能项数相加。数字、纯省略号和运行时重复映射不计，既有后续校订归属保留。",
+        "称号单独按 ID 统计，不并入原有前端 1,470 项。现成译文的整合不重复计为个人原创；修订既有剧情、复刻载体和空白内容不重复增加汉化数量。",
+        "70 个合作剧情目录分别计入各参与者的个人贡献。各人的目录数量含合作重叠，不相加作为全游戏剧情总数。",
+        "所有人采用相同的语音分类：语音字幕为 charaMessageList.message，看板台词为主界面等场景中的 textHome。同一语音在两处出现时，合计只计一次。",
+        "选关对话按对应关卡的 message 字段统计。当前发布包静态表有 1,580 条记录，另有 32 条表外运行时对话，合计覆盖 1,612 个关卡记录：国服来源 600 条、非国服文字 735 条、非国服省略号 159 条、空白 118 条。省略号和空白不计入文字汉化贡献；1,612 是当前已核实的发布数据覆盖量。",
+        "技能按类型与 ID 统计，同一技能的名称和说明不拆成两项。原译与后续实质校订分别保留贡献。",
+        "国服原有译文不计入上述个人汉化贡献。",
         "MadeInMagius的其他网站作品链接",
-        CNEndpoints.site(0) + "【魔法纪录剧情中日双语阅读网站】",
-        CNEndpoints.site(1) + "【MagiaExedra和魔法纪录Live2D网站】",
-        CNEndpoints.site(2) + "【魔法少女称呼关系搜索与身高对比网站】",
+        "magireader.pages.dev【魔法纪录剧情中日双语阅读网站】",
+        "magireco-call-search-cn.pages.dev【魔法少女称呼关系搜索与身高对比网站】",
+        "magius3dviewer.pages.dev【MagiaExedra3D网站】",
         "magiaexedralive2dviewer.pages.dev【魔法纪录 MagiaExedra Live2D 和战斗小人网站（有剧情播放功能）】",
         "madeinmagius-site.pages.dev【MadeInMagius 下载中心和教程网站】"
     };
@@ -459,25 +521,47 @@ public class CNCNDownloadUI {
      * 浏览器。下载界面盖在游戏之上，误触直接跳出去会打断安装，所以要求确认。
      */
     private static final String[] CREDIT_URLS = {
-        "",                                                     // 标题
-        CNEndpoints.HOME_URL,                                   // 项目官网
-        "",                                                     // 「主力人员」小标题
-        "https://afdian.com/a/madeinmagius",                    // MadeInMagius（赞助）
-        "https://b23.tv/aNjcz1p",                               // MadeInMagius 个人主页
-        "https://afdian.com/a/cybernova",                       // CyberNova/PhotonFlow（赞助）
-        "https://b23.tv/9vyRcI8",                               // CyberNova/PhotonFlow 个人主页
-        "",                                                     // 「其他协助者」小标题
-        "https://b23.tv/ovvbrNw",                               // 水银h2oag
-        "https://magireco.moe",                              // 圆环记录汉化组
-        "https://afdian.com/a/madeinmagius",                    // 统计说明前：先本人
-        "https://afdian.com/a/cybernova",                       // 再加速协助者
-        "",                                                     // 统计说明标题
-        "",                                                     // 统计
-        "https://b23.tv/xjXW9DI",                               // segfault
-        "",                                                     // 「友情链接」小标题
-        CNEndpoints.siteUrl(0),
-        CNEndpoints.siteUrl(1),
-        CNEndpoints.siteUrl(2),
+        "",
+        "https://space.bilibili.com/625821",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "https://space.bilibili.com/3546962632640645",
+        "",
+        "",
+        "https://space.bilibili.com/194242416",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "https://b23.tv/ovvbrNw",
+        "",
+        "",
+        "",
+        "",
+        "https://b23.tv/xjXW9DI",
+        "",
+        "https://afdian.com/a/madeinmagius",
+        "https://afdian.com/a/cybernova",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "https://magireader.pages.dev",
+        "https://magireco-call-search-cn.pages.dev/",
+        "https://magius3dviewer.pages.dev/",
         "https://magiaexedralive2dviewer.pages.dev/",
         "https://madeinmagius-site.pages.dev/"
     };
@@ -491,24 +575,46 @@ public class CNCNDownloadUI {
      */
     private static final String[] CREDIT_LINK_SPANS = {
         "",
-        CNEndpoints.HOME_HOST,
-        "",
         "MadeInMagius",
-        "个人主页",
-        "CyberNova/PhotonFlow",
-        "个人主页",
         "",
-        "水银h2oag",
-        "圆环记录汉化组",
-        "MADE IN MAGIUS",
-        "CyberNova",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "CyberNova／PhotonFlow",
+        "",
+        "",
+        "圆环记录攻略组",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "水银 h2oag",
+        "",
+        "",
         "",
         "",
         "segfault",
         "",
-        CNEndpoints.site(0),
-        CNEndpoints.site(1),
-        CNEndpoints.site(2),
+        "MADE IN MAGIUS",
+        "CyberNova",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "magireader.pages.dev",
+        "magireco-call-search-cn.pages.dev",
+        "magius3dviewer.pages.dev",
         "magiaexedralive2dviewer.pages.dev",
         "madeinmagius-site.pages.dev"
     };
@@ -531,7 +637,7 @@ public class CNCNDownloadUI {
 
     /** 底部常驻署名条：原先塞在速度行里的那句长文案，原文保留。 */
     private static final String FOOTER_CREDIT =
-        "总体规划与大部分实现、汉化引擎及内容修复：@MadeInMagius | 国内加速、下载 UI 与部分下载技术协助：@CyberNova/PhotonFlow | 国服与圆环记录汉化组外剧情翻译及部分校对：水银h2oag | 圆环记录汉化组提供50项剧情及战斗技能译文引用";
+        "MadeInMagius：剧情 344 个；选关对话 735 条；角色语音共 1,588 条（字幕 1,335 条、看板语音 784 条，重合 531 条）；战斗技能 4,209 项；前端界面 1,470 项；图像 258 个（PNG 162 个、.vfxt 96 个；恢复的 22 张国服原图不计入个人汉化）。CyberNova／PhotonFlow：国内加速、现代化下载界面、部分下载技术、Cocos 战斗场景汉化早期技术与美服 API 抓包资源。圆环记录攻略组：剧情 52 个；角色语音共 703 条（字幕 109 条、看板语音 641 条，重合 47 条）；战斗技能 4,114 项。水银 h2oag：剧情 144 个；巡逻区域 25、阵型技能 79、Connect 技能 1,049 个汉化字段。segfault：国服数据留存。70 个合作剧情分别计入各参与者；国服原有译文不计入个人汉化贡献。 称号汉化整合 967 项（1,934 个字段）；Wiki 现成译名 545 项、规范人名及称号格式整理 420 项、另有 2 项补译。剧情逐句校对 264 条，修正 245 条。";
 
     // ---- 云端可配的署名内容 ----
     //
@@ -1037,7 +1143,7 @@ public class CNCNDownloadUI {
         loadBitmapFromAssets(act, LOGO_ASSET, logoView);
         LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        logoLp.bottomMargin = dp(act, 3);
+        logoLp.bottomMargin = dp(act, 2);
         // 两个入口按实际文字高度测量，固定 64dp 会把第二行线路按钮裁掉。
         LinearLayout logoRow = new LinearLayout(act);
         logoRow.setMinimumHeight(dp(act, 64));
@@ -1050,26 +1156,39 @@ public class CNCNDownloadUI {
             vStorageChip = new TextView(act);
             vStorageChip.setText(CNStorageAccess.status(act));
             vStorageChip.setTextSize(12);
-            vStorageChip.setMinHeight(dp(act, 48));
-            vStorageChip.setGravity(Gravity.CENTER_VERTICAL);
-            vStorageChip.setTextColor(COLOR_ACCENT2);
-            vStorageChip.setPadding(dp(act, 8), dp(act, 12), dp(act, 4), dp(act, 12));
+            styleCompactOption(act, vStorageChip);
             vStorageChip.setOnClickListener(new StorageAccessClick(act));
-            logoActions.addView(vStorageChip);
+            LinearLayout.LayoutParams storageLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            storageLp.bottomMargin = dp(act, 4);
+            logoActions.addView(vStorageChip, storageLp);
         }
         vRouteChip = new TextView(act);
         vRouteChip.setText("线路：" + CNDownloadRoute.describe());
         vRouteChip.setTextSize(12);
-        vRouteChip.setMinHeight(dp(act, 48));
-        vRouteChip.setGravity(Gravity.CENTER_VERTICAL);
-        vRouteChip.setTextColor(COLOR_ACCENT2);
-        vRouteChip.setPadding(dp(act, 8), dp(act, 8), dp(act, 4), dp(act, 8));
+        styleCompactOption(act, vRouteChip);
         vRouteChip.setOnClickListener(new RouteMenuClick(act));
         logoActions.addView(vRouteChip);
         // The longer credited route name wraps inside its half rather than shrinking the logo away.
-        logoRow.addView(logoActions, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        LinearLayout.LayoutParams actionsLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        actionsLp.leftMargin = dp(act, 8);
+        logoRow.addView(logoActions, actionsLp);
         leftCol.addView(logoRow, logoLp);
+
+        // 固定信息紧接横幅；只有下面的贡献说明滚动。
+        LinearLayout versionPanel = new LinearLayout(act);
+        versionPanel.setOrientation(LinearLayout.VERTICAL);
+        versionPanel.setPadding(dp(act, 5), dp(act, 3), dp(act, 5), dp(act, 3));
+        GradientDrawable versionBg = new GradientDrawable();
+        versionBg.setColor(darkMode ? 0x221B1428 : 0x22FFFFFF);
+        versionBg.setCornerRadius(dp(act, 6));
+        versionBg.setStroke(dp(act, 1), COLOR_GLASS_STK);
+        versionPanel.setBackground(versionBg);
+        LinearLayout.LayoutParams versionLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        versionLp.bottomMargin = dp(act, 4);
+        leftCol.addView(versionPanel, versionLp);
 
         vVersionInfo = new TextView(act);
         vVersionInfo.setText("版本状态");
@@ -1077,14 +1196,15 @@ public class CNCNDownloadUI {
         vVersionInfo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f);
         vVersionInfo.setGravity(Gravity.START);
         vVersionInfo.setPadding(dp(act, 6), 0, dp(act, 4), dp(act, 1));
-        leftCol.addView(vVersionInfo, new LinearLayout.LayoutParams(
+        vVersionInfo.setIncludeFontPadding(false);
+        versionPanel.addView(vVersionInfo, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         // 版本状态从纵向 5 行改成双列 3 行：本端/资源、EdgeOne/JS、Scenario/留白。
         // 左列宽度现在默认 50%，足够容纳完整状态，不再为了几条短文本浪费高度。
         LinearLayout versionGrid = new LinearLayout(act);
         versionGrid.setOrientation(LinearLayout.VERTICAL);
-        versionGrid.setPadding(dp(act, 6), 0, dp(act, 4), dp(act, 4));
+        versionGrid.setPadding(dp(act, 6), 0, dp(act, 4), 0);
         String[] versionCells = versionPanelCells();
         vVersionCells = new TextView[5];
         int versionCellIndex = 0;
@@ -1098,6 +1218,7 @@ public class CNCNDownloadUI {
                 TextView cell = new TextView(act);
                 cell.setTextColor(COLOR_SUB);
                 cell.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f);
+                cell.setIncludeFontPadding(false);
                 cell.setSingleLine(true);
                 cell.setEllipsize(android.text.TextUtils.TruncateAt.END);
                 if (versionCellIndex < versionCells.length) {
@@ -1114,7 +1235,7 @@ public class CNCNDownloadUI {
                 versionRow.addView(cell, cellLp);
             }
         }
-        leftCol.addView(versionGrid, new LinearLayout.LayoutParams(
+        versionPanel.addView(versionGrid, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         ScrollView contribScroll = new ScrollView(act);
@@ -1172,6 +1293,7 @@ public class CNCNDownloadUI {
         vStatus.setMinLines(2);
         vStatus.setMaxLines(2);
         vStatus.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        vStatus.setPadding(dp(act, 8), dp(act, 4), dp(act, 8), dp(act, 4));
         rightCol.addView(vStatus, lpRow(0, dp(act, 6)));
 
         // 下载模式一行：自建引擎 / aria2c · 线程模式（单线程分片），排查当前走
@@ -1399,8 +1521,8 @@ public class CNCNDownloadUI {
         // 在部分 Adreno 驱动上会放大 vkDestroyFramebuffer 崩溃的触发面。
         vFooter = new TextView(act);
         vFooter.setText(footerText());
-        vFooter.setTextColor(darkMode ? 0xFFF6EDF9 : 0xFF30223E);
-        vFooter.setBackgroundColor(darkMode ? 0xE61B1428 : 0xF2FFFFFF);
+        vFooter.setTextColor(darkMode ? 0xFFF6EDF9 : 0xFF000000);
+        vFooter.setBackgroundColor(darkMode ? 0xC01B1428 : 0x99FFFFFF);
         vFooter.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
         vFooter.setSingleLine(true);
         applyFooterMode();
@@ -2349,6 +2471,28 @@ public class CNCNDownloadUI {
         }
     }
 
+    static int controlSurfaceColor() {
+        return darkMode ? 0xE61B1428 : 0xE6FFFFFF;
+    }
+
+    private static GradientDrawable optionBackground(Context ctx) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(controlSurfaceColor());
+        bg.setCornerRadius(dp(ctx, 18));
+        bg.setStroke(dp(ctx, 1), COLOR_ACCENT2);
+        return bg;
+    }
+
+    private static void styleCompactOption(Activity act, TextView view) {
+        view.setMinHeight(dp(act, 32));
+        view.setGravity(Gravity.CENTER);
+        view.setIncludeFontPadding(false);
+        view.setSingleLine(false);
+        view.setTextColor(COLOR_TEXT);
+        view.setPadding(dp(act, 10), dp(act, 4), dp(act, 10), dp(act, 4));
+        view.setBackground(optionBackground(act));
+    }
+
     /** 按当前状态刷新 BGM 胶囊的文字与配色。开＝实心强调色，关＝暗色描边。 */
     private static void styleBgmPill(Activity act) {
         TextView p = vBgmPill;
@@ -2361,11 +2505,10 @@ public class CNCNDownloadUI {
             bg.setColor(COLOR_LOG_PILL);
             p.setTextColor(0xFFFFFFFF);
         } else {
-            // 关闭态不用灰色实心：那样看着像「禁用」。空心 + 次要文字色表示
-            // 「可用但当前没开」，跟 LOG 面板里那三个开关是同一套语义。
-            bg.setColor(0x00000000);
-            bg.setStroke(dp(act, 1), COLOR_GLASS_STK);
-            p.setTextColor(COLOR_SUB);
+            // 半透明底色隔开复杂背景，关闭态仍保持描边按钮而非禁用色。
+            bg.setColor(controlSurfaceColor());
+            bg.setStroke(dp(act, 1), COLOR_ACCENT2);
+            p.setTextColor(COLOR_TEXT);
         }
         p.setBackground(bg);
     }
@@ -2416,9 +2559,9 @@ public class CNCNDownloadUI {
             bg.setColor(COLOR_LOG_PILL);
             p.setTextColor(0xFFFFFFFF);
         } else {
-            bg.setColor(0x00000000);
-            bg.setStroke(dp(act, 1), COLOR_GLASS_STK);
-            p.setTextColor(COLOR_SUB);
+            bg.setColor(controlSurfaceColor());
+            bg.setStroke(dp(act, 1), COLOR_ACCENT2);
+            p.setTextColor(COLOR_TEXT);
         }
         p.setBackground(bg);
     }
@@ -4689,6 +4832,11 @@ public class CNCNDownloadUI {
         if (vStatus != null) {
             long remain = autoEnterAtMs - android.os.SystemClock.uptimeMillis();
             boolean staying = CNDownloadUiAssist.shouldStayOnPage();
+            boolean actionVisible = staying || (autoEnterAtMs > 0 && remain > 0);
+            if (vStatus.isClickable() != actionVisible) {
+                // 可见气泡边界就是点击范围；普通下载说明不显示按钮外观。
+                vStatus.setBackground(actionVisible ? optionBackground(vStatus.getContext()) : null);
+            }
             if (staying) {
                 // 已经停表：这行就是唯一的「放行」入口（顶栏没有胶囊，
                 // 调试悬浮窗那扇门后面还有两道闸）。

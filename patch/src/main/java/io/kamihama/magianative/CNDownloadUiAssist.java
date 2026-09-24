@@ -837,9 +837,9 @@ public final class CNDownloadUiAssist {
         TextView v = displayChip;
         if (v == null) return;
         v.setText("Aa " + scalePct + "%");
-        v.setTextColor(color("COLOR_ACCENT2", 0xFF9C5BC2));
+        v.setTextColor(color("COLOR_TEXT", 0xFF30223E));
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0x00000000);
+        bg.setColor(CNCNDownloadUI.controlSurfaceColor());
         bg.setCornerRadius(dp(v, 20));
         bg.setStroke(dp(v, 1), color("COLOR_ACCENT2", 0xFF9C5BC2));
         v.setBackground(bg);
