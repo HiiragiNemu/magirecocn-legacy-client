@@ -129,6 +129,9 @@ jobs:
           sparse-checkout-cone-mode: false
           path: .reviewed-fonts
 
+      - name: Verify typed native battle skill names
+        run: python3 tools/test-battle-skill-name-context.py
+
       - name: ☕ 设置 JDK 17
         uses: actions/setup-java@v4
         with:

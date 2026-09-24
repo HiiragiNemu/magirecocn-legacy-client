@@ -1446,7 +1446,7 @@ struct Hidden {
 //   版本旁注，不得用 GITHUB_RUN_NUMBER 等构建编号覆盖；本地构建也直接使用该值。
 //   它是 constexpr、从不取地址，只在编译期喂给下面的 Hidden，因此不会有一份
 //   明文留在产物里。
-static constexpr char CLIENT_VERSION[] = "1.0.190";
+static constexpr char CLIENT_VERSION[] = "1.0.191";
 
 // 真正进二进制的是这一份：异或之后的字节。
 static constexpr auto kVersionHidden =
@@ -2841,6 +2841,32 @@ static void* createWithTtfStrNew(void* text, const void* font, float size,
     return createWithTtfStrOld(text, font, size, dims, h, v);
 }
 
+// BEGIN_TYPED_BATTLE_SKILL_NAMES
+// 原生 parseArtUnit -> setParam -> 技能标题。只处理已核对的 ID + 类型 + 完整原文；
+// 两个国服正式译名按 MEMORIA/EMOTION 保留，不污染无上下文的 engine_i18n.tsv。
+// APK 3.1.9 双 ABI：Type::MEMORIA=3, MemoriaType::ABILITY=1,
+// MemoriaDisplay::MEMORIA=1, ::EMOTION=3；详见 docs/battle-skill-name-context.md。
+static const char* typedBattleSkillName(int type, int id, int memoriaType,
+                                        int displayType, const char* name) {
+    if (type != 3 || memoriaType != 1 || !name ||
+        strcmp(name, "ファスト・マナアップ") != 0) return name;
+    if (id == 115201 && displayType == 1) return "快速魔法提升";
+    if (id == 1144110 && displayType == 3) return "魔力骤升";
+    return name;
+}
+using ArtUnitSetParamFn = void (*)(void*, int, int, int, int, int, int,
+                                   const char*, const char*, int, int);
+static ArtUnitSetParamFn artUnitSetParamOld = nullptr;
+static void artUnitSetParamNew(void* self, int type, int id, int icon, int level,
+                               int cost, int voice, const char* name,
+                               const char* description, int memoriaType, int displayType) {
+    const char* translated = g_dbgNoI18nLabel ? name :
+        typedBattleSkillName(type, id, memoriaType, displayType, name);
+    artUnitSetParamOld(self, type, id, icon, level, cost, voice,
+                       translated, description, memoriaType, displayType);
+}
+// END_TYPED_BATTLE_SKILL_NAMES
+
 // ─── JNI_OnLoad ──────────────────────────────────────────
 // ═══ TLS 探针：用**引擎自带的那份 OpenSSL** 去连一个端点 ═══════════
 //
@@ -3256,6 +3282,10 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
         H("_ZN9LbUtility9initLabelEPN7cocos2d4NodeERPNS0_5LabelEPKcfNS0_4Vec2EiNS0_4SizeENS0_7Color4BEi",
           (void*)initLabelNew, (void**)&initLabelOld, "i18n: LbUtility::initLabel");
     }
+
+    // 原生战斗同名技能需要 ID 与类型；对象构造时翻译名称，保留其余参数。
+    H("_ZN9QbArtUnit8setParamEN5QbArt4TypeEiiiiiPKcS3_NS0_11MemoriaTypeENS0_14MemoriaDisplayE",
+      (void*)artUnitSetParamNew, (void**)&artUnitSetParamOld, "i18n: QbArtUnit::setParam typed name");
 
     // ── TTF 构造文本汉化；字体仍由原调用点及资源决定 ──
     // 兼容已有 noTtfHooks 调试开关；这里只挂构造文本翻译，不改字体/字号/位置。
