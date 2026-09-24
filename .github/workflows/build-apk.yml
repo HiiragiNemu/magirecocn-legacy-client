@@ -442,7 +442,9 @@ jobs:
       # 打错符号名/少个分号这类错误 5 秒就能查出来，不必等两个 ABI 编译完。
       # ⚠ 通过它不等于 NDK 构建通过——桩的 libc++ 布局与 NDK 不同。
       - name: 📝 native 语法预检（桩头文件）
-        run: tools/check-native-syntax.sh
+        run: |
+          tools/check-native-syntax.sh
+          python3 tools/test-download-loading-exit.py
 
       - name: 🔢 读取客户端版本号（源码）
         run: |

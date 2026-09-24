@@ -1,0 +1,63 @@
+{
+  "source": "用户指定 A:/マギレコ_3.2.2/assets/resource/sound_native",
+  "files": [
+    {
+      "path": "assets/resource/sound_native/bgm/bgm00_system01_hca.hca",
+      "size": 1324105,
+      "sha256": "f0236498fe3f6c6bd4b127b03e916f239e7a2acb18bfc2996b86d8c7aaa18271",
+      "apk189": "byte-identical",
+      "source": "A:\\マギレコ_3.2.2\\assets\\resource\\sound_native\\bgm\\bgm00_system01_hca.hca"
+    },
+    {
+      "path": "assets/resource/sound_native/bgm/bgm00_system02_hca.hca",
+      "size": 1309442,
+      "sha256": "7919d23125f318bd040c0bf7ddfce6b94561309ef2b10335acede03b9e6697db",
+      "apk189": "byte-identical",
+      "source": "A:\\マギレコ_3.2.2\\assets\\resource\\sound_native\\bgm\\bgm00_system02_hca.hca"
+    },
+    {
+      "path": "assets/resource/sound_native/bgm/bgm01_anime07_hca.hca",
+      "size": 1445501,
+      "sha256": "2860a210ea77399cc78f740d93492e25c4391c57fa106694a7621f8506a8e550",
+      "apk189": "missing",
+      "source": "A:\\マギレコ_3.2.2\\assets\\resource\\sound_native\\bgm\\bgm01_anime07_hca.hca"
+    },
+    {
+      "path": "assets/resource/sound_native/bgm/bgm02_anime07_hca.hca",
+      "size": 938157,
+      "sha256": "3bfe5368b41036bc9e85969f01c4e572038ea2459af066fda6b1655e23acfd33",
+      "apk189": "missing",
+      "source": "A:\\マギレコ_3.2.2\\assets\\resource\\sound_native\\bgm\\bgm02_anime07_hca.hca"
+    },
+    {
+      "path": "assets/resource/sound_native/bgm/bgm02_anime11_hca.hca",
+      "size": 1285913,
+      "sha256": "da57bfd1750da442bf67c1d45068a2fc16440dafaf86b3e2881160adb746c508",
+      "apk189": "missing",
+      "source": "A:\\マギレコ_3.2.2\\assets\\resource\\sound_native\\bgm\\bgm02_anime11_hca.hca"
+    },
+    {
+      "path": "assets/resource/sound_native/bgm/bgm03_story14_hca.hca",
+      "size": 926541,
+      "sha256": "089c3ec25f0d3f0a8e51b00245f45ddbab9fafb87cbac1871df696979549e1ab",
+      "apk189": "missing",
+      "source": "A:\\マギレコ_3.2.2\\assets\\resource\\sound_native\\bgm\\bgm03_story14_hca.hca"
+    },
+    {
+      "path": "assets/resource/sound_native/se/magireco.acb",
+      "size": 9621600,
+      "sha256": "f303fd90f14a83e5df5b5a87ab4ac084e6ed923ea364855c2a5aab51fddb06a0",
+      "apk189": "byte-identical",
+      "source": "A:\\マギレコ_3.2.2\\assets\\resource\\sound_native\\se\\magireco.acb"
+    },
+    {
+      "path": "assets/resource/sound_native/se/magireco.acf",
+      "size": 4544,
+      "sha256": "4b9680a046e110d81bcace90a2a51308856373b52d46a11a0b6f1aeabbebac86",
+      "apk189": "byte-identical",
+      "source": "A:\\マギレコ_3.2.2\\assets\\resource\\sound_native\\se\\magireco.acf"
+    }
+  ],
+  "existingEqual": 4,
+  "added": 4
+}

@@ -1170,6 +1170,34 @@
       "group": "美术",
       "why": "用户提供并要求原样使用的分时下载背景；按设备当地时间选择，不改原图。",
       "post": "d36c40198103dc237ec54cb60359d559538752b50704f71664a777015dfa46f8"
+    },
+    {
+      "kind": "add",
+      "path": "assets/resource/sound_native/bgm/bgm01_anime07_hca.hca",
+      "group": "原版音频",
+      "why": "按用户指定日服 3.2.2 原件补齐 APK 同目录缺少的 HCA，不转码、不改写。",
+      "post": "2860a210ea77399cc78f740d93492e25c4391c57fa106694a7621f8506a8e550"
+    },
+    {
+      "kind": "add",
+      "path": "assets/resource/sound_native/bgm/bgm02_anime07_hca.hca",
+      "group": "原版音频",
+      "why": "按用户指定日服 3.2.2 原件补齐 APK 同目录缺少的 HCA，不转码、不改写。",
+      "post": "3bfe5368b41036bc9e85969f01c4e572038ea2459af066fda6b1655e23acfd33"
+    },
+    {
+      "kind": "add",
+      "path": "assets/resource/sound_native/bgm/bgm02_anime11_hca.hca",
+      "group": "原版音频",
+      "why": "按用户指定日服 3.2.2 原件补齐 APK 同目录缺少的 HCA，不转码、不改写。",
+      "post": "da57bfd1750da442bf67c1d45068a2fc16440dafaf86b3e2881160adb746c508"
+    },
+    {
+      "kind": "add",
+      "path": "assets/resource/sound_native/bgm/bgm03_story14_hca.hca",
+      "group": "原版音频",
+      "why": "按用户指定日服 3.2.2 原件补齐 APK 同目录缺少的 HCA，不转码、不改写。",
+      "post": "089c3ec25f0d3f0a8e51b00245f45ddbab9fafb87cbac1871df696979549e1ab"
     }
   ]
 }

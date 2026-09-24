@@ -489,6 +489,34 @@ static void (*downloadSceneLayerCtorOld)(void*, void*) = nullptr;
 static bool (*downloadSceneLayerInitOld)(void*)        = nullptr;
 static void (*downloadSceneLayerOnEnterOld)(void*)     = nullptr;
 
+using GetSceneLayerManagerFn = void* (*)();
+using PopSceneLayerFn = void (*)(void*, int);
+static GetSceneLayerManagerFn getSceneLayerManagerFn = nullptr;
+static PopSceneLayerFn popSceneLayerFn = nullptr;
+
+// pushSceneDownload 先 push Loading(33)，再 push Download(27)。原下载状态机
+// 会先 pop33；被快速路径直接调用的 onDownloaded 只 pop27，因此这里补齐配对。
+// 仅在下载快速完成分支调用，沿用 onEnter 的 GL 线程，不碰其他场景的 loading。
+static bool completeReadyDownload(const std::function<void()>& callback) {
+    if (!getSceneLayerManagerFn || !popSceneLayerFn) return false;
+    void* manager = getSceneLayerManagerFn();
+    if (!manager) return false;
+    popSceneLayerFn(manager, 33);
+    callback();
+    return true;
+}
+
+static void resolveDownloadLoadingExit(const char* lib) {
+    void* handle = ::dlopen(lib, RTLD_NOW | RTLD_NOLOAD);
+    if (!handle) handle = ::dlopen(lib, RTLD_NOW);
+    if (!handle) return;
+    getSceneLayerManagerFn = reinterpret_cast<GetSceneLayerManagerFn>(
+        ::dlsym(handle, "_ZN17SceneLayerManager11getInstanceEv"));
+    popSceneLayerFn = reinterpret_cast<PopSceneLayerFn>(
+        ::dlsym(handle, "_ZN17SceneLayerManager13popSceneLayerE15ESceneLayerType"));
+    ::dlclose(handle);
+}
+
 // libuwasa 逆向移植来的两个
 static int  (*criNcvGetHwSampleRateOld)(void)        = nullptr;
 static void (*setMaxConnectionNumOld)(void*, int)    = nullptr;
@@ -789,8 +817,12 @@ static void downloadSceneLayerOnEnterNew(void* _this) {
         downloadSceneLayerOnEnterOld(_this);
         return;
     }
-    LOGI("[DSL::onEnter] ★ 跳过下载 UI，直接调完成回调 info=%p", info);
-    cb();
+    if (!completeReadyDownload(cb)) {
+        LOGE("[DSL::onEnter] loading 清理接口未就绪，保留原下载状态机");
+        downloadSceneLayerOnEnterOld(_this);
+        return;
+    }
+    LOGI("[DSL::onEnter] ★ 已清理下载前置 loading，并调用完成回调 info=%p", info);
     LOGI("[DSL::onEnter] ✓ 回调执行完毕");
 }
 
@@ -1414,7 +1446,7 @@ struct Hidden {
 //   版本旁注，不得用 GITHUB_RUN_NUMBER 等构建编号覆盖；本地构建也直接使用该值。
 //   它是 constexpr、从不取地址，只在编译期喂给下面的 Hidden，因此不会有一份
 //   明文留在产物里。
-static constexpr char CLIENT_VERSION[] = "1.0.189";
+static constexpr char CLIENT_VERSION[] = "1.0.190";
 
 // 真正进二进制的是这一份：异或之后的字节。
 static constexpr auto kVersionHidden =
@@ -3129,6 +3161,7 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       "AssetLoadState::onDownloaded");
 
     // ── 下载场景三连 ──
+    resolveDownloadLoadingExit(LIB);
     H("_ZN22DownloadSceneLayerInfoC2E15ESceneLayerTypeRKNSt6__ndk18functionIFvvEEERKNS1_12basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEEN19DownloadRunningType21DownloadRunningType__E",
       (void*)dslInfoCtorNew, (void**)&dslInfoCtorOld, "DownloadSceneLayerInfo::ctor");
     H("_ZN18DownloadSceneLayerC1EP22DownloadSceneLayerInfo",
@@ -3242,5 +3275,4 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     LOGI("[JNI] hooks 安装完成：成功 %d 个，失败 %d 个", hookOk, hookFail);
     return JNI_VERSION_1_6;
 }
-
 
