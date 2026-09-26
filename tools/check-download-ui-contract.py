@@ -314,11 +314,13 @@ checks = {
         and "点这行停在本页" in ui and "点这行进入游戏" in ui
         and "CNDownloadUiAssist.setStayOnPage(!stay);" in code(ui)
         and "setAutoEnterCountdown(0L);" in code(ui),
-    # 顶栏的配平是这次改动明确要保住的东西：左四右二，加一颗就红。
-    # 真要加，改这个数之前先想清楚对称还成不成立。
-    "顶栏胶囊数量不变（左 4 右 2）":
-        code(ui).count("topLeft.addView(") == 4
-        and code(ui).count("headRight.addView(") == 2,
+    # 用户新增手动 APK 更新入口；左侧独立滚动，按钮不得挤入右侧主题栏。
+    "顶栏胶囊为左 5 右 2，手动更新紧随离线包":
+        code(ui).count("topLeft.addView(") == 5
+        and code(ui).count("headRight.addView(") == 2
+        and code(ui).index("topLeft.addView(vOfflinePill,") < code(ui).index("topLeft.addView(vApkUpdatePill,")
+        and "vApkUpdatePill.setOnClickListener(new ApkUpdatePillClick(act))" in code(ui)
+        and "CNVersionCheck.checkManually(act)" in code(ui),
     # 磁盘满不能伪装成网络故障。ENOSPC 抛的是普通 IOException，和超时、断流走同一个
     # catch，于是：线路被 reportFailure（线上 switch_after_failures=1，一次就冷却
     # 60 秒）、四次重试逐条线路白烧、玩家对着「重试/备用引擎/单线程/离线包」四个
