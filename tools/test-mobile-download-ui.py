@@ -10,7 +10,9 @@ a=p.parse_args()
 s=(a.source_root/'patch/src/main/java/io/kamihama/magianative/CNCNDownloadUI.java').read_text('utf8')
 assist=(a.source_root/'patch/src/main/java/io/kamihama/magianative/CNDownloadUiAssist.java').read_text('utf8')
 route=s[s.index('private static final class RouteMenuClick'):s.index('private static final class RouteChoice')]
+surface=re.search(r'return darkMode \? (0x[0-9A-F]+) : (0x[0-9A-F]+);',s[s.index('static int controlSurfaceColor()'):])
 checks={
+    'capsule fill is translucent (20 percent) in both themes':bool(surface) and all((int(surface[i],16)>>24)==0x33 for i in (1,2)),
     'dialog bounded by host height':'host.getHeight()-dp(act,24)' in route and 'new FrameLayout.LayoutParams(width,height,Gravity.CENTER)' in route,
     'tip scrolls with choices':'choices.addView(tip,lpRow(' in route and 'panel.addView(tip,' not in route,
     'body uses remaining height':'panel.addView(scroll,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,\n                    0,1f))' in route,

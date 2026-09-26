@@ -2472,7 +2472,7 @@ public class CNCNDownloadUI {
     }
 
     static int controlSurfaceColor() {
-        return darkMode ? 0xE61B1428 : 0xE6FFFFFF;
+        return darkMode ? 0x331B1428 : 0x33FFFFFF;
     }
 
     private static GradientDrawable optionBackground(Context ctx) {
