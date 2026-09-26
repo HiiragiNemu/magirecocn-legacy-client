@@ -46,6 +46,69 @@ public final class CNVersionCheck {
 
     private CNVersionCheck() {}
 
+    private static final java.util.concurrent.atomic.AtomicBoolean MANUAL_RUNNING =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    static boolean manualCheckInProgress() { return MANUAL_RUNNING.get(); }
+
+    /** A repeatable user request, separate from the once-only startup check. */
+    public static void checkManually(Activity act) {
+        if (act == null || act.isFinishing() || !MANUAL_RUNNING.compareAndSet(false, true)) return;
+        CNCNDownloadUI.setManualApkCheckBusy(act, true);
+        try {
+            Thread t = new Thread(new ManualCheck(act), "cnv-manual-version-check");
+            t.setDaemon(true);
+            t.start();
+        } catch (Throwable t) {
+            MANUAL_RUNNING.set(false);
+            CNCNDownloadUI.setManualApkCheckBusy(act, false);
+            CNCNDownloadUI.showManualApkResult(act, null, null, "检查启动失败，请重试");
+        }
+    }
+
+    /** -1: unavailable; 0: no newer valid package; 1: offer a newer package. */
+    static int manualResult(String local, JSONObject client) {
+        if (local == null || !local.matches("[0-9]+(\\.[0-9]+){1,3}") || !validClient(client)) return -1;
+        return compareVersion(local, client.optString("version")) < 0 ? 1 : 0;
+    }
+
+    private static final class ManualCheck implements Runnable {
+        private final Activity act;
+        ManualCheck(Activity act) { this.act = act; }
+        @Override public void run() {
+            String local = null;
+            JSONObject update = null;
+            String message = "检查失败，请稍后重试";
+            try {
+                local = awaitClientVersion();
+                lastLocalVersion = local == null ? "—" : local;
+                JSONObject client = local == null ? null : fetchBestClientSection();
+                int result = manualResult(local, client);
+                if (result > 0) update = client;
+                else if (result == 0) message = "当前已是最新可用版本（v" + local + "）";
+                else message = local == null ? "读取当前版本失败，请重试" : "未取得有效更新信息，请重试";
+            } catch (Throwable t) {
+                CNLog.w(TAG, "手动检查 APK 更新失败: " + t);
+            }
+            try { act.runOnUiThread(new ManualResult(act, local, update, message)); }
+            catch (Throwable t) { MANUAL_RUNNING.set(false); }
+        }
+    }
+
+    private static final class ManualResult implements Runnable {
+        private final Activity act;
+        private final String local, message;
+        private final JSONObject update;
+        ManualResult(Activity act, String local, JSONObject update, String message) {
+            this.act = act; this.local = local; this.update = update; this.message = message;
+        }
+        @Override public void run() {
+            MANUAL_RUNNING.set(false);
+            CNCNDownloadUI.setManualApkCheckBusy(act, false);
+            CNCNDownloadUI.showManualApkResult(act, local, update, message);
+        }
+    }
+
     /**
      * 本端客户端版本，由 libMagiaLegacy 经 RegisterNatives 提供。
      * 读不到（旧库没这个函数）时抛 {@link UnsatisfiedLinkError}——调用方必须

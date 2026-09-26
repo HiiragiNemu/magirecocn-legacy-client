@@ -434,6 +434,7 @@ public class CNCNDownloadUI {
         KIND_SUB,
         KIND_SUB,
         KIND_SUB,
+        KIND_SUB,
         KIND_ITEM,
         KIND_SUB,
         KIND_HEAD,
@@ -471,35 +472,36 @@ public class CNCNDownloadUI {
     private static final String[] CREDIT_TEXTS = {
         "主力人员",
         "MadeInMagius",
-        "总体规划、路线设计、核心实现与汉化整合。",
+        "核心实现与全中文化补全以及整合汉化。",
         "剧情翻译与校订：完成 344 个剧情汉化。",
         "选关对话：汉化 735 条文字内容。",
         "角色语音文本翻译与校订：共 1,588 条。其中语音字幕 1,335 条、看板语音 784 条，两类重合 531 条。",
         "战斗技能文本翻译与修订：4,209 项。",
         "前端界面文本汉化：1,470 项。",
-        "游戏图像资源汉化：258 个图像，包括 162 个 PNG 和 96 个 .vfxt 特效图像文件。已恢复的 22 张国服原图不计入个人汉化数量。",
+        "游戏图像资源汉化：258 个图像，包括 162 个 PNG 和 96 个 .vfxt 特效图像文件。",
         "称号名称与解锁条件汉化整合：967 项，共 1,934 个字段。",
         "剧情逐句校对：复核 264 条独立文本，修正 245 条；含复刻剧情共覆盖 339 处载体，实际修正 313 处。",
+        "记忆结晶简介校订：5 条（奈叶联动，依据日文原文修正既有 Wiki 译文；原译来源归属保留）。",
         "CyberNova／PhotonFlow",
-        "国内加速、现代化下载界面与部分下载技术协助，发现了非 Web 页面外战斗场景 Cocos 引擎部分汉化的可能性和早期实现技术，提供了美服 API 抓包资源。",
+        "国内加速、现代化下载界面与部分下载技术协助，发现了非 Web 页面外战斗场景 Cocos 引擎部分汉化的可能性和早期实现技术，提供了美服 API 抓包资源。目前加速 CN BASE 主资源文件。",
         "其他协助者",
         "圆环记录攻略组",
         "提供剧情、角色语音及战斗技能相关的权威汉化文本。",
-        "剧情翻译与校订：参与 52 个剧情。",
+        "剧情翻译与校订：目前采纳 52 个剧情汉化。",
         "角色语音文本：共 703 条。其中语音字幕 109 条、看板语音 641 条，两类重合 47 条。",
         "战斗技能文本：4,114 项。",
-        "其运营的魔法纪录中文 Wiki 编辑者提供称号译名资料：545 项直接采用，420 项结合现有规范人名与称号格式整理。此项为资料来源贡献，不重复计数。",
+        "其运营的魔法纪录中文 Wiki 编辑者提供称号译名资料：545 项直接采用，420 项结合现有规范人名与称号格式整理。",
         "水银 h2oag",
         "剧情翻译与部分校订：汉化 144 个剧情。",
         "巡逻区域汉化：22 个区域名称、3 条解锁条件，共 25 个字段。",
-        "阵型技能汉化：40 个名称、39 条效果说明，共 79 个字段。",
-        "Connect 技能汉化：524 个名称、525 条效果说明，共 1,049 个字段。",
+        "阵型技能汉化：12 个名称、13 条效果说明，共 25 个字段。",
+        "Connect 技能汉化：220 个名称、278 条效果说明，共 498 个字段。",
         "segfault",
         "国服数据留存。",
         "赞助支持 MADE IN MAGIUS",
         "赞助支持 CyberNova",
         "统计说明",
-        "水银的三个 JSON 按类型、ID 和汉化字段统计，共 1,153 个字段；不与技能项数相加。数字、纯省略号和运行时重复映射不计，既有后续校订归属保留。",
+        "水银的三个 JSON 按类型、ID 和汉化字段统计，共 548 个字段；不与技能项数相加。数字、纯省略号和运行时重复映射不计，既有后续校订归属保留。",
         "称号单独按 ID 统计，不并入原有前端 1,470 项。现成译文的整合不重复计为个人原创；修订既有剧情、复刻载体和空白内容不重复增加汉化数量。",
         "70 个合作剧情目录分别计入各参与者的个人贡献。各人的目录数量含合作重叠，不相加作为全游戏剧情总数。",
         "所有人采用相同的语音分类：语音字幕为 charaMessageList.message，看板台词为主界面等场景中的 textHome。同一语音在两处出现时，合计只计一次。",
@@ -523,6 +525,7 @@ public class CNCNDownloadUI {
     private static final String[] CREDIT_URLS = {
         "",
         "https://space.bilibili.com/625821",
+        "",
         "",
         "",
         "",
@@ -585,6 +588,7 @@ public class CNCNDownloadUI {
         "",
         "",
         "",
+        "",
         "CyberNova／PhotonFlow",
         "",
         "",
@@ -637,7 +641,7 @@ public class CNCNDownloadUI {
 
     /** 底部常驻署名条：原先塞在速度行里的那句长文案，原文保留。 */
     private static final String FOOTER_CREDIT =
-        "MadeInMagius：剧情 344 个；选关对话 735 条；角色语音共 1,588 条（字幕 1,335 条、看板语音 784 条，重合 531 条）；战斗技能 4,209 项；前端界面 1,470 项；图像 258 个（PNG 162 个、.vfxt 96 个；恢复的 22 张国服原图不计入个人汉化）。CyberNova／PhotonFlow：国内加速、现代化下载界面、部分下载技术、Cocos 战斗场景汉化早期技术与美服 API 抓包资源。圆环记录攻略组：剧情 52 个；角色语音共 703 条（字幕 109 条、看板语音 641 条，重合 47 条）；战斗技能 4,114 项。水银 h2oag：剧情 144 个；巡逻区域 25、阵型技能 79、Connect 技能 1,049 个汉化字段。segfault：国服数据留存。70 个合作剧情分别计入各参与者；国服原有译文不计入个人汉化贡献。 称号汉化整合 967 项（1,934 个字段）；Wiki 现成译名 545 项、规范人名及称号格式整理 420 项、另有 2 项补译。剧情逐句校对 264 条，修正 245 条。";
+        "MadeInMagius：剧情 344 个；选关对话 735 条；角色语音共 1,588 条（字幕 1,335 条、看板语音 784 条，重合 531 条）；战斗技能 4,209 项；前端界面 1,470 项；图像 258 个（PNG 162 个、.vfxt 96 个）。MadeInMagius：记忆结晶简介校订 5 条（原 Wiki 译文归属保留）。CyberNova／PhotonFlow：国内加速、现代化下载界面、部分下载技术、Cocos 战斗场景汉化早期技术与美服 API 抓包资源；目前加速 CN BASE 主资源文件。圆环记录攻略组：剧情 52 个；角色语音共 703 条（字幕 109 条、看板语音 641 条，重合 47 条）；战斗技能 4,114 项。水银 h2oag：剧情 144 个；巡逻区域 25、阵型技能 25、Connect 技能 498 个汉化字段。segfault：国服数据留存。70 个合作剧情分别计入各参与者；国服原有译文不计入个人汉化贡献。 称号汉化整合 967 项（1,934 个字段）；Wiki 现成译名 545 项、规范人名及称号格式整理 420 项、另有 2 项补译。剧情逐句校对 264 条，修正 245 条。";
 
     // ---- 云端可配的署名内容 ----
     //
@@ -802,6 +806,8 @@ public class CNCNDownloadUI {
     private static TextView vBgmPill;
     private static TextView vTutorialPill;
     private static TextView vOfflinePill;
+    private static TextView vApkUpdatePill;
+    private static boolean statisticsExpanded;
     /** 教程询问的模态框。非空即表示正在显示，用于防重入。 */
     private static FrameLayout tutorialModal;
     /** 「网络慢，要不要继续等」询问框。非空即表示正在显示，用于防重入。 */
@@ -1449,6 +1455,22 @@ public class CNCNDownloadUI {
         topLeft.addView(vOfflinePill, offLp);
         styleOfflinePill(act);
 
+        vApkUpdatePill = new TextView(act);
+        vApkUpdatePill.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
+        vApkUpdatePill.setTypeface(vApkUpdatePill.getTypeface(), Typeface.BOLD);
+        vApkUpdatePill.setGravity(Gravity.CENTER);
+        vApkUpdatePill.setPadding(dp(act, 12), dp(act, 3), dp(act, 12), dp(act, 3));
+        vApkUpdatePill.setText("检查 APK 更新");
+        vApkUpdatePill.setOnClickListener(new ApkUpdatePillClick(act));
+        LinearLayout.LayoutParams apkLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        apkLp.leftMargin = dp(act, 8);
+        topLeft.addView(vApkUpdatePill, apkLp);
+        vApkUpdatePill.setBackground(optionBackground(act));
+        vApkUpdatePill.setTextColor(COLOR_TEXT);
+        vApkUpdatePill.setEnabled(!CNVersionCheck.manualCheckInProgress());
+        if (CNVersionCheck.manualCheckInProgress()) vApkUpdatePill.setText("检查中…");
+
         // ── 第 3 层：右上角主题切换胶囊 ──
         themeChipBg = new GradientDrawable();
         themeChipBg.setCornerRadius(dp(act, 20));
@@ -2058,11 +2080,17 @@ public class CNCNDownloadUI {
         CreditsModel credits = creditsModel();
         int itemIndex = 0;
         int renderCount = 0;
+        boolean statisticsSection = false;
         int[] renderOrder = contributorRenderOrder(credits);
         for (int orderIndex = 0; orderIndex < renderOrder.length; orderIndex++) {
             int i = renderOrder[orderIndex];
             int kind = credits.kinds[i];
             String creditText = credits.texts[i] == null ? "" : credits.texts[i];
+            if (kind == KIND_HEAD || kind == KIND_TITLE) {
+                statisticsSection = "统计说明".equals(creditText);
+            } else if (statisticsSection && !statisticsExpanded) {
+                continue;
+            }
             if (creditText.contains("魔法纪录Totentanz中文化")
                     || creditText.contains("核心逆向开发")
                     || creditText.contains("补丁与自动化")
@@ -2117,6 +2145,14 @@ public class CNCNDownloadUI {
                     t.setTypeface(t.getTypeface(), Typeface.BOLD);
                     lp.topMargin    = dp(act, 4);
                     lp.bottomMargin = dp(act, 1);
+                    if (statisticsSection) {
+                        t.setText(statisticsExpanded ? "统计说明 ▾ 收起" : "统计说明 ▸ 展开");
+                        t.setContentDescription(statisticsExpanded ? "统计说明，已展开，点击收起" : "统计说明，已折叠，点击展开");
+                        t.setMinHeight(dp(act, 32));
+                        t.setGravity(Gravity.CENTER_VERTICAL);
+                        t.setFocusable(true);
+                        t.setOnClickListener(new StatisticsClick(act));
+                    }
                 } else {  // KIND_SUB
                     t.setTextColor(COLOR_SUB);
                     t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f);
@@ -2534,6 +2570,42 @@ public class CNCNDownloadUI {
         private final Activity act;
         OfflinePillClick(Activity act) { this.act = act; }
         @Override public void onClick(View v) { showOfflineDialog(act); }
+    }
+
+    private static final class StatisticsClick implements View.OnClickListener {
+        private final Activity act;
+        StatisticsClick(Activity act) { this.act = act; }
+        @Override public void onClick(View v) {
+            statisticsExpanded = !statisticsExpanded;
+            populateContributors(act);
+        }
+    }
+
+    private static final class ApkUpdatePillClick implements View.OnClickListener {
+        private final Activity act;
+        ApkUpdatePillClick(Activity act) { this.act = act; }
+        @Override public void onClick(View v) {
+            // Manual checks never reset the once-only startup continuation.
+            if (versionModal == null) CNVersionCheck.checkManually(act);
+        }
+    }
+
+    /** Called on the UI thread; ignore results belonging to an old Activity. */
+    static void setManualApkCheckBusy(Activity act, boolean busy) {
+        if (act != hostActivity || vApkUpdatePill == null) return;
+        vApkUpdatePill.setEnabled(!busy);
+        vApkUpdatePill.setText(busy ? "检查中…" : "检查 APK 更新");
+    }
+
+    static void showManualApkResult(Activity act, String local, JSONObject metadata, String message) {
+        if (act != hostActivity || !isShowing || act.isFinishing()) return;
+        refreshVersionPanel();
+        if (metadata != null) {
+            showVersionUpdateDialog(act, local, metadata.optString("version"),
+                    metadata.optString("apk_url"), metadata.optString("note"), metadata, false);
+        } else {
+            android.widget.Toast.makeText(act, message, android.widget.Toast.LENGTH_LONG).show();
+        }
     }
 
     /** 离线包胶囊样式（常驻，实心强调色）。 */
@@ -3970,53 +4042,63 @@ public class CNCNDownloadUI {
 
     /** 可选更新弹窗的模态框。非空即表示正在显示，用于防重入。 */
     private static FrameLayout versionModal;
+    private static boolean versionModalContinuesStartup = true;
 
     /** 可选 APK 更新；继续按钮、框外点击或返回键都接回原启动流程。 */
     public static void showVersionUpdateDialog(final Activity act, final String local,
                                                final String cloud, final String url,
                                                final String note, final org.json.JSONObject metadata) {
+        showVersionUpdateDialog(act, local, cloud, url, note, metadata, true);
+    }
+
+    private static void showVersionUpdateDialog(final Activity act, final String local,
+                                               final String cloud, final String url,
+                                               final String note, final org.json.JSONObject metadata,
+                                               final boolean continueStartup) {
         final FrameLayout host = overlayView;
         if (act == null || host == null) {
             CNLog.w("界面", "浮层不在，无法显示可选更新框");
-            CNVersionCheck.continueWithCurrentVersion();
+            if (continueStartup) CNVersionCheck.continueWithCurrentVersion();
             return;
         }
         try { act.runOnUiThread(new Runnable() {
             @Override public void run() {
                 try {
                     if (host != overlayView || act.isFinishing()) {
-                        continueWithCurrentVersion();
+                        if (continueStartup) CNVersionCheck.continueWithCurrentVersion();
                         return;
                     }
-                    buildVersionUpdateDialog(act, host, local, cloud, url, note, metadata);
+                    buildVersionUpdateDialog(act, host, local, cloud, url, note, metadata, continueStartup);
                 } catch (Throwable t) {
                     CNLog.e("界面", "构建可选更新框失败", t);
-                    continueWithCurrentVersion();
+                    if (continueStartup) CNVersionCheck.continueWithCurrentVersion();
                 }
             }
         }); } catch (Throwable t) {
             CNLog.e("界面", "更新提示调度失败，继续启动", t);
-            CNVersionCheck.continueWithCurrentVersion();
+            if (continueStartup) CNVersionCheck.continueWithCurrentVersion();
         }
     }
 
     /** 先拆提示，再接力；版本检查侧以原子标记保证后续流程只执行一次。 */
     private static void continueWithCurrentVersion() {
         FrameLayout modal = versionModal;
+        boolean continueStartup = versionModalContinuesStartup;
         versionModal = null;
         try {
             if (modal != null && modal.getParent() instanceof ViewGroup) {
                 ((ViewGroup) modal.getParent()).removeView(modal);
             }
         } finally {
-            CNVersionCheck.continueWithCurrentVersion();
+            if (continueStartup) CNVersionCheck.continueWithCurrentVersion();
         }
     }
 
     /** 在 UI 线程上真正把可选更新框建出来。 */
     private static void buildVersionUpdateDialog(final Activity act, FrameLayout host,
                                                  String local, String cloud,
-                                                 final String url, String note, final org.json.JSONObject metadata) {
+                                                 final String url, String note, final org.json.JSONObject metadata,
+                                                 final boolean continueStartup) {
         if (versionModal != null) return;      // 已经开着，别叠第二层
 
         final FrameLayout modal = new FrameLayout(act);
@@ -4065,6 +4147,8 @@ public class CNCNDownloadUI {
                 + "· 「立即更新」：应用内下载并校验，随后确认覆盖安装，保留存档与资源\n"
                 + "· 「继续用旧版」：跳过本次 APK 更新，继续原启动流程";
         if (note != null && !note.isEmpty()) text += "\n\n" + note;
+        if (!continueStartup) text = text.replace("「继续用旧版」：跳过本次 APK 更新，继续原启动流程",
+                "「暂不更新」：关闭提示，留在当前页面");
         msg.setText(text);
         msg.setTextColor(COLOR_LOG_PANEL_TEXT);
         msg.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
@@ -4114,6 +4198,7 @@ public class CNCNDownloadUI {
         panel.addView(row, lpRow(0, 0));
 
         TextView stay = dialogButton(act, "继续用旧版", COLOR_LOG_PANEL_TEXT, 0x00000000, true);
+        if (!continueStartup) stay.setText("暂不更新");
         TextView go   = dialogButton(act, "立即更新", 0xFFFFFFFF, COLOR_ACCENT, false);
         if (fontScale >= 1.2f) {
             LinearLayout.LayoutParams qLp = new LinearLayout.LayoutParams(
@@ -4145,6 +4230,7 @@ public class CNCNDownloadUI {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
         versionModal = modal;
+        versionModalContinuesStartup = continueStartup;
         modal.requestFocus();
         CNLog.i("界面", "可选更新框已显示：本端 v" + local + " → 云端 v" + cloud);
     }
@@ -5108,6 +5194,8 @@ public class CNCNDownloadUI {
                 // aria2AskModal 残留会让后续询问被静默替玩家做决定。
                 headRightRow          = null;
                 vOfflinePill          = null;
+                vApkUpdatePill        = null;
+                statisticsExpanded   = false;
                 versionModal          = null;
                 aria2AskModal         = null;
                 offlineModal          = null;
