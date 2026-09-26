@@ -107,7 +107,11 @@ def main():
             (root/(name+'.java')).write_text(PACKAGE+body,encoding='utf8')
         (root/'PublicResourceFallbackTest.java').write_text(PACKAGE+HARNESS,encoding='utf8')
         for name in ('CNPublicResources.java','CNUpdateSources.java'):
-            shutil.copyfile(SOURCE/name,root/name)
+            content=(SOURCE/name).read_text(encoding='utf8')
+            if name=='CNPublicResources.java':
+                assert 'static final boolean ENABLED = false;' in content
+                content=content.replace('static final boolean ENABLED = false;','static final boolean ENABLED = true;')
+            (root/name).write_text(content,encoding='utf8')
         subprocess.run(['javac','--release','8','-encoding','UTF-8','-d',str(root)]+[str(p) for p in root.glob('*.java')],check=True,timeout=60)
         subprocess.run(['java','-cp',str(root),'io.kamihama.magianative.PublicResourceFallbackTest'],check=True,timeout=30)
 

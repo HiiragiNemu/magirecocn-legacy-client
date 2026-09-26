@@ -26,7 +26,7 @@ public final class CNUpdateSources {
         LinkedHashMap<String,CNMirrors.Mirror> available = new LinkedHashMap<String,CNMirrors.Mirror>();
         for (CNMirrors.Mirror m : CNMirrors.selectable()) available.put(m.base,m);
         // 配置源不可达时，基础包也必须保留独立公开兜底；热更仍受下方身份集合约束。
-        add(available, CNPublicResources.RELEASE_BASE, "公开资源仓备用");
+        if (CNPublicResources.ENABLED) add(available, CNPublicResources.RELEASE_BASE, "公开资源仓备用");
         if (expected != null) for (CNMirrors.Mirror m : mirrors(expected.sourceBase)) {
             if (!available.containsKey(m.base)) available.put(m.base,m);
         }
@@ -48,7 +48,7 @@ public final class CNUpdateSources {
         add(out, CNEndpoints.ESA_BASE, "内置更新备用线路");
         add(out, CNEndpoints.LEGACY_EDGEONE_BASE, "原 EdgeOne 更新源");
         add(out, CNEndpoints.LEGACY_ESA_BASE, "原 ESA 更新源");
-        add(out, CNPublicResources.RELEASE_BASE, "独立公开资源更新源");
+        if (CNPublicResources.ENABLED) add(out, CNPublicResources.RELEASE_BASE, "独立公开资源更新源");
         for (CNMirrors.Mirror m : CNMirrors.healthy()) {
             if (m.enabled && !out.containsKey(m.base)) out.put(m.base, m);
         }
@@ -69,7 +69,7 @@ public final class CNUpdateSources {
         for (CNMirrors.Mirror m : mirrors(null)) urls.add(m.urlFor(CLIENT_META));
         if (!CNEndpoints.MIRRORS_URL.isEmpty()) urls.add(CNEndpoints.MIRRORS_URL);
         if (!CNEndpoints.API_BASE.isEmpty()) urls.add(CNEndpoints.API_BASE + "legacy/config.json");
-        urls.add(CNPublicResources.CONFIG_URL);
+        if (CNPublicResources.ENABLED) urls.add(CNPublicResources.CONFIG_URL);
         return new ArrayList<String>(urls);
     }
 

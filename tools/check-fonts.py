@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""验证原生字体恢复及 reviewed 补字保留。
-
-6095180 的父版本把 MTF 请求映射到 MagiReco CN Medium (mbm)。
-原生两个旧请求名现在承载这份完全相同的旧字节，不再增加场景/加载/框高补丁。
-TTZhiHei / TTDaYuan 的 reviewed 补字资产保持原样；Web 字体路由独立且不回退。
-"""
+"""验证194替代补字字体；原生历史载体和路由约束保持不变。"""
 
 import hashlib
 import argparse
@@ -17,44 +12,30 @@ FONT_DIR = "assets/fonts"
 
 # 文件名 -> (大小, 内容标识, 内部家族名, 这个文件是干什么的)
 # 内容标识支持 sha256:<hex> 或 gitblob:<sha1>；Git blob 同样精确绑定全部字节。
-EXPECTED = {
-    "MTF4a5kp.ttf": (
-        9070328,
-        "sha256:51383ac04bf0835445a0de382c07e6467f43991c6a51cf13a4327cad51f58b03",
-        "MagiReco CN Medium",
-        "恢复 6095180 之前 MTF 请求实际使用的原生字体字节",
-    ),
-    "mbm_20160902.ttf": (
-        9070328,
-        "sha256:51383ac04bf0835445a0de382c07e6467f43991c6a51cf13a4327cad51f58b03",
-        "MagiReco CN Medium",
-        "恢复改大圆之前的原生载体，含音乐符号，与 Web mbm 字体族分离",
-    ),
-    "witchText-export.fnt": (
-        4525,
-        "sha256:1ab05592922270fe52792431f7843a9f767aa50efbfbcbb22f65ea90a78a8118",
-        None,
-        "魔女文字的位图字体描述",
-    ),
-    "TTDaYuanGB3.ttf": (
-        17571336,
-        "gitblob:b121abca3ef624104c84adf2a25de2ea2bea7cf0",
-        "Tensentype JiaLiDaYuanGB18030",
-        "reviewed 剧情/ADV/叙事字体；2026-09-19 补齐缺失字形版",
-    ),
-    "TTZhiHeiGB3-W4.ttf": (
-        8431292,
-        "gitblob:e588b7ddb4b5a1761bf94d73d732b3330d292413",
-        "Tensentype ZhiHeiGB18030-W4",
-        "reviewed 通用 UI/对话框字体；2026-09-19 补齐缺失字形版",
-    ),
-    "witchText-export.png": (
-        2065782,
-        "sha256:43cd69d857986ce393fea96e2ebedd2fe8282df2a7eff4c1d036fb9accdd5d7f",
-        None,
-        "魔女文字的字形图集",
-    ),
-}
+EXPECTED = {'MTF4a5kp.ttf': (9070328,
+                  'sha256:51383ac04bf0835445a0de382c07e6467f43991c6a51cf13a4327cad51f58b03',
+                  'MagiReco CN Medium',
+                  '恢复 6095180 之前 MTF 请求实际使用的原生字体字节'),
+ 'mbm_20160902.ttf': (9070328,
+                      'sha256:51383ac04bf0835445a0de382c07e6467f43991c6a51cf13a4327cad51f58b03',
+                      'MagiReco CN Medium',
+                      '恢复改大圆之前的原生载体，含音乐符号，与 Web mbm 字体族分离'),
+ 'witchText-export.fnt': (4525,
+                          'sha256:1ab05592922270fe52792431f7843a9f767aa50efbfbcbb22f65ea90a78a8118',
+                          None,
+                          '魔女文字的位图字体描述'),
+ 'TTDaYuanGB3.ttf': (6983356,
+                     'sha256:a6adbd53d4d061c54a210194d800fafd989f656a6bd5334843fc069c08ed8f48',
+                     'Magius Round Symbols',
+                     '194 ChillRoundF Bold 同名补字替换；原版已有轮廓与度量不变'),
+ 'TTZhiHeiGB3-W4.ttf': (7994792,
+                        'sha256:fa0710a050e8c0c73623d482be4d25a4aed23a8d2fb6056fad79fd98de22289e',
+                        'Magius Sans Symbols',
+                        '194 MiSans Semibold 同名补字替换；原版已有轮廓与度量不变'),
+ 'witchText-export.png': (2065782,
+                          'sha256:43cd69d857986ce393fea96e2ebedd2fe8282df2a7eff4c1d036fb9accdd5d7f',
+                          None,
+                          '魔女文字的字形图集')}
 
 
 def sha256(path):
@@ -117,12 +98,116 @@ def family_name(path):
 # 玩家实际文本里会出现的音乐符号。旧国服原始 TTZhiHei / TTDaYuan 两个文件
 # 都缺 U+266A/U+266F；2026-09-19 reviewed carrier 必须把它们补回来。
 # U+F6DB 仍是独立未闭合问题，不在这里伪装成已解决。
-REQUIRED_GLYPHS = {
-    "MTF4a5kp.ttf": {0x266A: "♪", 0x266F: "♯"},
-    "mbm_20160902.ttf": {0x266A: "♪", 0x266F: "♯"},
-    "TTDaYuanGB3.ttf": {0x266A: "♪", 0x266F: "♯"},
-    "TTZhiHeiGB3-W4.ttf": {0x266A: "♪", 0x266F: "♯"},
-}
+REQUIRED_GLYPHS = {'MTF4a5kp.ttf': {9834: '♪', 9839: '♯'},
+ 'mbm_20160902.ttf': {9834: '♪', 9839: '♯'},
+ 'TTDaYuanGB3.ttf': {180: '´',
+                     199: 'Ç',
+                     235: 'ë',
+                     8225: '‡',
+                     8658: '⇒',
+                     8660: '⇔',
+                     8704: '∀',
+                     8706: '∂',
+                     8715: '∋',
+                     8748: '∬',
+                     8810: '≪',
+                     8811: '≫',
+                     8835: '⊃',
+                     8839: '⊇',
+                     9829: '♥',
+                     9833: '♩',
+                     9834: '♪',
+                     9835: '♫',
+                     9836: '♬',
+                     9837: '♭',
+                     9838: '♮',
+                     9839: '♯',
+                     12316: '〜',
+                     12539: '・',
+                     12857: '㈹',
+                     65377: '｡',
+                     65378: '｢',
+                     65379: '｣',
+                     65380: '､',
+                     65381: '･',
+                     65382: 'ｦ',
+                     65383: 'ｧ',
+                     65385: 'ｩ',
+                     65387: 'ｫ',
+                     65390: 'ｮ',
+                     65391: 'ｯ',
+                     65392: 'ｰ',
+                     65395: 'ｳ',
+                     65396: 'ｴ',
+                     65397: 'ｵ',
+                     65400: 'ｸ',
+                     65401: 'ｹ',
+                     65402: 'ｺ',
+                     65404: 'ｼ',
+                     65405: 'ｽ',
+                     65406: 'ｾ',
+                     65421: 'ﾍ',
+                     65423: 'ﾏ',
+                     65434: 'ﾚ',
+                     65437: 'ﾝ',
+                     65438: 'ﾞ',
+                     65439: 'ﾟ',
+                     65466: 'ﾺ',
+                     177813: '𫚕'},
+ 'TTZhiHeiGB3-W4.ttf': {180: '´',
+                        199: 'Ç',
+                        235: 'ë',
+                        8225: '‡',
+                        8658: '⇒',
+                        8660: '⇔',
+                        8704: '∀',
+                        8706: '∂',
+                        8715: '∋',
+                        8748: '∬',
+                        8810: '≪',
+                        8811: '≫',
+                        8835: '⊃',
+                        8839: '⊇',
+                        9829: '♥',
+                        9833: '♩',
+                        9834: '♪',
+                        9835: '♫',
+                        9836: '♬',
+                        9837: '♭',
+                        9838: '♮',
+                        9839: '♯',
+                        12316: '〜',
+                        12539: '・',
+                        12857: '㈹',
+                        65377: '｡',
+                        65378: '｢',
+                        65379: '｣',
+                        65380: '､',
+                        65381: '･',
+                        65382: 'ｦ',
+                        65383: 'ｧ',
+                        65385: 'ｩ',
+                        65387: 'ｫ',
+                        65390: 'ｮ',
+                        65391: 'ｯ',
+                        65392: 'ｰ',
+                        65395: 'ｳ',
+                        65396: 'ｴ',
+                        65397: 'ｵ',
+                        65400: 'ｸ',
+                        65401: 'ｹ',
+                        65402: 'ｺ',
+                        65404: 'ｼ',
+                        65405: 'ｽ',
+                        65406: 'ｾ',
+                        65421: 'ﾍ',
+                        65423: 'ﾏ',
+                        65434: 'ﾚ',
+                        65437: 'ﾝ',
+                        65438: 'ﾞ',
+                        65439: 'ﾟ',
+                        65466: 'ﾺ',
+                        177813: '𫚕'}}
 
 
 def font_has_codepoint(path, cp):
@@ -278,15 +363,15 @@ def main():
         for p in problems:
             print("  · " + p, file=sys.stderr)
         print("", file=sys.stderr)
-        print("原生旧请求使用 6095180 前的 MagiReco CN Medium；Web 字体与 reviewed 补字保持不变。", file=sys.stderr)
-        print("reviewed 字体内容来自固定提交 71d3278e…，不得临时换回原始缺字形版本。",
+        print("原生旧请求保持历史载体；两份TT别名必须是194替代补字版。", file=sys.stderr)
+        print("替代字体来源固定于194审核提交，54项必需字符不可回退。",
               file=sys.stderr)
         print("", file=sys.stderr)
         print("确实要改基线（例如换了新的授权字体），就更新本脚本的 EXPECTED 表，"
               "并在提交信息里写明来源与授权。", file=sys.stderr)
         return 1
 
-    print("✔ 字体守卫通过（%d 个文件，原生历史载体及 reviewed 补字内容身份均相符）" % len(expected))
+    print("✔ 字体守卫通过（%d 个文件，原生历史载体及194替代补字身份均相符）" % len(expected))
     for name in sorted(expected):
         size, _d, family, _p = EXPECTED[name]
         print("    %-22s %9d B  %s" % (name, size, family or "（位图字体）"))
