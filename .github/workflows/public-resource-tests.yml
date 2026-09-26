@@ -1,0 +1,28 @@
+name: 公开资源入口兼容检查
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'patch/src/main/java/io/kamihama/magianative/CNUpdateSources.java'
+      - 'patch/src/main/java/io/kamihama/magianative/CNPublicResources.java'
+      - 'tools/test-public-resource-fallback.py'
+      - '.github/workflows/public-resource-tests.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python tools/test-public-resource-fallback.py
