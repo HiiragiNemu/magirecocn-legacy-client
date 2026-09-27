@@ -17,3 +17,6 @@ tools/*.py        text eol=lf
 
 # .cmd 反过来：Windows 的批处理必须是 CRLF，否则某些 cmd.exe 版本解析会出错
 tools/*.cmd       text eol=crlf
+
+# Keep the title resource byte-exact for baseline pre/post verification.
+baseline/replace/assets/package/top/toppage_bg_02.ExportJson -text
