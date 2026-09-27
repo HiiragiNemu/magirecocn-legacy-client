@@ -37,6 +37,23 @@ public final class PrivateSourceRoundTest {
   exhausted=false;try{cooled.next(list);}catch(IllegalStateException e){exhausted=true;}
   ok(exhausted,"cooldown fallback never loops a source");
   for(CNMirrors.Mirror m:list)ok(m.cooldownUntilNs==Long.MAX_VALUE,"global health was not reset");
+
+  for(CNMirrors.Mirror m:list)m.cooldownUntilNs=0;
+  CNDownloadRoute.Round baseRound=new CNDownloadRoute.Round();
+  List<CNMirrors.Mirror> baseSources=CNUpdateSources.downloadMirrors(null);
+  for(int i=0;i<4;i++)ok(baseRound.next(baseSources).mirror.base.equals(wanted[i]),"base fallback EdgeOne -> ESA -> Cloudflare -> public GitHub "+i);
+  CNHotUpdateValidate.VerMeta stale=new CNHotUpdateValidate.VerMeta(87,90,"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",wanted[0],Arrays.asList(wanted[0],wanted[1]));
+  CNHotUpdateValidate.VerMeta fresh=new CNHotUpdateValidate.VerMeta(103,100,"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",wanted[2],Arrays.asList(wanted[2],wanted[3]));
+  CNHotUpdateValidate.VerMeta newest=CNUpdateSources.highestHot(Arrays.asList(stale,fresh));
+  List<CNMirrors.Mirror> hotSources=CNUpdateSources.downloadMirrors(newest);
+  ok(hotSources.size()==2,"stale accelerated content excluded");
+  ok(hotSources.get(0).base.equals(wanted[2])&&hotSources.get(1).base.equals(wanted[3]),"fresh content Cloudflare before GitHub");
+  CNHotUpdateValidate.VerMeta synced=new CNHotUpdateValidate.VerMeta(103,100,"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",wanted[0],Arrays.asList(wanted[0],wanted[1]));
+  List<CNMirrors.Mirror> identical=CNUpdateSources.downloadMirrors(CNUpdateSources.highestHot(Arrays.asList(fresh,synced)));
+  for(int i=0;i<4;i++)ok(identical.get(i).base.equals(wanted[i]),"identical accelerated bytes remain preferred "+i);
+  for(CNMirrors.Mirror m:identical)if(CNDownloadRoute.accelerated(m))m.cooldownUntilNs=Long.MAX_VALUE;
+  ok(new CNDownloadRoute.Round().next(identical).mirror.base.equals(wanted[2]),"CDN outage uses Cloudflare first");
+  for(CNMirrors.Mirror m:list)m.cooldownUntilNs=0;
   final List<String> visited=Collections.synchronizedList(new ArrayList<String>());
   CNUpdateSources.collect(Arrays.asList(pub+"version_js.json",old+"version_js.json"),new CNUpdateSources.Loader<String>(){
    public String load(String url){visited.add(url);return "good";}

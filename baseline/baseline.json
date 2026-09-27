@@ -1198,6 +1198,15 @@
       "group": "原版音频",
       "why": "按用户指定日服 3.2.2 原件补齐 APK 同目录缺少的 HCA，不转码、不改写。",
       "post": "089c3ec25f0d3f0a8e51b00245f45ddbab9fafb87cbac1871df696979549e1ab"
+    },
+    {
+      "kind": "replace",
+      "path": "assets/package/top/toppage_bg_02.ExportJson",
+      "from": "store",
+      "group": "标题音乐",
+      "why": "用户确认下载页第二首うつろい为第二部Touch标题曲；只替换该标题动画的bgm帧事件，保留其他场景bgm00_system01及两份音频。",
+      "pre": "e2ab98d07c3d6212b17b029ee329f3fa416214365de78a641fdb481cd555007a",
+      "post": "aea8b9391bc1b415fcf2288ad81c0d44e3be61cc4ba244f3f0a996799a125e59"
     }
   ]
 }
