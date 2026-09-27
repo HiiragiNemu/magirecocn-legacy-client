@@ -96,7 +96,8 @@ public final class CNUpdateSources {
         List<String> emergency = new ArrayList<String>();
         for (String url : urls) (CNPublicResources.legacyUrl(url) ? emergency : normal).add(url);
         long started = System.nanoTime();
-        List<Reply<T>> answers = collectWithin(normal, loader, Math.max(1L,budgetMs-1500L));
+        long reserve = emergency.isEmpty() ? 0L : Math.min(1500L, budgetMs/4L);
+        List<Reply<T>> answers = collectWithin(normal, loader, Math.max(1L,budgetMs-reserve));
         for (Reply<T> reply : answers) if (reply.error == null && reply.value != null) return answers;
         long remaining = budgetMs-TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started);
         if (remaining > 0) answers.addAll(collectWithin(emergency,loader,remaining));
