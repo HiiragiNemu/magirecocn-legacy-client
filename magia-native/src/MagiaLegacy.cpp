@@ -1446,7 +1446,7 @@ struct Hidden {
 //   版本旁注，不得用 GITHUB_RUN_NUMBER 等构建编号覆盖；本地构建也直接使用该值。
 //   它是 constexpr、从不取地址，只在编译期喂给下面的 Hidden，因此不会有一份
 //   明文留在产物里。
-static constexpr char CLIENT_VERSION[] = "1.0.194";
+static constexpr char CLIENT_VERSION[] = "1.0.195";
 
 // 真正进二进制的是这一份：异或之后的字节。
 static constexpr auto kVersionHidden =
@@ -2718,7 +2718,7 @@ static void loadingSetTitleNew(void* self, const void* text) {
 }
 
 // 字体由引擎原有的每个文本调用点选择，不再依据类名推断整段调用的字体。
-// APK 的 MTF4a5kp / mbm 资源分别承载 reviewed 智黑 / 大圆；Cocos 原样加载。
+// 195：MTF4a5kp / mbm 两个原生文件别名均承载已补字寒蝉全圆 Bold；Cocos 原样加载。
 // WebView 另由已修复的 CSS 选择智黑，不使用这里的原生资源别名。
 
 // LbUtility::initLabel(Node*, Label*&, const char* text, float, Vec2, int, Size, Color4B, int)

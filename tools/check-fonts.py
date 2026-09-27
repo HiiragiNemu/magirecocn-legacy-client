@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""验证194替代补字字体；原生历史载体和路由约束保持不变。"""
+"""验证195原生圆体别名和194补字字体；路由及布局约束不变。"""
 
 import hashlib
 import argparse
@@ -12,14 +12,14 @@ FONT_DIR = "assets/fonts"
 
 # 文件名 -> (大小, 内容标识, 内部家族名, 这个文件是干什么的)
 # 内容标识支持 sha256:<hex> 或 gitblob:<sha1>；Git blob 同样精确绑定全部字节。
-EXPECTED = {'MTF4a5kp.ttf': (9070328,
-                  'sha256:51383ac04bf0835445a0de382c07e6467f43991c6a51cf13a4327cad51f58b03',
-                  'MagiReco CN Medium',
-                  '恢复 6095180 之前 MTF 请求实际使用的原生字体字节'),
- 'mbm_20160902.ttf': (9070328,
-                      'sha256:51383ac04bf0835445a0de382c07e6467f43991c6a51cf13a4327cad51f58b03',
-                      'MagiReco CN Medium',
-                      '恢复改大圆之前的原生载体，含音乐符号，与 Web mbm 字体族分离'),
+EXPECTED = {'MTF4a5kp.ttf': (6983356,
+                  'sha256:a6adbd53d4d061c54a210194d800fafd989f656a6bd5334843fc069c08ed8f48',
+                  'Magius Round Symbols',
+                  '195：原生同名入口使用已补字寒蝉全圆Bold，不改路由及布局'),
+ 'mbm_20160902.ttf': (6983356,
+                      'sha256:a6adbd53d4d061c54a210194d800fafd989f656a6bd5334843fc069c08ed8f48',
+                      'Magius Round Symbols',
+                      '195：原生同名入口使用已补字寒蝉全圆Bold，不改路由及布局'),
  'witchText-export.fnt': (4525,
                           'sha256:1ab05592922270fe52792431f7843a9f767aa50efbfbcbb22f65ea90a78a8118',
                           None,
@@ -282,6 +282,10 @@ def font_has_codepoint(path, cp):
     return False
 
 
+# Both native aliases must retain the same 54-character contract as the round font.
+for _alias in ('MTF4a5kp.ttf', 'mbm_20160902.ttf'):
+    REQUIRED_GLYPHS[_alias] = dict(REQUIRED_GLYPHS['TTDaYuanGB3.ttf'])
+
 NATIVE_SRC = "magia-native/src/MagiaLegacy.cpp"
 
 
@@ -363,7 +367,7 @@ def main():
         for p in problems:
             print("  · " + p, file=sys.stderr)
         print("", file=sys.stderr)
-        print("原生旧请求保持历史载体；两份TT别名必须是194替代补字版。", file=sys.stderr)
+        print("原生MTF/mbm必须等于寒蝉全圆Bold补字版；Web黑体保持MiSans。", file=sys.stderr)
         print("替代字体来源固定于194审核提交，54项必需字符不可回退。",
               file=sys.stderr)
         print("", file=sys.stderr)
@@ -371,7 +375,7 @@ def main():
               "并在提交信息里写明来源与授权。", file=sys.stderr)
         return 1
 
-    print("✔ 字体守卫通过（%d 个文件，原生历史载体及194替代补字身份均相符）" % len(expected))
+    print("✔ 字体守卫通过（%d 个文件，195原生圆体别名及194替代补字身份均相符）" % len(expected))
     for name in sorted(expected):
         size, _d, family, _p = EXPECTED[name]
         print("    %-22s %9d B  %s" % (name, size, family or "（位图字体）"))

@@ -6,7 +6,7 @@ package io.kamihama.magianative;
  * 不改变现有镜像、资源文件名、字体路径、下载校验或版本比较规则。
  */
 final class CNPublicResources {
-    // 194只发布字体；195迁移入口保持关闭，后续独立启用并验收。
+    // 194/195只处理字体；196迁移入口保持关闭，后续独立启用并验收。
     static final boolean ENABLED = false;
     static final String RELEASE_BASE =
             "https://github.com/HiiragiNemu/ProgettoMagius-1/releases/download/latest/";
