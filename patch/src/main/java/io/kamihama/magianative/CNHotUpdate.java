@@ -100,18 +100,26 @@ public final class CNHotUpdate {
         }
 
         if (!CNMirrors.isLoaded()) CNMirrors.ensureLoadedAsync();
-        final java.util.List<CNMirrors.Mirror> updateMirrors =
+        java.util.List<CNMirrors.Mirror> updateMirrors =
                 CNUpdateSources.downloadMirrors(expected);
         CNLog.i(TAG, "开始下载 " + displayName + " file=" + remoteName
                 + " identity=" + hotIdentity(expected)
                 + " 可用线路=" + updateMirrors.size());
 
         final CNDownloadRoute.Round sourceRound = new CNDownloadRoute.Round();
+        boolean refreshedSources = false;
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             if (Thread.currentThread().isInterrupted()) {
                 Thread.currentThread().interrupt();
                 markFailed(index);
                 return false;
+            }
+            if (attempt > 1 && !refreshedSources && CNUpdateSources.validHot(expected)) {
+                refreshedSources = true;
+                CNHotUpdateValidate.VerMeta refreshed = CNHotUpdateCheck.refreshMatchingSources(remoteName, expected);
+                updateMirrors = CNUpdateSources.downloadMirrors(refreshed);
+                CNLog.i(TAG,"补查同版本线路 file="+remoteName+" identity="+hotIdentity(expected)
+                        +" 可用线路="+updateMirrors.size());
             }
             final int restartToken = CNDownloadRestart.generation(index);
             // F-072：pick() 与随后的 urlFor()/身份拼接原先都在 try 之外，空线路表

@@ -555,7 +555,7 @@ public final class CNHotUpdateCheck {
                             // redownloadPackage 自带「取版本 → 下载 → 校验 → 事务
                             // 应用 → 记版本号」整条链，成功即本项已完成，不能再
                             // 落到下面的应用流程里去（tmp 已被它删掉）。
-                            if (redownloadPackage(pkg.slot)) {
+                            if (redownloadPackage(pkg.slot, meta, tmp)) {
                                 applied = true;
                                 deleteQuietly(tmp);
                                 continue;
@@ -699,6 +699,10 @@ public final class CNHotUpdateCheck {
      * 不读取基础包 manifest；下载通过 version JSON 的 size/MD5 后才事务应用。
      */
     static boolean redownloadPackage(int slot) {
+        return redownloadPackage(slot, null, null);
+    }
+
+    private static boolean redownloadPackage(int slot, CNHotUpdateValidate.VerMeta pinned, File retryFile) {
         Pkg pkg = null;
         for (int i = 0; i < PACKAGES.length; i++) {
             if (PACKAGES[i].slot == slot) { pkg = PACKAGES[i]; break; }
@@ -707,13 +711,14 @@ public final class CNHotUpdateCheck {
             CNLog.e(TAG, "手动热更新槽位无效: " + slot);
             return false;
         }
-        File tmp = new File(FILES_DIR, pkg.tmpName + ".manual.zip");
+        File tmp = retryFile != null ? retryFile : new File(FILES_DIR, pkg.tmpName + ".manual.zip");
         try {
             CNMirrors.ensureLoadedAsync();
             CNCNDownloadUI.markFilePending(slot);
             CNCNDownloadUI.updateSimple("重新下载热更新",
                     pkg.label + "：正在取得当前版本身份…", 0);
             CNHotUpdateValidate.VerMeta meta = fetchMeta(pkg.versionUrl);
+            if (pinned != null) meta = CNUpdateSources.highestHot(java.util.Arrays.asList(pinned, meta));
             // F-B-07：md5 也纳入强制。verifyZip 的 fail-closed 只拦「两者
             // 皆缺」；只有 size 没有 md5 仍会放行，而 size 相同、内容不同的
             // 重打包在线上真实发生过——这条通道写的是可执行 JS，身份强度不该
@@ -721,7 +726,7 @@ public final class CNHotUpdateCheck {
             if (meta == null || meta.size <= 0 || meta.md5 == null || meta.md5.length() == 0)
                 throw new java.io.IOException("版本 JSON 缺少有效 size/md5");
             CNCNDownloadUI.setFileSize(slot, (float) (meta.size / 1000000.0d));
-            CNHotUpdate.cleanupDownloadArtifacts(tmp);
+            if (retryFile == null) CNHotUpdate.cleanupDownloadArtifacts(tmp);
             boolean ok = CNHotUpdate.download(pkg.zipUrl, tmp.getAbsolutePath(),
                     pkg.tmpName, pkg.slot, meta);
             if (!ok) throw new java.io.IOException("所有镜像均未取得匹配 version JSON 的 ZIP");
@@ -759,7 +764,7 @@ public final class CNHotUpdateCheck {
             CNLog.i(TAG, "手动热更新完成 slot=" + slot + " version=" + meta.version);
             return true;
         } catch (Throwable t) {
-            CNHotUpdate.cleanupDownloadArtifacts(tmp);
+            if (retryFile == null) CNHotUpdate.cleanupDownloadArtifacts(tmp);
             if (CNCNDownloadUI.fileStatus != null
                     && slot >= 0 && slot < CNCNDownloadUI.fileStatus.length) {
                 CNCNDownloadUI.fileStatus[slot] = CNCNDownloadUI.ST_ERROR;
@@ -947,11 +952,48 @@ public final class CNHotUpdateCheck {
                 }
             } else CNLog.w(TAG,"热更新源元数据不完整 source="+reply.url);
         }
-        CNHotUpdateValidate.VerMeta best=CNUpdateSources.highestHot(values);
+        CNHotUpdateValidate.VerMeta discovered=CNUpdateSources.highestHot(values);
+        CNHotUpdateValidate.VerMeta best=CNUpdateSources.rememberHot(name,discovered);
+        if (best != null && (discovered == null || discovered.version < best.version))
+            CNLog.w(TAG,"重试保留已确认身份 file="+name+" version="+best.version+"，不退回旧镜像版本");
         if (best==null) throw new java.io.IOException("所有来源均未返回完整有效的版本身份");
         CNLog.i(TAG,"最高热更版本 file="+name+" version="+best.version+" source="+best.sourceBase
                    +" completed="+replies.size()+" total="+urls.size());
         return best;
+    }
+
+    /** A metadata timeout is not proof that another publisher lacks the pinned bytes. */
+    static CNHotUpdateValidate.VerMeta refreshMatchingSources(final String zipName,
+            final CNHotUpdateValidate.VerMeta expected) {
+        if (!CNUpdateSources.validHot(expected)) return expected;
+        String versionName = null;
+        for (Pkg pkg : PACKAGES) if (pkg.zipUrl.endsWith("/"+zipName)) {
+            versionName = pkg.versionUrl.substring(pkg.versionUrl.lastIndexOf('/')+1); break;
+        }
+        if (versionName == null) return expected;
+        final java.util.Map<String,String> bases = new java.util.LinkedHashMap<String,String>();
+        for (CNMirrors.Mirror m : CNUpdateSources.mirrors(null)) {
+            if (expected.sourceBases == null || !expected.sourceBases.contains(m.base))
+                bases.put(m.urlFor(versionName), m.base);
+        }
+        try {
+            java.util.List<CNUpdateSources.Reply<CNHotUpdateValidate.VerMeta>> replies =
+                CNUpdateSources.collect(new java.util.ArrayList<String>(bases.keySet()),
+                    new CNUpdateSources.Loader<CNHotUpdateValidate.VerMeta>() {
+                        public CNHotUpdateValidate.VerMeta load(String url) throws Exception {
+                            CNHotUpdateValidate.VerMeta m = fetchMetaDirect(url+"?cnv_retry="+System.nanoTime());
+                            return new CNHotUpdateValidate.VerMeta(m.version,m.size,m.md5,bases.get(url));
+                        }
+                    }, CNUpdateSources.QUERY_BUDGET_MS);
+            java.util.List<CNHotUpdateValidate.VerMeta> values = new java.util.ArrayList<CNHotUpdateValidate.VerMeta>();
+            for (CNUpdateSources.Reply<CNHotUpdateValidate.VerMeta> r : replies)
+                if (r.error == null) values.add(r.value);
+            return CNUpdateSources.matchingHotSources(expected, values);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt(); return expected;
+        } catch (Exception e) {
+            CNLog.w(TAG,"补查同版本线路失败 file="+zipName,e); return expected;
+        }
     }
 
     /** 从单条线路直取版本 json 并解析 version/size/md5。 */

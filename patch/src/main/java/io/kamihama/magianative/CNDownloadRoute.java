@@ -104,7 +104,7 @@ public final class CNDownloadRoute {
             if (tried.size()>=LIMIT) throw new IllegalStateException("本轮线路已耗尽，请手动重试；已保留进度");
             List<CNMirrors.Mirror> remaining=new ArrayList<CNMirrors.Mirror>();
             for (CNMirrors.Mirror m:candidates) if(m.enabled && !tried.contains(m.base)) remaining.add(m);
-            Plan plan=plan(remaining,1);
+            Plan plan=plan(remaining,1,true);
             tried.add(plan.mirror.base);
             return plan;
         }
@@ -112,10 +112,18 @@ public final class CNDownloadRoute {
 
     /** Cooling sources do not become healthy merely because all routes failed. */
     public static Plan plan(List<CNMirrors.Mirror> candidates, int attempt) {
+        return plan(candidates, attempt, false);
+    }
+
+    private static Plan plan(List<CNMirrors.Mirror> candidates, int attempt, boolean perFileRound) {
         Choice selected=choice;
         List<CNMirrors.Mirror> ordered=new ArrayList<CNMirrors.Mirror>();
         long now=System.nanoTime();
         for (CNMirrors.Mirror m:candidates) if(m.enabled && m.cooldownUntilNs<=now) ordered.add(m);
+        // A different file's timeout must not veto this file's only remaining source.
+        // Round.tried still limits each source to one actual attempt; no cooldown reset.
+        if (ordered.isEmpty() && perFileRound)
+            for (CNMirrors.Mirror m:candidates) if(m.enabled) ordered.add(m);
         sortSources(ordered);
         // Even a manual preference never pulls the old emergency source ahead of normal sources.
         for(int i=0;i<ordered.size();i++) if(ordered.get(i).base.equals(selected.base)

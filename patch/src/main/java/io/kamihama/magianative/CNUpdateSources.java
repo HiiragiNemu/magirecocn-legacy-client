@@ -172,6 +172,29 @@ public final class CNUpdateSources {
         return best;
     }
 
+    // A slow retry must not forget a newer identity already seen in this process.
+    private static final java.util.Map<String,CNHotUpdateValidate.VerMeta> knownHot =
+            new java.util.HashMap<String,CNHotUpdateValidate.VerMeta>();
+    static synchronized CNHotUpdateValidate.VerMeta rememberHot(String name,
+            CNHotUpdateValidate.VerMeta discovered) throws java.io.IOException {
+        List<CNHotUpdateValidate.VerMeta> values = new ArrayList<CNHotUpdateValidate.VerMeta>();
+        values.add(knownHot.get(name)); values.add(discovered);
+        CNHotUpdateValidate.VerMeta best = highestHot(values);
+        if (best != null) knownHot.put(name, best);
+        return best;
+    }
+
+    static CNHotUpdateValidate.VerMeta matchingHotSources(CNHotUpdateValidate.VerMeta expected,
+            List<CNHotUpdateValidate.VerMeta> replies) throws java.io.IOException {
+        List<CNHotUpdateValidate.VerMeta> matches = new ArrayList<CNHotUpdateValidate.VerMeta>();
+        matches.add(expected);
+        for (CNHotUpdateValidate.VerMeta m : replies) {
+            if (validHot(m) && m.version == expected.version && m.size == expected.size
+                    && m.md5.equalsIgnoreCase(expected.md5)) matches.add(m);
+        }
+        return highestHot(matches);
+    }
+
     static CNHotUpdateValidate.VerMeta highestHot(List<CNHotUpdateValidate.VerMeta> values)
             throws java.io.IOException {
         CNHotUpdateValidate.VerMeta best=null;

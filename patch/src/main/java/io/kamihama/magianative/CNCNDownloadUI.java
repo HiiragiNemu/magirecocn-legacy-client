@@ -641,7 +641,7 @@ public class CNCNDownloadUI {
 
     /** 底部常驻署名条：原先塞在速度行里的那句长文案，原文保留。 */
     private static final String FOOTER_CREDIT =
-        "MadeInMagius：剧情 344 个；选关对话 735 条；角色语音共 1,588 条（字幕 1,335 条、看板语音 784 条，重合 531 条）；战斗技能 4,209 项；前端界面 1,470 项；图像 258 个（PNG 162 个、.vfxt 96 个）。MadeInMagius：记忆结晶简介校订 5 条（原 Wiki 译文归属保留）。CyberNova／PhotonFlow：国内加速、现代化下载界面、部分下载技术、Cocos 战斗场景汉化早期技术与美服 API 抓包资源；目前加速 CN BASE 主资源文件。圆环记录攻略组：剧情 52 个；角色语音共 703 条（字幕 109 条、看板语音 641 条，重合 47 条）；战斗技能 4,114 项。水银 h2oag：剧情 144 个；巡逻区域 25、阵型技能 25、Connect 技能 498 个汉化字段。segfault：国服数据留存。70 个合作剧情分别计入各参与者；国服原有译文不计入个人汉化贡献。 称号汉化整合 967 项（1,934 个字段）；Wiki 现成译名 545 项、规范人名及称号格式整理 420 项、另有 2 项补译。剧情逐句校对 264 条，修正 245 条。";
+        "MadeInMagius 中文化与整合｜协助：CyberNova／PhotonFlow、圆环记录攻略组、水银 h2oag、segfault｜详细贡献与统计见左栏｜1.0.195 起使用寒蝉全圆体 Bold 3.200（OFL 开源）与 MiSans Semibold 4.009 补字版，许可随包附带。";
 
     // ---- 云端可配的署名内容 ----
     //
@@ -2385,14 +2385,20 @@ public class CNCNDownloadUI {
         private final Activity act;
         ShareLogClick(Activity act) { this.act = act; }
         @Override public void onClick(View v) {
-            if (shareLogRunning) return;   // 连点只打包一次
+            if (shareLogRunning) { toast(act, "日志正在打包，请稍候…"); return; }
+            CNLog.i("界面", "分享日志：收到点击");
             shareLogRunning = true;
             toast(act, "正在打包日志…");
             noteInteraction();
             // 线程启动挪进静态方法：方法体内的匿名 Runnable 在实例方法里会
             // 引用外层实例（this$0）——CLAUDE.md 铁律 4 的 d8 崩溃形状，
             // CI 的 check-d8-pitfalls 按字节扫 this$0 必拦。
-            startShareLogPack(act);
+            try { startShareLogPack(CNLogShareProvider.liveHost(act)); }
+            catch (Throwable t) {
+                shareLogRunning = false;
+                CNLog.w("界面", "分享日志启动失败", t);
+                toast(act, "分享失败：" + t.getMessage());
+            }
         }
     }
 
@@ -2463,15 +2469,10 @@ public class CNCNDownloadUI {
                 toast(act, "没有可分享的日志文件");
                 return;
             }
-            // 编译 classpath 没有 androidx，用自带的只读 provider 临时授权
-            // （只开 cacheDir/share/，见 CNLogShareProvider）。
-            Uri uri = Uri.parse("content://" + CNLogShareProvider.AUTHORITY
-                    + "/" + Uri.encode(out.getName()));
-            Intent send = new Intent(Intent.ACTION_SEND);
-            send.setType("text/plain");
-            send.putExtra(Intent.EXTRA_STREAM, uri);
-            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            act.startActivity(Intent.createChooser(send, "分享日志"));
+            // Packaging may outlive an Activity recreation (rotation / floating window).
+            act = CNLogShareProvider.liveHost(act);
+            act.startActivity(CNLogShareProvider.chooserIntent(out));
+            CNLog.i("界面", "分享日志：已请求系统分享面板 bytes=" + out.length());
             toast(act, "日志已打包：" + out.getName());
         } catch (Throwable t) {
             CNLog.w("界面", "分享日志失败", t);

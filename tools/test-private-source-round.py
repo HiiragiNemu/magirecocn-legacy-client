@@ -32,8 +32,11 @@ public final class PrivateSourceRoundTest {
   CNDownloadRoute.select(pub);round.restartByUser();ok(round.next(list).mirror.base.equals(pub),"manual public choice retained");
   CNDownloadRoute.select("");
   for(CNMirrors.Mirror m:list)m.cooldownUntilNs=Long.MAX_VALUE;
-  exhausted=false;try{new CNDownloadRoute.Round().next(list);}catch(IllegalStateException e){exhausted=true;}
-  ok(exhausted,"all cooled down must not be automatically revived");
+  CNDownloadRoute.Round cooled=new CNDownloadRoute.Round();
+  for(int i=0;i<5;i++)ok(cooled.next(list).mirror.base.equals(wanted[i]),"another file cooldown must not veto a bounded attempt");
+  exhausted=false;try{cooled.next(list);}catch(IllegalStateException e){exhausted=true;}
+  ok(exhausted,"cooldown fallback never loops a source");
+  for(CNMirrors.Mirror m:list)ok(m.cooldownUntilNs==Long.MAX_VALUE,"global health was not reset");
   final List<String> visited=Collections.synchronizedList(new ArrayList<String>());
   CNUpdateSources.collect(Arrays.asList(pub+"version_js.json",old+"version_js.json"),new CNUpdateSources.Loader<String>(){
    public String load(String url){visited.add(url);return "good";}

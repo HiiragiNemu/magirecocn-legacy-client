@@ -701,7 +701,8 @@ public final class CNChunkedDownload {
             ctx.segmentSize = segmentSize;
             ctx.next = new AtomicInteger(0);
 
-            int workers = Math.min(maxWorkers(), Math.min(segments, incomplete));
+            // Resume keeps the disk layout, not the old network concurrency.
+            int workers = byteWorkerCount(requestedSegments, segments, incomplete);
             ExecutorService pool = Executors.newFixedThreadPool(workers, new DownloadThreadFactory());
             CountDownLatch latch = new CountDownLatch(workers);
             for (int i = 0; i < workers; i++) pool.submit(new ByteWorker(ctx, latch));
@@ -731,6 +732,10 @@ public final class CNChunkedDownload {
         CNLog.i(TAG, "分段下载完成 file=" + target.getName() + " bytes=" + probe.total
                 + " segments=" + segments);
         return new Result(probe.total, probe.etag, false);
+    }
+
+    static int byteWorkerCount(int requested, int segments, int incomplete) {
+        return Math.min(maxWorkers(), Math.min(Math.max(1, requested), Math.min(segments, incomplete)));
     }
 
     private static final class ByteContext {

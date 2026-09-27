@@ -3,6 +3,11 @@ package io.kamihama.magianative;
 import android.content.ContentProvider;
 import android.content.ContentValues;
 import android.database.Cursor;
+import android.database.MatrixCursor;
+import android.provider.OpenableColumns;
+import android.content.Intent;
+import android.content.ClipData;
+import android.app.Activity;
 import android.net.Uri;
 import android.os.ParcelFileDescriptor;
 
@@ -37,6 +42,7 @@ public final class CNLogShareProvider extends ContentProvider {
 
     @Override public ParcelFileDescriptor openFile(Uri uri, String mode)
             throws FileNotFoundException {
+        if (!"r".equals(mode)) throw new FileNotFoundException("read-only log export");
         String name = uri.getLastPathSegment();
         File f = resolveShareFile(name);
         if (f == null) throw new FileNotFoundException(name);
@@ -63,11 +69,44 @@ public final class CNLogShareProvider extends ContentProvider {
         return f;
     }
 
-    // ---- 其余抽象方法：本 provider 只服务 openFile，这些不实现 ----
+    public static Intent chooserIntent(File out) {
+        Uri uri = Uri.parse("content://" + AUTHORITY + "/" + Uri.encode(out.getName()));
+        Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType("text/plain");
+        send.putExtra(Intent.EXTRA_STREAM, uri);
+        send.putExtra(Intent.EXTRA_SUBJECT, "魔法纪录运行日志");
+        ClipData clip = ClipData.newRawUri(out.getName(), uri);
+        send.setClipData(clip);
+        send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        Intent chooser = Intent.createChooser(send, "分享日志");
+        chooser.setClipData(clip);
+        chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        return chooser;
+    }
+
+    static Activity liveHost(Activity captured) {
+        Activity current = CNRestClientActivity.getCurrentActivity();
+        if (current != null && !current.isFinishing() && !current.isDestroyed()) return current;
+        if (captured != null && !captured.isFinishing() && !captured.isDestroyed()) return captured;
+        throw new IllegalStateException("游戏界面已关闭，请返回游戏后再分享日志");
+    }
+
+    // Receivers and OEM sharesheets query this before opening the stream.
 
     @Override public Cursor query(Uri uri, String[] projection, String selection,
                                   String[] selectionArgs, String sortOrder) {
-        return null;
+        File f = resolveShareFile(uri.getLastPathSegment());
+        if (f == null) return null;
+        String[] columns = projection == null
+                ? new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE} : projection;
+        MatrixCursor cursor = new MatrixCursor(columns, 1);
+        Object[] row = new Object[columns.length];
+        for (int i = 0; i < columns.length; i++) {
+            if (OpenableColumns.DISPLAY_NAME.equals(columns[i])) row[i] = f.getName();
+            else if (OpenableColumns.SIZE.equals(columns[i])) row[i] = Long.valueOf(f.length());
+        }
+        cursor.addRow(row);
+        return cursor;
     }
 
     @Override public Uri insert(Uri uri, ContentValues values) {

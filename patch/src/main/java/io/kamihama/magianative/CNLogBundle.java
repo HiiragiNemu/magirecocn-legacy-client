@@ -136,8 +136,15 @@ public final class CNLogBundle {
     /** 把文件内容拷到 os，最多 {@code max} 字节；返回实际写入字节数。 */
     private static long copyBounded(File f, OutputStream os, long max) {
         try {
-            InputStream in = new FileInputStream(f);
+            java.io.RandomAccessFile in = new java.io.RandomAccessFile(f, "r");
             try {
+                // Keep the failure at the end, not only startup noise at the beginning.
+                long start = Math.max(0L, in.length() - max);
+                in.seek(start);
+                if (start > 0) {
+                    // Resume on a complete UTF-8 line instead of splitting a character.
+                    int b; while ((b = in.read()) != -1 && b != '\n') {}
+                }
                 byte[] buf = new byte[1 << 16];
                 long done = 0L;
                 int n;

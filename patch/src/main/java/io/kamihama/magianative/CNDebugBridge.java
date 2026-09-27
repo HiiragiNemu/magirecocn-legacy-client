@@ -474,15 +474,7 @@ public final class CNDebugBridge {
 
     /** 分享用的 ACTION_SEND chooser Intent（F-R6-01）。由调用方在主线程 startActivity。 */
     public static Intent shareChooserIntent(File out) {
-        // 编译 classpath 没有 androidx，用自带的只读 provider 临时授权
-        // （只开 cacheDir/share/，见 CNLogShareProvider）。
-        Uri uri = Uri.parse("content://" + CNLogShareProvider.AUTHORITY
-                + "/" + Uri.encode(out.getName()));
-        Intent send = new Intent(Intent.ACTION_SEND);
-        send.setType("text/plain");
-        send.putExtra(Intent.EXTRA_STREAM, uri);
-        send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        return Intent.createChooser(send, "分享日志");
+        return CNLogShareProvider.chooserIntent(out);
     }
 
     /** 悬浮窗权限（API 23+ 要用户手动授予）。低版本恒为 true。 */
