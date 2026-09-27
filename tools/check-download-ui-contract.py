@@ -371,14 +371,14 @@ checks = {
         "CNDownloadMode.cap(16)" in downloader
         and "CNAria2.download(url, FILE_ROOT, name," in downloader
         and "null, null, conns, null, progress, cancel)" in downloader,
-    # 完整换线机制，不是简化版：逐轮 pick(attempt) + 成败都回报 CNMirrors 健康表
-    # （失败记冷却、成功清计数），尝试次数与主引擎对齐好让线路表轮得完。原先固定
-    # pick(1) 且从不回报——线路有多不行，健康表一无所知，主引擎回退后照样先挑它。
-    "aria2 接入完整换线机制":
-        "CNMirrors.pick(attempt)" in downloader
-        and "tryAria2Download(CNMirrors.pick(1)" not in downloader
+    # One file owns the same bounded round across aria2 and the main engine.
+    # Failure/success must still feed mirror health; engine fallback must not reset the round.
+    "aria2 接入共享文件轮次与完整健康上报":
+        "mirror = sourceRound.next(CNUpdateSources.downloadMirrors(pinnedHot)).mirror;" in code(downloader)
+        and downloader.count("final CNDownloadRoute.Round sourceRound = new CNDownloadRoute.Round();") == 1
+        and downloader.count("pinnedHot, sourceRound)") >= 3
         and 'CNMirrors.reportFailure(mirror, "aria2 code=" + rv)' in downloader
-        and "A2_MAX_ATTEMPTS = 4" in downloader
+        and "A2_MAX_ATTEMPTS = CNDownloadRoute.Round.LIMIT" in code(downloader)
         and downloader.count("CNMirrors.reportSuccess(mirror)") >= 2,
     # 热更两包在**同一个 URL** 上被反复重发，CDN 各节点因此可能同时存在好几个版本。
     # 热更轮一直靠 cnv_hot=<version-size-md5> 把它们隔开，安装器与 aria2 这两条路
@@ -798,7 +798,7 @@ checks = {
     # 问题在调用方：异常落在受控 try 之外就会冲出下载状态机，同一种故障在三个入口
     # 分别表现成「worker 崩了」「Future false」「顶层异常」，槽位甚至没 markFailed。
     "主引擎与热更的取线路都有受控出口":
-        "pickMirrorOrNull(attempt, index, name, pinnedHot)" in code(downloader)
+        "pickMirrorOrNull(attempt, index, name, pinnedHot, sourceRound)" in code(downloader)
         and "markFailed(index);" in body(downloader,
                 "private static CNDownloadRoute.Plan pickMirrorOrNull(int attempt, int index, String name,")
         and "catch (IllegalStateException noMirror)" in code(hot),
