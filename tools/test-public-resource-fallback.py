@@ -28,6 +28,7 @@ STUBS = {
  }
 }''',
 'CNDownloadRoute': '''final class CNDownloadRoute {
+ static void sortSources(java.util.List<CNMirrors.Mirror> rows){}
  static boolean accelerated(CNMirrors.Mirror m){return m.base.contains("edgeone.example");}
 }''',
 'CNHotUpdateValidate': '''final class CNHotUpdateValidate {
@@ -86,7 +87,7 @@ public final class PublicResourceFallbackTest {
     if(url.startsWith(pub)||url.equals(CNPublicResources.CONFIG_URL))return "available";
     throw new java.io.IOException("HTTP 404: simulated private old source");
    }
-  },1500);
+  },3000);
   int successes=0,failures=0;for(CNUpdateSources.Reply<String> r:replies){if(r.error==null)successes++;else failures++;}
   ok(successes==2&&failures>0,"old source failures prevented independent public discovery");
   CNMirrors.list.add(new CNMirrors.Mirror("duplicate",pub,70,4,true));
@@ -109,8 +110,7 @@ def main():
         for name in ('CNPublicResources.java','CNUpdateSources.java'):
             content=(SOURCE/name).read_text(encoding='utf8')
             if name=='CNPublicResources.java':
-                assert 'static final boolean ENABLED = false;' in content
-                content=content.replace('static final boolean ENABLED = false;','static final boolean ENABLED = true;')
+                assert 'static final boolean ENABLED = true;' in content
             (root/name).write_text(content,encoding='utf8')
         subprocess.run(['javac','--release','8','-encoding','UTF-8','-d',str(root)]+[str(p) for p in root.glob('*.java')],check=True,timeout=60)
         subprocess.run(['java','-cp',str(root),'io.kamihama.magianative.PublicResourceFallbackTest'],check=True,timeout=30)

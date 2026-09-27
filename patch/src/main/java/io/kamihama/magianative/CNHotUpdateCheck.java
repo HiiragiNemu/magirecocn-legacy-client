@@ -928,7 +928,8 @@ public final class CNHotUpdateCheck {
                 public CNHotUpdateValidate.VerMeta load(String source) throws Exception {
                     String request=source+(source.indexOf('?')>=0?"&":"?")+"cnv_version="+System.nanoTime();
                     CNHotUpdateValidate.VerMeta v=fetchMetaDirect(request);
-                    return new CNHotUpdateValidate.VerMeta(v.version,v.size,v.md5,bases.get(source));
+                    return CNUpdateSources.validHot(v)
+                            ? new CNHotUpdateValidate.VerMeta(v.version,v.size,v.md5,bases.get(source)) : null;
                 }
             },CNUpdateSources.QUERY_BUDGET_MS);
         java.util.List<CNHotUpdateValidate.VerMeta> values=new java.util.ArrayList<CNHotUpdateValidate.VerMeta>();

@@ -6,12 +6,18 @@ package io.kamihama.magianative;
  * 不改变现有镜像、资源文件名、字体路径、下载校验或版本比较规则。
  */
 final class CNPublicResources {
-    // 194/195只处理字体；196迁移入口保持关闭，后续独立启用并验收。
-    static final boolean ENABLED = false;
+    // 独立公开入口启用；旧入口仅作有界应急，不改变规范安装身份。
+    static final boolean ENABLED = true;
     static final String RELEASE_BASE =
             "https://github.com/HiiragiNemu/ProgettoMagius-1/releases/download/latest/";
     static final String CONFIG_URL =
             "https://raw.githubusercontent.com/HiiragiNemu/ProgettoMagius-1/main/legacy/config.json";
 
+    static final String LEGACY_RELEASE_BASE =
+            "https://github.com/HiiragiNemu/magireco-cn-patch/releases/download/latest/";
+    static boolean legacyUrl(String url) {
+        return url != null && (url.startsWith(LEGACY_RELEASE_BASE)
+                || url.startsWith("https://raw.githubusercontent.com/HiiragiNemu/magireco-cn-patch/"));
+    }
     private CNPublicResources() {}
 }

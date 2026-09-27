@@ -78,25 +78,52 @@ public final class CNDownloadRoute {
         return "自动选择";
     }
 
-    /** Snapshot the choice and mirror together so a concurrent click cannot be lost. */
+    static int sourceTier(CNMirrors.Mirror m) {
+        if (m.base.equals(CNEndpoints.LEGACY_EDGEONE_BASE)) return 0;
+        if (m.base.equals(CNEndpoints.LEGACY_ESA_BASE)) return 1;
+        if (m.base.equals(CNEndpoints.PRIMARY_BASE_OVERRIDE)) return 2;
+        if (m.base.equals(CNPublicResources.RELEASE_BASE)) return 3;
+        if (m.base.equals(CNPublicResources.LEGACY_RELEASE_BASE)) return 5;
+        return 4;
+    }
+    static void sortSources(List<CNMirrors.Mirror> rows) {
+        // Stable insertion sort preserves configured order within a tier, API 21 compatible.
+        for (int i=1;i<rows.size();i++) {
+            CNMirrors.Mirror m=rows.get(i); int j=i-1;
+            while(j>=0 && sourceTier(rows.get(j))>sourceTier(m)) { rows.set(j+1,rows.get(j)); j--; }
+            rows.set(j+1,m);
+        }
+    }
+
+    /** One shared round per file, outside all chunk workers and both download engines. */
+    public static final class Round {
+        public static final int LIMIT = 5;
+        private final java.util.Set<String> tried = new java.util.HashSet<String>();
+        public synchronized void restartByUser() { tried.clear(); }
+        public synchronized Plan next(List<CNMirrors.Mirror> candidates) {
+            if (tried.size()>=LIMIT) throw new IllegalStateException("本轮线路已耗尽，请手动重试；已保留进度");
+            List<CNMirrors.Mirror> remaining=new ArrayList<CNMirrors.Mirror>();
+            for (CNMirrors.Mirror m:candidates) if(m.enabled && !tried.contains(m.base)) remaining.add(m);
+            Plan plan=plan(remaining,1);
+            tried.add(plan.mirror.base);
+            return plan;
+        }
+    }
+
+    /** Cooling sources do not become healthy merely because all routes failed. */
     public static Plan plan(List<CNMirrors.Mirror> candidates, int attempt) {
         Choice selected=choice;
         List<CNMirrors.Mirror> ordered=new ArrayList<CNMirrors.Mirror>();
-        // Manual preference must not inject an old or unidentified hot-update publisher.
         long now=System.nanoTime();
-        boolean hasHealthy=false;
-        for (CNMirrors.Mirror m : candidates) if (m.enabled && m.cooldownUntilNs<=now) hasHealthy=true;
-        for (CNMirrors.Mirror m : candidates) {
-            if (m.enabled && (!hasHealthy || m.cooldownUntilNs<=now) && m.base.equals(selected.base)) { ordered.add(m); break; }
+        for (CNMirrors.Mirror m:candidates) if(m.enabled && m.cooldownUntilNs<=now) ordered.add(m);
+        sortSources(ordered);
+        // Even a manual preference never pulls the old emergency source ahead of normal sources.
+        for(int i=0;i<ordered.size();i++) if(ordered.get(i).base.equals(selected.base)
+                && !CNPublicResources.legacyUrl(ordered.get(i).base)) {
+            CNMirrors.Mirror m=ordered.remove(i); ordered.add(0,m); break;
         }
-        for (CNMirrors.Mirror m : candidates) {
-            if (m.enabled && (!hasHealthy || m.cooldownUntilNs<=now)
-                    && (ordered.isEmpty() || !ordered.get(0).base.equals(m.base))) ordered.add(m);
-        }
-        if (ordered.isEmpty()) throw new IllegalStateException("没有可用下载线路");
-        // A failed route is already removed by cooldown. Applying attempt % size again
-        // skips the still-healthy second CDN and prematurely jumps to GitHub/Cloudflare.
-        return new Plan(selected,ordered.get(hasHealthy ? 0 : Math.max(0,attempt-1)%ordered.size()));
+        if(ordered.isEmpty()) throw new IllegalStateException("本轮线路不可用，请稍后手动重试；已保留进度");
+        return new Plan(selected,ordered.get(0));
     }
 
     public static void enter(Plan plan) { transfer.set(plan); }

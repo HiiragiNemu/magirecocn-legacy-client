@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit;
  */
 public final class CNHotUpdate {
     private static final String TAG = "MagiaCNHotUpdate";
-    private static final int MAX_ATTEMPTS = 4;
+    private static final int MAX_ATTEMPTS = CNDownloadRoute.Round.LIMIT;
     private static final int CONNECT_TIMEOUT_MS = 15000;
     private static final int READ_TIMEOUT_MS = 30000;
     private static final long MIN_OK_BPS = 100L * 1024L;
@@ -106,6 +106,7 @@ public final class CNHotUpdate {
                 + " identity=" + hotIdentity(expected)
                 + " 可用线路=" + updateMirrors.size());
 
+        final CNDownloadRoute.Round sourceRound = new CNDownloadRoute.Round();
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             if (Thread.currentThread().isInterrupted()) {
                 Thread.currentThread().interrupt();
@@ -121,7 +122,7 @@ public final class CNHotUpdate {
             String tryUrl;
             try {
                 if (updateMirrors.isEmpty()) throw new IllegalStateException("无可用更新线路");
-                route = CNDownloadRoute.plan(updateMirrors, attempt);
+                route = sourceRound.next(updateMirrors);
                 mirror = route.mirror;
                 tryUrl = withIdentity(mirror.urlFor(remoteName), expected);
             } catch (IllegalStateException noMirror) {
@@ -155,6 +156,7 @@ public final class CNHotUpdate {
                     CNDownloadRestart.clearInterrupt();
                     cleanupDownloadArtifacts(dest);
                     CNCNDownloadUI.resetFileProgress(index);
+                    sourceRound.restartByUser();
                     attempt = 0;
                     continue;
                 }
@@ -169,6 +171,7 @@ public final class CNHotUpdate {
                 // 空间不会因为多试四次就长出来。
                 if (t instanceof CNDownloadRoute.Changed) {
                     CNLog.i(TAG, "manual-route file=" + remoteName + "：保留同版本断点，重连所选线路");
+                    sourceRound.restartByUser();
                     attempt = 0;
                     continue;
                 }
@@ -183,7 +186,7 @@ public final class CNHotUpdate {
                 // 无身份的旧路径仍不跨镜像拼装。
                 if (!CNUpdateSources.validHot(expected)) cleanupDownloadArtifacts(dest);
                 if (attempt < MAX_ATTEMPTS) {
-                    long delay = 2000L << (attempt - 1);
+                    long delay = Math.min(4000L, 1000L * attempt);
                     try {
                         Thread.sleep(delay);
                     } catch (InterruptedException ie) {

@@ -85,7 +85,7 @@ public final class CNDownloaderFix {
     private static final String FILE_ROOT = CNPaths.filesDir();
     private static final String FINAL_FLAG = FILE_ROOT + "/madomagi/magica/cn_base_done.flag";
     private static final String INSTALL_ROOT = FILE_ROOT + "/";
-    private static final int    MAX_ATTEMPTS = 4;
+    private static final int    MAX_ATTEMPTS = CNDownloadRoute.Round.LIMIT;
     /** {@link #tryAria2Download} 的返回：装好了。 */
     private static final int A2_INSTALLED = 1;
     /** {@link #tryAria2Download} 的返回：玩家选继续主引擎（或询问兜底），走主引擎重试。 */
@@ -118,7 +118,7 @@ public final class CNDownloaderFix {
      * {@code CNMirrors.pick(attempt)} 有机会把线路表轮一遍——线路只有轮得完，
      * 「换线」才叫换线。
      */
-    private static final int A2_MAX_ATTEMPTS = 4;
+    private static final int A2_MAX_ATTEMPTS = CNDownloadRoute.Round.LIMIT;
     private static final int    MAX_DOWNLOADS = 4;
     // F-060：SNAA 响应体上限（几 KB 的小 JSON）。配置错误/WAF 无限流/被攻破端点
     // 能靠它挡住启动链上的 OOM，超限 fail-closed。
@@ -1235,12 +1235,13 @@ public final class CNDownloaderFix {
             CNLog.w(TAG, "热更包未取得有效版本，保留断点: " + name);
             return false;
         }
+        final CNDownloadRoute.Round sourceRound = new CNDownloadRoute.Round();
         boolean aria2Forced = "aria2c".equals(CNBuildConfig.MAIN_ENGINE)
                 || CNMirrors.forceAria2()
                 || CNDebugFlags.isOn(CNDebugFlags.USE_ARIA2);
         if (aria2Forced && FORCE_REDOWNLOAD.get(index) == 0
                 && CNAria2.isAvailable()) {
-            int a2 = tryAria2Download(name, archive, index, marker, canonicalUrl, pinnedHot);
+            int a2 = tryAria2Download(name, archive, index, marker, canonicalUrl, pinnedHot, sourceRound);
             if (a2 == A2_INSTALLED) return true;
             if (a2 == A2_YIELD) return yieldToOfflineInstall(index, name, "aria2");
             if (a2 == A2_OFFLINE || a2 == A2_CLOSED) {
@@ -1292,7 +1293,7 @@ public final class CNDownloaderFix {
             // try 之外，异常会越过本轮全部 catch/finally 直接冲出下载状态机：
             // ArchiveTask 以异常收场，这个槽位可能连 markFailed 都没走到——UI 上
             // 是「失败 0 项」却卡在等待重试页，日志里也和普通下载失败长得不一样。
-            CNDownloadRoute.Plan route = pickMirrorOrNull(attempt, index, name, pinnedHot);
+            CNDownloadRoute.Plan route = pickMirrorOrNull(attempt, index, name, pinnedHot, sourceRound);
             if (route == null) return false;
             CNMirrors.Mirror mirror = route.mirror;
             // 资源下载一律直连（Proxy.NO_PROXY）：系统代理会劫持 CDN 大文件传输，
@@ -1383,6 +1384,7 @@ public final class CNDownloaderFix {
                     // worker 继续持锁联网重试，离线安装线程在锁外干等，玩家看到的是
                     // 「已停止当前传输，改用离线包」之后界面又联网重试了几分钟。
                     if (keepOffline) return yieldToOfflineInstall(index, name, "main");
+                    sourceRound.restartByUser();
                     attempt = 0;
                     continue;
                 }
@@ -1438,6 +1440,7 @@ public final class CNDownloaderFix {
                     // worker 继续持锁联网重试，离线安装线程在锁外干等，玩家看到的是
                     // 「已停止当前传输，改用离线包」之后界面又联网重试了几分钟。
                     if (keepOffline) return yieldToOfflineInstall(index, name, "main");
+                    sourceRound.restartByUser();
                     attempt = 0;
                     continue;
                 }
@@ -1445,6 +1448,7 @@ public final class CNDownloaderFix {
                 // 普通 IOException。先认出来，别当成线路故障处理。
                 if (e instanceof CNDownloadRoute.Changed) {
                     CNLog.i(TAG, "manual-route file=" + name + "：保留断点，重连所选线路");
+                    sourceRound.restartByUser();
                     attempt = 0;
                     continue;
                 }
@@ -1470,7 +1474,7 @@ public final class CNDownloaderFix {
 
             if (attempt < maxAttempts) {
                 // 退避按**本轮内**的序号算，续轮后不会一上来就等 16 秒
-                long delay = 2000L << (Math.min(attempt, MAX_ATTEMPTS) - 1);
+                long delay = Math.min(4000L, 1000L * attempt);
                 CNLog.i(TAG, "retry-wait file=" + name + " delay_ms=" + delay);
                 try {
                     Thread.sleep(delay);
@@ -1492,9 +1496,10 @@ public final class CNDownloaderFix {
                     CNLog.w(TAG, "玩家选择改用离线包，停止网络重试: " + name);
                     return false;
                 }
+                sourceRound.restartByUser();
                 if (choice == CNCNDownloadUI.ARIA2_RETRY && canAria2) {
                     int a2 = tryAria2Download(name, archive, index,
-                                              marker, canonicalUrl, pinnedHot);
+                                              marker, canonicalUrl, pinnedHot, sourceRound);
                     if (a2 == A2_INSTALLED) return true;
                     if (a2 == A2_YIELD) return yieldToOfflineInstall(index, name, "aria2-fallback");
                     if (a2 == A2_OFFLINE || a2 == A2_CLOSED) {
@@ -1578,7 +1583,7 @@ public final class CNDownloaderFix {
      *         {@link #A2_NOSPACE} 磁盘满（产物与断点保留，不续主引擎轮）。
      */
     private static int tryAria2Download(String name, File archive, int index,
-                                        File marker, String canonicalUrl, CNHotUpdateValidate.VerMeta pinnedHot) {
+                                        File marker, String canonicalUrl, CNHotUpdateValidate.VerMeta pinnedHot, CNDownloadRoute.Round sourceRound) {
         // 完整的包直接复用，别让 aria2 的 --allow-overwrite 把它重下一遍。场景是进程
         // 在下到 100% 之后、解压之前被杀（.aria2 控制文件在 = 没下完，不在此列）。
         // 交回主引擎，fetchArchive 按同一判据复用它。force_aria2 开着时这正是
@@ -1604,7 +1609,7 @@ public final class CNDownloaderFix {
             // 在这里先记一次失败，会让同一个空表在两条路径上各报一次。
             CNMirrors.Mirror mirror;
             try {
-                mirror = CNDownloadRoute.plan(CNUpdateSources.downloadMirrors(pinnedHot), attempt).mirror;
+                mirror = sourceRound.next(CNUpdateSources.downloadMirrors(pinnedHot)).mirror;
                 CNDownloadRoute.recordFile(index, CNDownloadRoute.shortName(mirror));
             } catch (IllegalStateException noMirror) {
                 CNLog.e(TAG, "no-mirror(aria2) file=" + name + " attempt=" + attempt, noMirror);
@@ -1724,7 +1729,8 @@ public final class CNDownloaderFix {
                         CNCNDownloadUI.resetFileProgress(index);
                         // F-082：同主引擎——keepOffline 意味着让出 archive lock 本身。
                         if (keepOffline) return A2_YIELD;
-                        attempt = 0;
+                        sourceRound.restartByUser();
+                    attempt = 0;
                         continue;
                     }
                     // 无重发意图的中断（整体停止/池回收）：保留产物与断点供
@@ -1841,7 +1847,8 @@ public final class CNDownloaderFix {
                         CNCNDownloadUI.resetFileProgress(index);
                         // F-082：同主引擎——keepOffline 意味着让出 archive lock 本身。
                         if (keepOffline) return A2_YIELD;
-                        attempt = 0;
+                        sourceRound.restartByUser();
+                    attempt = 0;
                         continue;
                     }
                     // 无重发意图的中断：保留完整 ZIP / 解压检查点，安静交回
@@ -3269,9 +3276,9 @@ public final class CNDownloaderFix {
      * @return 线路；空表时返回 {@code null}，此时该槽位已经 markFailed。
      */
     private static CNDownloadRoute.Plan pickMirrorOrNull(int attempt, int index, String name,
-                                                        CNHotUpdateValidate.VerMeta hotMeta) {
+                                                        CNHotUpdateValidate.VerMeta hotMeta, CNDownloadRoute.Round sourceRound) {
         try {
-            CNDownloadRoute.Plan route = CNDownloadRoute.plan(CNUpdateSources.downloadMirrors(hotMeta), attempt);
+            CNDownloadRoute.Plan route = sourceRound.next(CNUpdateSources.downloadMirrors(hotMeta));
             CNDownloadRoute.recordFile(index, CNDownloadRoute.shortName(route.mirror));
             return route;
         } catch (IllegalStateException noMirror) {

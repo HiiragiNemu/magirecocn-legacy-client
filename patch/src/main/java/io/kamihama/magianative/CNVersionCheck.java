@@ -330,7 +330,10 @@ public final class CNVersionCheck {
         java.util.List<String> urls=CNUpdateSources.clientUrls();
         java.util.List<CNUpdateSources.Reply<JSONObject>> replies=CNUpdateSources.collect(urls,
             new CNUpdateSources.Loader<JSONObject>() {
-                public JSONObject load(String url) throws Exception { return fetchClientSection(url); }
+                public JSONObject load(String url) throws Exception {
+                    JSONObject result = fetchClientSection(url);
+                    return validClient(result) ? result : null;
+                }
             }, CNUpdateSources.QUERY_BUDGET_MS);
         java.util.List<JSONObject> candidates=new java.util.ArrayList<JSONObject>();
         java.util.List<CNUpdateSources.ClientIdentity> identities=new java.util.ArrayList<CNUpdateSources.ClientIdentity>();

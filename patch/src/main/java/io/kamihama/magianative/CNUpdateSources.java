@@ -26,7 +26,9 @@ public final class CNUpdateSources {
         LinkedHashMap<String,CNMirrors.Mirror> available = new LinkedHashMap<String,CNMirrors.Mirror>();
         for (CNMirrors.Mirror m : CNMirrors.selectable()) available.put(m.base,m);
         // 配置源不可达时，基础包也必须保留独立公开兜底；热更仍受下方身份集合约束。
-        if (CNPublicResources.ENABLED) add(available, CNPublicResources.RELEASE_BASE, "公开资源仓备用");
+        if (CNPublicResources.ENABLED) {
+            for (CNMirrors.Mirror m : mirrors(null)) if (!available.containsKey(m.base)) available.put(m.base,m);
+        }
         if (expected != null) for (CNMirrors.Mirror m : mirrors(expected.sourceBase)) {
             if (!available.containsKey(m.base)) available.put(m.base,m);
         }
@@ -38,6 +40,7 @@ public final class CNUpdateSources {
             (CNDownloadRoute.accelerated(m) ? fast : fallback).add(m);
         }
         fast.addAll(fallback);
+        CNDownloadRoute.sortSources(fast);
         return fast;
     }
 
@@ -48,14 +51,19 @@ public final class CNUpdateSources {
         add(out, CNEndpoints.ESA_BASE, "内置更新备用线路");
         add(out, CNEndpoints.LEGACY_EDGEONE_BASE, "原 EdgeOne 更新源");
         add(out, CNEndpoints.LEGACY_ESA_BASE, "原 ESA 更新源");
-        if (CNPublicResources.ENABLED) add(out, CNPublicResources.RELEASE_BASE, "独立公开资源更新源");
+        if (CNPublicResources.ENABLED) {
+            add(out, CNPublicResources.RELEASE_BASE, "独立公开资源更新源");
+            add(out, CNPublicResources.LEGACY_RELEASE_BASE, "旧仓应急入口");
+        }
         for (CNMirrors.Mirror m : CNMirrors.healthy()) {
             if (m.enabled && !out.containsKey(m.base)) out.put(m.base, m);
         }
         List<CNMirrors.Mirror> result = new ArrayList<CNMirrors.Mirror>();
         // Pin bytes to the publisher of the selected identity; other publishers remain fallbacks.
         if (preferredBase != null && out.containsKey(preferredBase)) result.add(out.remove(preferredBase));
-        result.addAll(out.values());
+        List<CNMirrors.Mirror> remaining = new ArrayList<CNMirrors.Mirror>(out.values());
+        CNDownloadRoute.sortSources(remaining);
+        result.addAll(remaining);
         return result;
     }
 
@@ -84,6 +92,19 @@ public final class CNUpdateSources {
     /** Collect all responses within one bounded parallel budget, not first-success wins. */
     static <T> List<Reply<T>> collect(final List<String> urls, final Loader<T> loader,
                                      long budgetMs) throws InterruptedException {
+        List<String> normal = new ArrayList<String>();
+        List<String> emergency = new ArrayList<String>();
+        for (String url : urls) (CNPublicResources.legacyUrl(url) ? emergency : normal).add(url);
+        long started = System.nanoTime();
+        List<Reply<T>> answers = collectWithin(normal, loader, Math.max(1L,budgetMs-1500L));
+        for (Reply<T> reply : answers) if (reply.error == null && reply.value != null) return answers;
+        long remaining = budgetMs-TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started);
+        if (remaining > 0) answers.addAll(collectWithin(emergency,loader,remaining));
+        return answers;
+    }
+
+    private static <T> List<Reply<T>> collectWithin(final List<String> urls, final Loader<T> loader,
+                                                  long budgetMs) throws InterruptedException {
         final List<Reply<T>> out = new ArrayList<Reply<T>>();
         if (urls.isEmpty()) return out;
         ExecutorService pool = Executors.newFixedThreadPool(Math.min(6, urls.size()), new ThreadFactory() {
