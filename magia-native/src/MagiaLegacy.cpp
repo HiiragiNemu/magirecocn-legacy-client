@@ -1447,7 +1447,7 @@ struct Hidden {
 //   版本旁注，不得用 GITHUB_RUN_NUMBER 等构建编号覆盖；本地构建也直接使用该值。
 //   它是 constexpr、从不取地址，只在编译期喂给下面的 Hidden，因此不会有一份
 //   明文留在产物里。
-static constexpr char CLIENT_VERSION[] = "1.0.199";
+static constexpr char CLIENT_VERSION[] = "1.0.200";
 
 // 真正进二进制的是这一份：异或之后的字节。
 static constexpr auto kVersionHidden =
@@ -2811,7 +2811,40 @@ static thread_local magia_story_name::Capture* storyNameCapture = nullptr;
 static magia_story_name::ReadPoint storyNodePosition = nullptr;
 static magia_story_name::ReadPoint storyNodeAnchor = nullptr;
 static magia_story_name::WritePoint storyNodeSetPosition = nullptr;
+static magia_story_name::ReadFloat storyNameFontSize = nullptr;
+static magia_story_name::ReadFloat storyNameLineHeight = nullptr;
+static magia_story_name::WriteFloat storyNameSetLineHeight = nullptr;
+using StoryTtfGet = const void* (*)(void*);
+using StoryTtfSet = bool (*)(void*, const void*);
+static StoryTtfGet storyNameGetConfig = nullptr;
+static StoryTtfSet storyNameSetConfig = nullptr;
 static std::atomic<unsigned> storyNameLayoutLogged{0};
+
+static bool setStoryNameFontSize(void* label, float size) {
+    if (!storyNameGetConfig || !storyNameSetConfig) return false;
+    const void* original = storyNameGetConfig(label);
+    alignas(void*) magia_story_name::TtfConfigCopy changed, retained;
+    if (!magia_story_name::copyNameTtfConfig(original, 16.0f, size, changed)
+        || !magia_story_name::copyNameTtfConfig(original, 16.0f, 16.0f, retained)) return false;
+    // setTTFConfigInternal can reset the Label on failure. Keep the original
+    // font path alive independently, including for restoration, rather than
+    // borrowing a heap string which that reset is allowed to release.
+    try {
+        const auto view = ndkStrRead(original);
+        if (!view.data || !view.size || view.size > 4096) return false;
+        const std::string fontPath(view.data, view.size);
+        FakeNdkStr path;
+        fakeNdkStr(path, fontPath);
+        std::memcpy(changed.data(), &path, sizeof(path));
+        std::memcpy(retained.data(), &path, sizeof(path));
+        if (storyNameSetConfig(label, changed.data())) return true;
+        storyNameSetConfig(label, retained.data());
+    } catch (...) {
+        // Allocation failure before the setter must leave the original node.
+        return false;
+    }
+    return false;
+}
 
 static void* captureStoryNameLabel(void* label, float size) {
     if (storyNameCapture) storyNameCapture->record(label, size);
@@ -2821,10 +2854,12 @@ static void storyMessageAreaNew(void* self, int position) {
     magia_story_name::Capture capture(position);
     magia_story_name::Scope scope(storyNameCapture, capture);
     storyMessageAreaOld(self, position);
-    if (capture.apply(storyNodePosition, storyNodeAnchor, storyNodeSetPosition)) {
+    if (capture.apply(storyNodePosition, storyNodeAnchor, storyNodeSetPosition,
+                      storyNameFontSize, storyNameLineHeight, setStoryNameFontSize,
+                      storyNameSetLineHeight)) {
         const unsigned bit = 1u << static_cast<unsigned>(position);
         if (!(storyNameLayoutLogged.fetch_or(bit, std::memory_order_relaxed) & bit)) {
-            LOGI("[StoryNameLayout] slot=%d localY=57->63; native parent and anchor retained", position);
+            LOGI("[StoryNameLayout] slot=%d localY=57->63 fontSize=16->20 lineHeight=25; body/font-file/parent/anchor retained", position);
         }
     }
 }
@@ -2837,8 +2872,14 @@ static bool resolveStoryNameLayout(const char* lib) {
         ::dlsym(h, "_ZNK7cocos2d4Node14getAnchorPointEv"));
     storyNodeSetPosition = reinterpret_cast<magia_story_name::WritePoint>(
         ::dlsym(h, "_ZN7cocos2d4Node11setPositionERKNS_4Vec2E"));
+    storyNameGetConfig = reinterpret_cast<StoryTtfGet>(::dlsym(h, "_ZNK7cocos2d5Label12getTTFConfigEv"));
+    storyNameSetConfig = reinterpret_cast<StoryTtfSet>(::dlsym(h, "_ZN7cocos2d5Label12setTTFConfigERKNS_10_ttfConfigE"));
+    storyNameFontSize = reinterpret_cast<magia_story_name::ReadFloat>(::dlsym(h, "_ZNK7cocos2d5Label20getRenderingFontSizeEv"));
+    storyNameLineHeight = reinterpret_cast<magia_story_name::ReadFloat>(::dlsym(h, "_ZNK7cocos2d5Label13getLineHeightEv"));
+    storyNameSetLineHeight = reinterpret_cast<magia_story_name::WriteFloat>(::dlsym(h, "_ZN7cocos2d5Label13setLineHeightEf"));
     ::dlclose(h);
-    return storyNodePosition && storyNodeAnchor && storyNodeSetPosition;
+    return storyNodePosition && storyNodeAnchor && storyNodeSetPosition && storyNameGetConfig
+        && storyNameSetConfig && storyNameFontSize && storyNameLineHeight && storyNameSetLineHeight;
 }
 
 

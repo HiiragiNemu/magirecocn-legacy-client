@@ -2,11 +2,33 @@
 #define MAGIA_STORY_NAME_LAYOUT_H
 
 #include <cmath>
+#include <array>
+#include <cstring>
 
 namespace magia_story_name {
 struct Point { float x; float y; };
 using ReadPoint = const Point& (*)(void*);
 using WritePoint = void (*)(void*, const Point&);
+using ReadFloat = float (*)(void*);
+using WriteFloat = void (*)(void*, float);
+using SetFontSize = bool (*)(void*, float);
+
+// ABI of the public _ttfConfig value returned by the pinned engine's getter.
+// AArch64 copies bytes 24..51, ARM32 copies 12..35; their padded sizes are
+// 56 and 36. The leading libc++ string is borrowed for this one synchronous
+// setter call only. Never reinterpret or write offsets inside a Label object.
+constexpr size_t kTtfConfigBytes = sizeof(void*) == 8 ? 56 : 36;
+constexpr size_t kTtfFontSizeOffset = sizeof(void*) * 3;
+using TtfConfigCopy = std::array<unsigned char, kTtfConfigBytes>;
+inline bool copyNameTtfConfig(const void* source, float expected, float size, TtfConfigCopy& target) {
+    if (!source || !std::isfinite(size) || size <= 0) return false;
+    std::memcpy(target.data(), source, target.size());
+    float current;
+    std::memcpy(&current, target.data() + kTtfFontSizeOffset, sizeof(current));
+    if (current != expected) return false;
+    std::memcpy(target.data() + kTtfFontSizeOffset, &size, sizeof(size));
+    return true;
+}
 
 // Only the two labels constructed by StoryMessageUnit::createMessageArea are
 // admitted. No engine object layout, vtable index, font replacement or global
@@ -26,15 +48,24 @@ struct Capture {
             name = label;
         } else expected = false;
     }
-    bool apply(ReadPoint positionOf, ReadPoint anchorOf, WritePoint setPosition) const {
+    bool apply(ReadPoint positionOf, ReadPoint anchorOf, WritePoint setPosition,
+               ReadFloat fontSizeOf, ReadFloat lineHeightOf, SetFontSize setFontSize,
+               WriteFloat setLineHeight) const {
         if (!expected || calls != 2 || !name || position < 0 || position > 2
-            || !positionOf || !anchorOf || !setPosition) return false;
+            || !positionOf || !anchorOf || !setPosition || !fontSizeOf || !lineHeightOf
+            || !setFontSize || !setLineHeight) return false;
         const Point current = positionOf(name);
         const Point anchor = anchorOf(name);
         const float expectedX = position == 0 ? -215.0f : position == 2 ? 215.0f : -55.0f;
         const float expectedAnchor = position == 2 ? 1.0f : 0.0f;
         if (current.x != expectedX || current.y != 57.0f
             || anchor.x != expectedAnchor || anchor.y != 0.5f) return false;
+        // The 199 correction moved only Y and left the legacy 16px name in a
+        // 20px CN layout. Admit the complete original label, then update only
+        // its rendering size and reapply the unchanged native line height.
+        if (fontSizeOf(name) != 16.0f || lineHeightOf(name) != 25.0f) return false;
+        if (!setFontSize(name, 20.0f)) return false;
+        setLineHeight(name, 25.0f);
         setPosition(name, Point{current.x, 63.0f});
         return true;
     }
