@@ -214,7 +214,15 @@ jobs:
         echo "MAGIA_ROOT_DOMAIN=$ROOT" >> "$GITHUB_ENV"
 
         '
-    - name: 🛠 编译 libMagiaLegacy.so（magia-native）
+    - name: 国服姓名布局限定范围回归
+      # Host tests exercise the same guarded coordinate helper used by both
+      # Android ABIs before a candidate can enter the packaging workflow.
+      run: |
+        set -euo pipefail
+        mkdir -p .build/name-layout
+        g++ -std=c++17 tools/StoryNameLayoutTest.cpp -o .build/name-layout/test
+        .build/name-layout/test
+    - name: 编译已验证的原生补丁（双架构）
       run: "set -euo pipefail\n# 取代原先包内两个预编译的 Dobby hook 库：\n#   libuwasa.so   一改：端点重定向（顺带按英文行宽重排剧情文本，正是要去掉的）\n#   libcn_hook.so\
         \ 二改：拦引擎下载入口接我们的浮层\nNDK_ROOT=\"${ANDROID_NDK_HOME:-}\"\nif [ -z \"$NDK_ROOT\" ] || [ ! -d \"$NDK_ROOT\" ]; then\n\
         \  NDK_BASE=\"${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/ndk\"\n  NDK_ROOT=\"$(ls -1d $NDK_BASE/* 2>/dev/null\

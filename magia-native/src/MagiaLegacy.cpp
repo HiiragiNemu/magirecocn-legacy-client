@@ -96,6 +96,7 @@
 #include <sys/stat.h>
 #include <pthread.h>
 #include <dlfcn.h>
+#include "StoryNameLayout.h"
 #include <stdlib.h>   // strtol（安装完成标记的正文解析）
 #include <stdio.h>
 #include <string.h>
@@ -1446,7 +1447,7 @@ struct Hidden {
 //   版本旁注，不得用 GITHUB_RUN_NUMBER 等构建编号覆盖；本地构建也直接使用该值。
 //   它是 constexpr、从不取地址，只在编译期喂给下面的 Hidden，因此不会有一份
 //   明文留在产物里。
-static constexpr char CLIENT_VERSION[] = "1.0.198";
+static constexpr char CLIENT_VERSION[] = "1.0.199";
 
 // 真正进二进制的是这一份：异或之后的字节。
 static constexpr auto kVersionHidden =
@@ -2802,6 +2803,45 @@ using CreateWithTtfStrFn = void* (*)(void*, const void*, float, void*, int, int)
 static CreateWithTtfCfgFn createWithTtfCfgOld = nullptr;
 static CreateWithTtfStrFn createWithTtfStrOld = nullptr;
 
+// 纯国服姓名局部 y=63；现归档引擎为57。仅在原有姓名创建调用范围内
+// 修正已核实的名字节点，不改字体、正文、锚点或安全区/比例适配。
+using StoryMessageAreaFn = void (*)(void*, int);
+static StoryMessageAreaFn storyMessageAreaOld = nullptr;
+static thread_local magia_story_name::Capture* storyNameCapture = nullptr;
+static magia_story_name::ReadPoint storyNodePosition = nullptr;
+static magia_story_name::ReadPoint storyNodeAnchor = nullptr;
+static magia_story_name::WritePoint storyNodeSetPosition = nullptr;
+static std::atomic<unsigned> storyNameLayoutLogged{0};
+
+static void* captureStoryNameLabel(void* label, float size) {
+    if (storyNameCapture) storyNameCapture->record(label, size);
+    return label;
+}
+static void storyMessageAreaNew(void* self, int position) {
+    magia_story_name::Capture capture(position);
+    magia_story_name::Scope scope(storyNameCapture, capture);
+    storyMessageAreaOld(self, position);
+    if (capture.apply(storyNodePosition, storyNodeAnchor, storyNodeSetPosition)) {
+        const unsigned bit = 1u << static_cast<unsigned>(position);
+        if (!(storyNameLayoutLogged.fetch_or(bit, std::memory_order_relaxed) & bit)) {
+            LOGI("[StoryNameLayout] slot=%d localY=57->63; native parent and anchor retained", position);
+        }
+    }
+}
+static bool resolveStoryNameLayout(const char* lib) {
+    void* h = ::dlopen(lib, RTLD_NOW | RTLD_NOLOAD);
+    if (!h) return false;
+    storyNodePosition = reinterpret_cast<magia_story_name::ReadPoint>(
+        ::dlsym(h, "_ZNK7cocos2d4Node11getPositionEv"));
+    storyNodeAnchor = reinterpret_cast<magia_story_name::ReadPoint>(
+        ::dlsym(h, "_ZNK7cocos2d4Node14getAnchorPointEv"));
+    storyNodeSetPosition = reinterpret_cast<magia_story_name::WritePoint>(
+        ::dlsym(h, "_ZN7cocos2d4Node11setPositionERKNS_4Vec2E"));
+    ::dlclose(h);
+    return storyNodePosition && storyNodeAnchor && storyNodeSetPosition;
+}
+
+
 // 战斗中的技能浮字有一部分在 createWithTTF() 构造时一次性传入，之后不会再走
 // Label::setString。这两个构造入口仍复用 engine 表，但不再改变任何字体参数，
 // 同时仍由 noI18nSetString 统一关闭这类动态 Label 文案替换。
@@ -2836,9 +2876,9 @@ static void* createWithTtfStrNew(void* text, const void* font, float size,
     if (translateTtfInitialText(text, "Label::createWithTTF(str)", translated)) {
         FakeNdkStr fk;
         fakeNdkStr(fk, translated);
-        return createWithTtfStrOld(&fk, font, size, dims, h, v);
+        return captureStoryNameLabel(createWithTtfStrOld(&fk, font, size, dims, h, v), size);
     }
-    return createWithTtfStrOld(text, font, size, dims, h, v);
+    return captureStoryNameLabel(createWithTtfStrOld(text, font, size, dims, h, v), size);
 }
 
 // BEGIN_TYPED_BATTLE_SKILL_NAMES
@@ -3294,8 +3334,14 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     } else {
     H("_ZN7cocos2d5Label13createWithTTFERKNS_10_ttfConfigERKNSt6__ndk112basic_stringIcNS4_11char_traitsIcEENS4_9allocatorIcEEEENS_14TextHAlignmentEi",
       (void*)createWithTtfCfgNew, (void**)&createWithTtfCfgOld, "i18n: createWithTTF(cfg)");
-    H("_ZN7cocos2d5Label13createWithTTFERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEES9_fRKNS_4SizeENS_14TextHAlignmentENS_14TextVAlignmentE",
+    const bool stringLabelHook = H("_ZN7cocos2d5Label13createWithTTFERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEES9_fRKNS_4SizeENS_14TextHAlignmentENS_14TextVAlignmentE",
       (void*)createWithTtfStrNew, (void**)&createWithTtfStrOld, "i18n: createWithTTF(str)");
+    // 创建器与公共坐标 API 都可用才启用，未知引擎仍原样运行。
+    if (stringLabelHook && resolveStoryNameLayout(LIB)) {
+        H("_ZN16StoryMessageUnit17createMessageAreaENS_11TextPosType13TextPosType__E",
+          (void*)storyMessageAreaNew, (void**)&storyMessageAreaOld,
+          "StoryMessageUnit: CN name local layout");
+    }
     }
 
     // ── 下载浮层期间挂起引擎 BGM（QbUtility::playBgmDirect）──
