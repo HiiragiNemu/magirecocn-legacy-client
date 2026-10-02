@@ -1447,7 +1447,7 @@ struct Hidden {
 //   版本旁注，不得用 GITHUB_RUN_NUMBER 等构建编号覆盖；本地构建也直接使用该值。
 //   它是 constexpr、从不取地址，只在编译期喂给下面的 Hidden，因此不会有一份
 //   明文留在产物里。
-static constexpr char CLIENT_VERSION[] = "1.0.200";
+static constexpr char CLIENT_VERSION[] = "1.0.201";
 
 // 真正进二进制的是这一份：异或之后的字节。
 static constexpr auto kVersionHidden =
@@ -2819,6 +2819,53 @@ using StoryTtfSet = bool (*)(void*, const void*);
 static StoryTtfGet storyNameGetConfig = nullptr;
 static StoryTtfSet storyNameSetConfig = nullptr;
 static std::atomic<unsigned> storyNameLayoutLogged{0};
+using StoryFontCreate = void* (*)(const void*, float, int, const char*, bool, float);
+using StoryFontAscender = int (*)(void*);
+static StoryFontCreate storyNameCreateFont = nullptr;
+static StoryFontAscender storyNameAscender = nullptr;
+static StoryTtfGet storyNameGetString = nullptr;
+static magia_story_name::ReadPoint storyNameContentSize = nullptr;
+
+static float storyNameBaselineY(void* label) {
+    constexpr float retainedY = 63.0f;
+    if (!storyNameCreateFont || !storyNameAscender || !storyNameGetString
+        || !storyNameContentSize || !storyNameGetConfig) return retainedY;
+    try {
+        const auto text = ndkStrRead(storyNameGetString(label));
+        if (!text.data || !text.size || text.size > 4096) return retainedY;
+        const std::string name(text.data, text.size);
+        if (name.find_first_of("\r\n") != std::string::npos
+            || name.find("\xe2\x80\xa8") != std::string::npos
+            || name.find("\xe2\x80\xa9") != std::string::npos) return retainedY;
+        // Public Label::getContentSize forces text layout. For the admitted
+        // dimensionless, single-line TTF name its height is lineHeight / CSF.
+        // No private Director/Label offsets or window pixel ratios are used.
+        const auto extent = storyNameContentSize(label);
+        if (!std::isfinite(extent.y) || extent.y <= 0.0f) return retainedY;
+        const float scale = 25.0f / extent.y;
+        if (!std::isfinite(scale) || scale < 0.25f || scale > 8.0f) return retainedY;
+        const void* config = storyNameGetConfig(label);
+        if (!config) return retainedY;
+        const auto view = ndkStrRead(config);
+        if (!view.data || !view.size || view.size > 4096) return retainedY;
+        const std::string fontPath(view.data, view.size);
+        static thread_local std::string cachedPath;
+        static thread_local float cachedScale = 0.0f, cachedY = retainedY;
+        if (fontPath == cachedPath && scale == cachedScale) return cachedY;
+        // This pinned legacy FontFreeType::create autoreleases its result.
+        // Retain no font object and never release it manually. Only numeric
+        // metrics are cached; existing shared font atlases remain untouched.
+        void* font = storyNameCreateFont(config, 20.0f * scale, 0, nullptr, false, 0.0f);
+        if (!font) return retainedY;
+        const int ascender = storyNameAscender(font);
+        const float y = magia_story_name::cnNameBaselineY(static_cast<float>(ascender), scale);
+        cachedPath = fontPath; cachedScale = scale; cachedY = y;
+        LOGI("[StoryNameBaseline] size=20 line=25 rasterScale=%.4f ascender=%d mappedY=%.4f; font/body untouched", scale, ascender, y);
+        return y;
+    } catch (...) {
+        return retainedY;
+    }
+}
 
 static bool setStoryNameFontSize(void* label, float size) {
     if (!storyNameGetConfig || !storyNameSetConfig) return false;
@@ -2856,10 +2903,10 @@ static void storyMessageAreaNew(void* self, int position) {
     storyMessageAreaOld(self, position);
     if (capture.apply(storyNodePosition, storyNodeAnchor, storyNodeSetPosition,
                       storyNameFontSize, storyNameLineHeight, setStoryNameFontSize,
-                      storyNameSetLineHeight)) {
+                      storyNameSetLineHeight, storyNameBaselineY)) {
         const unsigned bit = 1u << static_cast<unsigned>(position);
         if (!(storyNameLayoutLogged.fetch_or(bit, std::memory_order_relaxed) & bit)) {
-            LOGI("[StoryNameLayout] slot=%d localY=57->63 fontSize=16->20 lineHeight=25; body/font-file/parent/anchor retained", position);
+            LOGI("[StoryNameLayout] slot=%d localY=57->%.4f fontSize=16->20 lineHeight=25; CN baseline mapped, body/font-file/parent/anchor retained", position, storyNodePosition(capture.name).y);
         }
     }
 }
@@ -2877,6 +2924,13 @@ static bool resolveStoryNameLayout(const char* lib) {
     storyNameFontSize = reinterpret_cast<magia_story_name::ReadFloat>(::dlsym(h, "_ZNK7cocos2d5Label20getRenderingFontSizeEv"));
     storyNameLineHeight = reinterpret_cast<magia_story_name::ReadFloat>(::dlsym(h, "_ZNK7cocos2d5Label13getLineHeightEv"));
     storyNameSetLineHeight = reinterpret_cast<magia_story_name::WriteFloat>(::dlsym(h, "_ZN7cocos2d5Label13setLineHeightEf"));
+    // Optional metric APIs: their absence preserves the existing size/line/Y
+    // correction rather than disabling the entire 1.0.200 name hook.
+    storyNameCreateFont = reinterpret_cast<StoryFontCreate>(::dlsym(h,
+        "_ZN7cocos2d12FontFreeType6createERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEEfNS_15GlyphCollectionEPKcbf"));
+    storyNameAscender = reinterpret_cast<StoryFontAscender>(::dlsym(h, "_ZNK7cocos2d12FontFreeType15getFontAscenderEv"));
+    storyNameGetString = reinterpret_cast<StoryTtfGet>(::dlsym(h, "_ZNK7cocos2d5Label9getStringEv"));
+    storyNameContentSize = reinterpret_cast<magia_story_name::ReadPoint>(::dlsym(h, "_ZNK7cocos2d5Label14getContentSizeEv"));
     ::dlclose(h);
     return storyNodePosition && storyNodeAnchor && storyNodeSetPosition && storyNameGetConfig
         && storyNameSetConfig && storyNameFontSize && storyNameLineHeight && storyNameSetLineHeight;

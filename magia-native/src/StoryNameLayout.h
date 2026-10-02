@@ -13,6 +13,21 @@ using ReadFloat = float (*)(void*);
 using WriteFloat = void (*)(void*, float);
 using SetFontSize = bool (*)(void*, float);
 
+// CN TTDaYuanGB3 has hhea ascender=2007, unitsPerEm=2048. The original
+// FreeType path rounds that scaled ascender up to a raster pixel. Label's
+// single-line baseline is y + lineHeight/(2*scale) - ascender/scale.
+// Copying y=63 alone therefore moves retained-font glyphs above the nameplate.
+// Map the baseline, not a screenshot pixel or the bounds of a particular name.
+inline float cnNameBaselineY(float rasterAscender, float rasterScale) {
+    constexpr float originalY = 63.0f;
+    if (!std::isfinite(rasterAscender) || !std::isfinite(rasterScale)
+        || rasterScale < 0.25f || rasterScale > 8.0f || rasterAscender <= 0.0f)
+        return originalY;
+    const float reference = std::ceil(20.0f * rasterScale * (2007.0f / 2048.0f));
+    const float offset = (rasterAscender - reference) / rasterScale;
+    return std::fabs(offset) <= 10.0f ? originalY + offset : originalY;
+}
+
 // ABI of the public _ttfConfig value returned by the pinned engine's getter.
 // AArch64 copies bytes 24..51, ARM32 copies 12..35; their padded sizes are
 // 56 and 36. The leading libc++ string is borrowed for this one synchronous
@@ -50,7 +65,7 @@ struct Capture {
     }
     bool apply(ReadPoint positionOf, ReadPoint anchorOf, WritePoint setPosition,
                ReadFloat fontSizeOf, ReadFloat lineHeightOf, SetFontSize setFontSize,
-               WriteFloat setLineHeight) const {
+               WriteFloat setLineHeight, ReadFloat baselineYOf = nullptr) const {
         if (!expected || calls != 2 || !name || position < 0 || position > 2
             || !positionOf || !anchorOf || !setPosition || !fontSizeOf || !lineHeightOf
             || !setFontSize || !setLineHeight) return false;
@@ -66,7 +81,10 @@ struct Capture {
         if (fontSizeOf(name) != 16.0f || lineHeightOf(name) != 25.0f) return false;
         if (!setFontSize(name, 20.0f)) return false;
         setLineHeight(name, 25.0f);
-        setPosition(name, Point{current.x, 63.0f});
+        const float mappedY = baselineYOf ? baselineYOf(name) : 63.0f;
+        const float y = std::isfinite(mappedY) && std::fabs(mappedY - 63.0f) <= 10.0f
+            ? mappedY : 63.0f;
+        setPosition(name, Point{current.x, y});
         return true;
     }
 };
