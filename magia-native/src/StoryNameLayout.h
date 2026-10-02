@@ -28,6 +28,33 @@ inline float cnNameBaselineY(float rasterAscender, float rasterScale) {
     return std::fabs(offset) <= 10.0f ? originalY + offset : originalY;
 }
 
+// A preserved font can share the baseline and still have a different em-body
+// position. These OS/2 sTypo metrics come from the unchanged reference and
+// retained font files, not individual glyph bounds or screenshot coordinates.
+// The retained profile is admitted only for the three release-verified aliases,
+// the engine-reported family, and its independently checked raster ascender.
+inline bool retainedNameBodyProfile(const char* path, const char* family,
+                                    float ascent, float scale) {
+    if (!path || !family || std::strcmp(family, "Magius Round Symbols") != 0
+        || !std::isfinite(ascent) || !std::isfinite(scale)
+        || scale < 0.25f || scale > 8.0f) return false;
+    const bool alias = std::strcmp(path, "fonts/mbm_20160902.ttf") == 0
+        || std::strcmp(path, "fonts/TTDaYuanGB3.ttf") == 0
+        || std::strcmp(path, "fonts/MTF4a5kp.ttf") == 0;
+    return alias && ascent == std::ceil(20.0f * scale * (850.0f / 1000.0f));
+}
+
+inline float cnNameBodyY(float ascent, float scale, bool retainedProfile) {
+    const float baselineY = cnNameBaselineY(ascent, scale);
+    if (!retainedProfile || !std::isfinite(ascent) || !std::isfinite(scale)
+        || scale < 0.25f || scale > 8.0f || ascent <= 0.0f
+        || ascent != std::ceil(20.0f * scale * (850.0f / 1000.0f))) return baselineY;
+    constexpr float referenceBodyAxis = (1599.0f - 449.0f) / (2.0f * 2048.0f);
+    constexpr float retainedBodyAxis = (850.0f - 150.0f) / (2.0f * 1000.0f);
+    const float y = baselineY + 20.0f * (referenceBodyAxis - retainedBodyAxis);
+    return std::isfinite(y) && std::fabs(y - 63.0f) <= 10.0f ? y : baselineY;
+}
+
 // ABI of the public _ttfConfig value returned by the pinned engine's getter.
 // AArch64 copies bytes 24..51, ARM32 copies 12..35; their padded sizes are
 // 56 and 36. The leading libc++ string is borrowed for this one synchronous

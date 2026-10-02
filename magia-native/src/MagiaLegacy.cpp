@@ -1447,7 +1447,7 @@ struct Hidden {
 //   版本旁注，不得用 GITHUB_RUN_NUMBER 等构建编号覆盖；本地构建也直接使用该值。
 //   它是 constexpr、从不取地址，只在编译期喂给下面的 Hidden，因此不会有一份
 //   明文留在产物里。
-static constexpr char CLIENT_VERSION[] = "1.0.201";
+static constexpr char CLIENT_VERSION[] = "1.0.202";
 
 // 真正进二进制的是这一份：异或之后的字节。
 static constexpr auto kVersionHidden =
@@ -2821,8 +2821,10 @@ static StoryTtfSet storyNameSetConfig = nullptr;
 static std::atomic<unsigned> storyNameLayoutLogged{0};
 using StoryFontCreate = void* (*)(const void*, float, int, const char*, bool, float);
 using StoryFontAscender = int (*)(void*);
+using StoryFontFamily = const char* (*)(void*);
 static StoryFontCreate storyNameCreateFont = nullptr;
 static StoryFontAscender storyNameAscender = nullptr;
+static StoryFontFamily storyNameFamily = nullptr;
 static StoryTtfGet storyNameGetString = nullptr;
 static magia_story_name::ReadPoint storyNameContentSize = nullptr;
 
@@ -2858,9 +2860,13 @@ static float storyNameBaselineY(void* label) {
         void* font = storyNameCreateFont(config, 20.0f * scale, 0, nullptr, false, 0.0f);
         if (!font) return retainedY;
         const int ascender = storyNameAscender(font);
-        const float y = magia_story_name::cnNameBaselineY(static_cast<float>(ascender), scale);
+        const char* family = storyNameFamily ? storyNameFamily(font) : nullptr;
+        const bool bodyProfile = magia_story_name::retainedNameBodyProfile(
+            fontPath.c_str(), family, static_cast<float>(ascender), scale);
+        const float y = magia_story_name::cnNameBodyY(
+            static_cast<float>(ascender), scale, bodyProfile);
         cachedPath = fontPath; cachedScale = scale; cachedY = y;
-        LOGI("[StoryNameBaseline] size=20 line=25 rasterScale=%.4f ascender=%d mappedY=%.4f; font/body untouched", scale, ascender, y);
+        LOGI("[StoryNameBaseline] size=20 line=25 rasterScale=%.4f ascender=%d mappedY=%.4f emBodyProfile=%d; font/dialogue untouched", scale, ascender, y, bodyProfile ? 1 : 0);
         return y;
     } catch (...) {
         return retainedY;
@@ -2929,6 +2935,7 @@ static bool resolveStoryNameLayout(const char* lib) {
     storyNameCreateFont = reinterpret_cast<StoryFontCreate>(::dlsym(h,
         "_ZN7cocos2d12FontFreeType6createERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEEfNS_15GlyphCollectionEPKcbf"));
     storyNameAscender = reinterpret_cast<StoryFontAscender>(::dlsym(h, "_ZNK7cocos2d12FontFreeType15getFontAscenderEv"));
+    storyNameFamily = reinterpret_cast<StoryFontFamily>(::dlsym(h, "_ZNK7cocos2d12FontFreeType13getFontFamilyEv"));
     storyNameGetString = reinterpret_cast<StoryTtfGet>(::dlsym(h, "_ZNK7cocos2d5Label9getStringEv"));
     storyNameContentSize = reinterpret_cast<magia_story_name::ReadPoint>(::dlsym(h, "_ZNK7cocos2d5Label14getContentSizeEv"));
     ::dlclose(h);

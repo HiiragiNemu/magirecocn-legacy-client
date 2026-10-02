@@ -220,8 +220,10 @@ jobs:
       run: |
         set -euo pipefail
         mkdir -p .build/name-layout
-        g++ -std=c++17 tools/StoryNameLayoutTest.cpp -o .build/name-layout/test
-        .build/name-layout/test
+        for name in StoryNameLayoutTest StoryNameBaselineTest StoryNameBodyTest; do
+          g++ -std=c++17 "tools/${name}.cpp" -o ".build/name-layout/${name}"
+          ".build/name-layout/${name}"
+        done
     - name: 编译已验证的原生补丁（双架构）
       run: "set -euo pipefail\n# 取代原先包内两个预编译的 Dobby hook 库：\n#   libuwasa.so   一改：端点重定向（顺带按英文行宽重排剧情文本，正是要去掉的）\n#   libcn_hook.so\
         \ 二改：拦引擎下载入口接我们的浮层\nNDK_ROOT=\"${ANDROID_NDK_HOME:-}\"\nif [ -z \"$NDK_ROOT\" ] || [ ! -d \"$NDK_ROOT\" ]; then\n\
