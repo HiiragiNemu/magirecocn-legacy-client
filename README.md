@@ -5,6 +5,22 @@ APK 的 Totentanz 客户端为基线，叠一层 Java 补丁，由 CI 重新构�
 
 基础 APK 来自 `io.kamihama.totentanz`，版权与免责声明见下方「原始署名与免责声明」。
 
+## 当前正式交付（2026-10-03 核验快照）
+
+玩家入口：[最新正式下载页](https://github.com/HiiragiNemu/ProgettoMagius-1/releases/latest)。
+当前客户端为 **1.0.204**，配套固定 Scenario **3323**、完整 JS **103** 和累计 delta **26**。
+日后版本以正式入口元数据为准；修改本说明不代表 APK 或资源重新构建。
+
+- 后续剧情、脚本、图片和样式更新走累计 delta，完整基线保持原文件、版本与摘要。
+  新安装只需固定基线加最新累计层，不要求串联历史 delta。
+- 最终 1.0.204 已实测手动重下 delta，以及重下 Scenario／完整 JS 后从网络重下 delta；
+  delta 25 的设备落盘校验通过，用户已确认正常进入游戏。
+- delta 26 仅追加默认玩家名的显示修订：`TOTENTANZ` 显示为「小丘比」，保留 ID、
+  邀请码、存档标识和其他自定义名字。该层已发布并通过回归及包校验，尚未另做设备显示验收；
+  不将此描述为新增自定义改名或已验证改名持久化。
+- APK 的构建、最终包实测与发布是独立步骤。发布需显式批准已验收的 APK SHA-256
+  和对应源码 SHA，匹配后才更新公开客户端入口，不顺带重打资源包。
+
 > **协作**：主干开发，直接提 `main`；分支只有 `hotfix/*`（修红灯）与 `surgery/*`
 > （核心层大手术）两类例外。开工前读 [CONTRIBUTING.md](CONTRIBUTING.md)，
 > 在 [ACTIVE.md](ACTIVE.md) 登记你在动哪片。
@@ -135,25 +151,26 @@ python3 tools/baseline.py apply --out <目录>   # 只重建，不比对
 | 类 | 职责 |
 |---|---|
 | `CNCNDownloadUI` | 资源下载浮层。背景图 + 毛玻璃底板 + 左列署名区 + 右列文件槽位/总进度；左上 LOG 胶囊、右上主题切换与 GitHub 胶囊 |
-| `CNDownloaderFix` | 资源安装器。**15 个槽位**（13 个基础包 + 2 个热更包，`FILE_COUNT = 15`）的下载、解压校验、完成标记、重试。两类的校验判据不同：基础包套 `manifest.json` 的分块指纹，热更包按版本 json 的 size/md5——别把 15 个一律叫「基础包」 |
+| `CNDownloaderFix` | 资源安装器。**16 个槽位**（13 个基础包 + Scenario、完整 JS、累计 delta，`ARCHIVE_COUNT = 16`）的下载、解压校验、完成标记、重试。两类的校验判据不同：基础包套 `manifest.json` 的分块指纹，热更包按版本 json 的 size/md5——别把 16 个一律叫「基础包」 |
 | `CNChunkedDownload` | 多线程分片下载 + 断点续传 |
 | `ChunkManifest` | 资源包**固定块哈希清单**（16 MiB 一块）的拉取与解析。它是「这个包是不是官方那一份」的唯一内容判据——基础包没有 md5/size 下发，只有这份清单，所以断点续传、离线导入、下载完工校验三条路都靠它 |
 | `CNDownloadConcurrency` | 所有 Java 下载器共享的**连接闸门**：允许多个 ZIP 同时推进，长连接总数始终不超过 8。排队等许可**不算线路停滞**——调用方传 heartbeat，排队期间每秒刷一次，否则另一个文件占满连接时，当前文件会被自己的停滞看门狗误杀 |
 | `CNDownloadRestart` | 按文件的**重启代际 + 在跑线程登记表**。重下请求绝不为同一个包起第二个 writer：它只推进代际并打断当前 worker，既有任务观察到代际过期后**只丢这一个文件**的下载状态、从字节 0 重来，别的文件照常跑 |
-| `CNManualRedownload` | 任意 ZIP 的**手动强制重下协调器**。不要求另外 14 个 marker 齐全、不撤销总完成标记、不为了开始下载而重启。不同文件最多三个并行，同一文件去重；真正解压仍由 `CNDownloaderFix` 的全局提交锁串行。旧 marker 只有在新包完整装成之后才被覆盖 |
+| `CNManualRedownload` | 任意 ZIP 的**手动强制重下协调器**。不要求其他文件的 marker 齐全、不撤销总完成标记、不为了开始下载而重启。基础包最多三个并行，同一文件去重；Scenario／完整 JS／delta 的手动热更新链另由 `CNHotUpdateCheck` 串行协调，重下前两者会随后从网络重下最新 delta。真正提交由全局提交锁串行，完成标记在整个相关链校验成功后更新 |
 | `CNArchiveValidate` | 基础包的**下载完工校验**：ZIP 结构预检 + 按 `ChunkManifest` 的分块指纹逐块比对。与热更那套分开（见 `CNHotUpdateValidate`），因为基础包没有 size/md5 可核 |
 | `CNOfflineImport` | **离线包注入**：把玩家自己从网盘下好的官方 zip 拷进私有离线区，按分块清单校验后标记「离线就位」，之后 `installArchive` 直接跳过网络。⚠ 拷 1GB+ 要几十秒，所以逐 4MB 回调进度——不显示的话玩家会以为界面定住而再导一次，两个导入线程会并发写同一个 `.importing` 临时文件互相覆盖；`IMPORTING` 互斥位就是为这个 |
 | `CNOfflineImportActivity` | 上面那件事的 trampoline Activity：拉起 `ACTION_GET_CONTENT` 选文件、拷贝、校验、写离线标记，结果经静态回调通知 UI。它是「下载反复失败 / 服务器不可达」时的兜底通道 |
 | `CNDownloadMode` | **单线程可靠模式**开关。四处并发（分片工作线程、字节分段、全局连接闸门、并行文件数）共用它一个判据 `cap()`——各写各的判断迟早漏掉一处，而漏掉的表现是「选了单线程但并发没降下来」，不报错不崩，只有翻日志数连接才发现得了。 |
 | `CNDiskSpace` | **「装不下」与「网络坏了」的分界**。ENOSPC 抛的是普通 `IOException`，和超时、断流走同一个 catch，于是磁盘满会被当成线路故障：无辜线路被记失败进 60 秒冷却（线上 `switch_after_failures=1`，一次就够）、四次重试逐条线路白烧、玩家对着「重试 / 备用引擎 / 单线程 / 离线包」四个都不解决问题的选项反复点。 |
-| `CNZipPlan` | **下载前算出安装峰值**。装一个包的磁盘峰值是 ZIP + 解压后（ZIP 要留到解压成功才删），而这个比例各包差得很远：`cn_base_03.zip` 1.32→2.79 GiB（**2.11x**），其余全在 1.02–1.16x。03 因此拥有 15 个包里最高的安装峰值 **4.11 GiB**，而进度条上只写着 1.3 GB——玩家按这个数去清理空间，然后在解压阶段翻车。 |
+| `CNZipPlan` | **下载前算出安装峰值**。装一个包的磁盘峰值是 ZIP + 解压后（ZIP 要留到解压成功才删），而这个比例各包差得很远：`cn_base_03.zip` 1.32→2.79 GiB（**2.11x**），其余全在 1.02–1.16x。03 在这些基础包中拥有最高的安装峰值 **4.11 GiB**，而进度条上只写着 1.3 GB——玩家按这个数去清理空间，然后在解压阶段翻车。 |
 | `CNEndpoints` | **全部对外主机名的唯一来源**。源码里只留结构（`assets.` 子域 + 主域这样的拼法），真实取值由 `tools/inject-endpoints.py` 在构建期从 Secret 注入，仓库与历史里都不出现。注入缺失时 fail-closed：放行列表不含自有域、线路表为空、热更地址拼不出来——退化成「什么都下不了」，而不是退回某个不受控的默认值。 |
 | `CNMirrors` | 线路目录：从 `config.json` 拉取线路表，失败/停滞/过慢时自动换线 |
 | `CNAria2` | **进程内 aria2 引擎**（`libaria2c_{ossl,gnutls}.so`，JNI 加载，备用或构建期选作主引擎）：**双 TLS 后端共存 + dead-man's switch**（`Aria2EngineFailover`）——默认 openssl 后端，原生崩溃或加载失败自动换 gnutls 后端，连 4 次死亡才回退主引擎。由 linker 加载共享库、**无 exec**，绕开 SELinux exec 闸与 16KB 页对齐（与 libarchive 同思路）。loopback JSON-RPC 控制，单文件同步下载、多连接 + 断点续传。**日志不落独立文件**：aria2 控制台输出经 native 源码层 AndroidLogFile sink 直进 logcat（`tools/aria2/patches/0001-console-android-log-sink.patch`，不重定向进程 fd），随 CNLog 一起进玩家分享包（2026-08-18 原则，别加回 `--log=`）。构建与许可明细见 THIRD-PARTY-NOTICES.md。 |
 | `CNAria2Lib` | 上面那两枚 `.so` 的 JNI 装载层。两组导出**同名 JNI 符号**，因此【硬约束】同一进程只允许加载一个后端——`load(Backend)` 显式选，重复调用返回已加载的那个，绝不双载 |
 | `Aria2EngineFailover` | aria2 的 **dead-man's switch**。原生崩溃整体杀进程，Java 层没有任何 catch 机会，所以在启动 aria2 **之前**落盘 armed 标记，只有 RPC 确认干净关停才 disarm；下次启动读到标记仍 armed 就换后端。加载期失败（`UnsatisfiedLinkError`）可捕获，当场换、不等下次。连续 armed-death 达上限则整体停用 aria2（两组 so 是同一份 aria2 代码，负载触发的崩溃换组也会连环炸），并在**客户端版本变更**时自动重置计数 |
 | `CNHotUpdate` | 热更新的文件下载，与首次安装共用同一套选线与分片逻辑 |
-| `CNHotUpdateCheck` | 热更检查流程：启动时比对台词包/前端脚本包版本，必要时下载并应用。重写自原包的 `RestClient.checkAndApplyHotUpdate`——那版浮层自始至终不出现，无从判断跑没跑 |
+| `CNHotUpdateCheck` | 热更检查流程：启动时检查 Scenario、完整 JS 和累计 delta，按基线在前、累计层最后的顺序下载并应用。重写自原包的 `RestClient.checkAndApplyHotUpdate`——那版浮层自始至终不出现，无从判断跑没跑 |
+| `CNJsDelta` | 累计补充层安装与重放保护：核对固定基线及逐文件 SHA-256，拒绝旧版本、同版本不同身份和错误基线；基线覆盖后重放有效累计层，验证成功后再记版本 |
 | `CNHotUpdateTx` | 热更包的**事务化应用**：暂存 → 备份 → 换入，出错整体回滚，崩溃后按 journal 恢复。只用于热更，安装器的大包仍直接解压 |
 | `CNHotUpdateValidate` | 热更包的下载完工校验：热更的版本 json 带 size/md5 三元组，逐字节核对才放行。这套是热更专属——基础包没有这三元组，走 `CNArchiveValidate` 那条 |
 | `CNWebProxy` | WebView 拦截层代理：把原 `WebViewClient` 包一层，本地文件没命中的 GET 可改走 `/stream/`。默认纯透传，模式由 `config.json` 的 `proxy.web_mode`（`off` / `measure` / `on`）下发，切换不用重打 APK。端点级代理在真机上五次会话零命中（见「网络出口」一节），这是替代路线 |
@@ -224,13 +241,10 @@ native hook 转调 `RestClient.startCNDownload` 后做 `ExceptionCheck`/`Excepti
 信任锚只有三样，都写死在包里：`CNMirrors.MIRRORS_URL`、`CNSafeLink` 的外链允许
 列表、APK 签名。其余一切来自 `config.json`。
 
-- **🔴 只收 https。** 往 `mirrors[].base` 或 `proxy.base` 填一个 `http://`，TLS 就
-  整个不参与了，而 15 个包里有 13 个**没有 md5/sha 校验**，完整性全押在 TLS 上。
-  那条链是：明文投毒 → `extractChecked` 只验结构 → 恶意 JS 落进 `<files>/magica/js/`
-  → 拦截层本地优先且热更只写不删 → 永久执行。所以 `normalizeBase` 只收 https，
-  并拒掉内嵌控制字符。
-  > 欠着的一层：给 13 个基础包加 md5/大小校验。那要服务端先出清单，
-  > 在那之前这条规则不能松。
+- **🔴 只收 HTTPS，保留 TLS 证书验证。** `normalizeBase` 拒绝明文地址和内嵌
+  控制字符。早期基础包缺少摘要校验的风险是历史背景；当前基础资源已有分块清单校验，
+  热更新另核对包身份，累计 delta 还核对基线及逐文件 SHA-256。这些检查不能替代 TLS，
+  也不能通过关闭证书验证处理连接错误。
 - **`proxy.domains` 有最小粒度。** 它是后缀匹配，填个 `"com"` 就能把所有 `.com`
   流量吸进代理。`isSaneProxyDomain` 要求至少两段、纯 ASCII，并拒掉常见两级公共
   后缀。挡不住多级公共后缀，但最便宜那条路堵死了。
@@ -258,9 +272,9 @@ java -cp .build-test:.cache/deps/android.jar ConfigGuardTest
 | 请求 | 去向 | 位置 |
 |---|---|---|
 | `config.json` | 直连主线 | `CNMirrors.MIRRORS_URL` |
-| `version_scenario.json` / `version_js.json` | 走支线 | `CNHotUpdateCheck.fetchMetaSafe` |
+| `version_scenario.json` / `version_js.json` / `version_js_delta.json` | 走支线 | `CNHotUpdateCheck.fetchMetaSafe` |
 | 13 个基础资源包 | 走支线 | `CNDownloaderFix.fetchArchive` |
-| 两个热更包 | 走支线 | `CNHotUpdate.download` |
+| Scenario、完整 JS、累计 delta 三个热更新包 | 走支线 | `CNHotUpdate.download` |
 | `/magica/api/snaa`（端点发现） | 有代理配置走 `/stream/`，否则直连 | `CNDownloaderFix.snaaUrl()` |
 | **游戏本身的 API / 页面 / 图片** | 不经上述任何一条 | 见下 |
 | 同上，`proxy.web_mode=on` 的 GET | 经 `/stream/` 转发，失败回退直连 | `CNWebProxy.fetchViaProxy` |
@@ -537,7 +551,7 @@ Application.onCreate
      ├─ CNWebProxy.install()                     skipWebProxy
      ├─ [标记不存在] runInstaller()              skipInstaller
      │    ├─ CNCNDownloadUI.show()               skipOverlay
-     │    ├─ 15 个包下载                          failDownload
+     │    ├─ 16 个包下载                          failDownload
      │    ├─ 序章询问                             skipTutorialPrompt
      │    └─ noticeAndRestart()                   skipRestart
      └─ [标记存在] CNVersionCheck                skipVersionCheck
@@ -767,3 +781,15 @@ WebView 调试回调仍由主线程执行，编译形状使用静态回调类，
 已安装清单和保留缓存共同拒绝旧 delta；同版本不同内容或压缩包身份拒绝。新的已核验下载可修复损坏缓存。
 已退役的旧 CDN 不再作为内置线路自动补回；保留构建配置主备线路及独立公开 GitHub。TLS 证书验证不放宽。规范资源身份不变，不触发旧资源全量重下。
 回归：`tools/test-js-delta-install.py` 包含 31 项生产安装器断言；主机测试不替代最终 APK 设备测试。
+
+
+### 手动重下的完成条件（1.0.204）
+
+点击累计 delta 的重下按钮，会重置对应行并显示排队、下载和安装进度。
+点击 Scenario 或完整 JS 的重下按钮，也会重置 delta 行：完整基线安装受缓存保护，
+写入后先重放有效缓存，再发起最新累计 delta 的网络下载、校验和应用。
+这不是只重放缓存，也不是只显示“正在重下”的提示；相关链成功后才标为完成。
+热更新链串行执行，基础资源的有限并行下载不改变实际安装提交的串行保护。
+
+源码仓可见性不应影响玩家下载：正式安装依赖公开下载入口，维护端凭据不进入 APK。
+当前文档不把“未来私有化后复验”记成已完成的实际切换。
