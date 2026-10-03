@@ -1176,10 +1176,11 @@ public final class CNDownloaderFix {
                 File offState = CNArchiveInstallTx.stateFile(
                         new File(STATE_ROOT), name + ".offline");
                 synchronized (EXTRACT_LOCK) {
+                    CNHotUpdateCheck.beforeInstallerPackage(index, offline);
                     CNArchiveInstallTx.extract(offline, new File(INSTALL_ROOT),
                             offState, null, null);
+                    CNHotUpdateCheck.afterInstallerPackage(index, null);
                 }
-                CNHotUpdateCheck.afterInstallerPackage(index, null);
                 CNArchiveInstallTx.clearState(offState);
                 writeMarker(marker, name, canonicalUrl,
                         new DownloadMetadata(offlineBytes, "offline"));
@@ -1327,6 +1328,7 @@ public final class CNDownloaderFix {
                 File extractState = CNArchiveInstallTx.stateFile(new File(STATE_ROOT), name);
                 try {
                     synchronized (EXTRACT_LOCK) {
+                        CNHotUpdateCheck.beforeInstallerPackage(index, archive);
                         CNArchiveInstallTx.extract(archive, new File(INSTALL_ROOT), extractState,
                                 new CNArchiveInstallTx.Cancel() {
                                     @Override public boolean isCancelled() {
@@ -1342,6 +1344,7 @@ public final class CNDownloaderFix {
                                                 100);
                                     }
                                 });
+                        CNHotUpdateCheck.afterInstallerPackage(index, pinnedHot);
                     }
                 } catch (CNArchiveInstallTx.CancelledException e) {
                     throw new ResetRequired("manual restart during extraction");
@@ -1350,7 +1353,6 @@ public final class CNDownloaderFix {
                 } catch (CNArchiveInstallTx.InstallIOException e) {
                     throw new ExtractionPaused(e.getMessage(), e);
                 }
-                CNHotUpdateCheck.afterInstallerPackage(index, pinnedHot);
                 writeMarker(marker, name, canonicalUrl, meta);
                 if (!archive.delete() && archive.exists()) {
                     CNLog.w(TAG, "Installed archive retained because delete failed: " + archive);
@@ -1770,6 +1772,7 @@ public final class CNDownloaderFix {
                     final int a2ExtractToken = CNDownloadRestart.generation(index);
                     File a2State = CNArchiveInstallTx.stateFile(new File(STATE_ROOT), name);
                     synchronized (EXTRACT_LOCK) {
+                        CNHotUpdateCheck.beforeInstallerPackage(index, archive);
                         CNArchiveInstallTx.extract(archive, new File(INSTALL_ROOT),
                                 a2State,
                                 new CNArchiveInstallTx.Cancel() {
@@ -1777,9 +1780,9 @@ public final class CNDownloaderFix {
                                         return CNDownloadRestart.cancelled(index, a2ExtractToken);
                                     }
                                 }, null);
+                        CNHotUpdateCheck.afterInstallerPackage(index, pinnedHot);
                     }
                     CNMirrors.reportSuccess(mirror);
-                    CNHotUpdateCheck.afterInstallerPackage(index, pinnedHot);
                     writeMarker(marker, name, canonicalUrl,
                             new DownloadMetadata(archive.length(), "aria2"));
                     deleteQuietly(urlTag);   // 装好了，身份凭据随产物一起清

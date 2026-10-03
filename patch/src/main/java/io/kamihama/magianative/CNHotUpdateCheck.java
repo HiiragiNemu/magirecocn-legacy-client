@@ -1112,14 +1112,16 @@ public final class CNHotUpdateCheck {
                 if (pkg.slot == CNDownloaderFix.HOT_SLOT_DELTA) {
                     CNJsDelta.apply(tmp, new File(FILES_DIR), readLocalVersion("js_version"), meta.version);
                 } else {
+                    CNJsDelta.verifyBaseline(tmp, pkg.slot == CNDownloaderFix.HOT_SLOT_SCENARIO);
+                    CNJsDelta.requireReplayReady(new File(FILES_DIR), CNJsDelta.BASE_VERSION);
                     CNHotUpdateTx.apply(tmp, new File(FILES_DIR), pkg.txTag);
+                    CNJsDelta.reapplyCached(new File(FILES_DIR), CNJsDelta.BASE_VERSION);
                 }
                 // F-067：内容事务成功不等于版本状态已持久化，必须同步 commit
                 // 并把失败如实上报，不能伪报完整成功。
                 if (!saveLocalVersion(pkg.versionKey, meta.version)) {
                     return HOT_COMMIT_STATE_FAILED;
                 }
-                if (pkg.slot != CNDownloaderFix.HOT_SLOT_DELTA) reapplyDeltaAfterBase();
                 return HOT_COMMIT_APPLIED;
             }
         }
@@ -1128,22 +1130,26 @@ public final class CNHotUpdateCheck {
     /** Called after a successful first-install or manual base ZIP extraction, before its marker. */
     static void afterInstallerPackage(int slot, CNHotUpdateValidate.VerMeta meta) throws java.io.IOException {
         synchronized (CNDownloaderFix.extractCommitLock()) {
+            reapplyDeltaAfterBase();
             if (slot == CNDownloaderFix.HOT_SLOT_JS || slot == CNDownloaderFix.HOT_SLOT_SCENARIO) {
                 String key = slot == CNDownloaderFix.HOT_SLOT_JS ? "js_version" : "scenario_version";
                 if (!CNUpdateSources.validHot(meta) || !saveLocalVersion(key, meta.version))
                     throw new java.io.IOException("安装完成，但热更版本记录未保存");
             }
-            reapplyDeltaAfterBase();
         }
     }
 
-    private static void reapplyDeltaAfterBase() {
-        try { CNJsDelta.reapplyCached(new File(FILES_DIR), readLocalVersion("js_version")); }
-        catch (Exception e) {
-            // Preserve the successful base install; next check repairs a missing/incompatible layer.
-            saveLocalVersion("js_delta_version", 0);
-            CNLog.w(TAG, "补充层等待重新应用", e);
-        }
+    private static void reapplyDeltaAfterBase() throws java.io.IOException {
+        try { CNJsDelta.reapplyCached(new File(FILES_DIR), CNJsDelta.BASE_VERSION); }
+        catch (Exception e) { throw new java.io.IOException("最新补充层未恢复，安装不记成功", e); }
+    }
+
+    static void beforeInstallerPackage(int slot, File archive) throws java.io.IOException {
+        try {
+            if (slot == CNDownloaderFix.HOT_SLOT_JS || slot == CNDownloaderFix.HOT_SLOT_SCENARIO)
+                CNJsDelta.verifyBaseline(archive, slot == CNDownloaderFix.HOT_SLOT_SCENARIO);
+            CNJsDelta.requireReplayReady(new File(FILES_DIR), CNJsDelta.BASE_VERSION);
+        } catch (Exception e) { throw new java.io.IOException("资源安装前置校验失败", e); }
     }
 
     private static int readLocalVersion(String key) {

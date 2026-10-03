@@ -59,7 +59,7 @@ public final class PublicResourceFallbackTest {
   List<CNMirrors.Mirror> routes=CNUpdateSources.mirrors(null);
   ok(has(routes,pub),"public publisher missing");
   ok(has(routes,old)&&has(routes,CNEndpoints.ESA_BASE),"old publishers removed");
-  ok(has(routes,CNEndpoints.LEGACY_EDGEONE_BASE)&&has(routes,CNEndpoints.LEGACY_ESA_BASE),"CDN publishers removed");
+  ok(!has(routes,CNEndpoints.LEGACY_EDGEONE_BASE)&&!has(routes,CNEndpoints.LEGACY_ESA_BASE),"retired hostnames reintroduced");
   ok(CNUpdateSources.mirrors(pub).get(0).base.equals(pub),"preferred identity publisher not first");
   ok(CNUpdateSources.clientUrls().contains(pub+CNUpdateSources.CLIENT_META),"public APK discovery missing");
   ok(CNUpdateSources.clientUrls().contains(CNPublicResources.CONFIG_URL),"public config discovery missing");

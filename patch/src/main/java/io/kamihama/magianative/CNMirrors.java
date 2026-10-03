@@ -271,10 +271,6 @@ public final class CNMirrors {
      */
     private static List<Mirror> defaultList() {
         List<Mirror> l = new ArrayList<Mirror>(4);
-        if (!CNEndpoints.LEGACY_EDGEONE_BASE.isEmpty())
-            l.add(new Mirror("EdgeOne 加速", CNEndpoints.LEGACY_EDGEONE_BASE, 140, 8, true));
-        if (!CNEndpoints.LEGACY_ESA_BASE.isEmpty())
-            l.add(new Mirror("阿里 ESA 加速", CNEndpoints.LEGACY_ESA_BASE, 120, 8, true));
         // 权重只决定内置表内部的先后，config.json 到位后整张表会被替换。
         // 注入缺失时两条前缀都是空串——此时**一条都不加**，返回空表。空表比
         // 「以空串为前缀的线路」好：后者会去请求 "cn_base_02.zip" 这种相对

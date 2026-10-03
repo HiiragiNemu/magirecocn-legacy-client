@@ -21,8 +21,8 @@ with zipfile.ZipFile(base, 'w') as z:
     z.writestr(member.replace('.png','.plist'), b'unchanged-atlas')
     z.writestr('magica/fonts/music-symbol-test.ttf', b'unchanged-font')
 data = b'user-new-image'
-meta = dict(schema='magireco-cn-js-delta/v1', version=1, base_js_version=102,
-            base_js_sha256=hashlib.sha256(base.read_bytes()).hexdigest(),
+meta = dict(schema='magireco-cn-js-delta/v1', version=1, base_js_version=103,
+            base_js_sha256='bffc1acc31f65c24cc2f9042a492e4f18c5ba9e41806ed725e1e0730c60a7a9d',
             entries=[dict(path=member, size=len(data), sha256=hashlib.sha256(data).hexdigest())])
 with zipfile.ZipFile(delta, 'w') as z:
     z.writestr(member, data); z.writestr('magica/.cn_js_delta.json', json.dumps(meta))
