@@ -2557,6 +2557,7 @@ public final class CNDownloaderFix {
         writeAtomic(marker, "schema=1\nfile=" + name + "\nurl=" + url
                 + "\nbytes=" + meta.totalBytes
                 + "\netag=" + sanitizeLine(meta.etag) + "\n");
+        CNPackageReceipt.installed(name, "offline".equals(meta.etag));
     }
 
     private static boolean isMarkerValid(File marker, String name, String url) {

@@ -75,6 +75,7 @@ public final class CNHotUpdate {
             cleanupDownloadArtifacts(dest);
         }
 
+        if (expected != null) CNPackageReceipt.target(index, expected.version);
         String remoteName = mainLineFileName(url);
         if (remoteName == null) {
             CNLog.i(TAG, "非主线地址，按原地址下载: " + url);

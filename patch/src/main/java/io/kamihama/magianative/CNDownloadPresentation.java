@@ -56,6 +56,17 @@ public final class CNDownloadPresentation {
         return new Totals((float) size, (float) done, Math.max(0, Math.min(100, pct)));
     }
 
+    /** Compact labels do not invent historic routes or numeric versions for fixed archives. */
+    public static String packageIdentity(int version, String route, boolean downloading) {
+        String identity = version > 0 ? "v" + version : version == 0 ? "固定包" : "版本未记录";
+        String source = route == null || route.isEmpty() ? "来源未记录" : route;
+        source = source.replace("MadeInMagius Cloudflare", "Magius/CF")
+                .replace("MadeInMagius GitHub", "Magius/GH")
+                .replace("CyberNova EdgeOne", "CyberNova/EO")
+                .replace("CyberNova ESA", "CyberNova/ESA");
+        return (downloading ? "下载 " : "") + identity + " · " + source;
+    }
+
     public static final int DAY = 0, SUNSET = 1, NIGHT = 2;
     /** 按用户设备当地时间：06–16 点白天，17–18 点黄昏，19–05 点夜景。 */
     public static int periodForHour(int hour) {

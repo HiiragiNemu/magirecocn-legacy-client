@@ -29,11 +29,14 @@ public final class CNDownloadRoute {
             if (url.startsWith(m.base)) { recordFile(index,shortName(m)); return; }
         }
     }
+    static String currentFile(int index) { return fileRoutes.get(index); }
+
     static String shortName(CNMirrors.Mirror m) {
         if (m.base.equals(CNEndpoints.LEGACY_EDGEONE_BASE)) return "CyberNova EdgeOne";
         if (m.base.equals(CNEndpoints.LEGACY_ESA_BASE)) return "CyberNova ESA";
         if (!CNEndpoints.PRIMARY_BASE_OVERRIDE.isEmpty() && m.base.equals(CNEndpoints.PRIMARY_BASE_OVERRIDE)) return "MadeInMagius Cloudflare";
         if (!CNEndpoints.SECONDARY_BASE_OVERRIDE.isEmpty() && m.base.equals(CNEndpoints.SECONDARY_BASE_OVERRIDE)) return "MadeInMagius GitHub";
+        if (m.base.equals(CNPublicResources.RELEASE_BASE)) return "MadeInMagius GitHub";
         return m.name;
     }
     /** Display ownership without changing mirror identity, priority or version eligibility. */

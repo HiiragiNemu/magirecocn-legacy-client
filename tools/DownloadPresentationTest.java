@@ -28,6 +28,19 @@ public class DownloadPresentationTest {
             eq(CNDownloadPresentation.periodForHour(hour),want);
             if (want==2 && !CNDownloadPresentation.backgroundForPeriod(want).endsWith("background_night.png")) throw new AssertionError();
         }
+        String[][] cases = {
+            {"103", "MadeInMagius Cloudflare", "v103 · Magius/CF"},
+            {"26", "MadeInMagius GitHub", "v26 · Magius/GH"},
+            {"0", "CyberNova EdgeOne", "固定包 · CyberNova/EO"},
+            {"0", "CyberNova ESA", "固定包 · CyberNova/ESA"},
+            {"-1", "", "版本未记录 · 来源未记录"},
+            {"26", "离线导入", "v26 · 离线导入"}
+        };
+        for (String[] c : cases) {
+            int v=Integer.parseInt(c[0]);
+            if (!c[2].equals(CNDownloadPresentation.packageIdentity(v,c[1],false))) throw new AssertionError(c[2]);
+            if (!("下载 "+c[2]).equals(CNDownloadPresentation.packageIdentity(v,c[1],true))) throw new AssertionError(c[2]);
+        }
         System.out.println("PASS: bit/byte speed units, single/multiple/next-round progress, 24 local-time boundaries");
     }
 }

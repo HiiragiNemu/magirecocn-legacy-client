@@ -251,9 +251,9 @@ checks = {
     # 三层来源缺一不可：调试开关（排查）、云端（全员故障）、玩家（弹窗）
     "单线程有调试开关与云端开关": "USE_SINGLE_THREAD" in mode
         and "forceSingleThread" in mode,
-    "下载失败弹窗给得出单线程": "DL_SINGLE" in ui and "改用单线程下载" in ui
+    "下载失败不弹窗，手动线路入口保留": "return DL_CLOSE;" in ui and "下载自动重试已结束，保留进度" in ui and "new RouteMenuClick(act)" in ui
         and "CNDownloadMode.setPlayerChoice(true)" in ui,
-    "主引擎与热更失败都会问玩家":
+    "主引擎与热更失败共用静默失败出口":
         "awaitDownloadFallbackChoice" in downloader
         and "awaitDownloadFallbackChoice" in hot_check,
     # 离线包导入成功后必须**立刻被消费**。离线检查在 installArchive 的开头，而

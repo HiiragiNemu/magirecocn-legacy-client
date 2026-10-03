@@ -141,38 +141,11 @@ public final class CNHotUpdateCheck {
      */
     private static final int MAX_VERSION_JSON_BYTES = 65536;
     /**
-     * 两份版本查询**合计**最多占用启动关键路径 6 秒，超过即取消未完成项、
-     * fail-open 进入游戏。
+     * 版本查询超过预算后取消未完成项，保留现有资源并显示该项未检查。
      *
-     * <p>两个包是并行查的（固定 2 线程池），所以这 6 秒是墙钟时间，不是两份相加。
+     * <p>三个包并行查询，共用 45 秒墙钟预算；超时保留当前内容，不弹框打断下载。
      */
-    private static final long VERSION_QUERY_DEADLINE_MS = 6000L;
-    /** 玩家选「继续等待」后再给的一段时间。到点仍没结果就再问一次，不无限等。 */
-    private static final long VERSION_QUERY_EXTEND_MS = 15000L;
-
-    /**
-     * 版本查询超预算时问玩家：继续等，还是本次跳过。
-     *
-     * <p>取代原来那句「超时即 fail-open 进入游戏」。这件事众口难调——网好的觉得被
-     * 慢线路拖着，网差的觉得刚开始就被放弃，而且两种都是<b>静默</b>发生的：玩家
-     * 只看到「进游戏了但台词没更新」，根本不知道刚才做过一次取舍。所以摆到台面上。
-     *
-     * <p>浮层不在、或调用线程是 UI 线程时，{@code askSlowNetwork} 会返回
-     * {@link CNCNDownloadUI#SLOW_SKIP}，也就是退回原来的行为——问不了就别卡着。
-     */
-    private static int askVersionSlow(android.app.Activity act, long waitedMs) {
-        try {
-            return CNCNDownloadUI.askSlowNetwork(act, "热更新",
-                    "正在查询台词与前端脚本的版本",
-                    "继续等待", "跳过",
-                    "再给它一些时间。网络慢但可用时选这个。",
-                    "本次不检查热更新，直接进入游戏；下次启动会再试。",
-                    waitedMs);
-        } catch (Throwable t) {
-            CNLog.e(TAG, "[慢网询问] 版本查询询问出错，按跳过处理", t);
-            return CNCNDownloadUI.SLOW_SKIP;
-        }
-    }
+    private static final long VERSION_QUERY_DEADLINE_MS = 45000L;
 
     /** 只跑一次。 */
     private static final java.util.concurrent.atomic.AtomicBoolean STARTED =
@@ -247,7 +220,7 @@ public final class CNHotUpdateCheck {
     // 槽位取自 CNCNDownloadUI.FILE_NAMES 的下标。两个热更包已被排到列表最前，
     // 所以是 0 和 1——原实现里写的 14 / 11 是排序前的下标，照抄会画错行。
     private static final Pkg[] PACKAGES = {
-        new Pkg("台词包",
+        new Pkg("剧情资源包",
                 "version_scenario.json", "scenario_version",
                 "cn_scenario_update.zip",
                 "cn_scenario_update.zip", "scenario",
@@ -350,13 +323,13 @@ public final class CNHotUpdateCheck {
 
         java.util.concurrent.ScheduledExecutorService watchdog = startWatchdog(act);
         boolean applied = false;
-        // 下载失败询问框整轮只弹一次，见下方 !ok 分支
+        // 下载失败保留当前内容并在文件行显示，不弹出重试选择框。
         boolean askedHotFallback = false;
         // 任何包处理失败都记下——末尾的「已是最新」不能谎报
         boolean anyFailure = false;
         synchronized (RESTART_GATE) { running = true; }
         try {
-            CNCNDownloadUI.updateSimple("检查热更新", "正在查询台词与前端脚本的版本…", 0);
+            CNCNDownloadUI.updateSimple("检查热更新", "正在查询剧情、前端和累计补充资源版本…", 0);
             // 版本号并行查：串行时首条线路的慢/挂会在两个包上各吃一轮超时
             final java.util.concurrent.ExecutorService pool =
                     java.util.concurrent.Executors.newFixedThreadPool(PACKAGES.length);
@@ -370,50 +343,30 @@ public final class CNHotUpdateCheck {
                     pool.submit(new java.util.concurrent.Callable<CNHotUpdateValidate.VerMeta>() {
                         @Override public CNHotUpdateValidate.VerMeta call() { return fetchMetaSafe(PACKAGES[2]); }});
             final CNHotUpdateValidate.VerMeta[] metas = new CNHotUpdateValidate.VerMeta[PACKAGES.length];
-            // 预算用完不再替玩家决定，而是问他（见 askVersionSlow 的说明）。
-            final long startedMs = android.os.SystemClock.uptimeMillis();
-            long budgetMs = VERSION_QUERY_DEADLINE_MS;
+            // A slow source must not discard other metadata that already arrived.
+            java.util.List<java.util.concurrent.Future<CNHotUpdateValidate.VerMeta>> queries =
+                    java.util.Arrays.asList(fScenario, fJs, fDelta);
+            final long deadlineNs = System.nanoTime()
+                    + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(VERSION_QUERY_DEADLINE_MS);
             try {
-                while (true) {
-                    long deadlineNs = System.nanoTime()
-                            + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(budgetMs);
+                for (int i = 0; i < queries.size(); i++) {
+                    java.util.concurrent.Future<CNHotUpdateValidate.VerMeta> query = queries.get(i);
                     try {
-                        if (metas[0] == null) {
-                            metas[0] = fScenario.get(deadlineNs - System.nanoTime(),
-                                    java.util.concurrent.TimeUnit.NANOSECONDS);
-                        }
-                        if (metas[1] == null) {
-                            metas[1] = fJs.get(deadlineNs - System.nanoTime(),
-                                    java.util.concurrent.TimeUnit.NANOSECONDS);
-                        }
-                        if (metas[2] == null) metas[2] = fDelta.get(deadlineNs - System.nanoTime(),
+                        if (query.isDone()) metas[i] = query.get();
+                        else metas[i] = query.get(Math.max(0L, deadlineNs - System.nanoTime()),
                                 java.util.concurrent.TimeUnit.NANOSECONDS);
-                        break;                       // 三份都拿到了
-                    } catch (java.util.concurrent.TimeoutException te) {
-                        long waited = android.os.SystemClock.uptimeMillis() - startedMs;
-                        if (askVersionSlow(act, waited) != CNCNDownloadUI.SLOW_WAIT) {
-                            anyFailure = true;
-                            CNLog.w(TAG, "版本查询等待 " + waited
-                                    + "ms 后按「跳过」处理，未完成项本次不更新");
-                            fScenario.cancel(true);
-                            fJs.cancel(true);
-                            fDelta.cancel(true);
-                            break;
-                        }
-                        budgetMs = VERSION_QUERY_EXTEND_MS;   // 玩家说再等，就再给一段
-                        CNCNDownloadUI.updateSimple("检查热更新",
-                                "继续等待版本查询…（已等 " + (waited / 1000) + " 秒）", 0);
-                        CNLog.i(TAG, "玩家选择继续等待版本查询，追加 "
-                                + VERSION_QUERY_EXTEND_MS + "ms");
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        anyFailure = true;
+                        break;
+                    } catch (Exception failure) {
+                        anyFailure = true;
+                        CNLog.w(TAG, PACKAGES[i].label + "版本查询未完成，保留当前资源：" + failure);
                     }
                 }
-            } catch (Throwable t) {
-                anyFailure = true;
-                CNLog.w(TAG, "并行版本查询异常: " + t);
-                fScenario.cancel(true);
-                fJs.cancel(true);
-                            fDelta.cancel(true);
             } finally {
+                for (java.util.concurrent.Future<CNHotUpdateValidate.VerMeta> query : queries)
+                    if (!query.isDone()) query.cancel(true);
                 pool.shutdownNow();
             }
 
@@ -1144,6 +1097,7 @@ public final class CNHotUpdateCheck {
                 if (!saveLocalVersion(pkg.versionKey, meta.version)) {
                     return HOT_COMMIT_STATE_FAILED;
                 }
+                CNPackageReceipt.installed(pkg.slot, null);
                 return HOT_COMMIT_APPLIED;
             }
         }

@@ -12,6 +12,10 @@ assist=(a.source_root/'patch/src/main/java/io/kamihama/magianative/CNDownloadUiA
 route=s[s.index('private static final class RouteMenuClick'):s.index('private static final class RouteChoice')]
 surface=re.search(r'return darkMode \? (0x[0-9A-F]+) : (0x[0-9A-F]+);',s[s.index('static int controlSurfaceColor()'):])
 checks={
+    'logo fills measured button stack without stretching':'ImageView.ScaleType.CENTER_CROP' in s and '0, ViewGroup.LayoutParams.MATCH_PARENT, 1f' in s and 'logoRow.setBaselineAligned(false)' in s,
+    'redownload aligned to filename top':'headRow.setGravity(Gravity.TOP)' in s and 'actionLp.gravity = Gravity.TOP' in s,
+    'resource identities reuse one existing line':'route.setSingleLine(true)' in s and 'CNPackageReceipt.label(fileIdx' in s,
+
     'capsule fill is translucent (20 percent) in both themes':bool(surface) and all((int(surface[i],16)>>24)==0x33 for i in (1,2)),
     'dialog bounded by host height':'host.getHeight()-dp(act,24)' in route and 'new FrameLayout.LayoutParams(width,height,Gravity.CENTER)' in route,
     'tip scrolls with choices':'choices.addView(tip,lpRow(' in route and 'panel.addView(tip,' not in route,

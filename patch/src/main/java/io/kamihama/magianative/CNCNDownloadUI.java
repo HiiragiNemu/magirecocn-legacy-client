@@ -461,6 +461,7 @@ public class CNCNDownloadUI {
         KIND_SUB,
         KIND_SUB,
         KIND_SUB,
+        KIND_SUB,
         KIND_HEAD,
         KIND_ITEM,
         KIND_ITEM,
@@ -472,15 +473,15 @@ public class CNCNDownloadUI {
     private static final String[] CREDIT_TEXTS = {
         "主力人员",
         "MadeInMagius",
-        "核心实现与全中文化补全以及整合汉化。",
-        "剧情翻译与校订：完成 344 个剧情汉化。",
+        "核心实现与全中文化【完全离线版研究中】。",
+        "剧情翻译与校订：完成 344 个剧情汉化，逐句校对 313 处。",
         "选关对话：汉化 735 条文字内容。",
         "角色语音文本翻译与校订：共 1,588 条。其中语音字幕 1,335 条、看板语音 784 条，两类重合 531 条。",
         "战斗技能文本翻译与修订：4,209 项。",
         "前端界面文本汉化：1,470 项。",
-        "游戏图像资源汉化：258 个图像，包括 162 个 PNG 和 96 个 .vfxt 特效图像文件。",
+        "游戏图像资源汉化：282 个图像，包括 186 个 PNG 和 96 个 .vfxt 特效图像文件。",
         "称号名称与解锁条件汉化整合：967 项，共 1,934 个字段。",
-        "剧情逐句校对：复核 264 条独立文本，修正 245 条；含复刻剧情共覆盖 339 处载体，实际修正 313 处。",
+        "剧情全文校订：共修订 11,226 处文本字段。",
         "记忆结晶简介校订：5 条（奈叶联动，依据日文原文修正既有 Wiki 译文；原译来源归属保留）。",
         "CyberNova／PhotonFlow",
         "国内加速、现代化下载界面与部分下载技术协助，发现了非 Web 页面外战斗场景 Cocos 引擎部分汉化的可能性和早期实现技术，提供了美服 API 抓包资源。目前加速 CN BASE 主资源文件。",
@@ -501,6 +502,7 @@ public class CNCNDownloadUI {
         "赞助支持 MADE IN MAGIUS",
         "赞助支持 CyberNova",
         "统计说明",
+        "2026 年 10 月本轮剧情校订已在 Reader 上线，并已通过游戏累计 JS delta 正式发布。剧情目录、运行片段和文本字段是不同统计单位；复核、同源复用和重复修订不重复计为新增原创翻译，原译者署名保留。",
         "水银的三个 JSON 按类型、ID 和汉化字段统计，共 548 个字段；不与技能项数相加。数字、纯省略号和运行时重复映射不计，既有后续校订归属保留。",
         "称号单独按 ID 统计，不并入原有前端 1,470 项。现成译文的整合不重复计为个人原创；修订既有剧情、复刻载体和空白内容不重复增加汉化数量。",
         "70 个合作剧情目录分别计入各参与者的个人贡献。各人的目录数量含合作重叠，不相加作为全游戏剧情总数。",
@@ -553,6 +555,7 @@ public class CNCNDownloadUI {
         "",
         "https://afdian.com/a/madeinmagius",
         "https://afdian.com/a/cybernova",
+        "",
         "",
         "",
         "",
@@ -616,6 +619,7 @@ public class CNCNDownloadUI {
         "",
         "",
         "",
+        "",
         "magireader.pages.dev",
         "magireco-call-search-cn.pages.dev",
         "magius3dviewer.pages.dev",
@@ -641,7 +645,7 @@ public class CNCNDownloadUI {
 
     /** 底部常驻署名条：原先塞在速度行里的那句长文案，原文保留。 */
     private static final String FOOTER_CREDIT =
-        "MadeInMagius 中文化与整合｜协助：CyberNova／PhotonFlow、圆环记录攻略组、水银 h2oag、segfault｜详细贡献与统计见左栏｜1.0.195 起使用寒蝉全圆体 Bold 3.200（OFL 开源）与 MiSans Semibold 4.009 补字版，许可随包附带。";
+        "MadeInMagius 中文化与整合｜协助：CyberNova／PhotonFlow、圆环记录攻略组、水银 h2oag、segfault｜详细贡献与统计见左栏｜1.0.195 起使用寒蝉全圆体 Bold 3.200与 MiSans Semibold 4.009";
 
     // ---- 云端可配的署名内容 ----
     //
@@ -1145,7 +1149,8 @@ public class CNCNDownloadUI {
         // MadeInMagius / PhotonFlow 在下方贡献者列表与底部署名条里都已经有，
         // 品牌区再写一遍是重复，不是信息。
         ImageView logoView = new ImageView(act);
-        logoView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        logoView.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        logoView.setTag("cn-logo-aligned");
         loadBitmapFromAssets(act, LOGO_ASSET, logoView);
         LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -1153,10 +1158,13 @@ public class CNCNDownloadUI {
         // 两个入口按实际文字高度测量，固定 64dp 会把第二行线路按钮裁掉。
         LinearLayout logoRow = new LinearLayout(act);
         logoRow.setMinimumHeight(dp(act, 64));
-        logoRow.setGravity(Gravity.CENTER_VERTICAL);
-        logoRow.addView(logoView, new LinearLayout.LayoutParams(0, dp(act, 64), 1f));
+        logoRow.setGravity(Gravity.TOP);
+        logoRow.setBaselineAligned(false);
+        logoRow.addView(logoView, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
         LinearLayout logoActions = new LinearLayout(act);
         logoActions.setOrientation(LinearLayout.VERTICAL);
+        logoActions.setTag("cn-logo-actions");
         vStorageChip = null;
         if (CNBuildConfig.ALL_FILES_ACCESS) {
             vStorageChip = new TextView(act);
@@ -1185,6 +1193,7 @@ public class CNCNDownloadUI {
         // 固定信息紧接横幅；只有下面的贡献说明滚动。
         LinearLayout versionPanel = new LinearLayout(act);
         versionPanel.setOrientation(LinearLayout.VERTICAL);
+        versionPanel.setTag("cn-version-panel");
         versionPanel.setPadding(dp(act, 5), dp(act, 3), dp(act, 5), dp(act, 3));
         GradientDrawable versionBg = new GradientDrawable();
         versionBg.setColor(darkMode ? 0x221B1428 : 0x22FFFFFF);
@@ -1267,7 +1276,8 @@ public class CNCNDownloadUI {
 
         LinearLayout headRow = new LinearLayout(act);
         headRow.setOrientation(LinearLayout.HORIZONTAL);
-        headRow.setGravity(Gravity.CENTER_VERTICAL);
+        headRow.setGravity(Gravity.TOP);
+            headRow.setBaselineAligned(false);
         rightCol.addView(headRow, lpRow(0, dp(act, 4)));
 
         vPhase = new TextView(act);
@@ -2220,7 +2230,8 @@ public class CNCNDownloadUI {
 
             LinearLayout headRow = new LinearLayout(act);
             headRow.setOrientation(LinearLayout.HORIZONTAL);
-            headRow.setGravity(Gravity.CENTER_VERTICAL);
+            headRow.setGravity(Gravity.TOP);
+            headRow.setBaselineAligned(false);
             LinearLayout.LayoutParams hrLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -2231,17 +2242,20 @@ public class CNCNDownloadUI {
             name.setText((d + 1) + ". " + FILE_NAMES[fileIdx]);
             name.setTextColor(COLOR_TEXT);
             name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
+            name.setIncludeFontPadding(false);
             name.setSingleLine(true);
             name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
             headRow.addView(name, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
             TextView route = new TextView(act);
-            route.setText(CNDownloadRoute.fileLabel(fileIdx, fileStatus[fileIdx]));
+            route.setText(CNPackageReceipt.label(fileIdx, fileStatus[fileIdx]));
             route.setTextColor(COLOR_SUB);
             route.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
-            // A full credited route needs its own width; do not steal space from the ZIP name.
-            route.setSingleLine(false);
+            // Version and provenance replace the existing route line; never add row height.
+            route.setSingleLine(true);
+            route.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            route.setIncludeFontPadding(false);
             row.addView(route, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -2278,6 +2292,7 @@ public class CNCNDownloadUI {
             action.setTextColor(0xFFFFFFFF);
             action.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
             action.setGravity(Gravity.CENTER);
+            action.setIncludeFontPadding(false);
             action.setMinEms(ACTION_MIN_EMS);
             action.setPadding(dp(act, 10), dp(act, 3), dp(act, 10), dp(act, 3));
             GradientDrawable actionBg = new GradientDrawable();
@@ -2288,6 +2303,7 @@ public class CNCNDownloadUI {
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT);
             actionLp.leftMargin = dp(act, 8);
+            actionLp.gravity = Gravity.TOP;
             headRow.addView(action, actionLp);
 
             // 双列后单槽只有右栏的一半宽度：把“大小/速度/百分比”独占第二行，
@@ -3414,67 +3430,9 @@ public class CNCNDownloadUI {
             ((ViewGroup)modal.getParent()).removeView(modal);
     }
 
-    // 与元数据查询失败的阻塞询问分开：资源仍有字节时，提示绝不控制下载线程。
-    private static boolean slowTransferNoticeOffered;
-
+    /** Slow transfers keep their workers and progress; no card, choice or restart. */
     public static void offerSlowTransferNotice() {
-        try {
-            Handler handler = uiHandler;
-            if (handler != null) handler.post(new SlowTransferNoticeBuild());
-        } catch (Throwable ignored) { /* A missing UI never interrupts a transfer. */ }
-    }
-
-    private static final class SlowTransferNoticeBuild implements Runnable {
-        @Override public void run() {
-            try {
-                Activity act = hostActivity;
-                FrameLayout host = overlayView;
-                if (slowTransferNoticeOffered || act == null || host == null
-                        || act.isFinishing() || !isShowing) return;
-                LinearLayout panel = new LinearLayout(act);
-                panel.setOrientation(LinearLayout.VERTICAL);
-                panel.setPadding(dp(act, 18), dp(act, 14), dp(act, 18), dp(act, 12));
-                GradientDrawable bg = new GradientDrawable();
-                bg.setColor(COLOR_LOG_PANEL_BG);
-                bg.setCornerRadius(dp(act, 16));
-                bg.setStroke(dp(act, 1), COLOR_CARD_STK);
-                panel.setBackground(bg);
-                // Only this card receives touches; no full-screen dim layer or input trap.
-                panel.setClickable(true);
-                TextView message = new TextView(act);
-                message.setText("当前速度较慢，文件仍在下载。\n关闭提示或继续下载都不会暂停，也不会从头重下。");
-                message.setTextColor(COLOR_LOG_PANEL_TEXT);
-                message.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
-                panel.addView(message, lpRow(0, dp(act, 10)));
-                LinearLayout buttons = new LinearLayout(act);
-                buttons.setGravity(Gravity.END);
-                TextView close = dialogButton(act, "关闭", COLOR_LOG_PANEL_TEXT, 0x00000000, true);
-                TextView keep = dialogButton(act, "继续下载", 0xFFFFFFFF, COLOR_ACCENT, false);
-                close.setOnClickListener(new DismissTransferNotice(panel));
-                keep.setOnClickListener(new DismissTransferNotice(panel));
-                buttons.addView(close);
-                LinearLayout.LayoutParams keepLp = new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                keepLp.leftMargin = dp(act, 10);
-                buttons.addView(keep, keepLp);
-                panel.addView(buttons, lpRow(0, 0));
-                FrameLayout.LayoutParams pos = new FrameLayout.LayoutParams(
-                        dp(act, 360), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-                pos.topMargin = dp(act, 50);
-                host.addView(panel, pos);
-                slowTransferNoticeOffered = true;
-            } catch (Throwable t) { CNLog.w(TAG, "低速提示显示失败，下载继续", t); }
-        }
-    }
-
-    /** Both actions dismiss presentation only. No reset, retry, latch or engine switch. */
-    private static final class DismissTransferNotice implements View.OnClickListener {
-        private final View panel;
-        DismissTransferNotice(View panel) { this.panel = panel; }
-        @Override public void onClick(View v) {
-            android.view.ViewParent parent = panel.getParent();
-            if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(panel);
-        }
+        // Intentionally silent: progress/speed already remain visible in the file row.
     }
 
     /** {@link #askSlowNetwork} 的返回值：玩家选了「再来一次」（继续等 / 重试）。 */
@@ -3563,31 +3521,8 @@ public class CNCNDownloadUI {
                                      final String waitLabel, final String skipLabel,
                                      final String waitDesc, final String skipCost,
                                      final long waitedMs) {
-        if (CNDebugFlags.isOn(CNDebugFlags.SKIP_SLOW_ASK)) {
-            CNLog.i(TAG, "[慢网询问] 调试开关 skipSlowAsk 生效，按跳过处理：" + what);
-            return SLOW_SKIP;
-        }
-        if (act == null || overlayView == null) {
-            CNLog.w(TAG, "[慢网询问] 浮层不在，无法询问「" + what + "」，按跳过处理");
-            return SLOW_SKIP;
-        }
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            CNLog.e(TAG, "[慢网询问] 被在 UI 线程上调用，会死锁；按跳过处理：" + what);
-            return SLOW_SKIP;
-        }
-        final SlowAnswer ans = new SlowAnswer();
-        try {
-            act.runOnUiThread(new SlowBuild(act, title, what, waitLabel, skipLabel,
-                                            waitDesc, skipCost, waitedMs, ans));
-            ans.latch.await();
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-            return SLOW_SKIP;
-        } catch (Throwable t) {
-            CNLog.e(TAG, "[慢网询问] 建框失败，按跳过处理", t);
-            return SLOW_SKIP;
-        }
-        return ans.choice[0];
+        CNLog.w(TAG, "网络查询超时，保留当前内容并使用可用线路：" + what);
+        return SLOW_SKIP;
     }
 
     /** 在 UI 线程上把询问框建出来。建不出来就立刻放行调用线程，别把它吊死。 */
@@ -3803,29 +3738,8 @@ public class CNCNDownloadUI {
                                           final boolean canRetry,
                                           final boolean aria2Failed,
                                           final boolean offerOffline) {
-        if (act == null || overlayView == null) {
-            CNLog.w(TAG, "[下载询问] 浮层不在，按「关闭且保留断点」处理：" + fileName);
-            return DL_CLOSE;
-        }
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            CNLog.e(TAG, "[下载询问] 被在 UI 线程上调用，会死锁；按「关闭且保留断点」处理");
-            return DL_CLOSE;
-        }
-        final Aria2Answer ans = new Aria2Answer();
-        try {
-            act.runOnUiThread(new Aria2Build(act, fileName, canRetry, aria2Failed,
-                    offerOffline, ans));
-            if (!ans.latch.await(60, java.util.concurrent.TimeUnit.SECONDS)) {
-                CNLog.w(TAG, "[aria2询问] 60 秒未选择，按「关闭且保留断点」处理：" + fileName);
-            }
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-        } catch (Throwable t) {
-            CNLog.e(TAG, "[aria2询问] 建框失败，按「关闭且保留断点」处理", t);
-        }
-        ans.choose(DL_CLOSE);
-        act.runOnUiThread(new CloseAriaAnswer(ans));
-        return ans.choice[0];
+        CNLog.w(TAG, "下载自动重试已结束，保留进度；可在对应文件行重试：" + fileName);
+        return DL_CLOSE;
     }
 
     /** 在 UI 线程上把询问框建出来。建不出来就立刻放行调用线程，别把它吊死。 */
@@ -4952,7 +4866,8 @@ public class CNCNDownloadUI {
                 int idx = sv.fileIdx;
                 int st  = status[idx];
                 int pct = progress[idx];
-                sv.routeView.setText(CNDownloadRoute.fileLabel(idx, st));
+                sv.routeView.setText(CNPackageReceipt.label(idx, st));
+                sv.routeView.setContentDescription(FILE_NAMES[idx] + "：" + CNPackageReceipt.label(idx, st));
                 sv.routeView.setTextColor(COLOR_SUB);
                 sv.bar.setProgress(pct);
 

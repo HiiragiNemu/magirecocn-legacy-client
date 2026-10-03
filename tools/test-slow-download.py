@@ -15,9 +15,22 @@ for name in ['CNDownloaderFix.java','CNHotUpdate.java','CNChunkedDownload.java']
     assert 'slowNotice.observe(' in source
     assert 'CNDownloadRestart.cancelled(' in source if name!='CNChunkedDownload.java' else 'sink.isCancelled()' in source
 ui=(JAVA/'CNCNDownloadUI.java').read_text(encoding='utf-8')
-notice=ui.split('private static boolean slowTransferNoticeOffered;',1)[1].split('/** {@link #askSlowNetwork}',1)[0]
-for forbidden in ['.await(','.interrupt(','.request(','.resetFileProgress(','.delete(','.setDownloadMode(', 'COLOR_DIM']:
-    assert forbidden not in notice, forbidden
-assert notice.count('new DismissTransferNotice(panel)')==2
-assert '"关闭"' in notice and '"继续下载"' in notice
-print('PASS: all three transfer paths are advisory; close/continue dismiss only; no full-screen dim/input trap')
+def body(signature):
+    start=ui.index(signature); start=ui.index('{',start); depth=1; end=start+1
+    while depth:
+        if ui[end]=='{': depth+=1
+        elif ui[end]=='}': depth-=1
+        end+=1
+    return ui[start:end]
+for signature in ['public static void offerSlowTransferNotice()', 'public static int askSlowNetwork(',
+                  'public static int askDownloadFallback(final Activity act, final String fileName,']:
+    # Overloads also delegate to the silent implementation; no modal construction remains here.
+    text=body(signature)
+    for forbidden in ['.await(', 'AlertDialog', 'new Slow', 'new DownloadFallback', 'runOnUiThread(', '.resetFileProgress(']:
+        assert forbidden not in text, (signature,forbidden)
+assert 'SlowTransferNoticeBuild' not in ui
+assert 'return SLOW_SKIP;' in body('public static int askSlowNetwork(')
+assert '下载自动重试已结束，保留进度' in ui
+hot=(JAVA/'CNHotUpdateCheck.java').read_text('utf8')
+assert 'askVersionSlow' not in hot and 'if (query.isDone()) metas[i] = query.get();' in hot
+print('PASS: slow transfers stay uninterrupted; metadata budget is bounded; terminal failures remain inline; no slow-choice modal')
