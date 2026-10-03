@@ -21,7 +21,8 @@ public final class PackageRoutingTest {
         String edge=CNEndpoints.LEGACY_EDGEONE_BASE,esa=CNEndpoints.LEGACY_ESA_BASE;
         String cf=CNEndpoints.PRIMARY_BASE_OVERRIDE,github=CNEndpoints.SECONDARY_BASE_OVERRIDE;
         check(!edge.isEmpty()&&!esa.isEmpty()&&!cf.isEmpty()&&!github.isEmpty(),"injected_four_endpoints");
-        check(CNMirrors.selectable().size()==4,"builtin_has_four_manual_choices_before_config");
+        check(CNMirrors.selectable().size()==2,"builtin_has_two_live_manual_choices_before_config");
+        for(CNMirrors.Mirror row:CNMirrors.selectable())check(!row.base.equals(edge)&&!row.base.equals(esa),"retired_hosts_not_restored_before_config");
         List<CNMirrors.Mirror> routes=Arrays.asList(
             new CNMirrors.Mirror("EdgeOne",edge,140,8,true),
             new CNMirrors.Mirror("ESA",esa,120,8,true),
