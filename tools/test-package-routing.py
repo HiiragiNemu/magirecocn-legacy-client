@@ -9,7 +9,9 @@ p.add_argument('--source-root',type=pathlib.Path,default=ROOT)
 a=p.parse_args();src=a.source_root/'patch/src/main/java/io/kamihama/magianative'
 read=lambda n:(src/(n+'.java')).read_text(encoding='utf-8')
 route=read('CNDownloadRoute');ui=read('CNCNDownloadUI');install=read('CNDownloaderFix')
-assert 'fileLabel' in route and 'sv.routeView.setText(CNDownloadRoute.fileLabel(idx, st))' in ui, 'per-ZIP actual route display missing'
+assert 'sv.routeView.setText(CNPackageReceipt.label(idx, st))' in ui, 'per-ZIP installed identity display missing'
+assert 'CNDownloadRoute.currentFile(index)' in read('CNPackageReceipt'), 'actual route is not retained'
+assert 'CNPackageReceipt.installed(name,' in install and 'CNPackageReceipt.installed(pkg.slot,' in read('CNHotUpdateCheck'), 'successful install receipts missing'
 assert 'CNUpdateSources.downloadMirrors(expected)' in read('CNHotUpdate'), 'hot route eligibility not wired'
 assert 'CNUpdateSources.downloadMirrors(pinnedHot)' in install, 'aria2 route eligibility not wired'
 assert 'CNUpdateSources.downloadMirrors(hotMeta)' in install, 'first install route eligibility not wired'
