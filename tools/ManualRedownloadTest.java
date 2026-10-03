@@ -56,6 +56,12 @@ public class ManualRedownloadTest {
         check("释放后可再次选择", CNManualRedownload.claimForTest(5));
         CNManualRedownload.releaseForTest(5);
 
+        int delta = CNCNDownloadUI.FILE_NAMES.length - 1;
+        check("最后一项 delta 可登记且即时处于运行状态",
+                CNManualRedownload.claimForTest(delta) && CNManualRedownload.isRunning(delta));
+        check("delta 重复点击去重", !CNManualRedownload.claimForTest(delta));
+        CNManualRedownload.releaseForTest(delta);
+        check("delta 结束后释放状态", !CNManualRedownload.isRunning(delta));
         System.out.println("[2] marker 校验只判断自身，不读取其它文件");
         String name = CNCNDownloadUI.FILE_NAMES[5];
         File marker = new File(state, name + ".done");

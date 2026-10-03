@@ -31,7 +31,7 @@ public final class CNManualRedownload {
     private static final String REQUEST_NAME = "manual-redownload.request";
     private static final String BACKUP_SUFFIX = ".manual-redownload.bak";
 
-    private static final AtomicIntegerArray RUNNING = new AtomicIntegerArray(15);
+    private static final AtomicIntegerArray RUNNING = new AtomicIntegerArray(CNCNDownloadUI.FILE_NAMES.length);
     private static final AtomicInteger RUNNING_COUNT = new AtomicInteger(0);
     /**
      * 「有基础包被换过，进游戏前得重启一次」——<b>整个会话</b>的状态，由
@@ -395,7 +395,7 @@ public final class CNManualRedownload {
 
     private static boolean allMarkersValid(File state) {
         String[] names = CNCNDownloadUI.FILE_NAMES;
-        if (names == null || names.length != 15) return false;
+        if (names == null || names.length == 0) return false;
         for (int i = 0; i < names.length; i++) {
             if (!markerValid(markerFor(state, names[i]), names[i])) return false;
         }

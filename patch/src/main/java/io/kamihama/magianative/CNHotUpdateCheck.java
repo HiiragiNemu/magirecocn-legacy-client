@@ -698,8 +698,30 @@ public final class CNHotUpdateCheck {
      * 手动强制重下 scenario/js 的当前服务端版本。它不依赖其它 14 个 marker，
      * 不读取基础包 manifest；下载通过 version JSON 的 size/MD5 后才事务应用。
      */
+    // Manual hot chains share temporary paths; serialize the whole download chain,
+    // not just extraction. Startup uses distinct paths and the existing commit lock.
+    private static final Object MANUAL_HOT_CHAIN_LOCK = new Object();
+
     static boolean redownloadPackage(int slot) {
-        return redownloadPackage(slot, null, null);
+        synchronized (MANUAL_HOT_CHAIN_LOCK) {
+            boolean base = slot == CNDownloaderFix.HOT_SLOT_SCENARIO
+                    || slot == CNDownloaderFix.HOT_SLOT_JS;
+            if (base) {
+                CNCNDownloadUI.markFilePending(CNDownloaderFix.HOT_SLOT_DELTA);
+                CNLog.i(TAG, "手动基础包重下后将联网重下最新累计补充包 slot=" + slot);
+            }
+            if (!redownloadPackage(slot, null, null)) {
+                if (base) markHotFailed(CNDownloaderFix.HOT_SLOT_DELTA);
+                return false;
+            }
+            if (!base) return true;
+            CNCNDownloadUI.updateSimple("重新下载累计补充包",
+                    "基础包已完成；正在联网取得并重下最新 delta…", 0);
+            boolean ok = redownloadPackage(CNDownloaderFix.HOT_SLOT_DELTA, null, null);
+            if (!ok) CNCNDownloadUI.updateSimple("累计补充包重下失败",
+                    "已保留此前有效补充层，请点击 delta 重试；本次联动尚未完成", 0);
+            return ok;
+        }
     }
 
     private static boolean redownloadPackage(int slot, CNHotUpdateValidate.VerMeta pinned, File retryFile) {
